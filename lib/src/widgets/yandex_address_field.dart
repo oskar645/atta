@@ -12,7 +12,7 @@ class YandexAddressField extends StatefulWidget {
   const YandexAddressField({
     super.key,
     required this.controller,
-    this.label = 'Адрес',
+    this.label = '\u0410\u0434\u0440\u0435\u0441',
     this.onSelected,
   });
 
@@ -29,7 +29,7 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
   Timer? _debounce;
   OverlayEntry? _overlayEntry;
   bool _loading = false;
-  List<String> _items = [];
+  List<YandexAddressSuggestion> _items = [];
   String _rawValue = '';
 
   @override
@@ -82,14 +82,10 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
     try {
       final res = await _service.suggest(query);
       if (!mounted) return;
-      setState(() {
-        _items = res;
-      });
+      setState(() => _items = res);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _items = [];
-      });
+      setState(() => _items = []);
     } finally {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -112,7 +108,7 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
   bool _showManualChoice() {
     final raw = _rawValue.trim();
     if (raw.length < 2) return false;
-    return !_items.any((x) => x.trim().toLowerCase() == raw.toLowerCase());
+    return !_items.any((x) => x.value.trim().toLowerCase() == raw.toLowerCase());
   }
 
   bool get _shouldShowOverlay =>
@@ -160,44 +156,82 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
         showWhenUnlinked: false,
         offset: Offset(0, size.height + 4),
         child: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(12),
+          elevation: 10,
+          borderRadius: BorderRadius.circular(16),
           color: Theme.of(context).colorScheme.surface,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 280),
+            constraints: const BoxConstraints(maxHeight: 320),
             child: ListView.separated(
-              padding: EdgeInsets.zero,
+              padding: const EdgeInsets.symmetric(vertical: 6),
               shrinkWrap: true,
               itemCount: _items.length + (_showManualChoice() ? 1 : 0),
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (_, i) {
                 if (i < _items.length) {
-                  final value = _items[i];
+                  final item = _items[i];
                   return ListTile(
                     dense: true,
-                    leading: const Icon(Icons.place_outlined),
-                    title: Text(
-                      value,
-                      maxLines: 3,
-                      overflow: TextOverflow.fade,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 4,
                     ),
-                    onTap: () => _select(value),
+                    leading: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.place_outlined,
+                        size: 18,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    title: Text(
+                      item.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                    subtitle: item.subtitle.trim().isEmpty
+                        ? null
+                        : Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              item.subtitle,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                height: 1.2,
+                              ),
+                            ),
+                          ),
+                    onTap: () => _select(item.value),
                   );
                 }
 
                 final typed = _rawValue.trim();
                 return ListTile(
                   dense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   leading: const Icon(Icons.edit_location_alt_outlined),
                   title: const Text(
-                    'Оставить как введено',
+                    '\u041e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u043a\u0430\u043a \u0432\u0432\u0435\u0434\u0435\u043d\u043e',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   subtitle: Text(
                     typed,
                     maxLines: 3,
-                    overflow: TextOverflow.fade,
+                    overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () => _select(typed),
                 );

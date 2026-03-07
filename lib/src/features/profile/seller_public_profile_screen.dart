@@ -147,7 +147,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                   borderRadius: BorderRadius.circular(16),
                   color: Theme.of(context).colorScheme.surface,
                   border:
-                      Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+                      Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.18)),
                 ),
                 child: Row(
                   children: [
@@ -289,6 +289,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                       stream: listingsSvc.streamListingsByOwnerAll(widget.sellerId).map(
                             (items) => items.where((x) => x.status == 'approved').toList(),
                           ),
+                      isArchive: false,
                     ),
                     _SellerListingsGrid(
                       stream: listingsSvc.streamListingsByOwnerAll(widget.sellerId).map(
@@ -299,6 +300,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     x.status == 'rejected')
                                 .toList(),
                           ),
+                      isArchive: true,
                     ),
                   ],
                 ),
@@ -345,7 +347,8 @@ class _Avatar extends StatelessWidget {
 
 class _SellerListingsGrid extends StatelessWidget {
   final Stream<List<Listing>> stream;
-  const _SellerListingsGrid({required this.stream});
+  final bool isArchive;
+  const _SellerListingsGrid({required this.stream, required this.isArchive});
 
   @override
   Widget build(BuildContext context) {
@@ -366,13 +369,13 @@ class _SellerListingsGrid extends StatelessWidget {
         if (items.isEmpty) {
           return Center(
             child: Text(
-              'Пока нет объявлений',
+              isArchive ? 'Архив пуст' : 'Пока нет объявлений',
               style: TextStyle(color: Theme.of(context).colorScheme.outline),
             ),
           );
         }
 
-        return GridView.builder(
+        final grid = GridView.builder(
           itemCount: items.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
@@ -382,6 +385,7 @@ class _SellerListingsGrid extends StatelessWidget {
           ),
           itemBuilder: (_, i) => _ListingCard(
             listing: items[i],
+            isArchive: isArchive,
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
@@ -391,6 +395,30 @@ class _SellerListingsGrid extends StatelessWidget {
             },
           ),
         );
+
+        if (!isArchive) return grid;
+
+        return Column(
+          children: [
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              ),
+              child: Text(
+                'Архив: история объявлений продавца (продано, снято, отклонено).',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Expanded(child: grid),
+          ],
+        );
       },
     );
   }
@@ -399,21 +427,90 @@ class _SellerListingsGrid extends StatelessWidget {
 class _ListingCard extends StatelessWidget {
   final Listing listing;
   final VoidCallback onTap;
+  final bool isArchive;
 
-  const _ListingCard({required this.listing, required this.onTap});
+  const _ListingCard({
+    required this.listing,
+    required this.onTap,
+    required this.isArchive,
+  });
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'sold':
+        return 'Продано';
+      case 'rejected':
+        return 'Отклонено';
+      case 'deleted':
+      case 'archived':
+        return 'Снято';
+      default:
+        return 'Снято';
+    }
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'sold':
+        return Colors.green;
+      case 'rejected':
+        return Colors.red;
+      case 'deleted':
+      case 'archived':
+        return Colors.grey;
+      case 'pending':
+        return Colors.orange;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
+  String? _archiveNote(Listing listing) {
+    if (listing.status == 'rejected' && listing.rejectionReason.trim().isNotEmpty) {
+      return listing.rejectionReason.trim();
+    }
+    if (listing.status == 'sold') return 'Объявление отмечено как проданное';
+    if (listing.status == 'deleted' || listing.status == 'archived') {
+      return 'Объявление снято с публикации';
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : '';
+    final statusText = _statusLabel(listing.status);
+    final statusColor = _statusColor(listing.status);
+    final archiveNote = isArchive ? _archiveNote(listing) : null;
+    final image = (photo.isEmpty)
+        ? Container(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: const Center(child: Icon(Icons.image_outlined)),
+          )
+        : CachedNetworkImage(
+            imageUrl: photo,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            placeholder: (_, __) => Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              alignment: Alignment.center,
+              child: const CircularProgressIndicator(strokeWidth: 2),
+            ),
+            errorWidget: (_, __, ___) => Container(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              alignment: Alignment.center,
+              child: const Icon(Icons.broken_image_outlined),
+            ),
+          );
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
-      onTap: onTap,
+      onTap: isArchive ? null : onTap,
       child: Ink(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+          border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.18)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -421,26 +518,31 @@ class _ListingCard extends StatelessWidget {
             Expanded(
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-                child: (photo.isEmpty)
-                    ? Container(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: const Center(child: Icon(Icons.image_outlined)),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    if (isArchive)
+                      ColorFiltered(
+                        colorFilter: const ColorFilter.matrix(<double>[
+                          0.2126, 0.7152, 0.0722, 0, 0,
+                          0.2126, 0.7152, 0.0722, 0, 0,
+                          0.2126, 0.7152, 0.0722, 0, 0,
+                          0, 0, 0, 1, 0,
+                        ]),
+                        child: Opacity(opacity: 0.78, child: image),
                       )
-                    : CachedNetworkImage(
-                        imageUrl: photo,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        placeholder: (_, __) => Container(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          alignment: Alignment.center,
-                          child: const CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        errorWidget: (_, __, ___) => Container(
-                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          alignment: Alignment.center,
-                          child: const Icon(Icons.broken_image_outlined),
+                    else
+                      image,
+                    if (isArchive)
+                      Positioned.fill(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.12),
+                          ),
                         ),
                       ),
+                  ],
+                ),
               ),
             ),
             Padding(
@@ -448,6 +550,25 @@ class _ListingCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (isArchive) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: statusColor.withValues(alpha: 0.14),
+                        border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+                      ),
+                      child: Text(
+                        statusText,
+                        style: TextStyle(
+                          color: statusColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
                   Text(
                     listing.title,
                     maxLines: 1,
@@ -462,6 +583,18 @@ class _ListingCard extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
+                  if (archiveNote != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      archiveNote,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

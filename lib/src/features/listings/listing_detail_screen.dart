@@ -1,4 +1,4 @@
-import 'package:cached_network_image/cached_network_image.dart';
+﻿import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chestore2/src/features/inbox/chat_screen.dart';
 import 'package:chestore2/src/features/listings/edit_listing_screen.dart';
 import 'package:chestore2/src/features/listings/photo_viewer_screen.dart';
@@ -728,9 +728,24 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
                           const SizedBox(height: 12),
 
-                          Text(
-                            listing.city.trim().isEmpty ? 'Город не указан' : listing.city,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          Builder(
+                            builder: (ctx) {
+                              final address = listing.cityFull.trim();
+                              final hasAddress = address.isNotEmpty;
+                              final color = Theme.of(ctx).colorScheme.primary;
+                              return InkWell(
+                                onTap: hasAddress ? () => _openInMaps(address) : null,
+                                borderRadius: BorderRadius.circular(8),
+                                child: Text(
+                                  hasAddress ? address : 'Город не указан',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: hasAddress ? color : null,
+                                    decoration: hasAddress ? TextDecoration.underline : null,
+                                  ),
+                                ),
+                              );
+                            },
                           ),
 
                           const SizedBox(height: 8),
@@ -922,6 +937,32 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   }
 }
 
+Future<void> _openInMaps(String address) async {
+  final query = Uri.encodeComponent(address.trim());
+  if (query.isEmpty) return;
+
+  final geo = Uri.parse('geo:0,0?q=$query');
+  if (await canLaunchUrl(geo)) {
+    await launchUrl(geo, mode: LaunchMode.externalApplication);
+    return;
+  }
+
+  final google = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+  if (await canLaunchUrl(google)) {
+    await launchUrl(google, mode: LaunchMode.externalApplication);
+    return;
+  }
+
+  final yandex = Uri.parse('https://yandex.ru/maps/?text=$query');
+  if (await canLaunchUrl(yandex)) {
+    await launchUrl(yandex, mode: LaunchMode.externalApplication);
+    return;
+  }
+
+  final osm = Uri.parse('https://www.openstreetmap.org/search?query=$query');
+  await launchUrl(osm, mode: LaunchMode.externalApplication);
+}
+
 Widget _kv(String k, String v) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 8),
@@ -1019,3 +1060,6 @@ class _PhotosState extends State<_Photos> {
     );
   }
 }
+
+
+

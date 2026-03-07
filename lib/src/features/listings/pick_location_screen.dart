@@ -2,13 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'package:chestore2/src/services/yandex_suggest_service.dart';
 
 class PickLocationScreen extends StatefulWidget {
-  const PickLocationScreen({super.key});
+  final String? initialAddress;
+
+  const PickLocationScreen({super.key, this.initialAddress});
 
   @override
   State<PickLocationScreen> createState() => _PickLocationScreenState();
@@ -22,7 +25,7 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
   Timer? _debounce;
   bool _loadingSuggest = false;
   String? _suggestError;
-  List<String> _suggestions = const [];
+  List<YandexAddressSuggestion> _suggestions = const [];
 
   LatLng _picked = const LatLng(55.751244, 37.618423);
   bool _loadingGeo = true;
@@ -32,6 +35,7 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
     super.initState();
     _initGeo();
     _qCtrl.addListener(_onQueryChanged);
+    _prefillInitialAddress();
   }
 
   @override
@@ -61,6 +65,15 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
     } finally {
       if (mounted) setState(() => _loadingGeo = false);
     }
+  }
+
+  Future<void> _prefillInitialAddress() async {
+    final addr = widget.initialAddress?.trim() ?? '';
+    if (addr.isEmpty) return;
+
+    _qCtrl.text = addr;
+    await _loadYandexSuggestions(addr);
+    await _geocodeAddress(addr);
   }
 
   void _onQueryChanged() {
@@ -106,8 +119,23 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
     }
   }
 
-  void _onSuggestionTap(String value) {
-    final label = value.trim();
+  Future<void> _geocodeAddress(String address) async {
+    try {
+      final results = await locationFromAddress(address);
+      if (results.isEmpty) return;
+      final loc = results.first;
+      if (!mounted) return;
+      setState(() {
+        _picked = LatLng(loc.latitude, loc.longitude);
+        _tab = 1;
+      });
+    } catch (_) {
+      // ignore geocode errors; keep current point
+    }
+  }
+
+  void _onSuggestionTap(YandexAddressSuggestion suggestion) {
+    final label = suggestion.value.trim();
     if (label.isEmpty) return;
     Navigator.of(context).maybePop(label);
   }
@@ -233,15 +261,22 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
                       itemCount: _suggestions.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (_, i) {
-                        final value = _suggestions[i];
+                        final item = _suggestions[i];
                         return ListTile(
                           leading: const Icon(Icons.place_outlined),
                           title: Text(
-                            value,
-                            maxLines: 3,
-                            overflow: TextOverflow.fade,
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          onTap: () => _onSuggestionTap(value),
+                          subtitle: item.subtitle.trim().isEmpty
+                              ? null
+                              : Text(
+                                  item.subtitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                          onTap: () => _onSuggestionTap(item),
                         );
                       },
                     )),

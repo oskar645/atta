@@ -33,6 +33,7 @@ dependencies:
 
   # Network
   url_launcher: ^6.3.0
+  shared_preferences: ^2.2.3
   dio: ^5.9.1
   share_plus: ^12.0.1
   http: ^1.2.0   # ✅ ДОБАВИЛИ

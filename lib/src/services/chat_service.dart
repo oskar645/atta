@@ -187,16 +187,18 @@ class ChatService {
     final buyerId = (chat['buyer_id'] ?? '').toString();
     final sellerId = (chat['seller_id'] ?? '').toString();
     final fileId = _uuid.v4();
-    final path = '$chatId/$fileId.jpg';
+    final extension = _pickImageExtension(file.path);
+    final contentType = _contentTypeForExtension(extension);
+    final path = '$chatId/$fileId.$extension';
 
     final bytes = await file.readAsBytes();
     await _db.storage.from(_chatImagesBucket).uploadBinary(
       path,
       bytes,
-      fileOptions: const FileOptions(
+      fileOptions: FileOptions(
         cacheControl: '3600',
         upsert: false,
-        contentType: 'image/jpeg',
+        contentType: contentType,
       ),
     );
 
@@ -224,6 +226,45 @@ class ChatService {
       'unread_for_buyer': unreadForBuyer,
       'unread_for_seller': unreadForSeller,
     }).eq('id', chatId);
+  }
+
+  String _pickImageExtension(String path) {
+    final normalized = path.trim().toLowerCase();
+    final dot = normalized.lastIndexOf('.');
+    if (dot == -1 || dot == normalized.length - 1) return 'jpg';
+
+    final ext = normalized.substring(dot + 1);
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+        return 'jpg';
+      case 'png':
+      case 'webp':
+      case 'gif':
+      case 'heic':
+      case 'heif':
+        return ext;
+      default:
+        return 'jpg';
+    }
+  }
+
+  String _contentTypeForExtension(String extension) {
+    switch (extension) {
+      case 'png':
+        return 'image/png';
+      case 'webp':
+        return 'image/webp';
+      case 'gif':
+        return 'image/gif';
+      case 'heic':
+        return 'image/heic';
+      case 'heif':
+        return 'image/heif';
+      case 'jpg':
+      default:
+        return 'image/jpeg';
+    }
   }
 
   Future<String> resolveMessageImageUrl(String rawValue) async {

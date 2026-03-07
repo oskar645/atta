@@ -56,11 +56,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _restoreFilters() {
-    final uid = context.read<AuthService>().currentUser?.uid;
-    if (uid == null || uid.isEmpty) return;
-
-    final saved = homeFiltersSession.read(uid);
+  Future<void> _restoreFilters() async {
+    final uid = context.read<AuthService>().currentUser?.uid ?? '';
+    final saved = await homeFiltersSession.read(uid);
     if (saved == null) return;
 
     setState(() {
@@ -74,14 +72,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _autoCondition = saved.autoCondition;
       _autoMileageTo = saved.autoMileageTo;
       _onlyUncrashed = saved.onlyUncrashed;
+      _search = saved.search;
+      _searchCtrl.text = saved.search;
     });
   }
 
-  void _persistFilters() {
-    final uid = context.read<AuthService>().currentUser?.uid;
-    if (uid == null || uid.isEmpty) return;
+  Future<void> _persistFilters() async {
+    final uid = context.read<AuthService>().currentUser?.uid ?? '';
 
-    homeFiltersSession.write(
+    await homeFiltersSession.write(
       uid: uid,
       category: _category,
       subcategory: _subcategory,
@@ -93,6 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
       autoCondition: _autoCondition,
       autoMileageTo: _autoMileageTo,
       onlyUncrashed: _onlyUncrashed,
+      search: _search,
     );
   }
 
@@ -324,7 +324,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                     ),
-                    onChanged: (v) => setState(() => _search = v.trim()),
+                    onChanged: (v) {
+                      setState(() => _search = v.trim());
+                      _persistFilters();
+                    },
                   ),
                 ),
               ],
