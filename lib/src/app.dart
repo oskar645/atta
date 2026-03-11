@@ -10,6 +10,8 @@ import 'package:chestore2/src/services/admin_service.dart';
 import 'package:chestore2/src/services/auth_service.dart';
 import 'package:chestore2/src/services/chat_service.dart';
 import 'package:chestore2/src/services/favorites_service.dart';
+import 'package:chestore2/src/services/feed_ads_service.dart';
+import 'package:chestore2/src/services/listing_history_service.dart';
 import 'package:chestore2/src/services/listings_service.dart';
 import 'package:chestore2/src/services/profile_service.dart';
 import 'package:chestore2/src/services/theme_service.dart';
@@ -20,56 +22,58 @@ import 'package:chestore2/src/services/notifications_service.dart';
 import 'package:chestore2/src/services/presence_service.dart';
 
 class CheStoreApp extends StatelessWidget {
-const CheStoreApp({super.key});
+  const CheStoreApp({super.key});
 
-@override
-Widget build(BuildContext context) {
-final base = ThemeData(
-useMaterial3: true,
-colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B2D33)),
-);
+  @override
+  Widget build(BuildContext context) {
+    final base = ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B2D33)),
+    );
 
-final darkBase = ThemeData(
-useMaterial3: true,
-brightness: Brightness.dark,
-colorScheme: ColorScheme.fromSeed(
-seedColor: const Color(0xFF2B2D33),
-brightness: Brightness.dark,
-),
-);
+    final darkBase = ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: const Color(0xFF2B2D33),
+        brightness: Brightness.dark,
+      ),
+    );
 
-return MultiProvider(
-providers: [
-ChangeNotifierProvider(create: (_) => ThemeService()),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeService()),
 
-Provider<AuthService>(create: (_) => AuthService()),
-Provider<ListingsService>(create: (_) => ListingsService()),
-Provider<FavoritesService>(create: (_) => FavoritesService()),
-Provider<ProfileService>(create: (_) => ProfileService()),
-Provider<ChatService>(create: (_) => ChatService()),
-Provider<ReviewsService>(create: (_) => ReviewsService()),
-Provider<SupportService>(create: (_) => SupportService()),
-Provider<ReportsService>(create: (_) => ReportsService()),
-	Provider<AdminService>(create: (_) => AdminService()),
-	Provider<PresenceService>(create: (_) => PresenceService()),
+        Provider<AuthService>(create: (_) => AuthService()),
+        Provider<ListingsService>(create: (_) => ListingsService()),
+        Provider<FavoritesService>(create: (_) => FavoritesService()),
+        Provider<FeedAdsService>(create: (_) => FeedAdsService()),
+        ChangeNotifierProvider(create: (_) => ListingHistoryService()),
+        Provider<ProfileService>(create: (_) => ProfileService()),
+        Provider<ChatService>(create: (_) => ChatService()),
+        Provider<ReviewsService>(create: (_) => ReviewsService()),
+        Provider<SupportService>(create: (_) => SupportService()),
+        Provider<ReportsService>(create: (_) => ReportsService()),
+        Provider<AdminService>(create: (_) => AdminService()),
+        Provider<PresenceService>(create: (_) => PresenceService()),
 
 // новый сервис уведомлений
-Provider<NotificationsService>(create: (_) => NotificationsService()),
-],
-child: Consumer<ThemeService>(
-builder: (_, theme, __) {
-	return MaterialApp(
-	title: 'CheStore',
-	debugShowCheckedModeBanner: false,
-	theme: base,
-	darkTheme: darkBase,
-	themeMode: theme.mode,
-	home: const SessionPresenceBinder(child: AuthGate()),
-	);
-	},
-	),
-	);
-	}
+        Provider<NotificationsService>(create: (_) => NotificationsService()),
+      ],
+      child: Consumer<ThemeService>(
+        builder: (_, theme, __) {
+          return MaterialApp(
+            title: 'CheStore',
+            debugShowCheckedModeBanner: false,
+            theme: base,
+            darkTheme: darkBase,
+            themeMode: theme.mode,
+            home: const SessionPresenceBinder(child: AuthGate()),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class SessionPresenceBinder extends StatefulWidget {

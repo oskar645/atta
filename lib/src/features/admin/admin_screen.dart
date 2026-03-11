@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:chestore2/src/features/admin/admin_reports_screen.dart';
+import 'package:chestore2/src/features/admin/admin_ads_tab.dart';
 import 'admin_support_screen.dart';
 import 'package:chestore2/src/services/admin_service.dart';
 import 'package:chestore2/src/services/auth_service.dart';
@@ -48,7 +49,7 @@ class _AdminScreenState extends State<AdminScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 5, vsync: this);
+    _tab = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -107,6 +108,7 @@ class _AdminScreenState extends State<AdminScreen>
                   builder: (context, snap) =>
                       _tabWithAlert('Жалобы', (snap.data ?? 0) > 0),
                 ),
+                _tabWithAlert('Реклама', false),
                 _tabWithAlert('Уведомления', false),
               ],
             ),
@@ -118,6 +120,7 @@ class _AdminScreenState extends State<AdminScreen>
               _ModerationTab(),
               AdminSupportTab(),
               AdminReportsScreen(),
+              AdminAdsTab(),
               AdminNotificationsTab(),
             ],
           ),
