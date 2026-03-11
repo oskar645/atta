@@ -141,80 +141,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _persistFilters();
   }
 
-  List<Listing> _applyLocationPriority(List<Listing> items) {
-    if (!_preferLocationFirst) return items;
-
-    final q = _location.trim().toLowerCase();
-    if (q.isEmpty) return items;
-
-    // ✅ как ты просил: сперва “в моём городе/регионе”, потом остальные
-    final first = <Listing>[];
-    final rest = <Listing>[];
-
-    for (final x in items) {
-      final city = x.city.trim().toLowerCase();
-      if (city.isNotEmpty && (city == q || city.contains(q) || q.contains(city))) {
-        first.add(x);
-      } else {
-        rest.add(x);
-      }
-    }
-
-    return [...first, ...rest];
-  }
-
-  bool _isAutoCategory(String category) {
-    final c = category.trim().toLowerCase();
-    return c == 'авто' || c.contains('авто') || c.contains('рђрвс');
-  }
-
-  bool _looksUncrashed(Listing x) {
-    final carCond = (x.car?.condition ?? '').toLowerCase();
-    final text = '${x.title} ${x.description}'.toLowerCase();
-    final source = '$carCond $text';
-
-    final positive = source.contains('не бит') ||
-        source.contains('без дтп') ||
-        source.contains('не крашен') ||
-        source.contains('родной окрас');
-    final negative = source.contains('бит') ||
-        source.contains('дтп') ||
-        source.contains('крашен') ||
-        source.contains('после авар');
-    return positive && !negative;
-  }
-
-  List<Listing> _applyAdvancedFilters(List<Listing> items) {
-    Iterable<Listing> out = items;
-
-    if (_subcategory != 'Все') {
-      out = out.where((x) => x.subcategory == _subcategory);
-    }
-
-    final hasAutoFilters = _autoBrand.isNotEmpty ||
-        _autoModel.isNotEmpty ||
-        _autoCondition.isNotEmpty ||
-        _autoMileageTo != null ||
-        _onlyUncrashed;
-
-    if (hasAutoFilters && _isAutoCategory(_category)) {
-      out = out.where((x) {
-        if (!_isAutoCategory(x.category)) return false;
-        final car = x.car;
-        if (car == null) return false;
-
-        if (_autoBrand.isNotEmpty && car.brand != _autoBrand) return false;
-        if (_autoModel.isNotEmpty && car.model != _autoModel) return false;
-        if (_autoCondition.isNotEmpty && car.condition != _autoCondition) return false;
-        if (_autoMileageTo != null && car.mileageKm > _autoMileageTo!) return false;
-        if (_onlyUncrashed && !_looksUncrashed(x)) return false;
-        return true;
-      });
-    }
-
-    return out.toList();
-  }
-
   @override
   Widget build(BuildContext context) {
     final listings = context.read<ListingsService>();
@@ -344,6 +270,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   stream: listings.streamListings(
                     category: _category,
                     search: _search,
+                    filters: ListingFeedFilters(
+                      category: _category,
+                      search: _search,
+                      subcategory: _subcategory,
+                      location: _location,
+                      preferLocationFirst: _preferLocationFirst,
+                      radiusKm: _radiusKm,
+                      autoBrand: _autoBrand,
+                      autoModel: _autoModel,
+                      autoCondition: _autoCondition,
+                      autoMileageTo: _autoMileageTo,
+                      onlyUncrashed: _onlyUncrashed,
+                    ),
                   ),
                   builder: (context, snap) {
                     if (!snap.hasData) {
@@ -354,10 +293,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (items.isEmpty) {
                       return const Center(child: Text('Пока нет объявлений'));
                     }
-
-                    // ✅ “Мой регион сначала” (НЕ фильтр, только порядок)
-                    items = _applyLocationPriority(items);
-                    items = _applyAdvancedFilters(items);
 
                     if (items.isEmpty) {
                       return const Center(child: Text('Ничего не найдено по фильтрам'));
@@ -566,7 +501,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cats = kCategories;
+    const cats = kCategories;
     final subs = kSubcategories[_category] ?? const <String>[];
     final subItems = ['Все', ...subs];
     if (!subItems.contains(_subcategory)) {
@@ -629,7 +564,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
 
           if (_category != 'Все' && subs.isNotEmpty) ...[
             DropdownButtonFormField<String>(
-              value: _subcategory,
+              initialValue: _subcategory,
               items: subItems
                   .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                   .toList(),
@@ -645,7 +580,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
 
           if (_isAutoCategory) ...[
             DropdownButtonFormField<String>(
-              value: _autoBrand.isEmpty ? null : _autoBrand,
+              initialValue: _autoBrand.isEmpty ? null : _autoBrand,
               items: kAutoBrandsPopular
                   .map((b) => DropdownMenuItem(value: b, child: Text(b)))
                   .toList(),
@@ -663,7 +598,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _autoModel.isEmpty ? null : _autoModel,
+              initialValue: _autoModel.isEmpty ? null : _autoModel,
               items: (_autoBrand.isEmpty
                       ? const <String>[]
                       : (kAutoModels[_autoBrand] ?? const <String>[]))
@@ -679,7 +614,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _autoCondition.isEmpty ? null : _autoCondition,
+              initialValue: _autoCondition.isEmpty ? null : _autoCondition,
               items: _carConditions
                   .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                   .toList(),

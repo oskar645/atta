@@ -1,7 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
-class PhotoViewerScreen extends StatelessWidget {
+class PhotoViewerScreen extends StatefulWidget {
   final List<String> photoUrls;
   final int initialIndex;
 
@@ -12,21 +12,41 @@ class PhotoViewerScreen extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final controller = PageController(initialPage: initialIndex);
+  State<PhotoViewerScreen> createState() => _PhotoViewerScreenState();
+}
 
+class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
+  late final PageController _controller;
+  late int _page;
+
+  @override
+  void initState() {
+    super.initState();
+    _page = widget.initialIndex.clamp(0, widget.photoUrls.length - 1);
+    _controller = PageController(initialPage: _page);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        title: Text('${initialIndex + 1}/${photoUrls.length}'),
+        title: Text('${_page + 1}/${widget.photoUrls.length}'),
       ),
       body: PageView.builder(
-        controller: controller,
-        itemCount: photoUrls.length,
+        controller: _controller,
+        itemCount: widget.photoUrls.length,
+        onPageChanged: (index) => setState(() => _page = index),
         itemBuilder: (_, i) {
-          final url = photoUrls[i];
+          final url = widget.photoUrls[i];
           return InteractiveViewer(
             minScale: 1,
             maxScale: 4,
@@ -34,6 +54,16 @@ class PhotoViewerScreen extends StatelessWidget {
               child: CachedNetworkImage(
                 imageUrl: url,
                 fit: BoxFit.contain,
+                placeholder: (_, __) => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                errorWidget: (_, __, ___) => const Center(
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: Colors.white70,
+                    size: 52,
+                  ),
+                ),
               ),
             ),
           );

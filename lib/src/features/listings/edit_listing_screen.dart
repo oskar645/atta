@@ -39,6 +39,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
   String _category = '';
   bool _phoneHidden = true;
+  String _subcategory = '';
+  String _lastTitleSuggestion = '';
 
   // smart авто
   String? _autoBrand;
@@ -76,6 +78,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
   };
 
   bool get _isAuto => _category == 'Авто';
+
+  bool get _isPassengerCar =>
+      _isAuto && isPassengerCarsSubcategory(_subcategory);
 
   static const _bodyTypes = <String>[
     'Седан','Хэтчбек','Универсал','Кроссовер','Внедорожник','Купе','Кабриолет','Минивэн','Пикап','Фургон','Лифтбек','Другое',
@@ -138,6 +143,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     _inited = true;
 
     _category = l.category;
+    _subcategory = l.subcategory;
 
     _title.text = l.title;
     _city.text = l.city;
@@ -172,6 +178,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
       _carColor = c.color;
       _carCleared = c.isCleared;
     }
+
+    _lastTitleSuggestion = _buildTitleSuggestion();
   }
 
   Future<void> _fillCityFromLatLng(latlng.LatLng p) async {
@@ -293,13 +301,46 @@ class _EditListingScreenState extends State<EditListingScreen> {
   }
 
   void _rebuildTitleFromSelections() {
-    if (!_isAuto) return;
-    final parts = <String>[
-      if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
-      if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
-      if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
-    ];
-    _title.text = parts.join(' ').trim();
+    _applyTitleSuggestion(_buildTitleSuggestion());
+  }
+
+  String _buildTitleSuggestion() {
+    if (_isPassengerCar) {
+      return [
+        if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
+        if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
+        if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
+      ].join(' ').trim();
+    }
+
+    return _subcategory.trim().isNotEmpty ? _subcategory.trim() : _category.trim();
+  }
+
+  void _applyTitleSuggestion(String suggestion) {
+    final nextSuggestion = suggestion.trim();
+    final current = _title.text;
+    final previous = _lastTitleSuggestion.trim();
+
+    if (nextSuggestion.isEmpty) {
+      _lastTitleSuggestion = '';
+      return;
+    }
+
+    String? nextText;
+    if (current.trim().isEmpty || (previous.isNotEmpty && current.trim() == previous)) {
+      nextText = nextSuggestion;
+    } else if (previous.isNotEmpty && current.startsWith(previous)) {
+      nextText = '$nextSuggestion${current.substring(previous.length)}';
+    }
+
+    _lastTitleSuggestion = nextSuggestion;
+    if (nextText == null || nextText == current) return;
+
+    _title.value = _title.value.copyWith(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+      composing: TextRange.empty,
+    );
   }
 
   // ----------- auto picker (как у тебя было) -----------
@@ -323,12 +364,18 @@ class _EditListingScreenState extends State<EditListingScreen> {
               if (step == 1) {
                 if (brand == null) return const [];
                 final models = kAutoModels[brand!];
-                if (models == null || models.isEmpty) return const ['Другая модель'];
+                if (models == null || models.isEmpty) {
+                  return const [kAutoCustomModelLabel];
+                }
                 return models;
               }
               final key = '${brand ?? ''}|${model ?? ''}';
               final gens = kAutoGenerations[key] ?? const [];
-              return gens.isEmpty ? const ['Не указывать'] : ['Не указывать', ...gens];
+              return [
+                kAutoSkipGenerationLabel,
+                ...gens,
+                kAutoCustomGenerationLabel,
+              ];
             }
 
             final items = currentItems()
@@ -339,8 +386,11 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
             Future<void> pickItem(String v) async {
               if (step == 0) {
-                if (v == 'Другая марка') {
-                  final custom = await _askText(title: 'Другая марка', hint: 'Например: Porsche');
+                  if (v == kAutoCustomBrandLabel) {
+                    final custom = await _askText(
+                      title: kAutoCustomBrandLabel,
+                      hint: 'Например: Porsche',
+                    );
                   if (custom == null) return;
                   v = custom;
                 }
@@ -355,8 +405,11 @@ class _EditListingScreenState extends State<EditListingScreen> {
               }
 
               if (step == 1) {
-                if (v == 'Другая модель') {
-                  final custom = await _askText(title: 'Другая модель', hint: 'Например: Camry');
+                  if (v == kAutoCustomModelLabel) {
+                    final custom = await _askText(
+                      title: kAutoCustomModelLabel,
+                      hint: 'Например: Camry',
+                    );
                   if (custom == null) return;
                   v = custom;
                 }
@@ -369,7 +422,16 @@ class _EditListingScreenState extends State<EditListingScreen> {
                 return;
               }
 
-              setM(() => gen = (v == 'Не указывать') ? null : v);
+              if (v == kAutoCustomGenerationLabel) {
+                final custom = await _askText(
+                  title: kAutoCustomGenerationLabel,
+                  hint: 'Например: XV70, рестайлинг 2, Series II',
+                );
+                if (custom == null) return;
+                v = custom;
+              }
+
+              setM(() => gen = (v == kAutoSkipGenerationLabel) ? null : v);
             }
 
             return SizedBox(
@@ -472,7 +534,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
     CarSpecs? car;
     if (_isAuto) {
-      if (_autoBrand == null || _autoModel == null) {
+      if (_isPassengerCar && (_autoBrand == null || _autoModel == null)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Выберите марку и модель')),
         );
@@ -498,10 +560,17 @@ class _EditListingScreenState extends State<EditListingScreen> {
       final vin = _carVin.text.trim().isEmpty ? null : _carVin.text.trim();
       final note = _carNote.text.trim().isEmpty ? null : _carNote.text.trim();
 
+      final autoBrand = ((_autoBrand ?? '').trim().isNotEmpty)
+          ? _autoBrand!.trim()
+          : _subcategory.trim();
+      final autoModel = ((_autoModel ?? '').trim().isNotEmpty)
+          ? _autoModel!.trim()
+          : title;
+
       car = CarSpecs(
-        brand: _autoBrand!.trim(),
-        model: _autoModel!.trim(),
-        generation: (_autoGen ?? '').trim(),
+        brand: autoBrand,
+        model: autoModel,
+        generation: _isPassengerCar ? (_autoGen ?? '').trim() : '',
         year: year,
         mileageKm: mileage,
         bodyType: _carBody,
@@ -666,7 +735,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
               const SizedBox(height: 14),
 
-              if (_isAuto) ...[
+              if (_isPassengerCar) ...[
                 _selectTile(
                   title: 'Марка • Модель • Поколение (в одном окне)',
                   value: autoLine,
@@ -677,15 +746,11 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
               TextField(
                 controller: _title,
-                readOnly: _isAuto,
                 decoration: InputDecoration(
-                  labelText: _isAuto ? 'Название (формируется автоматически)' : 'Название',
+                  labelText: _isPassengerCar
+                      ? 'Название (автозаполнение можно править)'
+                      : 'Название',
                 ),
-                onTap: _isAuto
-                    ? () async {
-                        if (_autoBrand == null) await _openAutoPickerOneWindow();
-                      }
-                    : null,
               ),
 
               const SizedBox(height: 12),

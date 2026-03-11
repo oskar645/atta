@@ -119,10 +119,30 @@ class ChatService {
     final buyerId = (chat['buyer_id'] ?? '').toString();
     final sellerId = (chat['seller_id'] ?? '').toString();
 
+    await _markIncomingMessagesDelivered(chatId: chatId, uid: uid);
+    await _markIncomingMessagesRead(chatId: chatId, uid: uid);
+
     if (uid == buyerId) {
       await _db.from('chats').update({'unread_for_buyer': 0}).eq('id', chatId);
     } else if (uid == sellerId) {
       await _db.from('chats').update({'unread_for_seller': 0}).eq('id', chatId);
+    }
+  }
+
+  Future<void> markChatDelivered({
+    required String chatId,
+    required String uid,
+  }) async {
+    await _markIncomingMessagesDelivered(chatId: chatId, uid: uid);
+  }
+
+  Future<void> markChatsDelivered({
+    required Iterable<String> chatIds,
+    required String uid,
+  }) async {
+    final ids = chatIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    for (final chatId in ids) {
+      await markChatDelivered(chatId: chatId, uid: uid);
     }
   }
 
@@ -152,6 +172,8 @@ class ChatService {
       'text': trimmed,
       'image_url': null,
       'created_at': DateTime.now().toUtc().toIso8601String(),
+      'delivered_at': null,
+      'read_at': null,
     });
 
     var unreadForBuyer = (chat['unread_for_buyer'] as num?)?.toInt() ?? 0;
@@ -209,6 +231,8 @@ class ChatService {
       'text': '',
       'image_url': path,
       'created_at': DateTime.now().toUtc().toIso8601String(),
+      'delivered_at': null,
+      'read_at': null,
     });
 
     var unreadForBuyer = (chat['unread_for_buyer'] as num?)?.toInt() ?? 0;
@@ -316,6 +340,55 @@ class ChatService {
 
     await _db.from('chat_messages').delete().eq('chat_id', chatId);
     await _db.from('chats').delete().eq('id', chatId);
+  }
+
+  Future<void> _markIncomingMessagesDelivered({
+    required String chatId,
+    required String uid,
+  }) async {
+    final rows = await _db
+        .from('chat_messages')
+        .select('id, delivered_at, sender_id')
+        .eq('chat_id', chatId)
+        .neq('sender_id', uid);
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (final raw in rows as List) {
+      final row = Map<String, dynamic>.from(raw as Map);
+      if (row['delivered_at'] != null) continue;
+      final id = (row['id'] ?? '').toString();
+      if (id.isEmpty) continue;
+      await _db.from('chat_messages').update({'delivered_at': now}).eq('id', id);
+    }
+  }
+
+  Future<void> _markIncomingMessagesRead({
+    required String chatId,
+    required String uid,
+  }) async {
+    final rows = await _db
+        .from('chat_messages')
+        .select('id, delivered_at, read_at, sender_id')
+        .eq('chat_id', chatId)
+        .neq('sender_id', uid);
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    for (final raw in rows as List) {
+      final row = Map<String, dynamic>.from(raw as Map);
+      final id = (row['id'] ?? '').toString();
+      if (id.isEmpty) continue;
+
+      final patch = <String, dynamic>{};
+      if (row['delivered_at'] == null) {
+        patch['delivered_at'] = now;
+      }
+      if (row['read_at'] == null) {
+        patch['read_at'] = now;
+      }
+      if (patch.isEmpty) continue;
+
+      await _db.from('chat_messages').update(patch).eq('id', id);
+    }
   }
 
   Future<void> deleteMessage({

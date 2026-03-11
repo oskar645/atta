@@ -1,19 +1,20 @@
-﻿import 'dart:io';
+import 'dart:async';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
-import 'package:chestore2/src/models/message.dart';
 import 'package:chestore2/src/features/listings/photo_viewer_screen.dart';
+import 'package:chestore2/src/features/profile/seller_public_profile_screen.dart';
+import 'package:chestore2/src/models/message.dart';
 import 'package:chestore2/src/services/auth_service.dart';
 import 'package:chestore2/src/services/chat_service.dart';
 import 'package:chestore2/src/services/presence_service.dart';
 import 'package:chestore2/src/services/profile_service.dart';
-import 'package:chestore2/src/features/profile/seller_public_profile_screen.dart';
 import 'package:chestore2/src/utils/app_snackbar.dart';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -27,6 +28,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _text = TextEditingController();
   final _picker = ImagePicker();
   bool _sending = false;
+  StreamSubscription<List<ChatMessage>>? _messagesSub;
 
   SupabaseClient get _db => Supabase.instance.client;
 
@@ -68,10 +70,17 @@ class _ChatScreenState extends State<ChatScreen> {
       if (uid.isEmpty) return;
       await context.read<ChatService>().markChatRead(chatId: widget.chatId, uid: uid);
     });
+    _messagesSub = context.read<ChatService>().streamMessages(widget.chatId).listen((_) async {
+      if (!mounted) return;
+      final uid = _uid(context);
+      if (uid.isEmpty) return;
+      await context.read<ChatService>().markChatRead(chatId: widget.chatId, uid: uid);
+    });
   }
 
   @override
   void dispose() {
+    _messagesSub?.cancel();
     _text.dispose();
     super.dispose();
   }
@@ -258,6 +267,41 @@ class _ChatScreenState extends State<ChatScreen> {
       MaterialPageRoute(
         builder: (_) => SellerPublicProfileScreen(sellerId: id),
       ),
+    );
+  }
+
+  String _formatMessageTime(DateTime dt) {
+    return DateFormat('HH:mm').format(dt.toLocal());
+  }
+
+  Widget _messageMeta(ChatMessage message, bool mine) {
+    final timeStyle = TextStyle(
+      fontSize: 11,
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+
+    final time = Text(_formatMessageTime(message.createdAt), style: timeStyle);
+    if (!mine) return time;
+
+    final isRead = message.readAt != null;
+    final isDelivered = message.deliveredAt != null;
+    final iconColor = isRead
+        ? Colors.blue
+        : Theme.of(context).colorScheme.onSurfaceVariant;
+
+    final statusIcon = isRead
+        ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
+        : isDelivered
+            ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
+            : Icon(Icons.done_rounded, size: 15, color: iconColor);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        time,
+        const SizedBox(width: 4),
+        statusIcon,
+      ],
     );
   }
 
@@ -463,6 +507,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                             if (hasImg) const SizedBox(height: 6),
                                             Text(m.text),
                                           ],
+                                          const SizedBox(height: 4),
+                                          Align(
+                                            alignment: Alignment.centerRight,
+                                            child: _messageMeta(m, mine),
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -529,4 +578,3 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
-

@@ -1,52 +1,73 @@
 // lib/src/services/listings_service.dart
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 
 import 'package:chestore2/src/models/car_specs.dart';
 import 'package:chestore2/src/models/listing.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
+
+class ListingFeedFilters {
+  final String category;
+  final String search;
+  final String subcategory;
+  final String location;
+  final bool preferLocationFirst;
+  final int? radiusKm;
+  final String autoBrand;
+  final String autoModel;
+  final String autoCondition;
+  final int? autoMileageTo;
+  final bool onlyUncrashed;
+
+  const ListingFeedFilters({
+    required this.category,
+    required this.search,
+    this.subcategory = 'Все',
+    this.location = '',
+    this.preferLocationFirst = false,
+    this.radiusKm,
+    this.autoBrand = '',
+    this.autoModel = '',
+    this.autoCondition = '',
+    this.autoMileageTo,
+    this.onlyUncrashed = false,
+  });
+}
 
 class ListingsService {
   final SupabaseClient _client = Supabase.instance.client;
   final _uuid = const Uuid();
 
-  // ✅ ВАЖНО: грузим в PUBLIC bucket
   static const String _bucket = 'listing-photos';
 
-  // =========================
-  // ЛЕНТА: только approved
-  // =========================
   Stream<List<Listing>> streamListings({
     required String category,
     required String search,
+    ListingFeedFilters? filters,
   }) {
-    final stream = _client
-        .from('listings')
-        .stream(primaryKey: ['id'])
+    final effectiveFilters = filters ??
+        ListingFeedFilters(
+          category: category,
+          search: search,
+        );
+
+    final stream = (_isAllCategory(effectiveFilters.category)
+            ? _client.from('listings').stream(primaryKey: ['id'])
+            : _client
+                .from('listings')
+                .stream(primaryKey: ['id'])
+                .eq('category', effectiveFilters.category))
         .order('created_at', ascending: false);
 
     return stream.map((rows) {
-      var items = rows.map((r) => Listing.fromMap(r)).toList();
-
-      items = items.where((x) => x.status == 'approved').toList();
-
-      if (category != 'Все') {
-        items = items.where((x) => x.category == category).toList();
-      }
-
-      final s = search.trim().toLowerCase();
-      if (s.isNotEmpty) {
-        items = items.where((x) => x.title.toLowerCase().contains(s)).toList();
-      }
-
-      return items;
+      final items = rows.map((r) => Listing.fromMap(r)).toList();
+      final filtered = items.where((x) => _matchesFilters(x, effectiveFilters)).toList();
+      filtered.sort((a, b) => _compareListings(a, b, effectiveFilters));
+      return filtered;
     });
   }
 
-  // =========================
-  // МОИ: все статусы
-  // =========================
   Stream<List<Listing>> streamMyListings(String uid) {
     final stream = _client
         .from('listings')
@@ -63,9 +84,6 @@ class ListingsService {
     return streamMyListings(uid).map((items) => items.length);
   }
 
-  // =========================
-  // ✅ НОВОЕ: ОБЪЯВЛЕНИЯ ПРОДАВЦА (для профиля как Avito)
-  // =========================
   Stream<List<Listing>> streamListingsByOwner(String ownerId) {
     return streamListingsByOwnerAll(ownerId).map(
       (items) => items.where((x) => x.status == 'approved').toList(),
@@ -91,11 +109,6 @@ class ListingsService {
     );
   }
 
-  // =========================
-  // ✅ НОВОЕ: для кнопки "Написать" в профиле продавца
-  // Берём любое последнее approved объявление продавца
-  // (чтобы создать чат через listing_id + title)
-  // =========================
   Future<Listing?> getLatestApprovedListingByOwner(String ownerId) async {
     final row = await _client
         .from('listings')
@@ -110,9 +123,6 @@ class ListingsService {
     return Listing.fromMap(row);
   }
 
-  // =========================
-  // СОЗДАТЬ -> pending
-  // =========================
   Future<void> createListing({
     required String ownerId,
     required String ownerEmail,
@@ -142,7 +152,6 @@ class ListingsService {
           final file = photos[i];
           final ext = file.path.split('.').last.toLowerCase();
 
-          // ✅ ограничим расширения (иначе бывает странный content-type)
           final safeExt =
               (ext == 'jpg' || ext == 'jpeg' || ext == 'png' || ext == 'webp')
                   ? ext
@@ -176,7 +185,6 @@ class ListingsService {
         }
       }
     } else {
-      // WEB (пока заглушка)
       urls.add('https://via.placeholder.com/400');
     }
 
@@ -211,9 +219,6 @@ class ListingsService {
     await _client.from('listings').insert(data);
   }
 
-  // =========================
-  // УДАЛИТЬ
-  // =========================
   Future<void> deleteListing({required Listing listing}) async {
     await _client
         .from('listings')
@@ -221,9 +226,6 @@ class ListingsService {
         .eq('id', listing.id);
   }
 
-  // =========================
-  // +1 просмотр
-  // =========================
   Future<void> incrementView(String listingId) async {
     final row = await _client
         .from('listings')
@@ -231,29 +233,20 @@ class ListingsService {
         .eq('id', listingId)
         .maybeSingle();
 
-    int current = 0;
+    var current = 0;
     if (row != null && row['view_count'] is num) {
       current = (row['view_count'] as num).toInt();
     }
 
-    await _client
-        .from('listings')
-        .update({'view_count': current + 1})
-        .eq('id', listingId);
+    await _client.from('listings').update({'view_count': current + 1}).eq('id', listingId);
   }
 
-  // =========================
-  // ПОЛУЧИТЬ ОДНО
-  // =========================
   Future<Listing?> getListingById(String id) async {
     final row = await _client.from('listings').select('*').eq('id', id).maybeSingle();
     if (row == null) return null;
     return Listing.fromMap(row);
   }
 
-  // =========================
-  // ОБНОВИТЬ (без фото)
-  // =========================
   Future<void> updateListing({
     required String listingId,
     required String title,
@@ -282,5 +275,220 @@ class ListingsService {
     };
 
     await _client.from('listings').update(data).eq('id', listingId);
+  }
+
+  bool _matchesFilters(Listing listing, ListingFeedFilters filters) {
+    if (listing.status != 'approved') return false;
+
+    if (!_isAllCategory(filters.category) && listing.category != filters.category) {
+      return false;
+    }
+
+    final subcategory = filters.subcategory.trim();
+    if (subcategory.isNotEmpty && subcategory != 'Все' && listing.subcategory != subcategory) {
+      return false;
+    }
+
+    if (!_matchesSearch(listing, filters.search)) return false;
+    if (!_matchesAutoFilters(listing, filters)) return false;
+    if (!_matchesLocationFilter(listing, filters)) return false;
+
+    return true;
+  }
+
+  bool _matchesSearch(Listing listing, String search) {
+    final tokens = _tokenize(search);
+    if (tokens.isEmpty) return true;
+
+    final haystack = _buildSearchHaystack(listing);
+    return tokens.every(haystack.contains);
+  }
+
+  bool _matchesAutoFilters(Listing listing, ListingFeedFilters filters) {
+    final car = listing.car;
+    final hasAutoFilters = filters.autoBrand.trim().isNotEmpty ||
+        filters.autoModel.trim().isNotEmpty ||
+        filters.autoCondition.trim().isNotEmpty ||
+        filters.autoMileageTo != null ||
+        filters.onlyUncrashed;
+
+    if (!hasAutoFilters) return true;
+    if (car == null) return false;
+
+    if (filters.autoBrand.trim().isNotEmpty &&
+        !_containsNormalized(car.brand, filters.autoBrand)) {
+      return false;
+    }
+
+    if (filters.autoModel.trim().isNotEmpty &&
+        !_containsNormalized(car.model, filters.autoModel)) {
+      return false;
+    }
+
+    if (filters.autoCondition.trim().isNotEmpty &&
+        !_containsNormalized(car.condition, filters.autoCondition)) {
+      return false;
+    }
+
+    if (filters.autoMileageTo != null && car.mileageKm > filters.autoMileageTo!) {
+      return false;
+    }
+
+    if (filters.onlyUncrashed && !_looksUncrashed(listing)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool _matchesLocationFilter(Listing listing, ListingFeedFilters filters) {
+    final locationQuery = filters.location.trim();
+    if (locationQuery.isEmpty) return true;
+
+    if (filters.radiusKm == null) return true;
+
+    return _matchesLocationText(listing, locationQuery);
+  }
+
+  int _compareListings(Listing a, Listing b, ListingFeedFilters filters) {
+    final diff = _scoreListing(b, filters) - _scoreListing(a, filters);
+    if (diff != 0) return diff;
+    return b.createdAt.compareTo(a.createdAt);
+  }
+
+  int _scoreListing(Listing listing, ListingFeedFilters filters) {
+    var score = 0;
+    final search = _normalizeText(filters.search);
+    final location = _normalizeText(filters.location);
+
+    if (search.isNotEmpty) {
+      final title = _normalizeText(listing.title);
+      final description = _normalizeText(listing.description);
+      final category = _normalizeText(listing.category);
+      final subcategory = _normalizeText(listing.subcategory);
+      final city = _normalizeText(listing.cityFull);
+      final brand = _normalizeText(listing.car?.brand ?? '');
+      final model = _normalizeText(listing.car?.model ?? '');
+
+      if (title == search) score += 150;
+      if (title.startsWith(search)) score += 120;
+      if (title.contains(search)) score += 100;
+      if (brand == search || model == search) score += 90;
+      if (brand.contains(search) || model.contains(search)) score += 70;
+      if (subcategory.contains(search)) score += 55;
+      if (category.contains(search)) score += 40;
+      if (city.contains(search)) score += 35;
+      if (description.contains(search)) score += 15;
+
+      for (final token in _tokenize(filters.search)) {
+        if (title.contains(token)) score += 20;
+        if (brand.contains(token) || model.contains(token)) score += 16;
+        if (subcategory.contains(token)) score += 12;
+        if (category.contains(token)) score += 8;
+        if (city.contains(token)) score += 8;
+        if (description.contains(token)) score += 4;
+      }
+    }
+
+    if (filters.preferLocationFirst &&
+        location.isNotEmpty &&
+        _matchesLocationText(listing, filters.location)) {
+      score += 200;
+      if (_normalizeText(listing.cityShort) == location) {
+        score += 40;
+      }
+    }
+
+    score += listing.viewCount > 0 ? (listing.viewCount ~/ 25) : 0;
+    return score;
+  }
+
+  String _buildSearchHaystack(Listing listing) {
+    final values = <String>[
+      listing.title,
+      listing.description,
+      listing.category,
+      listing.subcategory,
+      listing.city,
+      listing.cityShort,
+      listing.cityFull,
+      listing.ownerName,
+      listing.car?.brand ?? '',
+      listing.car?.model ?? '',
+      listing.car?.generation ?? '',
+      listing.car?.bodyType ?? '',
+      listing.car?.fuel ?? '',
+      listing.car?.transmission ?? '',
+      listing.car?.drive ?? '',
+      listing.car?.condition ?? '',
+      listing.car?.color ?? '',
+      listing.car?.note ?? '',
+    ];
+
+    return _normalizeText(values.join(' '));
+  }
+
+  bool _looksUncrashed(Listing listing) {
+    final carCond = _normalizeText(listing.car?.condition ?? '');
+    final text = _normalizeText('${listing.title} ${listing.description}');
+    final source = '$carCond $text';
+
+    final positive = source.contains('не бит') ||
+        source.contains('без дтп') ||
+        source.contains('не крашен') ||
+        source.contains('родной окрас');
+    final negative = source.contains('бит') ||
+        source.contains('дтп') ||
+        source.contains('крашен') ||
+        source.contains('после авар');
+    return positive && !negative;
+  }
+
+  bool _matchesLocationText(Listing listing, String query) {
+    final q = _normalizeText(query);
+    if (q.isEmpty) return false;
+
+    final candidates = <String>[
+      listing.city,
+      listing.cityShort,
+      listing.cityFull,
+      listing.location.region,
+      listing.location.district,
+      listing.location.locality,
+      listing.location.subLocality,
+      listing.location.raw,
+    ].map(_normalizeText).where((e) => e.isNotEmpty).toList();
+
+    for (final candidate in candidates) {
+      if (candidate == q || candidate.contains(q) || q.contains(candidate)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  bool _containsNormalized(String source, String query) {
+    final normalizedSource = _normalizeText(source);
+    final normalizedQuery = _normalizeText(query);
+    if (normalizedQuery.isEmpty) return true;
+    return normalizedSource.contains(normalizedQuery);
+  }
+
+  List<String> _tokenize(String text) {
+    return _normalizeText(text)
+        .split(' ')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  bool _isAllCategory(String category) {
+    final value = category.trim();
+    return value.isEmpty || value == 'Все';
+  }
+
+  String _normalizeText(String value) {
+    return value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 }

@@ -66,6 +66,13 @@ class InboxScreen extends StatelessWidget {
           final items = snap.data!;
           if (items.isEmpty) return const Center(child: Text('Нет чатов'));
 
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            chat.markChatsDelivered(
+              chatIds: items.map((e) => e.id),
+              uid: uid,
+            );
+          });
+
           return ListView.separated(
             padding: const EdgeInsets.all(12),
             itemCount: items.length,

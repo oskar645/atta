@@ -2,8 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Нужно, чтобы выбрать место на карте для объявления</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Нужно, чтобы выбрать место на карте для объявления</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Нужно, чтобы отправлять фото в сообщениях и делать снимки с камеры</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Нужно, чтобы выбирать фото из галереи и отправлять их в сообщениях</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Нужно, чтобы приложение корректно работало с фотографиями пользователя</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -56,7 +62,7 @@
 			</array>
 		</dict>
 	</array>
-	<key>UIApplicationSupportsIndirectInputEvents</key> 
+	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 </dict>
 </plist>

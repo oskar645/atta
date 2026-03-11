@@ -2,11 +2,13 @@
 
 class ChatMessage {
   final String id;
-  final String chatId;     // ✅ добавили (в таблице messages есть chat_id)
+  final String chatId;
   final String senderId;
   final String text;
   final String? imageUrl;
   final DateTime createdAt;
+  final DateTime? deliveredAt;
+  final DateTime? readAt;
 
   ChatMessage({
     required this.id,
@@ -15,17 +17,23 @@ class ChatMessage {
     required this.text,
     required this.createdAt,
     this.imageUrl,
+    this.deliveredAt,
+    this.readAt,
   });
 
-  // ===============================
-  // SUPABASE: row -> ChatMessage
-  // ===============================
   factory ChatMessage.fromMap(Map<String, dynamic> row) {
     DateTime parseDt(dynamic v) {
       if (v == null) return DateTime.now();
       if (v is DateTime) return v;
       if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
       return DateTime.now();
+    }
+
+    DateTime? parseNullableDt(dynamic v) {
+      if (v == null) return null;
+      if (v is DateTime) return v;
+      if (v is String) return DateTime.tryParse(v);
+      return null;
     }
 
     return ChatMessage(
@@ -35,10 +43,11 @@ class ChatMessage {
       text: (row['text'] ?? '').toString(),
       imageUrl: row['image_url']?.toString(),
       createdAt: parseDt(row['created_at']),
+      deliveredAt: parseNullableDt(row['delivered_at']),
+      readAt: parseNullableDt(row['read_at']),
     );
   }
 
-  // Для insert
   Map<String, dynamic> toInsertMap() {
     return {
       'chat_id': chatId,
@@ -46,6 +55,8 @@ class ChatMessage {
       'text': text,
       'image_url': imageUrl,
       'created_at': createdAt.toIso8601String(),
+      'delivered_at': deliveredAt?.toIso8601String(),
+      'read_at': readAt?.toIso8601String(),
     };
   }
 }

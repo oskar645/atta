@@ -78,6 +78,8 @@ create table if not exists public.chat_messages (
   sender_id uuid not null references auth.users(id) on delete cascade,
   text text not null default '',
   image_url text,
+  delivered_at timestamptz,
+  read_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -289,6 +291,12 @@ create policy chat_messages_insert_member on public.chat_messages for insert to 
 );
 drop policy if exists chat_messages_delete_member on public.chat_messages;
 create policy chat_messages_delete_member on public.chat_messages for delete to authenticated using (
+  exists (select 1 from public.chats c where c.id = chat_messages.chat_id and (c.buyer_id = auth.uid() or c.seller_id = auth.uid()))
+);
+drop policy if exists chat_messages_update_member on public.chat_messages;
+create policy chat_messages_update_member on public.chat_messages for update to authenticated using (
+  exists (select 1 from public.chats c where c.id = chat_messages.chat_id and (c.buyer_id = auth.uid() or c.seller_id = auth.uid()))
+) with check (
   exists (select 1 from public.chats c where c.id = chat_messages.chat_id and (c.buyer_id = auth.uid() or c.seller_id = auth.uid()))
 );
 
