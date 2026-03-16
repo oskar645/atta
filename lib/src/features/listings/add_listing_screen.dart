@@ -9,6 +9,7 @@ import 'package:chestore2/src/features/listings/pick_location_screen.dart';
 import 'package:chestore2/src/models/car_specs.dart';
 import 'package:chestore2/src/services/auth_service.dart';
 import 'package:chestore2/src/services/listings_service.dart';
+import 'package:chestore2/src/services/profile_service.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
@@ -181,6 +182,27 @@ class _AddListingScreenState extends State<AddListingScreen> {
     'Аксессуары',
     'Другое',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _prefillPhoneFromProfile());
+  }
+
+  Future<void> _prefillPhoneFromProfile() async {
+    final auth = context.read<AuthService>();
+    final uid = auth.currentUser?.uid;
+    if (uid == null || uid.isEmpty || _phone.text.trim().isNotEmpty) return;
+
+    try {
+      final profile = context.read<ProfileService>();
+      final data = await profile.getProfile(uid);
+      final phone = (data['phone'] ?? '').toString().trim();
+      if (!mounted || phone.isEmpty || _phone.text.trim().isNotEmpty) return;
+      _phone.text = phone;
+      setState(() {});
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -405,30 +427,12 @@ class _AddListingScreenState extends State<AddListingScreen> {
   }
 
   String _buildTitleSuggestion() {
-    if (_isPassengerCar) {
-      return [
-        if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
-        if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
-        if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
-      ].join(' ').trim();
-    }
-
-    if (_isElectronics) {
-      return (_electronicsSub ?? _subcategory).trim();
-    }
-
-    if (_isRealEstate) {
-      return [_dealType.trim(), _realEstateType.trim()]
-          .where((x) => x.isNotEmpty)
-          .join(' ')
-          .trim();
-    }
-
-    if (_isClothes) {
-      return _clothesType.trim();
-    }
-
-    return _subcategory.trim().isNotEmpty ? _subcategory.trim() : _category.trim();
+    if (!_isPassengerCar) return '';
+    return [
+      if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
+      if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
+      if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
+    ].join(' ').trim();
   }
 
   void _applyTitleSuggestion(String suggestion) {
@@ -437,6 +441,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
     final previous = _lastTitleSuggestion.trim();
 
     if (nextSuggestion.isEmpty) {
+      if (previous.isNotEmpty && current.trim() == previous) {
+        _title.clear();
+      }
       _lastTitleSuggestion = '';
       return;
     }
@@ -587,18 +594,29 @@ class _AddListingScreenState extends State<AddListingScreen> {
               setM(() => gen = (v == kAutoSkipGenerationLabel) ? null : v);
             }
 
-            return SizedBox(
-              height: MediaQuery.of(ctx).size.height * 0.86,
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title(),
-                            style: const TextStyle(fontWeight: FontWeight.w800),
+	            return SizedBox(
+	              height: MediaQuery.of(ctx).size.height * 0.86,
+	              child: Column(
+	                children: [
+	                  Padding(
+	                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+	                    child: Row(
+	                      children: [
+	                        IconButton(
+	                          onPressed: step == 0
+	                              ? null
+	                              : () => setM(() {
+	                                  step -= 1;
+	                                  q = '';
+	                                }),
+	                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+	                          iconSize: 18,
+	                          tooltip: 'Назад',
+	                        ),
+	                        Expanded(
+	                          child: Text(
+	                            title(),
+	                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
                         TextButton(
@@ -839,6 +857,13 @@ class _AddListingScreenState extends State<AddListingScreen> {
     if (title.isEmpty || desc.isEmpty || price <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Заполните название, описание и цену')),
+      );
+      return;
+    }
+
+    if (city.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Укажите город или адрес объявления')),
       );
       return;
     }
@@ -1352,14 +1377,19 @@ class _AddListingScreenState extends State<AddListingScreen> {
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
               labelText: 'Телефон (для звонка)',
+              helperText: 'Номер из профиля подставляется автоматически, его можно изменить для этого объявления',
             ),
           ),
 
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Скрывать номер в объявлении'),
-            subtitle: const Text(
-              'Номер не будет виден, но кнопка “Позвонить” останется',
+            title: Text(
+              _phoneHidden ? 'Номер скрыт в объявлении' : 'Номер показан в объявлении',
+            ),
+            subtitle: Text(
+              _phoneHidden
+                  ? 'Покупатель не увидит номер в карточке, но сможет нажать “Позвонить”'
+                  : 'Покупатель увидит ваш номер прямо в объявлении',
             ),
             value: _phoneHidden,
             onChanged: (v) => setState(() => _phoneHidden = v),

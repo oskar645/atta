@@ -100,6 +100,28 @@ class ListingsService {
     return stream.map((rows) => rows.map((r) => Listing.fromMap(r)).toList());
   }
 
+  Stream<List<Listing>> streamSimilarListings(
+    Listing base, {
+    int limit = 10,
+  }) {
+    final stream = _client
+        .from('listings')
+        .stream(primaryKey: ['id'])
+        .eq('status', 'approved')
+        .order('created_at', ascending: false);
+
+    return stream.map((rows) {
+      final items = rows
+          .map((r) => Listing.fromMap(r))
+          .where((x) => x.id != base.id)
+          .where((x) => x.category == base.category)
+          .toList();
+
+      items.sort((a, b) => _compareSimilarListings(a, b, base));
+      return items.take(limit).toList();
+    });
+  }
+
   Stream<List<Listing>> streamMyListingsByStatuses(
     String uid, {
     required Set<String> statuses,
@@ -220,25 +242,45 @@ class ListingsService {
   }
 
   Future<void> deleteListing({required Listing listing}) async {
-    await _client
-        .from('listings')
-        .update({'status': 'deleted', 'updated_at': DateTime.now().toUtc().toIso8601String()})
-        .eq('id', listing.id);
+    await archiveListing(
+      listingId: listing.id,
+      status: 'archived',
+      note: 'Снято владельцем с публикации.',
+    );
+  }
+
+  Future<void> archiveListing({
+    required String listingId,
+    required String status,
+    String? note,
+  }) async {
+    final normalizedStatus = status.trim().isEmpty ? 'archived' : status.trim();
+    final normalizedNote = (note ?? '').trim();
+    await _client.from('listings').update({
+      'status': normalizedStatus,
+      'rejection_reason': normalizedNote.isEmpty ? null : normalizedNote,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', listingId);
   }
 
   Future<void> incrementView(String listingId) async {
-    final row = await _client
-        .from('listings')
-        .select('view_count')
-        .eq('id', listingId)
-        .maybeSingle();
+    try {
+      await _client.rpc('increment_listing_view', params: {'p_listing_id': listingId});
+      return;
+    } catch (_) {
+      final row = await _client
+          .from('listings')
+          .select('view_count')
+          .eq('id', listingId)
+          .maybeSingle();
 
-    var current = 0;
-    if (row != null && row['view_count'] is num) {
-      current = (row['view_count'] as num).toInt();
+      var current = 0;
+      if (row != null && row['view_count'] is num) {
+        current = (row['view_count'] as num).toInt();
+      }
+
+      await _client.from('listings').update({'view_count': current + 1}).eq('id', listingId);
     }
-
-    await _client.from('listings').update({'view_count': current + 1}).eq('id', listingId);
   }
 
   Future<Listing?> getListingById(String id) async {
@@ -356,6 +398,12 @@ class ListingsService {
     return b.createdAt.compareTo(a.createdAt);
   }
 
+  int _compareSimilarListings(Listing a, Listing b, Listing base) {
+    final diff = _similarityScore(b, base) - _similarityScore(a, base);
+    if (diff != 0) return diff;
+    return b.createdAt.compareTo(a.createdAt);
+  }
+
   int _scoreListing(Listing listing, ListingFeedFilters filters) {
     var score = 0;
     final search = _normalizeText(filters.search);
@@ -400,6 +448,45 @@ class ListingsService {
     }
 
     score += listing.viewCount > 0 ? (listing.viewCount ~/ 25) : 0;
+    return score;
+  }
+
+  int _similarityScore(Listing candidate, Listing base) {
+    var score = 0;
+
+    if (candidate.category == base.category) {
+      score += 150;
+    }
+    if (candidate.subcategory.trim().isNotEmpty &&
+        candidate.subcategory == base.subcategory) {
+      score += 90;
+    }
+    if (_normalizeText(candidate.cityShort) == _normalizeText(base.cityShort)) {
+      score += 55;
+    } else if (_matchesLocationText(candidate, base.cityFull)) {
+      score += 30;
+    }
+
+    final basePrice = base.price <= 0 ? 0 : base.price;
+    if (basePrice > 0 && candidate.price > 0) {
+      final ratio = (candidate.price - basePrice).abs() / basePrice;
+      if (ratio <= 0.10) {
+        score += 60;
+      } else if (ratio <= 0.25) {
+        score += 42;
+      } else if (ratio <= 0.50) {
+        score += 24;
+      }
+    }
+
+    final baseTitleTokens = _tokenize(base.title).toSet();
+    final candidateTitleTokens = _tokenize(candidate.title).toSet();
+    score += baseTitleTokens.intersection(candidateTitleTokens).length * 6;
+
+    if (candidate.ownerId == base.ownerId) {
+      score -= 20;
+    }
+
     return score;
   }
 

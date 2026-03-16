@@ -12,6 +12,8 @@ class FeedAd {
   final DateTime? activatedAt;
   final DateTime? expiresAt;
   final DateTime? updatedAt;
+  final int impressionCount;
+  final int clickCount;
 
   const FeedAd({
     required this.id,
@@ -25,6 +27,8 @@ class FeedAd {
     required this.activatedAt,
     required this.expiresAt,
     required this.updatedAt,
+    required this.impressionCount,
+    required this.clickCount,
   });
 
   bool get hasLink => targetUrl.trim().isNotEmpty;
@@ -39,6 +43,9 @@ class FeedAd {
 
   String get displayTitle => title.trim().isEmpty ? 'Реклама' : title.trim();
 
+  double get ctrPercent =>
+      impressionCount <= 0 ? 0 : (clickCount * 100) / impressionCount;
+
   FeedAd copyWith({
     String? id,
     String? title,
@@ -51,6 +58,8 @@ class FeedAd {
     DateTime? activatedAt,
     DateTime? expiresAt,
     DateTime? updatedAt,
+    int? impressionCount,
+    int? clickCount,
   }) {
     return FeedAd(
       id: id ?? this.id,
@@ -64,12 +73,16 @@ class FeedAd {
       activatedAt: activatedAt ?? this.activatedAt,
       expiresAt: expiresAt ?? this.expiresAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      impressionCount: impressionCount ?? this.impressionCount,
+      clickCount: clickCount ?? this.clickCount,
     );
   }
 
   static DateTime _parseDate(dynamic value) {
     if (value is DateTime) return value;
-    if (value is String) return DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc();
+    if (value is String) {
+      return DateTime.tryParse(value)?.toUtc() ?? DateTime.now().toUtc();
+    }
     return DateTime.now().toUtc();
   }
 
@@ -100,6 +113,8 @@ class FeedAd {
       activatedAt: null,
       expiresAt: null,
       updatedAt: now,
+      impressionCount: 0,
+      clickCount: 0,
     );
   }
 
@@ -110,12 +125,18 @@ class FeedAd {
       imageUrl: (row['image_url'] ?? '').toString(),
       targetUrl: (row['target_url'] ?? '').toString(),
       isActive: row['is_active'] == true,
-      durationDays: (row['duration_days'] is num) ? (row['duration_days'] as num).toInt() : 0,
+      durationDays:
+          (row['duration_days'] is num) ? (row['duration_days'] as num).toInt() : 0,
       placement: (row['placement'] ?? 'home').toString(),
       createdAt: _parseDate(row['created_at']),
       activatedAt: _parseNullableDate(row['activated_at']),
       expiresAt: _parseNullableDate(row['expires_at']),
       updatedAt: _parseNullableDate(row['updated_at']),
+      impressionCount: (row['impression_count'] is num)
+          ? (row['impression_count'] as num).toInt()
+          : 0,
+      clickCount:
+          (row['click_count'] is num) ? (row['click_count'] as num).toInt() : 0,
     );
   }
 
@@ -132,6 +153,8 @@ class FeedAd {
       'activated_at': activatedAt?.toIso8601String(),
       'expires_at': expiresAt?.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
+      'impression_count': impressionCount,
+      'click_count': clickCount,
     };
   }
 }

@@ -1,7 +1,9 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'package:chestore2/src/constants/categories.dart';
@@ -9,13 +11,17 @@ import 'package:chestore2/src/data/auto_catalog.dart';
 import 'package:chestore2/src/features/listings/add_listing_screen.dart';
 import 'package:chestore2/src/features/listings/listing_detail_screen.dart';
 import 'package:chestore2/src/features/notifications/notifications_screen.dart';
+import 'package:chestore2/src/models/feed_ad.dart';
 import 'package:chestore2/src/models/listing.dart';
 import 'package:chestore2/src/services/auth_service.dart';
 import 'package:chestore2/src/services/favorites_service.dart';
+import 'package:chestore2/src/services/feed_ads_service.dart';
 import 'package:chestore2/src/services/home_filters_session.dart';
+import 'package:chestore2/src/services/listing_history_service.dart';
 import 'package:chestore2/src/services/listings_service.dart';
 import 'package:chestore2/src/services/notifications_service.dart';
 import 'package:chestore2/src/services/reviews_service.dart';
+import 'package:chestore2/src/widgets/feed_ad_banner.dart';
 import 'package:chestore2/src/widgets/listing_card.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -31,10 +37,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String _search = '';
   final _searchCtrl = TextEditingController();
 
-  // ✅ Avito-like location
-  String _location = ''; // "Москва", "Чеченская Республика" и т.д.
+  // Avito-like location filter.
+  String _location = ''; // "Москва", "Чеченская Республика" и т.п.
   bool _preferLocationFirst = false; // "Сначала из ..."
-  int? _radiusKm; // 1/2/3/5/10 или null
+  int? _radiusKm; // 1/2/3/5/10 км или null
   String _autoBrand = '';
   String _autoModel = '';
   String _autoCondition = '';
@@ -145,12 +151,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final listings = context.read<ListingsService>();
     final favs = context.read<FavoritesService>();
+    final feedAds = context.read<FeedAdsService>();
+    final history = context.watch<ListingHistoryService>();
     final reviews = context.read<ReviewsService>();
     final notifications = context.read<NotificationsService>();
     final user = context.read<AuthService>().currentUser!;
 
-    // ✅ hint как в Avito: “Поиск в <город>”
-    final hint = _location.trim().isEmpty ? 'Поиск по названию' : 'Поиск в $_location';
+    // Search hint in Avito-like format: "Поиск в <локация>".
+    final hint =
+        _location.trim().isEmpty ? 'Поиск по названию' : 'Поиск в $_location';
 
     return Scaffold(
       appBar: AppBar(
@@ -163,9 +172,16 @@ class _HomeScreenState extends State<HomeScreen> {
               final unread = snap.data ?? 0;
               final icon = IconButton(
                 tooltip: 'Уведомления',
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-                ),
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationsScreen(),
+                    ),
+                  );
+                  await notifications.markAllSeen(user.uid);
+                  if (!mounted) return;
+                  setState(() {});
+                },
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                 icon: Stack(
@@ -240,7 +256,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(color: Theme.of(context).dividerColor),
+                        borderSide:
+                            BorderSide(color: Theme.of(context).dividerColor),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(16),
@@ -259,7 +276,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-
           Expanded(
             child: StreamBuilder<Set<String>>(
               stream: favs.streamFavoriteIds(user.uid),
@@ -291,50 +307,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
                     var items = snap.data!;
                     if (items.isEmpty) {
-                      return const Center(child: Text('Пока нет объявлений'));
+                      return const Center(
+                          child: Text('Пока нет объявлений'));
                     }
 
-                    if (items.isEmpty) {
-                      return const Center(child: Text('Ничего не найдено по фильтрам'));
-                    }
-
-                    return GridView.builder(
-                      clipBehavior: Clip.hardEdge,
-                      padding: const EdgeInsets.all(10),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                        childAspectRatio: 0.72,
-                      ),
-                      itemCount: items.length,
-                      itemBuilder: (_, i) {
-                        final item = items[i];
-
-                        return ListingCard(
-                          listing: item,
-                          isFav: favIds.contains(item.id),
+                    return StreamBuilder<FeedAd?>(
+                      stream: feedAds.streamActiveAd(),
+                      builder: (context, adSnap) {
+                        return _HomeFeedView(
+                          items: items,
+                          ad: adSnap.data,
+                          favIds: favIds,
+                          history: history,
                           reviews: reviews,
-                          onToggleFav: (makeFav) async {
-                            try {
-                              await favs.toggleFavorite(
-                                uid: user.uid,
-                                listingId: item.id,
-                                makeFavorite: makeFav,
-                              );
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Ошибка: $e')),
-                                );
-                              }
-                            }
-                          },
-                          onOpen: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => ListingDetailScreen(listingId: item.id),
-                            ),
-                          ),
+                          favs: favs,
+                          userId: user.uid,
                         );
                       },
                     );
@@ -345,6 +332,192 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _HomeFeedView extends StatefulWidget {
+  final List<Listing> items;
+  final FeedAd? ad;
+  final Set<String> favIds;
+  final ListingHistoryService history;
+  final ReviewsService reviews;
+  final FavoritesService favs;
+  final String userId;
+
+  const _HomeFeedView({
+    required this.items,
+    required this.ad,
+    required this.favIds,
+    required this.history,
+    required this.reviews,
+    required this.favs,
+    required this.userId,
+  });
+
+  @override
+  State<_HomeFeedView> createState() => _HomeFeedViewState();
+}
+
+class _HomeFeedViewState extends State<_HomeFeedView> {
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _adKey = GlobalKey();
+  bool _adVisible = false;
+  bool _trackingImpression = false;
+
+  static const _gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: 2,
+    mainAxisSpacing: 8,
+    crossAxisSpacing: 8,
+    childAspectRatio: 0.72,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_scheduleVisibilityCheck);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeFeedView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ad?.id != widget.ad?.id) {
+      _adVisible = false;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_scheduleVisibilityCheck);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scheduleVisibilityCheck() {
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+  }
+
+  Future<void> _checkAdVisibility() async {
+    if (!mounted) return;
+    final ad = widget.ad;
+    if (ad == null || !ad.isVisibleNow) {
+      _adVisible = false;
+      return;
+    }
+
+    final context = _adKey.currentContext;
+    if (context == null) return;
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+
+    final offset = renderObject.localToGlobal(Offset.zero);
+    final rect = offset & renderObject.size;
+    final screenHeight = MediaQuery.sizeOf(this.context).height;
+    final visible = rect.bottom > 0 && rect.top < screenHeight;
+
+    if (visible && !_adVisible) {
+      _adVisible = true;
+      if (_trackingImpression) return;
+      _trackingImpression = true;
+      try {
+        await this.context.read<FeedAdsService>().recordImpression(ad.id);
+      } catch (_) {
+      } finally {
+        _trackingImpression = false;
+      }
+      return;
+    }
+
+    if (!visible) {
+      _adVisible = false;
+    }
+  }
+
+  Future<void> _openAd(FeedAd ad) async {
+    if (!ad.hasLink) return;
+    final uri = Uri.tryParse(ad.targetUrl);
+    if (uri == null) return;
+    try {
+      await context.read<FeedAdsService>().recordClick(ad.id);
+    } catch (_) {}
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  Widget _buildCard(BuildContext context, Listing item) {
+    return ListingCard(
+      listing: item,
+      isFav: widget.favIds.contains(item.id),
+      isSeen: widget.history.hasViewed(item.id),
+      reviews: widget.reviews,
+      onToggleFav: (makeFav) async {
+        try {
+          await widget.favs.toggleFavorite(
+            uid: widget.userId,
+            listingId: item.id,
+            makeFavorite: makeFav,
+          );
+        } catch (e) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Не удалось изменить избранное: $e')),
+            );
+          }
+        }
+      },
+      onOpen: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ListingDetailScreen(listingId: item.id),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visibleAd = widget.ad != null && widget.ad!.isVisibleNow;
+    final firstChunk = visibleAd ? widget.items.take(2).toList() : widget.items;
+    final restChunk =
+        visibleAd ? widget.items.skip(2).toList() : const <Listing>[];
+
+    return CustomScrollView(
+      controller: _scrollController,
+      clipBehavior: Clip.hardEdge,
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+          sliver: SliverGrid(
+            gridDelegate: _gridDelegate,
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => _buildCard(context, firstChunk[index]),
+              childCount: firstChunk.length,
+            ),
+          ),
+        ),
+        if (visibleAd)
+          SliverToBoxAdapter(
+            child: Padding(
+              key: _adKey,
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: FeedAdBanner(
+                ad: widget.ad!,
+                onTap: widget.ad!.hasLink ? () => _openAd(widget.ad!) : null,
+              ),
+            ),
+          ),
+        if (restChunk.isNotEmpty)
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+            sliver: SliverGrid(
+              gridDelegate: _gridDelegate,
+              delegate: SliverChildBuilderDelegate(
+                (context, index) => _buildCard(context, restChunk[index]),
+                childCount: restChunk.length,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -387,8 +560,8 @@ class _CategoryRow extends StatelessWidget {
 class _HomeFilters {
   final String category;
   final String subcategory;
-  final String location; // город/регион строкой
-  final bool preferFirst; // “Сначала из …”
+  final String location; // Город/регион для поиска
+  final bool preferFirst; // Сначала показывать выбранную локацию
   final int? radiusKm;
   final String autoBrand;
   final String autoModel;
@@ -455,7 +628,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
 
   bool get _isAutoCategory {
     final c = _category.trim().toLowerCase();
-    return c == 'авто' || c.contains('авто') || c.contains('рђрвс');
+    return c == 'авто' || c.contains('авто') || c.contains('транспорт');
   }
 
   static const List<String> _carConditions = <String>[
@@ -650,9 +823,10 @@ class _FiltersScreenState extends State<_FiltersScreen> {
             const SizedBox(height: 8),
           ],
 
-          // ✅ “Где искать” как Avito
+          // Where to search block.
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             leading: const Icon(Icons.place_outlined),
             title: const Text('Где искать'),
@@ -695,7 +869,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
 }
 
 // =====================
-// “Где искать” (Avito)
+// Where to search (Avito-like)
 // =====================
 
 class _WhereResult {
@@ -761,7 +935,8 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          const Text('Город или регион', style: TextStyle(fontWeight: FontWeight.w800)),
+          const Text('Город или регион',
+              style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
           TextField(
             controller: _locCtrl,
@@ -773,9 +948,7 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
             ),
             onChanged: (_) => setState(() {}),
           ),
-
           const SizedBox(height: 14),
-
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: _preferFirst,
@@ -786,14 +959,13 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
                   : 'Сначала из $locationText',
             ),
           ),
-
           const SizedBox(height: 12),
-
           ListTile(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             title: const Text('Радиус'),
-            subtitle: Text(_radiusKm == null ? 'Не выбран' : '$_radiusKm км'),
+            subtitle: Text(_radiusKm == null ? 'Не ограничивать' : '$_radiusKm км'),
             trailing: const Icon(Icons.chevron_right),
             enabled: locationText.isNotEmpty,
             onTap: locationText.isEmpty
@@ -812,9 +984,7 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
                     setState(() => _radiusKm = r);
                   },
           ),
-
           const SizedBox(height: 18),
-
           SafeArea(
             top: false,
             child: FilledButton(
@@ -857,13 +1027,43 @@ class _RadiusPickerScreen extends StatefulWidget {
 class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
   static const _options = <int>[1, 2, 3, 5, 10];
 
+  final MapController _map = MapController();
   int? _radiusKm;
-  LatLng _center = const LatLng(55.751244, 37.618423); // дефолт Москва
+  bool _loadingGeo = true;
+  LatLng _center = const LatLng(55.751244, 37.618423); // Москва по умолчанию
 
   @override
   void initState() {
     super.initState();
     _radiusKm = widget.initialRadiusKm;
+    _initGeo();
+  }
+
+  Future<void> _initGeo() async {
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+
+      if (perm == LocationPermission.always ||
+          perm == LocationPermission.whileInUse) {
+        final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+        );
+        final point = LatLng(pos.latitude, pos.longitude);
+        if (!mounted) return;
+        setState(() => _center = point);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _map.move(point, 12);
+        });
+      }
+    } catch (_) {
+      // Keep the fallback point if geolocation is unavailable.
+    } finally {
+      if (mounted) setState(() => _loadingGeo = false);
+    }
   }
 
   @override
@@ -881,39 +1081,44 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
                 hintText: widget.title,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                 isDense: true,
               ),
             ),
           ),
 
           Expanded(
-            child: FlutterMap(
-              options: MapOptions(
-                initialCenter: _center,
-                initialZoom: 12,
-                onTap: (tapPos, p) => setState(() => _center = p),
-              ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.chestore2',
-                ),
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _center,
-                      width: 44,
-                      height: 44,
-                      child: const Icon(Icons.location_pin, size: 44),
+            child: _loadingGeo
+                ? const Center(child: CircularProgressIndicator())
+                : FlutterMap(
+                    mapController: _map,
+                    options: MapOptions(
+                      initialCenter: _center,
+                      initialZoom: 12,
+                      onTap: (tapPos, p) => setState(() => _center = p),
                     ),
-                  ],
-                ),
-              ],
-            ),
+                    children: [
+                      TileLayer(
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'com.example.chestore2',
+                      ),
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: _center,
+                            width: 44,
+                            height: 44,
+                            child: const Icon(Icons.location_pin, size: 44),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
           ),
 
-          // ✅ кнопки радиуса как Avito
+          // Radius chips under the map.
           SafeArea(
             top: false,
             child: Padding(
@@ -930,7 +1135,7 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
                         if (i == 0) {
                           final isSel = selected == null;
                           return ChoiceChip(
-                            label: const Text('Не выбран'),
+                            label: const Text('Не ограничивать'),
                             selected: isSel,
                             onSelected: (_) => setState(() => _radiusKm = null),
                           );
@@ -960,7 +1165,3 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
     );
   }
 }
-
-
-
-

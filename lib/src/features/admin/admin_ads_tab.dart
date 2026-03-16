@@ -11,14 +11,27 @@ import 'package:chestore2/src/services/feed_ads_service.dart';
 import 'package:chestore2/src/utils/app_snackbar.dart';
 import 'package:chestore2/src/widgets/feed_ad_banner.dart';
 
-class AdminAdsTab extends StatelessWidget {
+class AdminAdsTab extends StatefulWidget {
   const AdminAdsTab({super.key});
+
+  @override
+  State<AdminAdsTab> createState() => _AdminAdsTabState();
+}
+
+class _AdminAdsTabState extends State<AdminAdsTab> {
+  int _reloadNonce = 0;
+
+  void _refreshAds() {
+    if (!mounted) return;
+    setState(() => _reloadNonce++);
+  }
 
   @override
   Widget build(BuildContext context) {
     final ads = context.read<FeedAdsService>();
 
     return StreamBuilder<List<FeedAd>>(
+      key: ValueKey(_reloadNonce),
       stream: ads.streamAllAds(),
       builder: (context, snap) {
         if (snap.hasError) {
@@ -62,7 +75,7 @@ class AdminAdsTab extends StatelessWidget {
                 ),
               ),
             for (final ad in items) ...[
-              _AdCard(ad: ad),
+              _AdCard(ad: ad, onChanged: _refreshAds),
               const SizedBox(height: 12),
             ],
           ],
@@ -72,17 +85,27 @@ class AdminAdsTab extends StatelessWidget {
   }
 
   Future<void> _openCreateDialog(BuildContext context) async {
-    await showDialog<void>(
+    final changed = await showDialog<bool>(
       context: context,
       builder: (_) => const _AdEditorDialog(),
     );
+    if (changed == true) _refreshAds();
   }
 }
 
 class _AdCard extends StatelessWidget {
   final FeedAd ad;
+  final VoidCallback onChanged;
 
-  const _AdCard({required this.ad});
+  const _AdCard({
+    required this.ad,
+    required this.onChanged,
+  });
+
+  String _metricValue(num value, {int fractionDigits = 0}) {
+    if (fractionDigits == 0) return value.toStringAsFixed(0);
+    return value.toStringAsFixed(fractionDigits);
+  }
 
   String _statusLabel() {
     if (ad.isVisibleNow) return 'Активна';
@@ -144,6 +167,23 @@ class _AdCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MetaPill(label: 'Показы ${_metricValue(ad.impressionCount)}'),
+                _MetaPill(label: 'Клики ${_metricValue(ad.clickCount)}'),
+                _MetaPill(
+                  label: 'CTR ${_metricValue(ad.ctrPercent, fractionDigits: 1)}%',
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Показы считаются примерно по появлению баннера в ленте, клики по нажатию на баннер.',
+              style: TextStyle(color: Theme.of(context).colorScheme.outline),
+            ),
+            const SizedBox(height: 10),
             if (ad.targetUrl.trim().isNotEmpty)
               SelectableText(
                 ad.targetUrl,
@@ -158,6 +198,7 @@ class _AdCard extends StatelessWidget {
                   onPressed: () async {
                     try {
                       await ads.activateAd(ad.id);
+                      onChanged();
                       if (!context.mounted) return;
                       showAppSnack(context, 'Реклама включена');
                     } catch (e) {
@@ -173,6 +214,7 @@ class _AdCard extends StatelessWidget {
                       ? () async {
                           try {
                             await ads.deactivateAd(ad.id);
+                            onChanged();
                             if (!context.mounted) return;
                             showAppSnack(context, 'Реклама выключена');
                           } catch (e) {
@@ -186,10 +228,11 @@ class _AdCard extends StatelessWidget {
                 ),
                 OutlinedButton.icon(
                   onPressed: () async {
-                    await showDialog<void>(
+                    final changed = await showDialog<bool>(
                       context: context,
                       builder: (_) => _AdEditorDialog(existing: ad),
                     );
+                    if (changed == true) onChanged();
                   },
                   icon: const Icon(Icons.edit),
                   label: const Text('Изменить'),
@@ -216,6 +259,7 @@ class _AdCard extends StatelessWidget {
                     if (shouldDelete != true || !context.mounted) return;
                     try {
                       await ads.deleteAd(ad.id);
+                      onChanged();
                       if (!context.mounted) return;
                       showAppSnack(context, 'Реклама удалена');
                     } catch (e) {
@@ -341,7 +385,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
         );
       }
       if (!mounted) return;
-      Navigator.pop(context);
+      Navigator.pop(context, true);
       showAppSnack(context, widget.existing == null ? 'Реклама добавлена' : 'Реклама обновлена');
     } catch (e) {
       if (!mounted) return;

@@ -305,15 +305,12 @@ class _EditListingScreenState extends State<EditListingScreen> {
   }
 
   String _buildTitleSuggestion() {
-    if (_isPassengerCar) {
-      return [
-        if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
-        if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
-        if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
-      ].join(' ').trim();
-    }
-
-    return _subcategory.trim().isNotEmpty ? _subcategory.trim() : _category.trim();
+    if (!_isPassengerCar) return '';
+    return [
+      if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
+      if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
+      if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
+    ].join(' ').trim();
   }
 
   void _applyTitleSuggestion(String suggestion) {
@@ -322,6 +319,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
     final previous = _lastTitleSuggestion.trim();
 
     if (nextSuggestion.isEmpty) {
+      if (previous.isNotEmpty && current.trim() == previous) {
+        _title.clear();
+      }
       _lastTitleSuggestion = '';
       return;
     }
@@ -440,9 +440,20 @@ class _EditListingScreenState extends State<EditListingScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-                    child: Row(
-                      children: [
-                        Expanded(child: Text(title(), style: const TextStyle(fontWeight: FontWeight.w800))),
+	                    child: Row(
+	                      children: [
+	                        IconButton(
+	                          onPressed: step == 0
+	                              ? null
+	                              : () => setM(() {
+	                                  step -= 1;
+	                                  q = '';
+	                                }),
+	                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+	                          iconSize: 18,
+	                          tooltip: 'Назад',
+	                        ),
+	                        Expanded(child: Text(title(), style: const TextStyle(fontWeight: FontWeight.w800))),
                         TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
                       ],
                     ),
@@ -528,6 +539,15 @@ class _EditListingScreenState extends State<EditListingScreen> {
     if (title.isEmpty || desc.isEmpty || price <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Заполните название, описание и цену')),
+      );
+      return;
+    }
+
+    if (city.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Укажите город или адрес объявления'),
+        ),
       );
       return;
     }

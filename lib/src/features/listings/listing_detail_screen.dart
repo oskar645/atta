@@ -1,4 +1,4 @@
-﻿import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:chestore2/src/features/inbox/chat_screen.dart';
 import 'package:chestore2/src/features/listings/edit_listing_screen.dart';
 import 'package:chestore2/src/features/listings/photo_viewer_screen.dart';
@@ -8,9 +8,12 @@ import 'package:chestore2/src/models/listing.dart';
 import 'package:chestore2/src/services/auth_service.dart';
 import 'package:chestore2/src/services/chat_service.dart';
 import 'package:chestore2/src/services/favorites_service.dart';
+import 'package:chestore2/src/services/listing_history_service.dart';
 import 'package:chestore2/src/services/listings_service.dart';
 import 'package:chestore2/src/services/presence_service.dart';
+import 'package:chestore2/src/services/reviews_service.dart';
 import 'package:chestore2/src/utils/price_formatter.dart';
+import 'package:chestore2/src/widgets/listing_card.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -118,6 +121,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         return Colors.green;
       case 'rejected':
         return Colors.red;
+      case 'sold':
+        return Colors.green;
+      case 'deleted':
+        return Colors.red;
+      case 'archived':
+        return Colors.blueGrey;
       default:
         return Theme.of(context).colorScheme.outline;
     }
@@ -131,6 +140,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         return Icons.verified;
       case 'rejected':
         return Icons.block;
+      case 'sold':
+        return Icons.check_circle_outline;
+      case 'deleted':
+        return Icons.admin_panel_settings_outlined;
+      case 'archived':
+        return Icons.archive_outlined;
       default:
         return Icons.info_outline;
     }
@@ -142,18 +157,17 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         .stream(primaryKey: ['uid'])
         .eq('uid', uid)
         .map((rows) {
-      if (rows.isEmpty) return false;
-      final r = rows.first;
-      return (r['is_admin'] == true) || (r['isAdmin'] == true);
-    });
+          if (rows.isEmpty) return false;
+          final r = rows.first;
+          return (r['is_admin'] == true) || (r['isAdmin'] == true);
+        });
   }
 
   Stream<Map<String, dynamic>> _streamSellerProfile(String sellerId) {
-    return _sb
-        .from('users')
-        .stream(primaryKey: ['id'])
-        .eq('id', sellerId)
-        .map((rows) => rows.isNotEmpty ? Map<String, dynamic>.from(rows.first) : <String, dynamic>{});
+    return _sb.from('users').stream(primaryKey: ['id']).eq('id', sellerId).map(
+        (rows) => rows.isNotEmpty
+            ? Map<String, dynamic>.from(rows.first)
+            : <String, dynamic>{});
   }
 
   Stream<List<Map<String, dynamic>>> _streamSellerReviews(String sellerId) {
@@ -170,7 +184,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         .from('listings')
         .stream(primaryKey: ['id'])
         .eq('id', listingId)
-        .map((rows) => rows.isEmpty ? null : Map<String, dynamic>.from(rows.first));
+        .map((rows) =>
+            rows.isEmpty ? null : Map<String, dynamic>.from(rows.first));
   }
 
   Future<void> _openReportDialog({
@@ -200,7 +215,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           children: [
             DropdownButtonFormField<String>(
               value: reason,
-              items: reasons.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+              items: reasons
+                  .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                  .toList(),
               onChanged: (v) => reason = v ?? reason,
               decoration: const InputDecoration(labelText: 'Причина'),
             ),
@@ -217,8 +234,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Отправить')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Отправить')),
         ],
       ),
     );
@@ -237,10 +258,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Жалоба отправлена')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Жалоба отправлена')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Ошибка: $e')));
     }
   }
 
@@ -276,7 +299,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       await Share.share(message, subject: title);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Ошибка: $e')));
       }
     }
   }
@@ -288,7 +312,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final items = <MapEntry<String, String>>[
       MapEntry('Марка', car.brand),
       MapEntry('Модель', car.model),
-      if (car.generation.trim().isNotEmpty) MapEntry('Поколение', car.generation),
+      if (car.generation.trim().isNotEmpty)
+        MapEntry('Поколение', car.generation),
       MapEntry('Год', '${car.year}'),
       MapEntry('Пробег', '${car.mileageKm} км'),
       MapEntry('Кузов', car.bodyType),
@@ -300,9 +325,11 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       MapEntry('Состояние', car.condition),
       MapEntry('Цвет', car.color),
       if (car.owners != null) MapEntry('Владельцев', '${car.owners}'),
-      if (car.isCleared != null) MapEntry('Растаможен', car.isCleared! ? 'Да' : 'Нет'),
+      if (car.isCleared != null)
+        MapEntry('Растаможен', car.isCleared! ? 'Да' : 'Нет'),
       if ((car.vin ?? '').trim().isNotEmpty) MapEntry('VIN', car.vin!.trim()),
-      if ((car.note ?? '').trim().isNotEmpty) MapEntry('Примечание', car.note!.trim()),
+      if ((car.note ?? '').trim().isNotEmpty)
+        MapEntry('Примечание', car.note!.trim()),
     ];
 
     return items;
@@ -319,22 +346,27 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
+        border:
+            Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Описание', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          const Text('Описание',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
           const SizedBox(height: 10),
           Text(
             text,
             maxLines: (!_showFullDescription && isLong) ? 4 : null,
-            overflow: (!_showFullDescription && isLong) ? TextOverflow.ellipsis : null,
+            overflow: (!_showFullDescription && isLong)
+                ? TextOverflow.ellipsis
+                : null,
           ),
           if (isLong) ...[
             const SizedBox(height: 8),
             InkWell(
-              onTap: () => setState(() => _showFullDescription = !_showFullDescription),
+              onTap: () =>
+                  setState(() => _showFullDescription = !_showFullDescription),
               borderRadius: BorderRadius.circular(8),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
@@ -353,7 +385,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     );
   }
 
-  Widget _buildCarSpecsSection(BuildContext context, List<MapEntry<String, String>> specs) {
+  Widget _buildCarSpecsSection(
+      BuildContext context, List<MapEntry<String, String>> specs) {
     if (specs.isEmpty) return const SizedBox.shrink();
 
     final visible = _showAllSpecs ? specs : specs.take(3).toList();
@@ -364,12 +397,14 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
+        border:
+            Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Характеристики', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          const Text('Характеристики',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
           const SizedBox(height: 10),
           ...visible.map((e) => _kv(e.key, e.value)),
           if (hasMore) ...[
@@ -380,7 +415,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Text(
-                  _showAllSpecs ? 'Скрыть характеристики' : 'Показать все (${specs.length})',
+                  _showAllSpecs
+                      ? 'Скрыть характеристики'
+                      : 'Показать все (${specs.length})',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.primary,
                     fontWeight: FontWeight.w700,
@@ -401,6 +438,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     required Listing listing,
     required String myUid,
     required ChatService chats,
+    required String sellerName,
+    required String sellerAvatar,
   }) {
     return SafeArea(
       top: false,
@@ -408,16 +447,20 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
-          border: Border(top: BorderSide(color: Theme.of(context).dividerColor.withOpacity(0.2))),
+          border: Border(
+              top: BorderSide(
+                  color: Theme.of(context).dividerColor.withOpacity(0.2))),
         ),
         child: Row(
           children: [
             Expanded(
               child: FilledButton.icon(
-                onPressed: (!canContact || listing.phone.trim().isEmpty) ? null : () async {
-                  final uri = Uri(scheme: 'tel', path: listing.phone);
-                  await launchUrl(uri);
-                },
+                onPressed: (!canContact || listing.phone.trim().isEmpty)
+                    ? null
+                    : () async {
+                        final uri = Uri(scheme: 'tel', path: listing.phone);
+                        await launchUrl(uri);
+                      },
                 icon: const Icon(Icons.call),
                 label: Text(status == 'approved' ? 'Позвонить' : 'Недоступно'),
               ),
@@ -438,7 +481,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                         if (!context.mounted) return;
 
                         Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)),
+                          MaterialPageRoute(
+                            builder: (_) => ChatScreen(
+                              chatId: chatId,
+                              initialOtherUserName: sellerName,
+                              initialOtherUserAvatar: sellerAvatar,
+                            ),
+                          ),
                         );
                       },
                 icon: const Icon(Icons.chat_bubble_outline),
@@ -456,6 +505,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final me = context.read<AuthService>().currentUser!;
     final favs = context.read<FavoritesService>();
     final chats = context.read<ChatService>();
+    final history = context.read<ListingHistoryService>();
     final listingsSvc = context.read<ListingsService>();
     final presence = context.read<PresenceService>();
 
@@ -468,26 +518,33 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           stream: _streamListingRow(widget.listingId),
           builder: (context, snap) {
             if (!snap.hasData) {
-              return const Scaffold(body: Center(child: CircularProgressIndicator()));
+              return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()));
             }
 
             final row = snap.data;
             if (row == null) {
-              return Scaffold(appBar: AppBar(), body: const Center(child: Text('Объявление удалено')));
+              return Scaffold(
+                  appBar: AppBar(),
+                  body: const Center(child: Text('Объявление удалено')));
             }
 
             final listing = Listing.fromMap(row);
 
             final status = (row['status'] ?? 'approved').toString();
             final rejectionReason =
-                (row['rejection_reason'] ?? row['rejectionReason'] ?? '').toString().trim();
+                (row['rejection_reason'] ?? row['rejectionReason'] ?? '')
+                    .toString()
+                    .trim();
 
             final isOwner = listing.ownerId == me.uid;
             final canSee = (status == 'approved') || isOwner || isAdmin;
+            final canEdit = isOwner && (status == 'approved' || status == 'rejected');
             if (!canSee) {
               return Scaffold(
                 appBar: AppBar(),
-                body: const Center(child: Text('Объявление на модерации или недоступно')),
+                body: const Center(
+                    child: Text('Объявление на модерации или недоступно')),
               );
             }
 
@@ -496,9 +553,11 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (_viewCounted) return;
               if (status != 'approved') return;
-              if (listing.ownerId == me.uid) return;
               _viewCounted = true;
-              listingsSvc.incrementView(listing.id);
+              history.markViewed(listing.id);
+              if (listing.ownerId != me.uid) {
+                listingsSvc.incrementView(listing.id);
+              }
             });
 
             final deliveryNames = listing.delivery.entries
@@ -523,7 +582,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     return Scaffold(
                       appBar: AppBar(
                         centerTitle: false,
-                        title: Text(listing.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        title: Text(listing.title,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                         actions: [
                           IconButton(
                             tooltip: 'Поделиться',
@@ -544,14 +604,18 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                             ),
                             icon: Icon(
                               isFav ? Icons.favorite : Icons.favorite_border,
-                              color: isFav ? Colors.red : Theme.of(context).colorScheme.outline,
+                              color: isFav
+                                  ? Colors.red
+                                  : Theme.of(context).colorScheme.outline,
                             ),
                           ),
                           PopupMenuButton<String>(
                             onSelected: (v) async {
                               if (v == 'edit') {
                                 Navigator.of(context).push(
-                                  MaterialPageRoute(builder: (_) => EditListingScreen(listingId: listing.id)),
+                                  MaterialPageRoute(
+                                      builder: (_) => EditListingScreen(
+                                          listingId: listing.id)),
                                 );
                               } else if (v == 'report') {
                                 await _openReportDialog(
@@ -561,7 +625,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               }
                             },
                             itemBuilder: (ctx) => [
-                              if (isOwner)
+                              if (canEdit)
                                 const PopupMenuItem(
                                   value: 'edit',
                                   child: Row(
@@ -594,6 +658,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                         listing: listing,
                         myUid: me.uid,
                         chats: chats,
+                        sellerName: sellerName,
+                        sellerAvatar: sellerAvatar,
                       ),
                       body: ListView(
                         padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
@@ -603,34 +669,66 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
-                                color: _statusColor(context, status).withOpacity(0.12),
-                                border: Border.all(color: _statusColor(context, status).withOpacity(0.35)),
+                                color: _statusColor(context, status)
+                                    .withOpacity(0.12),
+                                border: Border.all(
+                                    color: _statusColor(context, status)
+                                        .withOpacity(0.35)),
                               ),
                               child: Row(
                                 children: [
-                                  Icon(_statusIcon(status), color: _statusColor(context, status)),
+                                  Icon(_statusIcon(status),
+                                      color: _statusColor(context, status)),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Text(
                                       '${_statusTitle(status)}${status == 'pending' ? ' — проверяем объявление' : ''}',
-                                      style: const TextStyle(fontWeight: FontWeight.w800),
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800),
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                          if (status == 'rejected' && rejectionReason.isNotEmpty && (isOwner || isAdmin)) ...[
+                          if (status != 'approved' &&
+                              status != 'pending' &&
+                              listing.archiveNote.trim().isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                                border: Border.all(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .outlineVariant,
+                                ),
+                              ),
+                              child: Text(
+                                listing.archiveNote,
+                                style: const TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                          if (status == 'rejected' &&
+                              rejectionReason.isNotEmpty &&
+                              (isOwner || isAdmin)) ...[
                             const SizedBox(height: 10),
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
                                 color: Colors.red.withOpacity(0.08),
-                                border: Border.all(color: Colors.red.withOpacity(0.25)),
+                                border: Border.all(
+                                    color: Colors.red.withOpacity(0.25)),
                               ),
                               child: Text(
                                 'Причина отклонения: $rejectionReason',
-                                style: const TextStyle(fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600),
                               ),
                             ),
                           ],
@@ -641,20 +739,25 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
                           Text(
                             '${formatPrice(listing.price)} ₽',
-                            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
+                            style: const TextStyle(
+                                fontSize: 26, fontWeight: FontWeight.w800),
                           ),
 
                           if (listing.car != null) ...[
                             const SizedBox(height: 6),
                             Row(
                               children: [
-                                Icon(Icons.speed_outlined, size: 18, color: Theme.of(context).colorScheme.outline),
+                                Icon(Icons.speed_outlined,
+                                    size: 18,
+                                    color:
+                                        Theme.of(context).colorScheme.outline),
                                 const SizedBox(width: 6),
                                 Text(
                                   'Пробег: ${listing.car!.mileageKm} км',
                                   style: TextStyle(
                                     fontWeight: FontWeight.w600,
-                                    color: Theme.of(context).colorScheme.onSurface,
+                                    color:
+                                        Theme.of(context).colorScheme.onSurface,
                                   ),
                                 ),
                               ],
@@ -667,16 +770,23 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(14),
                               color: Theme.of(context).colorScheme.surface,
-                              border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+                              border: Border.all(
+                                  color: Theme.of(context)
+                                      .dividerColor
+                                      .withOpacity(0.18)),
                             ),
                             child: Column(
                               children: [
                                 Padding(
-                                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                                  child: StreamBuilder<List<Map<String, dynamic>>>(
-                                    stream: _streamSellerReviews(listing.ownerId),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                                  child:
+                                      StreamBuilder<List<Map<String, dynamic>>>(
+                                    stream:
+                                        _streamSellerReviews(listing.ownerId),
                                     builder: (context, rSnap) {
-                                      final rows = rSnap.data ?? const <Map<String, dynamic>>[];
+                                      final rows = rSnap.data ??
+                                          const <Map<String, dynamic>>[];
                                       double sum = 0;
                                       int cnt = 0;
 
@@ -688,16 +798,23 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                         }
                                       }
 
-                                      final avg = (cnt == 0) ? 0.0 : (sum / cnt);
+                                      final avg =
+                                          (cnt == 0) ? 0.0 : (sum / cnt);
 
                                       return Row(
                                         children: [
-                                          const Icon(Icons.star, size: 18, color: Colors.amber),
+                                          const Icon(Icons.star,
+                                              size: 18, color: Colors.amber),
                                           const SizedBox(width: 6),
                                           Text(avg.toStringAsFixed(1),
-                                              style: const TextStyle(fontWeight: FontWeight.w700)),
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.w700)),
                                           const SizedBox(width: 6),
-                                          Text('($cnt)', style: TextStyle(color: Theme.of(context).colorScheme.outline)),
+                                          Text('($cnt)',
+                                              style: TextStyle(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .outline)),
                                         ],
                                       );
                                     },
@@ -706,8 +823,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                 const Divider(height: 1),
                                 ListTile(
                                   dense: true,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-                                  leading: Icon(Icons.rate_review_outlined, color: Theme.of(context).colorScheme.primary),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12),
+                                  leading: Icon(Icons.rate_review_outlined,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary),
                                   title: const Text('Отзывы'),
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: () {
@@ -734,14 +855,18 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               final hasAddress = address.isNotEmpty;
                               final color = Theme.of(ctx).colorScheme.primary;
                               return InkWell(
-                                onTap: hasAddress ? () => _openInMaps(address) : null,
+                                onTap: hasAddress
+                                    ? () => _openInMaps(address)
+                                    : null,
                                 borderRadius: BorderRadius.circular(8),
                                 child: Text(
                                   hasAddress ? address : 'Город не указан',
                                   style: TextStyle(
                                     fontWeight: FontWeight.w700,
                                     color: hasAddress ? color : null,
-                                    decoration: hasAddress ? TextDecoration.underline : null,
+                                    decoration: hasAddress
+                                        ? TextDecoration.underline
+                                        : null,
                                   ),
                                 ),
                               );
@@ -751,24 +876,41 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                           const SizedBox(height: 8),
 
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(14),
                               color: Theme.of(context).colorScheme.surface,
-                              border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+                              border: Border.all(
+                                  color: Theme.of(context)
+                                      .dividerColor
+                                      .withOpacity(0.18)),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.schedule, size: 18, color: Theme.of(context).colorScheme.outline),
+                                Icon(Icons.schedule,
+                                    size: 18,
+                                    color:
+                                        Theme.of(context).colorScheme.outline),
                                 const SizedBox(width: 6),
-                                Text(timeago.format(listing.createdAt, locale: 'ru'),
-                                    style: TextStyle(color: Theme.of(context).colorScheme.outline)),
+                                Text(
+                                    timeago.format(listing.createdAt,
+                                        locale: 'ru'),
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline)),
                                 const Spacer(),
                                 Icon(Icons.remove_red_eye_outlined,
-                                    size: 18, color: Theme.of(context).colorScheme.outline),
+                                    size: 18,
+                                    color:
+                                        Theme.of(context).colorScheme.outline),
                                 const SizedBox(width: 6),
                                 Text('${listing.viewCount}',
-                                    style: TextStyle(color: Theme.of(context).colorScheme.outline)),
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline)),
                               ],
                             ),
                           ),
@@ -781,9 +923,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
                                 color: Theme.of(context).colorScheme.surface,
-                                border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+                                border: Border.all(
+                                    color: Theme.of(context)
+                                        .dividerColor
+                                        .withOpacity(0.18)),
                               ),
-                              child: Text('Доставка: ${deliveryNames.join(', ')}'),
+                              child:
+                                  Text('Доставка: ${deliveryNames.join(', ')}'),
                             )
                           else
                             Container(
@@ -791,18 +937,26 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
                                 color: Theme.of(context).colorScheme.surface,
-                                border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+                                border: Border.all(
+                                    color: Theme.of(context)
+                                        .dividerColor
+                                        .withOpacity(0.18)),
                               ),
                               child: Text('Доставка: не указано',
-                                  style: TextStyle(color: Theme.of(context).colorScheme.outline)),
+                                  style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .outline)),
                             ),
 
                           const SizedBox(height: 12),
 
-                          if (specs.isNotEmpty) _buildCarSpecsSection(context, specs),
+                          if (specs.isNotEmpty)
+                            _buildCarSpecsSection(context, specs),
                           if (specs.isNotEmpty) const SizedBox(height: 12),
 
-                          _buildDescriptionSection(context, listing.description),
+                          _buildDescriptionSection(
+                              context, listing.description),
 
                           const SizedBox(height: 12),
 
@@ -812,7 +966,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                             onTap: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute(
-                                  builder: (_) => SellerPublicProfileScreen(sellerId: listing.ownerId),
+                                  builder: (_) => SellerPublicProfileScreen(
+                                    sellerId: listing.ownerId,
+                                    initialSellerName: sellerName,
+                                    initialSellerAvatar: sellerAvatar,
+                                    initialSellerPhone: listing.phone,
+                                  ),
                                 ),
                               );
                             },
@@ -821,37 +980,49 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(16),
                                 color: Theme.of(context).colorScheme.surface,
-                                border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.18)),
+                                border: Border.all(
+                                    color: Theme.of(context)
+                                        .dividerColor
+                                        .withOpacity(0.18)),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   const Text('Продавец',
-                                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 16)),
                                   const SizedBox(height: 10),
                                   Row(
                                     children: [
                                       StreamBuilder<bool>(
-                                        stream: presence.streamIsOnline(listing.ownerId),
+                                        stream: presence
+                                            .streamIsOnline(listing.ownerId),
                                         builder: (context, onlineSnap) {
-                                          final isOnline = onlineSnap.data == true;
+                                          final isOnline =
+                                              onlineSnap.data == true;
                                           return Stack(
                                             clipBehavior: Clip.none,
                                             children: [
                                               CircleAvatar(
                                                 radius: 22,
-                                                backgroundColor: Theme.of(context)
+                                                backgroundColor: Theme.of(
+                                                        context)
                                                     .colorScheme
                                                     .surfaceContainerHighest,
-                                                backgroundImage: (sellerAvatar.isNotEmpty)
+                                                backgroundImage: (sellerAvatar
+                                                        .isNotEmpty)
                                                     ? NetworkImage(sellerAvatar)
                                                     : null,
                                                 child: (sellerAvatar.isNotEmpty)
                                                     ? null
                                                     : Text(
-                                                        _sellerInitial(sellerName),
+                                                        _sellerInitial(
+                                                            sellerName),
                                                         style: const TextStyle(
-                                                            fontWeight: FontWeight.w900),
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w900),
                                                       ),
                                               ),
                                               Positioned(
@@ -882,30 +1053,41 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                       const SizedBox(width: 12),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
                                             Text(
                                               sellerName,
                                               maxLines: 1,
                                               overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(fontWeight: FontWeight.w800),
+                                              style: const TextStyle(
+                                                  fontWeight: FontWeight.w800),
                                             ),
                                             const SizedBox(height: 6),
                                             Text(
-                                              listing.phoneHidden ? 'Телефон: скрыт' : 'Телефон: ${listing.phone}',
-                                              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                              listing.phoneHidden
+                                                  ? 'Телефон: скрыт'
+                                                  : 'Телефон: ${listing.phone}',
+                                              style: TextStyle(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant),
                                             ),
                                           ],
                                         ),
                                       ),
-                                      Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.outline),
+                                      Icon(Icons.chevron_right,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .outline),
                                     ],
                                   ),
                                   const SizedBox(height: 10),
                                   Text(
                                     'Открыть профиль продавца',
                                     style: TextStyle(
-                                      color: Theme.of(context).colorScheme.outline,
+                                      color:
+                                          Theme.of(context).colorScheme.outline,
                                       fontWeight: FontWeight.w600,
                                     ),
                                   ),
@@ -916,12 +1098,24 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
                           const SizedBox(height: 12),
 
+                          _SimilarListingsSection(
+                            baseListing: listing,
+                            currentUserId: me.uid,
+                            listingsSvc: listingsSvc,
+                            favs: favs,
+                            history: history,
+                            reviews: context.read<ReviewsService>(),
+                          ),
+
+                          const SizedBox(height: 12),
+
                           if (listing.ownerId == me.uid)
                             Text(
                               status == 'approved'
                                   ? 'Это ваше объявление. Сообщения доступны покупателям.'
                                   : 'Это ваше объявление. Сейчас оно: ${_statusTitle(status)}.',
-                              style: TextStyle(color: Theme.of(context).colorScheme.outline),
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.outline),
                             ),
                         ],
                       ),
@@ -931,6 +1125,84 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               },
             );
           },
+        );
+      },
+    );
+  }
+}
+
+class _SimilarListingsSection extends StatelessWidget {
+  final Listing baseListing;
+  final String currentUserId;
+  final ListingsService listingsSvc;
+  final FavoritesService favs;
+  final ListingHistoryService history;
+  final ReviewsService reviews;
+
+  const _SimilarListingsSection({
+    required this.baseListing,
+    required this.currentUserId,
+    required this.listingsSvc,
+    required this.favs,
+    required this.history,
+    required this.reviews,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Listing>>(
+      stream: listingsSvc.streamSimilarListings(baseListing),
+      builder: (context, snap) {
+        final items = snap.data ?? const <Listing>[];
+        if (items.isEmpty) return const SizedBox.shrink();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Похожие объявления',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 270,
+              child: StreamBuilder<Set<String>>(
+                stream: favs.streamFavoriteIds(currentUserId),
+                builder: (context, favSnap) {
+                  final favIds = favSnap.data ?? const <String>{};
+                  return ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return SizedBox(
+                        width: 190,
+                        child: ListingCard(
+                          listing: item,
+                          isFav: favIds.contains(item.id),
+                          isSeen: history.hasViewed(item.id),
+                          reviews: reviews,
+                          onToggleFav: (makeFav) async {
+                            await favs.toggleFavorite(
+                              uid: currentUserId,
+                              listingId: item.id,
+                              makeFavorite: makeFav,
+                            );
+                          },
+                          onOpen: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ListingDetailScreen(listingId: item.id),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
         );
       },
     );
@@ -947,7 +1219,8 @@ Future<void> _openInMaps(String address) async {
     return;
   }
 
-  final google = Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+  final google =
+      Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
   if (await canLaunchUrl(google)) {
     await launchUrl(google, mode: LaunchMode.externalApplication);
     return;
@@ -969,7 +1242,10 @@ Widget _kv(String k, String v) {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(width: 120, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600))),
+        SizedBox(
+            width: 120,
+            child:
+                Text(k, style: const TextStyle(fontWeight: FontWeight.w600))),
         const SizedBox(width: 10),
         Expanded(child: Text(v)),
       ],
@@ -1000,7 +1276,8 @@ class _PhotosState extends State<_Photos> {
           borderRadius: BorderRadius.circular(16),
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
         ),
-        child: const Center(child: Icon(Icons.image_not_supported_outlined, size: 48)),
+        child: const Center(
+            child: Icon(Icons.image_not_supported_outlined, size: 48)),
       );
     }
 
@@ -1018,7 +1295,8 @@ class _PhotosState extends State<_Photos> {
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => PhotoViewerScreen(photoUrls: photoUrls, initialIndex: i),
+                      builder: (_) => PhotoViewerScreen(
+                          photoUrls: photoUrls, initialIndex: i),
                     ),
                   );
                 },
@@ -1027,12 +1305,14 @@ class _PhotosState extends State<_Photos> {
                   fit: BoxFit.cover,
                   alignment: Alignment.center,
                   placeholder: (_, __) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     alignment: Alignment.center,
                     child: const CircularProgressIndicator(strokeWidth: 2),
                   ),
                   errorWidget: (_, __, ___) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     alignment: Alignment.center,
                     child: const Icon(Icons.broken_image_outlined, size: 40),
                   ),
@@ -1043,14 +1323,16 @@ class _PhotosState extends State<_Photos> {
               right: 10,
               bottom: 10,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.55),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   '${_page + 1}/${photoUrls.length}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.w600),
                 ),
               ),
             ),
@@ -1060,6 +1342,3 @@ class _PhotosState extends State<_Photos> {
     );
   }
 }
-
-
-

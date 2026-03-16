@@ -97,8 +97,16 @@ class ReportsService {
     }
   }
 
-  Future<void> deleteListingById(String listingId) async {
-    await _db.from('listings').delete().eq('id', listingId);
+  Future<void> deleteListingById(
+    String listingId, {
+    String? reason,
+  }) async {
+    final note = (reason ?? '').trim();
+    await _db.from('listings').update({
+      'status': 'deleted',
+      'rejection_reason': note.isEmpty ? 'Объявление удалено администратором.' : note,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', listingId);
   }
 
   Future<void> notifyOwnerViaSupport({

@@ -84,7 +84,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
           _ListingsTab(
             stream: svc.streamMyListingsByStatuses(
               uid,
-              statuses: {'deleted', 'archived', 'rejected'},
+              statuses: {'deleted', 'archived', 'rejected', 'sold'},
             ),
           ),
         ],
@@ -128,7 +128,9 @@ class _MyListingTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final svc = context.read<ListingsService>();
     final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
-    final isDeleted = listing.status == 'deleted' || listing.status == 'archived';
+    final isArchived = listing.isArchivedStatus;
+    final canEdit = listing.canOwnerEdit && listing.status != 'deleted' && listing.status != 'sold';
+    final archiveNote = listing.archiveNote.trim();
 
     return InkWell(
       onTap: () => Navigator.of(context).push(
@@ -183,55 +185,58 @@ class _MyListingTile extends StatelessWidget {
                     'Статус: ${_statusLabel(listing.status)}',
                     style: TextStyle(color: Theme.of(context).colorScheme.outline),
                   ),
+                  if (archiveNote.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      archiveNote,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
             IconButton(
               icon: const Icon(Icons.edit),
               tooltip: 'Редактировать',
-              onPressed: isDeleted
-                  ? null
-                  : () {
+              onPressed: canEdit
+                  ? () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (_) => EditListingScreen(listingId: listing.id),
                         ),
                       );
-                    },
+                    }
+                  : null,
             ),
             IconButton(
-              icon: const Icon(Icons.delete_forever, color: Colors.red),
-              tooltip: 'Удалить',
-              onPressed: isDeleted
+              icon: Icon(
+                isArchived ? Icons.inventory_2_outlined : Icons.archive_outlined,
+                color: isArchived ? null : Colors.red,
+              ),
+              tooltip: isArchived ? 'В архиве' : 'В архив',
+              onPressed: isArchived
                   ? null
                   : () async {
-                      final ok = await showDialog<bool>(
+                      final decision = await showDialog<_ArchiveDecision>(
                         context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('Удалить объявление?'),
-                          content: const Text(
-                            'Объявление перейдёт в архив (вкладка "Удалённые").',
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child: const Text('Отмена'),
-                            ),
-                            FilledButton(
-                              style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                              onPressed: () => Navigator.pop(ctx, true),
-                              child: const Text('Удалить'),
-                            ),
-                          ],
-                        ),
+                        builder: (ctx) => const _ArchiveListingDialog(),
                       );
 
-                      if (ok != true) return;
+                      if (decision == null) return;
 
-                      await svc.deleteListing(listing: listing);
+                      await svc.archiveListing(
+                        listingId: listing.id,
+                        status: decision.status,
+                        note: decision.note,
+                      );
                       if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Перемещено в удалённые')),
+                        SnackBar(content: Text(decision.successMessage)),
                       );
                     },
             ),
@@ -248,12 +253,106 @@ class _MyListingTile extends StatelessWidget {
       case 'pending':
         return 'На модерации';
       case 'rejected':
-        return 'Отклонено';
+        return 'Нужно исправить';
+      case 'sold':
+        return 'Продано';
       case 'deleted':
+        return 'Удалено админом';
       case 'archived':
-        return 'Удалено';
+        return 'В архиве';
       default:
         return status;
+    }
+  }
+}
+
+class _ArchiveDecision {
+  final String status;
+  final String note;
+  final String successMessage;
+
+  const _ArchiveDecision({
+    required this.status,
+    required this.note,
+    required this.successMessage,
+  });
+}
+
+class _ArchiveListingDialog extends StatefulWidget {
+  const _ArchiveListingDialog();
+
+  @override
+  State<_ArchiveListingDialog> createState() => _ArchiveListingDialogState();
+}
+
+class _ArchiveListingDialogState extends State<_ArchiveListingDialog> {
+  static const List<_ArchiveDecision> _options = [
+    _ArchiveDecision(
+      status: 'sold',
+      note: 'Продано через CheStore.',
+      successMessage: 'Объявление перенесено в архив как проданное',
+    ),
+    _ArchiveDecision(
+      status: 'sold',
+      note: 'Продано в другом месте.',
+      successMessage: 'Объявление перенесено в архив как проданное',
+    ),
+    _ArchiveDecision(
+      status: 'archived',
+      note: 'Снято владельцем с публикации.',
+      successMessage: 'Объявление перенесено в архив',
+    ),
+  ];
+
+  int _selectedIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Перенести в архив'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Что произошло с объявлением?'),
+            const SizedBox(height: 10),
+            for (var i = 0; i < _options.length; i++)
+              RadioListTile<int>(
+                value: i,
+                groupValue: _selectedIndex,
+                contentPadding: EdgeInsets.zero,
+                title: Text(_labelFor(_options[i])),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() => _selectedIndex = value);
+                },
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _options[_selectedIndex]),
+          child: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+
+  String _labelFor(_ArchiveDecision decision) {
+    switch (decision.note) {
+      case 'Продано через CheStore.':
+        return 'Продано в приложении';
+      case 'Продано в другом месте.':
+        return 'Продано в другом месте';
+      default:
+        return 'Снять с продажи';
     }
   }
 }

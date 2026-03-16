@@ -18,7 +18,15 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
-  const ChatScreen({super.key, required this.chatId});
+  final String initialOtherUserName;
+  final String initialOtherUserAvatar;
+
+  const ChatScreen({
+    super.key,
+    required this.chatId,
+    this.initialOtherUserName = '',
+    this.initialOtherUserAvatar = '',
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -38,11 +46,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Stream<Map<String, dynamic>?> _streamChatRow(String chatId) {
-    return _db
-        .from('chats')
-        .stream(primaryKey: ['id'])
-        .eq('id', chatId)
-        .map((rows) => rows.isEmpty ? null : Map<String, dynamic>.from(rows.first));
+    return _db.from('chats').stream(primaryKey: ['id']).eq('id', chatId).map(
+        (rows) => rows.isEmpty ? null : Map<String, dynamic>.from(rows.first));
   }
 
   Stream<String> _streamListingThumb(String listingId) {
@@ -51,15 +56,15 @@ class _ChatScreenState extends State<ChatScreen> {
         .stream(primaryKey: ['id'])
         .eq('id', listingId)
         .map((rows) {
-      if (rows.isEmpty) return '';
-      final r = rows.first;
-      final urls = r['photo_urls'];
-      if (urls is List && urls.isNotEmpty) {
-        return (urls.first ?? '').toString().trim();
-      }
-      if (urls is String) return urls.trim();
-      return '';
-    });
+          if (rows.isEmpty) return '';
+          final r = rows.first;
+          final urls = r['photo_urls'];
+          if (urls is List && urls.isNotEmpty) {
+            return (urls.first ?? '').toString().trim();
+          }
+          if (urls is String) return urls.trim();
+          return '';
+        });
   }
 
   @override
@@ -68,13 +73,20 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final uid = _uid(context);
       if (uid.isEmpty) return;
-      await context.read<ChatService>().markChatRead(chatId: widget.chatId, uid: uid);
+      await context
+          .read<ChatService>()
+          .markChatRead(chatId: widget.chatId, uid: uid);
     });
-    _messagesSub = context.read<ChatService>().streamMessages(widget.chatId).listen((_) async {
+    _messagesSub = context
+        .read<ChatService>()
+        .streamMessages(widget.chatId)
+        .listen((_) async {
       if (!mounted) return;
       final uid = _uid(context);
       if (uid.isEmpty) return;
-      await context.read<ChatService>().markChatRead(chatId: widget.chatId, uid: uid);
+      await context
+          .read<ChatService>()
+          .markChatRead(chatId: widget.chatId, uid: uid);
     });
   }
 
@@ -119,7 +131,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() => _sending = true);
     try {
-      await chat.sendImage(chatId: widget.chatId, senderId: uid, file: File(x.path));
+      await chat.sendImage(
+          chatId: widget.chatId, senderId: uid, file: File(x.path));
       await chat.markChatRead(chatId: widget.chatId, uid: uid);
     } catch (e) {
       if (!mounted) return;
@@ -230,7 +243,8 @@ class _ChatScreenState extends State<ChatScreen> {
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('Удалить сообщение?'),
-            content: const Text('Сообщение будет удалено без возможности восстановления.'),
+            content: const Text(
+                'Сообщение будет удалено без возможности восстановления.'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
@@ -260,18 +274,100 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _openSellerProfile(String sellerId) {
-    final id = sellerId.trim();
+  void _openUserProfile(
+    String userId, {
+    String initialName = '',
+    String initialAvatar = '',
+  }) {
+    final id = userId.trim();
     if (id.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => SellerPublicProfileScreen(sellerId: id),
+        builder: (_) => SellerPublicProfileScreen(
+          sellerId: id,
+          initialSellerName: initialName,
+          initialSellerAvatar: initialAvatar,
+        ),
       ),
     );
   }
 
   String _formatMessageTime(DateTime dt) {
     return DateFormat('HH:mm').format(dt.toLocal());
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    final left = a.toLocal();
+    final right = b.toLocal();
+    return left.year == right.year &&
+        left.month == right.month &&
+        left.day == right.day;
+  }
+
+  String _formatDayDivider(DateTime dt) {
+    final local = dt.toLocal();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(local.year, local.month, local.day);
+    final diffDays = today.difference(target).inDays;
+
+    if (diffDays == 0) return 'Сегодня';
+    if (diffDays == 1) return 'Вчера';
+
+    const weekdays = <String>[
+      'понедельник',
+      'вторник',
+      'среда',
+      'четверг',
+      'пятница',
+      'суббота',
+      'воскресенье',
+    ];
+    const months = <String>[
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+
+    if (diffDays >= 0 && diffDays < 7) {
+      return weekdays[local.weekday - 1];
+    }
+
+    final dayMonth = '${local.day} ${months[local.month - 1]}';
+    if (local.year == now.year) return dayMonth;
+    return '$dayMonth ${local.year}';
+  }
+
+  Widget _dayDivider(DateTime dt) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            _formatDayDivider(dt),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _messageMeta(ChatMessage message, bool mine) {
@@ -285,9 +381,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final isRead = message.readAt != null;
     final isDelivered = message.deliveredAt != null;
-    final iconColor = isRead
-        ? Colors.blue
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+    final iconColor =
+        isRead ? Colors.blue : Theme.of(context).colorScheme.onSurfaceVariant;
 
     final statusIcon = isRead
         ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
@@ -317,7 +412,8 @@ class _ChatScreenState extends State<ChatScreen> {
         decoration: BoxDecoration(
           color: Theme.of(context).scaffoldBackgroundColor,
           border: Border(
-            bottom: BorderSide(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
+            bottom: BorderSide(
+                color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
           ),
         ),
         child: Row(
@@ -342,7 +438,9 @@ class _ChatScreenState extends State<ChatScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                listingTitle.trim().isEmpty ? 'Объявление' : listingTitle.trim(),
+                listingTitle.trim().isEmpty
+                    ? 'Объявление'
+                    : listingTitle.trim(),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w700),
@@ -372,16 +470,25 @@ class _ChatScreenState extends State<ChatScreen> {
         final buyerId = (chatRow?['buyer_id'] ?? '').toString();
         final sellerId = (chatRow?['seller_id'] ?? '').toString();
         final otherId = (uid == buyerId) ? sellerId : buyerId;
+        final profileSeed = <String, dynamic>{
+          if (widget.initialOtherUserName.trim().isNotEmpty)
+            'display_name': widget.initialOtherUserName.trim(),
+          if (widget.initialOtherUserAvatar.trim().isNotEmpty)
+            'avatar_url': widget.initialOtherUserAvatar.trim(),
+        };
 
         return StreamBuilder<Map<String, dynamic>>(
-          stream: profiles.streamProfile(otherId),
+          stream: profiles.streamProfile(otherId, seed: profileSeed),
           builder: (context, profileSnap) {
             final otherRow = profileSnap.data ?? const <String, dynamic>{};
-            final otherName = profiles.pickNameFromRow(otherRow, fallback: '').trim();
+            final otherName =
+                profiles.pickNameFromRow(otherRow, fallback: '').trim();
             final otherAvatar = profiles.pickAvatarFromRow(otherRow);
 
             return StreamBuilder<String>(
-              stream: listingId.isEmpty ? Stream.value('') : _streamListingThumb(listingId),
+              stream: listingId.isEmpty
+                  ? Stream.value('')
+                  : _streamListingThumb(listingId),
               builder: (context, photoSnap) {
                 final thumb = photoSnap.data ?? '';
 
@@ -424,8 +531,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                               .colorScheme
                                               .outlineVariant,
                                       border: Border.all(
-                                        color: Theme.of(context).appBarTheme.backgroundColor ??
-                                            Theme.of(context).scaffoldBackgroundColor,
+                                        color: Theme.of(context)
+                                                .appBarTheme
+                                                .backgroundColor ??
+                                            Theme.of(context)
+                                                .scaffoldBackgroundColor,
                                         width: 1.4,
                                       ),
                                     ),
@@ -436,7 +546,11 @@ class _ChatScreenState extends State<ChatScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: GestureDetector(
-                                onTap: () => _openSellerProfile(sellerId),
+                                onTap: () => _openUserProfile(
+                                  otherId,
+                                  initialName: otherName,
+                                  initialAvatar: otherAvatar,
+                                ),
                                 child: Text(
                                   otherName.isEmpty ? '...' : otherName,
                                   maxLines: 1,
@@ -454,19 +568,25 @@ class _ChatScreenState extends State<ChatScreen> {
                       _topListingBar(
                         listingTitle: listingTitle,
                         thumbUrl: thumb,
-                        onTap: () => _openSellerProfile(sellerId),
+                        onTap: () => _openUserProfile(
+                          otherId,
+                          initialName: otherName,
+                          initialAvatar: otherAvatar,
+                        ),
                       ),
                       Expanded(
                         child: StreamBuilder<List<ChatMessage>>(
                           stream: chatSvc.streamMessages(widget.chatId),
                           builder: (context, snap) {
                             if (!snap.hasData) {
-                              return const Center(child: CircularProgressIndicator());
+                              return const Center(
+                                  child: CircularProgressIndicator());
                             }
 
                             final items = snap.data!;
                             if (items.isEmpty) {
-                              return const Center(child: Text('Напишите первое сообщение'));
+                              return const Center(
+                                  child: Text('Напишите первое сообщение'));
                             }
 
                             return ListView.builder(
@@ -477,45 +597,70 @@ class _ChatScreenState extends State<ChatScreen> {
                                 final m = items[i];
                                 final mine = m.senderId == uid;
                                 final hasImg = (m.imageUrl ?? '').isNotEmpty;
+                                final showDayDivider =
+                                    i == items.length - 1 ||
+                                    !_isSameDay(
+                                      m.createdAt,
+                                      items[i + 1].createdAt,
+                                    );
 
-                                return Align(
-                                  alignment:
-                                      mine ? Alignment.centerRight : Alignment.centerLeft,
-                                  child: GestureDetector(
-                                    onLongPress: mine ? () => _confirmDeleteMessage(m) : null,
-                                    child: Container(
-                                      margin: const EdgeInsets.symmetric(vertical: 4),
-                                      padding: const EdgeInsets.all(10),
-                                      constraints: const BoxConstraints(maxWidth: 300),
-                                      decoration: BoxDecoration(
-                                        color: mine
-                                            ? Theme.of(context).colorScheme.primaryContainer
-                                            : Theme.of(context)
-                                                .colorScheme
-                                                .surfaceContainerHighest,
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          if (hasImg)
-                                            ClipRRect(
-                                              borderRadius: BorderRadius.circular(10),
-                                              child: _messageImage(chatSvc, m.imageUrl!),
-                                            ),
-                                          if (m.text.isNotEmpty) ...[
-                                            if (hasImg) const SizedBox(height: 6),
-                                            Text(m.text),
-                                          ],
-                                          const SizedBox(height: 4),
-                                          Align(
-                                            alignment: Alignment.centerRight,
-                                            child: _messageMeta(m, mine),
+                                return Column(
+                                  children: [
+                                    if (showDayDivider) _dayDivider(m.createdAt),
+                                    Align(
+                                      alignment: mine
+                                          ? Alignment.centerRight
+                                          : Alignment.centerLeft,
+                                      child: GestureDetector(
+                                        onLongPress: mine
+                                            ? () => _confirmDeleteMessage(m)
+                                            : null,
+                                        child: Container(
+                                          margin: const EdgeInsets.symmetric(
+                                              vertical: 4),
+                                          padding: const EdgeInsets.all(10),
+                                          constraints: const BoxConstraints(
+                                            maxWidth: 300,
                                           ),
-                                        ],
+                                          decoration: BoxDecoration(
+                                            color: mine
+                                                ? Theme.of(context)
+                                                    .colorScheme
+                                                    .primaryContainer
+                                                : Theme.of(context)
+                                                    .colorScheme
+                                                    .surfaceContainerHighest,
+                                            borderRadius:
+                                                BorderRadius.circular(14),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              if (hasImg)
+                                                ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
+                                                  child: _messageImage(
+                                                      chatSvc, m.imageUrl!),
+                                                ),
+                                              if (m.text.isNotEmpty) ...[
+                                                if (hasImg)
+                                                  const SizedBox(height: 6),
+                                                Text(m.text),
+                                              ],
+                                              const SizedBox(height: 4),
+                                              Align(
+                                                alignment:
+                                                    Alignment.centerRight,
+                                                child: _messageMeta(m, mine),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
+                                  ],
                                 );
                               },
                             );
@@ -550,7 +695,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                     focusedBorder: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(16),
                                       borderSide: BorderSide(
-                                        color: Theme.of(context).colorScheme.primary,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
                                         width: 1.5,
                                       ),
                                     ),

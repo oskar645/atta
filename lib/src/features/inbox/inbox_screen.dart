@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
@@ -100,7 +100,8 @@ class InboxScreen extends StatelessWidget {
                         context: context,
                         builder: (ctx) => AlertDialog(
                           title: const Text('Удалить переписку?'),
-                          content: const Text('Все сообщения в этом чате будут удалены.'),
+                          content: const Text(
+                              'Все сообщения в этом чате будут удалены.'),
                           actions: [
                             TextButton(
                               onPressed: () => Navigator.pop(ctx, false),
@@ -122,6 +123,9 @@ class InboxScreen extends StatelessWidget {
                   stream: profiles.streamProfile(otherId),
                   builder: (context, profileSnap) {
                     final row = profileSnap.data ?? const <String, dynamic>{};
+                    if (row.isNotEmpty) {
+                      profiles.seedProfile(otherId, row);
+                    }
                     final otherName = profiles.pickNameFromRow(
                       row,
                       fallback: '',
@@ -135,15 +139,16 @@ class InboxScreen extends StatelessWidget {
                         final isOnline = presenceSnap.data == true;
 
                         return ListTile(
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 6),
                           leading: Stack(
                             clipBehavior: Clip.none,
                             children: [
                               CircleAvatar(
                                 radius: 24,
-                                backgroundImage:
-                                    avatar.isEmpty ? null : NetworkImage(avatar),
+                                backgroundImage: avatar.isEmpty
+                                    ? null
+                                    : NetworkImage(avatar),
                                 child: avatar.isEmpty
                                     ? Text(
                                         titleName == '...'
@@ -162,9 +167,12 @@ class InboxScreen extends StatelessWidget {
                                     shape: BoxShape.circle,
                                     color: isOnline
                                         ? Colors.red
-                                        : Theme.of(context).colorScheme.outlineVariant,
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .outlineVariant,
                                     border: Border.all(
-                                      color: Theme.of(context).scaffoldBackgroundColor,
+                                      color: Theme.of(context)
+                                          .scaffoldBackgroundColor,
                                       width: 2,
                                     ),
                                   ),
@@ -177,7 +185,11 @@ class InboxScreen extends StatelessWidget {
                             if (!context.mounted) return;
                             Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder: (_) => ChatScreen(chatId: c.id),
+                                builder: (_) => ChatScreen(
+                                  chatId: c.id,
+                                  initialOtherUserName: otherName,
+                                  initialOtherUserAvatar: avatar,
+                                ),
                               ),
                             );
                           },
@@ -186,7 +198,8 @@ class InboxScreen extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontWeight: isUnread ? FontWeight.w800 : FontWeight.w600,
+                              fontWeight:
+                                  isUnread ? FontWeight.w800 : FontWeight.w600,
                             ),
                           ),
                           subtitle: Text(
@@ -202,7 +215,9 @@ class InboxScreen extends StatelessWidget {
                               Text(timeago.format(c.updatedAt, locale: 'ru')),
                               if (isUnread) ...[
                                 const SizedBox(height: 8),
-                                Badge(label: Text(unread > 99 ? '99+' : '$unread')),
+                                Badge(
+                                    label:
+                                        Text(unread > 99 ? '99+' : '$unread')),
                               ],
                             ],
                           ),

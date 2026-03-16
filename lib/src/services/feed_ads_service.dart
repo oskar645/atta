@@ -91,6 +91,24 @@ class FeedAdsService {
     await _db.from('feed_ads').delete().eq('id', adId);
   }
 
+  Future<void> recordImpression(String adId) async {
+    await _trackEvent(adId: adId, event: 'impression');
+  }
+
+  Future<void> recordClick(String adId) async {
+    await _trackEvent(adId: adId, event: 'click');
+  }
+
+  Future<void> _trackEvent({
+    required String adId,
+    required String event,
+  }) async {
+    await _db.rpc('track_feed_ad_event', params: {
+      'p_ad_id': adId,
+      'p_event': event,
+    });
+  }
+
   Future<String> uploadAdImage({
     required Uint8List bytes,
     String contentType = 'image/jpeg',

@@ -114,7 +114,13 @@ class AdminReportsScreen extends StatelessWidget {
 
                 try {
                   if (deleteListing && listingId.isNotEmpty) {
-                    await reports.deleteListingById(listingId);
+                    final deleteReason = options.adminComment == null
+                        ? options.template.body
+                        : '${options.template.body}\n\nКомментарий администратора: ${options.adminComment}';
+                    await reports.deleteListingById(
+                      listingId,
+                      reason: deleteReason,
+                    );
                   }
 
                   await reports.closeReportDecision(

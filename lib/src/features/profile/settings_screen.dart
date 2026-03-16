@@ -44,6 +44,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  OutlineInputBorder _fieldBorder(BuildContext context) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(18),
+      borderSide: BorderSide(
+        color: Theme.of(context).colorScheme.outlineVariant,
+      ),
+    );
+  }
+
   Future<void> _save() async {
     final auth = context.read<AuthService>();
     final profile = context.read<ProfileService>();
@@ -90,12 +99,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     Color? iconColor,
     VoidCallback? onTap,
   }) {
-    return ListTile(
-      leading: Icon(icon, color: iconColor),
-      title: Text(title),
-      subtitle: subtitle == null ? null : Text(subtitle),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(18),
+        child: ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          leading: Icon(icon, color: iconColor),
+          title: Text(title),
+          subtitle: subtitle == null ? null : Text(subtitle),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: onTap,
+        ),
+      ),
     );
   }
 
@@ -108,6 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final auth = context.read<AuthService>();
     final user = auth.currentUser!;
     final email = user.email ?? '';
+    final border = _fieldBorder(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -123,18 +143,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
               children: [
                 TextField(
                   controller: _nameCtrl,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Имя',
-                    border: OutlineInputBorder(),
+                    border: border,
+                    enabledBorder: border,
+                    focusedBorder: border,
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Телефон',
-                    border: OutlineInputBorder(),
+                    border: border,
+                    enabledBorder: border,
+                    focusedBorder: border,
                   ),
                 ),
               ],

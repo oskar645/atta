@@ -4,30 +4,55 @@ import 'package:chestore2/src/features/listings/listing_detail_screen.dart';
 import 'package:chestore2/src/features/reviews/seller_reviews_screen.dart';
 import 'package:chestore2/src/models/listing.dart';
 import 'package:chestore2/src/services/auth_service.dart';
+import 'package:chestore2/src/services/admin_service.dart';
 import 'package:chestore2/src/services/chat_service.dart';
 import 'package:chestore2/src/services/listings_service.dart';
 import 'package:chestore2/src/services/presence_service.dart';
 import 'package:chestore2/src/services/profile_service.dart';
 import 'package:chestore2/src/services/reviews_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class SellerPublicProfileScreen extends StatefulWidget {
   final String sellerId;
+  final String initialSellerName;
+  final String initialSellerAvatar;
+  final String initialSellerPhone;
 
   const SellerPublicProfileScreen({
     super.key,
     required this.sellerId,
+    this.initialSellerName = '',
+    this.initialSellerAvatar = '',
+    this.initialSellerPhone = '',
   });
 
   @override
-  State<SellerPublicProfileScreen> createState() => _SellerPublicProfileScreenState();
+  State<SellerPublicProfileScreen> createState() =>
+      _SellerPublicProfileScreenState();
 }
 
 class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
+
+  String _shortUserId(String uid) {
+    final text = uid.trim();
+    if (text.length <= 14) return text;
+    return '${text.substring(0, 8)}...${text.substring(text.length - 4)}';
+  }
+
+  Future<void> _copyUserId(BuildContext context, String uid) async {
+    final text = uid.trim();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('ID пользователя скопирован')),
+    );
+  }
 
   @override
   void initState() {
@@ -41,37 +66,18 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     super.dispose();
   }
 
-  String _pickName(Map<String, dynamic> u) {
-    String pick(dynamic v) => (v ?? '').toString().trim();
-    final dn = pick(u['display_name']);
-    if (dn.isNotEmpty) return dn;
-    final name = pick(u['name']);
-    if (name.isNotEmpty) return name;
-    return 'Пользователь';
-  }
-
-  String _pickPhoto(Map<String, dynamic> u) {
-    String pick(dynamic v) => (v ?? '').toString().trim();
-    final p1 = pick(u['avatar_url']);
-    if (p1.isNotEmpty) return p1;
-    final p2 = pick(u['photo_url']);
-    if (p2.isNotEmpty) return p2;
-    return '';
-  }
-
-  String _pickPhone(Map<String, dynamic> u) {
-    return (u['phone'] ?? '').toString().trim();
-  }
-
   Future<void> _openChat({
     required BuildContext context,
     required ListingsService listingsSvc,
     required ChatService chats,
     required String myUid,
     required String sellerId,
+    required String sellerName,
+    required String sellerAvatar,
   }) async {
     try {
-      final listing = await listingsSvc.getLatestApprovedListingByOwner(sellerId);
+      final listing =
+          await listingsSvc.getLatestApprovedListingByOwner(sellerId);
       if (listing == null) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -89,7 +95,13 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
 
       if (!context.mounted) return;
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ChatScreen(chatId: chatId)),
+        MaterialPageRoute(
+          builder: (_) => ChatScreen(
+            chatId: chatId,
+            initialOtherUserName: sellerName,
+            initialOtherUserAvatar: sellerAvatar,
+          ),
+        ),
       );
     } catch (e) {
       if (!context.mounted) return;
@@ -106,10 +118,19 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     final listingsSvc = context.read<ListingsService>();
     final chats = context.read<ChatService>();
     final presence = context.read<PresenceService>();
+    final admin = context.read<AdminService>();
     final me = context.read<AuthService>().currentUser;
 
     final myUid = me?.uid ?? '';
     final isMe = myUid.isNotEmpty && myUid == widget.sellerId;
+    final seed = <String, dynamic>{
+      if (widget.initialSellerName.trim().isNotEmpty)
+        'display_name': widget.initialSellerName.trim(),
+      if (widget.initialSellerAvatar.trim().isNotEmpty)
+        'avatar_url': widget.initialSellerAvatar.trim(),
+      if (widget.initialSellerPhone.trim().isNotEmpty)
+        'phone': widget.initialSellerPhone.trim(),
+    };
 
     return Scaffold(
       appBar: AppBar(
@@ -124,16 +145,21 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
         ),
       ),
       body: StreamBuilder<Map<String, dynamic>>(
-        stream: profile.streamProfile(widget.sellerId),
+        stream: profile.streamProfile(widget.sellerId, seed: seed),
         builder: (context, pSnap) {
-          if (pSnap.connectionState == ConnectionState.waiting && !pSnap.hasData) {
+          if (pSnap.connectionState == ConnectionState.waiting &&
+              !pSnap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final u = pSnap.data ?? const <String, dynamic>{};
-          final sellerName = _pickName(u);
-          final photoUrl = _pickPhoto(u);
-          final phone = _pickPhone(u);
+          final userRow = pSnap.data ?? const <String, dynamic>{};
+          if (userRow.isNotEmpty) {
+            profile.seedProfile(widget.sellerId, userRow);
+          }
+
+          final sellerName = profile.pickNameFromRow(userRow);
+          final photoUrl = profile.pickAvatarFromRow(userRow);
+          final phone = (userRow['phone'] ?? '').toString().trim();
 
           final canCall = phone.isNotEmpty && !isMe;
           final canWrite = myUid.isNotEmpty && !isMe;
@@ -146,8 +172,10 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
                   color: Theme.of(context).colorScheme.surface,
-                  border:
-                      Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.18)),
+                  border: Border.all(
+                    color:
+                        Theme.of(context).dividerColor.withValues(alpha: 0.18),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -158,7 +186,10 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                         return Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            _Avatar(photoUrl: photoUrl, fallbackText: sellerName),
+                            _Avatar(
+                              photoUrl: photoUrl,
+                              fallbackText: sellerName,
+                            ),
                             Positioned(
                               right: -1,
                               bottom: -1,
@@ -169,9 +200,12 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                   shape: BoxShape.circle,
                                   color: isOnline
                                       ? Colors.green
-                                      : Theme.of(context).colorScheme.outlineVariant,
+                                      : Theme.of(context)
+                                          .colorScheme
+                                          .outlineVariant,
                                   border: Border.all(
-                                    color: Theme.of(context).scaffoldBackgroundColor,
+                                    color: Theme.of(context)
+                                        .scaffoldBackgroundColor,
                                     width: 2,
                                   ),
                                 ),
@@ -190,28 +224,41 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                             sellerName,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
                           ),
                           const SizedBox(height: 6),
                           StreamBuilder<Map<String, dynamic>>(
                             stream: reviews.streamSellerRating(widget.sellerId),
                             builder: (_, rSnap) {
-                              final m = rSnap.data ?? const {'avg': 0.0, 'count': 0};
-                              final avg = (m['avg'] as num?)?.toDouble() ?? 0.0;
-                              final cnt = (m['count'] as num?)?.toInt() ?? 0;
+                              final rating =
+                                  rSnap.data ?? const {'avg': 0.0, 'count': 0};
+                              final avg =
+                                  (rating['avg'] as num?)?.toDouble() ?? 0.0;
+                              final cnt =
+                                  (rating['count'] as num?)?.toInt() ?? 0;
                               return Row(
                                 children: [
-                                  const Icon(Icons.star, size: 18, color: Colors.amber),
+                                  const Icon(
+                                    Icons.star,
+                                    size: 18,
+                                    color: Colors.amber,
+                                  ),
                                   const SizedBox(width: 6),
                                   Text(
                                     avg.toStringAsFixed(1),
-                                    style: const TextStyle(fontWeight: FontWeight.w800),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
                                     '($cnt)',
                                     style: TextStyle(
-                                      color: Theme.of(context).colorScheme.outline,
+                                      color:
+                                          Theme.of(context).colorScheme.outline,
                                     ),
                                   ),
                                 ],
@@ -249,6 +296,8 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                 chats: chats,
                                 myUid: myUid,
                                 sellerId: widget.sellerId,
+                                sellerName: sellerName,
+                                sellerAvatar: photoUrl,
                               )
                           : null,
                       icon: const Icon(Icons.chat_bubble_outline),
@@ -258,9 +307,34 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 ],
               ),
               const SizedBox(height: 12),
+              StreamBuilder<bool>(
+                stream: myUid.isEmpty
+                    ? const Stream<bool>.empty()
+                    : admin.streamIsAdmin(myUid),
+                initialData: false,
+                builder: (context, adminSnap) {
+                  final canCopyId = isMe || adminSnap.data == true;
+                  if (!canCopyId) return const SizedBox.shrink();
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _CopyIdChip(
+                        label: 'ID',
+                        value: _shortUserId(widget.sellerId),
+                        onTap: () => _copyUserId(context, widget.sellerId),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  );
+                },
+              ),
               ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                tileColor:
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
                 leading: Icon(
                   Icons.rate_review_outlined,
                   color: Theme.of(context).colorScheme.primary,
@@ -286,18 +360,27 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                   controller: _tab,
                   children: [
                     _SellerListingsGrid(
-                      stream: listingsSvc.streamListingsByOwnerAll(widget.sellerId).map(
-                            (items) => items.where((x) => x.status == 'approved').toList(),
+                      stream: listingsSvc
+                          .streamListingsByOwnerAll(widget.sellerId)
+                          .map(
+                            (items) => items
+                                .where((x) => x.status == 'approved')
+                                .toList(),
                           ),
                       isArchive: false,
                     ),
                     _SellerListingsGrid(
-                      stream: listingsSvc.streamListingsByOwnerAll(widget.sellerId).map(
+                      stream: listingsSvc
+                          .streamListingsByOwnerAll(widget.sellerId)
+                          .map(
                             (items) => items
-                                .where((x) =>
-                                    x.status == 'deleted' ||
-                                    x.status == 'archived' ||
-                                    x.status == 'rejected')
+                                .where(
+                                  (x) =>
+                                      x.status == 'deleted' ||
+                                      x.status == 'archived' ||
+                                      x.status == 'sold' ||
+                                      x.status == 'rejected',
+                                )
                                 .toList(),
                           ),
                       isArchive: true,
@@ -321,8 +404,8 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = fallbackText.trim();
-    final letter = t.isEmpty ? 'U' : t[0].toUpperCase();
+    final text = fallbackText.trim();
+    final letter = text.isEmpty ? 'U' : text[0].toUpperCase();
 
     return Container(
       width: 64,
@@ -336,7 +419,10 @@ class _Avatar extends StatelessWidget {
             ? Center(
                 child: Text(
                   letter,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               )
             : Image.network(photoUrl!, fit: BoxFit.cover),
@@ -345,10 +431,70 @@ class _Avatar extends StatelessWidget {
   }
 }
 
+class _CopyIdChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  const _CopyIdChip({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+              ),
+              if (value.trim().isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+              ],
+              const SizedBox(width: 6),
+              Icon(
+                Icons.copy_rounded,
+                size: 16,
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _SellerListingsGrid extends StatelessWidget {
   final Stream<List<Listing>> stream;
   final bool isArchive;
-  const _SellerListingsGrid({required this.stream, required this.isArchive});
+
+  const _SellerListingsGrid({
+    required this.stream,
+    required this.isArchive,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -361,7 +507,8 @@ class _SellerListingsGrid extends StatelessWidget {
             child: Text('Ошибка объявлений: ${lSnap.error}'),
           );
         }
-        if (lSnap.connectionState == ConnectionState.waiting && !lSnap.hasData) {
+        if (lSnap.connectionState == ConnectionState.waiting &&
+            !lSnap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
@@ -440,10 +587,11 @@ class _ListingCard extends StatelessWidget {
       case 'sold':
         return 'Продано';
       case 'rejected':
-        return 'Отклонено';
+        return 'На исправлении';
       case 'deleted':
+        return 'Удалено админом';
       case 'archived':
-        return 'Снято';
+        return 'Снято с продажи';
       default:
         return 'Снято';
     }
@@ -454,8 +602,9 @@ class _ListingCard extends StatelessWidget {
       case 'sold':
         return Colors.green;
       case 'rejected':
-        return Colors.red;
+        return Colors.orange;
       case 'deleted':
+        return Colors.red;
       case 'archived':
         return Colors.grey;
       case 'pending':
@@ -466,14 +615,8 @@ class _ListingCard extends StatelessWidget {
   }
 
   String? _archiveNote(Listing listing) {
-    if (listing.status == 'rejected' && listing.rejectionReason.trim().isNotEmpty) {
-      return listing.rejectionReason.trim();
-    }
-    if (listing.status == 'sold') return 'Объявление отмечено как проданное';
-    if (listing.status == 'deleted' || listing.status == 'archived') {
-      return 'Объявление снято с публикации';
-    }
-    return null;
+    final note = listing.archiveNote.trim();
+    return note.isEmpty ? null : note;
   }
 
   @override
@@ -482,7 +625,7 @@ class _ListingCard extends StatelessWidget {
     final statusText = _statusLabel(listing.status);
     final statusColor = _statusColor(listing.status);
     final archiveNote = isArchive ? _archiveNote(listing) : null;
-    final image = (photo.isEmpty)
+    final image = photo.isEmpty
         ? Container(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
             child: const Center(child: Icon(Icons.image_outlined)),
@@ -510,24 +653,43 @@ class _ListingCard extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
           color: Theme.of(context).colorScheme.surface,
-          border: Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.18)),
+          border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(14)),
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
                     if (isArchive)
                       ColorFiltered(
                         colorFilter: const ColorFilter.matrix(<double>[
-                          0.2126, 0.7152, 0.0722, 0, 0,
-                          0.2126, 0.7152, 0.0722, 0, 0,
-                          0.2126, 0.7152, 0.0722, 0, 0,
-                          0, 0, 0, 1, 0,
+                          0.2126,
+                          0.7152,
+                          0.0722,
+                          0,
+                          0,
+                          0.2126,
+                          0.7152,
+                          0.0722,
+                          0,
+                          0,
+                          0.2126,
+                          0.7152,
+                          0.0722,
+                          0,
+                          0,
+                          0,
+                          0,
+                          0,
+                          1,
+                          0,
                         ]),
                         child: Opacity(opacity: 0.78, child: image),
                       )
@@ -552,11 +714,16 @@ class _ListingCard extends StatelessWidget {
                 children: [
                   if (isArchive) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(999),
                         color: statusColor.withValues(alpha: 0.14),
-                        border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+                        border: Border.all(
+                          color: statusColor.withValues(alpha: 0.35),
+                        ),
                       ),
                       child: Text(
                         statusText,

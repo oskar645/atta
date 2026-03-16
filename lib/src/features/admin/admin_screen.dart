@@ -626,18 +626,19 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
 
     setState(() => _busy = true);
     try {
-      await Supabase.instance.client
-          .from('listings')
-          .delete()
-          .eq('id', widget.listingId);
+      final body = selected.comment == null
+          ? selected.reason.message
+          : '${selected.reason.message}\n\nКомментарий модератора: ${selected.comment}';
+      await Supabase.instance.client.from('listings').update({
+        'status': 'deleted',
+        'rejection_reason': body,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', widget.listingId);
 
       String? notifyError;
       final ownerId = (widget.listingData['owner_id'] ?? '').toString();
       if (ownerId.trim().isNotEmpty) {
         try {
-          final body = selected.comment == null
-              ? selected.reason.message
-              : '${selected.reason.message}\n\nКомментарий модератора: ${selected.comment}';
           await notifications.sendPersonal(
                 userId: ownerId,
                 title: '🚫 Объявление удалено',
@@ -1052,8 +1053,10 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset + 20),
       children: [
         const Text(
           'Уведомления',
@@ -1105,11 +1108,17 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
+        Text(
+          'Скопируй ID в профиле пользователя и вставь сюда. Администратор видит ID на публичном профиле пользователя.',
+          style: TextStyle(color: Theme.of(context).colorScheme.outline),
+        ),
+        const SizedBox(height: 8),
 
         TextField(
           controller: _userIdCtrl,
           decoration: const InputDecoration(
-            labelText: 'user_id пользователя',
+            labelText: 'ID пользователя',
+            hintText: 'Например: 123e4567-e89b-12d3-a456-426614174000',
             border: OutlineInputBorder(),
           ),
         ),
@@ -1132,10 +1141,14 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
         ),
         const SizedBox(height: 8),
 
-        FilledButton.tonal(
-          onPressed: _sendingGlobal ? null : _sendGlobal,
-          child: Text(
-            _sendingGlobal ? 'Отправляем…' : 'Отправить ОБЩЕЕ уведомление',
+        SafeArea(
+          top: false,
+          minimum: const EdgeInsets.only(bottom: 12),
+          child: FilledButton.tonal(
+            onPressed: _sendingGlobal ? null : _sendGlobal,
+            child: Text(
+              _sendingGlobal ? 'Отправляем…' : 'Отправить ОБЩЕЕ уведомление',
+            ),
           ),
         ),
       ],

@@ -226,6 +226,31 @@ required this.createdAt,
 required this.updatedAt,
 });
 
+bool get isArchivedStatus =>
+status == 'sold' ||
+status == 'deleted' ||
+status == 'archived' ||
+status == 'rejected';
+
+bool get canOwnerEdit => status == 'approved' || status == 'rejected';
+
+String get archiveNote {
+final note = rejectionReason.trim();
+if (note.isNotEmpty) return note;
+switch (status) {
+case 'sold':
+return 'Объявление отмечено как проданное.';
+case 'deleted':
+return 'Объявление удалено администратором.';
+case 'archived':
+return 'Объявление снято с публикации.';
+case 'rejected':
+return 'Объявление отправлено на доработку.';
+default:
+return '';
+}
+}
+
 /// Для карточки (как ты хотел): только “последний уровень”
 /// Пример: "Чеченская..., Гудермесский..., село Шуани" -> "Шуани"
 String get cityShort {
