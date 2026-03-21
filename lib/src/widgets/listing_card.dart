@@ -7,18 +7,10 @@ import '../utils/price_formatter.dart';
 
 class ListingCard extends StatelessWidget {
   final Listing listing;
-
-  /// true если в избранном
   final bool isFav;
   final bool isSeen;
-
-  /// открыть объявление
   final VoidCallback onOpen;
-
-  /// нажали сердечко (передаём: сделать избранным или убрать)
   final ValueChanged<bool> onToggleFav;
-
-  /// сервис отзывов
   final ReviewsService reviews;
 
   const ListingCard({
@@ -31,41 +23,10 @@ class ListingCard extends StatelessWidget {
     required this.reviews,
   });
 
-  /// ✅ На карточке показываем только последнюю часть адреса:
-  /// "Чеченская республика, Гудермесский район, село Шуани" -> "Шуани"
-  /// "Москва" -> "Москва"
-  /// "г. Грозный" -> "Грозный"
-  String _shortCity(String raw) {
-    var s = raw.trim();
-    if (s.isEmpty) return '';
-
-    // если разделено запятыми — берём последнюю часть
-    if (s.contains(',')) {
-      s = s.split(',').last.trim();
-    }
-
-    // если разделено тире/дефисом — иногда тоже удобно брать последнюю часть
-    // (оставим мягко: только если это не "Ростов-на-Дону" и т.п. — поэтому не трогаем дефисы)
-
-    // убрать частые префиксы
-    s = s
-        .replaceAll(RegExp(r'^(г\.|город)\s+', caseSensitive: false), '')
-        .replaceAll(RegExp(r'^(с\.|село)\s+', caseSensitive: false), '')
-        .replaceAll(
-            RegExp(r'^(п\.|пос\.|поселок|посёлок)\s+', caseSensitive: false),
-            '')
-        .trim();
-
-    // если последняя часть получилась пустая — вернём исходное
-    return s.isEmpty ? raw.trim() : s;
-  }
-
   @override
   Widget build(BuildContext context) {
     final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
-
-    final cityRaw = listing.city.trim();
-    final cityShort = cityRaw.isEmpty ? '' : _shortCity(cityRaw);
+    final cityShort = listing.cityShort.trim();
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -80,7 +41,6 @@ class ListingCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              /// PHOTO
               ClipRRect(
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(12)),
@@ -117,35 +77,7 @@ class ListingCard extends StatelessWidget {
                                   ],
                                 ),
                               )
-                            : CachedNetworkImage(
-                                imageUrl: photo,
-                                fit: BoxFit.cover,
-                                placeholder: (_, __) => const Center(
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                ),
-                                errorWidget: (_, __, ___) => Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const Icon(
-                                        Icons.broken_image_outlined,
-                                        size: 34,
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        'Ошибка загрузки',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .outline,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
+                            : _ListingCardPhoto(photoUrl: photo),
                       ),
                       if (isSeen)
                         Positioned(
@@ -156,10 +88,7 @@ class ListingCard extends StatelessWidget {
                               horizontal: 8,
                               vertical: 4,
                             ),
-                            decoration: BoxDecoration(
-                              color: Colors.transparent,
-                              borderRadius: BorderRadius.circular(0),
-                            ),
+                            color: Colors.transparent,
                             child: const Text(
                               'Просмотрено',
                               style: TextStyle(
@@ -174,15 +103,12 @@ class ListingCard extends StatelessWidget {
                   ),
                 ),
               ),
-
-              /// INFO
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      /// title + fav
                       Row(
                         children: [
                           Expanded(
@@ -203,7 +129,9 @@ class ListingCard extends StatelessWidget {
                             child: IconButton(
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints.tightFor(
-                                  width: 28, height: 28),
+                                width: 28,
+                                height: 28,
+                              ),
                               onPressed: () => onToggleFav(!isFav),
                               icon: Icon(
                                 isFav ? Icons.favorite : Icons.favorite_border,
@@ -216,21 +144,17 @@ class ListingCard extends StatelessWidget {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 4),
-
-                      /// price
                       Text(
                         '${formatPrice(listing.price)} ₽',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w800),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-
                       const SizedBox(height: 4),
-
-                      /// rating seller
                       StreamBuilder<Map<String, dynamic>>(
                         stream: reviews.streamSellerRating(listing.ownerId),
                         builder: (context, rSnap) {
@@ -244,8 +168,10 @@ class ListingCard extends StatelessWidget {
                               const Icon(Icons.star,
                                   size: 14, color: Colors.amber),
                               const SizedBox(width: 4),
-                              Text(avg.toStringAsFixed(1),
-                                  style: const TextStyle(fontSize: 12)),
+                              Text(
+                                avg.toStringAsFixed(1),
+                                style: const TextStyle(fontSize: 12),
+                              ),
                               const SizedBox(width: 4),
                               Text(
                                 '($cnt)',
@@ -258,12 +184,9 @@ class ListingCard extends StatelessWidget {
                           );
                         },
                       ),
-
                       const SizedBox(height: 4),
-
-                      /// ✅ city (теперь коротко, как ты просил)
                       Text(
-                        cityRaw.isEmpty ? 'Город не указан' : cityShort,
+                        cityShort.isEmpty ? 'Город не указан' : cityShort,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -277,6 +200,45 @@ class ListingCard extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ListingCardPhoto extends StatelessWidget {
+  final String photoUrl;
+
+  const _ListingCardPhoto({required this.photoUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final outline = Theme.of(context).colorScheme.outline;
+
+    return CachedNetworkImage(
+      imageUrl: photoUrl,
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      placeholder: (_, __) => const Center(
+        child: CircularProgressIndicator(strokeWidth: 2),
+      ),
+      errorWidget: (_, __, ___) => Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.broken_image_outlined,
+              size: 34,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Ошибка загрузки',
+              style: TextStyle(
+                fontSize: 12,
+                color: outline,
+              ),
+            ),
+          ],
         ),
       ),
     );

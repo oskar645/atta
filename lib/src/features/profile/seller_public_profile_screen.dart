@@ -354,39 +354,38 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 },
               ),
               const SizedBox(height: 16),
-              SizedBox(
-                height: 560,
-                child: TabBarView(
-                  controller: _tab,
-                  children: [
-                    _SellerListingsGrid(
-                      stream: listingsSvc
-                          .streamListingsByOwnerAll(widget.sellerId)
-                          .map(
-                            (items) => items
-                                .where((x) => x.status == 'approved')
-                                .toList(),
-                          ),
-                      isArchive: false,
-                    ),
-                    _SellerListingsGrid(
-                      stream: listingsSvc
-                          .streamListingsByOwnerAll(widget.sellerId)
-                          .map(
-                            (items) => items
-                                .where(
-                                  (x) =>
-                                      x.status == 'deleted' ||
-                                      x.status == 'archived' ||
-                                      x.status == 'sold' ||
-                                      x.status == 'rejected',
-                                )
-                                .toList(),
-                          ),
-                      isArchive: true,
-                    ),
-                  ],
-                ),
+              AnimatedBuilder(
+                animation: _tab,
+                builder: (context, _) {
+                  final tabIndex = _tab.index;
+                  return tabIndex == 0
+                      ? _SellerListingsGrid(
+                          stream: listingsSvc
+                              .streamListingsByOwnerAll(widget.sellerId)
+                              .map(
+                                (items) => items
+                                    .where((x) => x.status == 'approved')
+                                    .toList(),
+                              ),
+                          isArchive: false,
+                        )
+                      : _SellerListingsGrid(
+                          stream: listingsSvc
+                              .streamListingsByOwnerAll(widget.sellerId)
+                              .map(
+                                (items) => items
+                                    .where(
+                                      (x) =>
+                                          x.status == 'deleted' ||
+                                          x.status == 'archived' ||
+                                          x.status == 'sold' ||
+                                          x.status == 'rejected',
+                                    )
+                                    .toList(),
+                              ),
+                          isArchive: true,
+                        );
+                },
               ),
             ],
           );
@@ -524,6 +523,8 @@ class _SellerListingsGrid extends StatelessWidget {
 
         final grid = GridView.builder(
           itemCount: items.length,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
             mainAxisSpacing: 10,
@@ -563,7 +564,7 @@ class _SellerListingsGrid extends StatelessWidget {
                 ),
               ),
             ),
-            Expanded(child: grid),
+            grid,
           ],
         );
       },
