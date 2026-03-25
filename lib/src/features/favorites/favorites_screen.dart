@@ -1,9 +1,9 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:chestore2/src/features/listings/listing_detail_screen.dart';
-import 'package:chestore2/src/models/listing.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/favorites_service.dart';
-import 'package:chestore2/src/services/listings_service.dart';
+import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/favorites_service.dart';
+import 'package:atta/src/services/listings_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 

@@ -2,20 +2,20 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-import 'package:chestore2/src/constants/categories.dart';
-import 'package:chestore2/src/data/auto_catalog.dart';
-import 'package:chestore2/src/data/electronics_catalog.dart';
-import 'package:chestore2/src/features/listings/pick_location_screen.dart';
-import 'package:chestore2/src/models/car_specs.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/listings_service.dart';
-import 'package:chestore2/src/services/profile_service.dart';
+import 'package:atta/src/constants/categories.dart';
+import 'package:atta/src/data/auto_catalog.dart';
+import 'package:atta/src/data/electronics_catalog.dart';
+import 'package:atta/src/features/listings/pick_location_screen.dart';
+import 'package:atta/src/models/car_specs.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/profile_service.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' as latlng;
 import 'package:provider/provider.dart';
-import 'package:chestore2/src/widgets/yandex_address_field.dart';
+import 'package:atta/src/widgets/yandex_address_field.dart';
 
 class AddListingScreen extends StatefulWidget {
   const AddListingScreen({super.key});
@@ -70,7 +70,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
   String _carFuel = 'Бензин';
   String _carTransmission = 'Автомат';
   String _carDrive = 'Передний';
-  String _carCondition = 'Хорошее';
+  String _carCondition = 'Все';
   String _carColor = 'Чёрный';
   bool? _carCleared; // растаможен (null = не указано)
 
@@ -134,12 +134,51 @@ class _AddListingScreenState extends State<AddListingScreen> {
   static const _drives = <String>['Передний', 'Задний', 'Полный'];
 
   static const _conditions = <String>[
-    'Отличное',
-    'Хорошее',
-    'Среднее',
-    'Требует ремонта',
-    'Небитый',
-    'Битый',
+    'Все',
+    'Битые',
+    'Не битый',
+  ];
+
+  static const _engineVolumes = <String>[
+    '0.6',
+    '0.7',
+    '0.8',
+    '1.0',
+    '1.2',
+    '1.3',
+    '1.4',
+    '1.5',
+    '1.6',
+    '1.8',
+    '2.0',
+    '2.2',
+    '2.4',
+    '2.5',
+    '2.7',
+    '3.0',
+    '3.2',
+    '3.5',
+    '3.7',
+    '4.0',
+    '4.2',
+    '4.4',
+    '4.6',
+    '5.0',
+    '5.5',
+    '6.0',
+    '6.2',
+    '6.5',
+    '7.0',
+    '8.0',
+    '10.0',
+    '12.0',
+    '15.0',
+  ];
+
+  static final _powerValues = <String>[
+    for (int i = 50; i <= 200; i += 10) '$i',
+    for (int i = 225; i <= 500; i += 25) '$i',
+    for (int i = 550; i <= 1500; i += 50) '$i',
   ];
 
   static const _colors = <String>[
@@ -412,7 +451,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     _carFuel = 'Бензин';
     _carTransmission = 'Автомат';
     _carDrive = 'Передний';
-    _carCondition = 'Хорошее';
+    _carCondition = 'Все';
     _carColor = 'Чёрный';
     _carCleared = null;
 
@@ -840,6 +879,92 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool _validDouble(String s) =>
       double.tryParse(s.trim().replaceAll(',', '.')) != null;
 
+  List<String> _itemsWithCurrentValue(List<String> items, String current) {
+    final normalized = current.trim().replaceAll(',', '.');
+    if (normalized.isEmpty || items.contains(normalized)) return items;
+    return [normalized, ...items];
+  }
+
+  Future<void> _openValuePickerSheet({
+    required String title,
+    required List<String> items,
+    required String currentValue,
+    required ValueChanged<String> onSelected,
+    String Function(String value)? labelBuilder,
+  }) async {
+    var selected = currentValue.trim();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: StatefulBuilder(
+          builder: (ctx, setModal) => SizedBox(
+            height: MediaQuery.of(ctx).size.height * 0.52,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 12, 8),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                        tooltip: 'Назад',
+                      ),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final value = items[i];
+                      final isSelected = value == selected;
+                      final text = labelBuilder?.call(value) ?? value;
+                      return ListTile(
+                        title: Text(text),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: Colors.blue)
+                            : null,
+                        onTap: () => setModal(() => selected = value),
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: FilledButton(
+                    onPressed: () {
+                      if (selected.isEmpty && items.isNotEmpty) {
+                        selected = items.first;
+                      }
+                      onSelected(selected);
+                      Navigator.pop(ctx);
+                    },
+                    child: const Text('Выбрать'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _save() async {
     final title = _title.text.trim();
     final city = _city.text.trim();
@@ -1059,7 +1184,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
           padding: EdgeInsets.only(
             left: 12,
             right: 12,
-            bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
+            bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
           ),
           child: FilledButton(
             onPressed: _saving ? null : _save,
@@ -1261,22 +1386,31 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ),
             const SizedBox(height: 12),
 
-            TextField(
-              controller: _carEngine,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Объём двигателя (л), например: 2.5',
+            _selectTile(
+              title: 'Объём двигателя',
+              value: _carEngine.text.trim().isEmpty
+                  ? ''
+                  : '${_carEngine.text.trim().replaceAll(',', '.')} л',
+              onTap: () => _openValuePickerSheet(
+                title: 'Объём двигателя',
+                items: _itemsWithCurrentValue(_engineVolumes, _carEngine.text),
+                currentValue: _carEngine.text.trim().replaceAll(',', '.'),
+                labelBuilder: (value) => '$value л',
+                onSelected: (value) => setState(() => _carEngine.text = value),
               ),
             ),
             const SizedBox(height: 12),
 
-            TextField(
-              controller: _carPower,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Мощность (л.с.), например: 181',
+            _selectTile(
+              title: 'Мощность',
+              value:
+                  _carPower.text.trim().isEmpty ? '' : '${_carPower.text.trim()} л.с.',
+              onTap: () => _openValuePickerSheet(
+                title: 'Мощность',
+                items: _itemsWithCurrentValue(_powerValues, _carPower.text),
+                currentValue: _carPower.text.trim(),
+                labelBuilder: (value) => '$value л.с.',
+                onSelected: (value) => setState(() => _carPower.text = value),
               ),
             ),
             const SizedBox(height: 12),
@@ -1329,12 +1463,13 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ],
               onChanged: (v) {
                 setState(() {
-                  if (v == 'Да')
+                  if (v == 'Да') {
                     _carCleared = true;
-                  else if (v == 'Нет')
+                  } else if (v == 'Нет') {
                     _carCleared = false;
-                  else
+                  } else {
                     _carCleared = null;
+                  }
                 });
               },
               decoration: const InputDecoration(

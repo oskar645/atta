@@ -1,4 +1,4 @@
--- CheStore presence/online status
+-- ATTA presence/online status
 -- Run in Supabase SQL Editor
 
 create table if not exists public.user_presence (

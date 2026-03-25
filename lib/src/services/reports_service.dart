@@ -1,6 +1,6 @@
 ﻿import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
-import 'package:chestore2/src/services/notifications_service.dart';
+import 'package:atta/src/services/notifications_service.dart';
 
 class ReportsService {
   final SupabaseClient _db = Supabase.instance.client;

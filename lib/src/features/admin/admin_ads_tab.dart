@@ -6,10 +6,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'package:chestore2/src/models/feed_ad.dart';
-import 'package:chestore2/src/services/feed_ads_service.dart';
-import 'package:chestore2/src/utils/app_snackbar.dart';
-import 'package:chestore2/src/widgets/feed_ad_banner.dart';
+import 'package:atta/src/models/feed_ad.dart';
+import 'package:atta/src/services/feed_ads_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/feed_ad_banner.dart';
 
 class AdminAdsTab extends StatefulWidget {
   const AdminAdsTab({super.key});

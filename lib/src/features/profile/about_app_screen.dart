@@ -11,12 +11,12 @@ class AboutAppScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: const [
           Text(
-            'CheStore',
+            'ATTA',
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
           ),
           SizedBox(height: 10),
           Text(
-            'CheStore — это простой и удобный сервис для размещения объявлений. '
+            'ATTA — это простой и удобный сервис для размещения объявлений. '
             'Здесь можно продавать и покупать автомобили, вещи для дома, технику, одежду и многое другое рядом с вами.',
           ),
           SizedBox(height: 16),

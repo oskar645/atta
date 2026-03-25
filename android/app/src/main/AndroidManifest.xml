@@ -12,7 +12,7 @@
 
     <application
         android:name="${applicationName}"
-        android:label="chestore2"
+        android:label="ATTA"
         android:icon="@mipmap/ic_launcher">
 
         <activity

@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:chestore2/src/models/chat.dart';
-import 'package:chestore2/src/models/message.dart';
+import 'package:atta/src/models/chat.dart';
+import 'package:atta/src/models/message.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 

@@ -4,25 +4,25 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:chestore2/src/features/auth/auth_gate.dart';
-import 'package:chestore2/src/services/admin_service.dart';
+import 'package:atta/src/features/auth/auth_gate.dart';
+import 'package:atta/src/services/admin_service.dart';
 
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/chat_service.dart';
-import 'package:chestore2/src/services/favorites_service.dart';
-import 'package:chestore2/src/services/feed_ads_service.dart';
-import 'package:chestore2/src/services/listing_history_service.dart';
-import 'package:chestore2/src/services/listings_service.dart';
-import 'package:chestore2/src/services/profile_service.dart';
-import 'package:chestore2/src/services/theme_service.dart';
-import 'package:chestore2/src/services/reviews_service.dart';
-import 'package:chestore2/src/services/support_service.dart';
-import 'package:chestore2/src/services/reports_service.dart';
-import 'package:chestore2/src/services/notifications_service.dart';
-import 'package:chestore2/src/services/presence_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/favorites_service.dart';
+import 'package:atta/src/services/feed_ads_service.dart';
+import 'package:atta/src/services/listing_history_service.dart';
+import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/theme_service.dart';
+import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/services/support_service.dart';
+import 'package:atta/src/services/reports_service.dart';
+import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/presence_service.dart';
 
-class CheStoreApp extends StatelessWidget {
-  const CheStoreApp({super.key});
+class AttaApp extends StatelessWidget {
+  const AttaApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -63,7 +63,7 @@ class CheStoreApp extends StatelessWidget {
       child: Consumer<ThemeService>(
         builder: (_, theme, __) {
           return MaterialApp(
-            title: 'CheStore',
+            title: 'ATTA',
             debugShowCheckedModeBanner: false,
             theme: base,
             darkTheme: darkBase,

@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -6,23 +8,23 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
-import 'package:chestore2/src/constants/categories.dart';
-import 'package:chestore2/src/data/auto_catalog.dart';
-import 'package:chestore2/src/features/listings/add_listing_screen.dart';
-import 'package:chestore2/src/features/listings/listing_detail_screen.dart';
-import 'package:chestore2/src/features/notifications/notifications_screen.dart';
-import 'package:chestore2/src/models/feed_ad.dart';
-import 'package:chestore2/src/models/listing.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/favorites_service.dart';
-import 'package:chestore2/src/services/feed_ads_service.dart';
-import 'package:chestore2/src/services/home_filters_session.dart';
-import 'package:chestore2/src/services/listing_history_service.dart';
-import 'package:chestore2/src/services/listings_service.dart';
-import 'package:chestore2/src/services/notifications_service.dart';
-import 'package:chestore2/src/services/reviews_service.dart';
-import 'package:chestore2/src/widgets/feed_ad_banner.dart';
-import 'package:chestore2/src/widgets/listing_card.dart';
+import 'package:atta/src/constants/categories.dart';
+import 'package:atta/src/data/auto_catalog.dart';
+import 'package:atta/src/features/listings/add_listing_screen.dart';
+import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/features/notifications/notifications_screen.dart';
+import 'package:atta/src/models/feed_ad.dart';
+import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/favorites_service.dart';
+import 'package:atta/src/services/feed_ads_service.dart';
+import 'package:atta/src/services/home_filters_session.dart';
+import 'package:atta/src/services/listing_history_service.dart';
+import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/widgets/feed_ad_banner.dart';
+import 'package:atta/src/widgets/listing_card.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -132,19 +134,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted || res == null) return;
 
-    setState(() {
-      _category = res.category;
-      _subcategory = res.subcategory;
-      _location = res.location;
-      _preferLocationFirst = res.preferFirst;
-      _radiusKm = res.radiusKm;
-      _autoBrand = res.autoBrand;
-      _autoModel = res.autoModel;
-      _autoCondition = res.autoCondition;
-      _autoMileageTo = res.autoMileageTo;
-      _onlyUncrashed = res.onlyUncrashed;
-    });
-    _persistFilters();
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FilteredListingsScreen(
+          search: _search,
+          filters: res,
+        ),
+      ),
+    );
   }
 
   @override
@@ -164,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         centerTitle: false,
-        title: const Text('CheStore'),
+        title: const _HomeBrandTitle(),
         actions: [
           StreamBuilder<int>(
             stream: notifications.streamUnreadBadgeCount(user.uid),
@@ -543,6 +540,12 @@ class _CategoryRow extends StatelessWidget {
           return ChoiceChip(
             label: Text(c),
             selected: isSel,
+            selectedColor: Colors.blue,
+            checkmarkColor: Colors.white,
+            labelStyle: TextStyle(
+              color: isSel ? Colors.white : null,
+              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+            ),
             onSelected: (_) => onSelect(c),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             visualDensity: VisualDensity.compact,
@@ -551,6 +554,99 @@ class _CategoryRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _HomeBrandTitle extends StatelessWidget {
+  const _HomeBrandTitle();
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.headlineSmall?.copyWith(
+          color: const Color(0xFFF8F5EF),
+          fontSize: 34,
+          fontWeight: FontWeight.w600,
+          fontStyle: FontStyle.italic,
+          fontFamily: 'serif',
+          letterSpacing: -0.4,
+          height: 1,
+          shadows: const [
+            Shadow(
+              color: Color(0x22000000),
+              blurRadius: 12,
+              offset: Offset(0, 4),
+            ),
+          ],
+        );
+
+    return SizedBox(
+      height: 42,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Text('Atta', style: style),
+          Positioned(
+            left: 16,
+            right: -8,
+            bottom: -2,
+            child: IgnorePointer(
+              child: SizedBox(
+                height: 14,
+                child: CustomPaint(painter: _BrandFlourishPainter()),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BrandFlourishPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFF8F5EF).withValues(alpha: 0.95)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round;
+
+    final path = ui.Path()
+      ..moveTo(0, size.height * 0.62)
+      ..cubicTo(
+        size.width * 0.14,
+        size.height * 0.98,
+        size.width * 0.34,
+        size.height * 0.98,
+        size.width * 0.54,
+        size.height * 0.56,
+      )
+      ..cubicTo(
+        size.width * 0.66,
+        size.height * 0.3,
+        size.width * 0.83,
+        size.height * 0.4,
+        size.width * 0.93,
+        size.height * 0.62,
+      )
+      ..cubicTo(
+        size.width * 0.98,
+        size.height * 0.74,
+        size.width * 0.97,
+        size.height * 0.18,
+        size.width * 0.88,
+        size.height * 0.14,
+      );
+
+    canvas.drawPath(path, paint);
+
+    final dotPaint = Paint()
+      ..color = const Color(0xFFF8F5EF).withValues(alpha: 0.95)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(size.width * 0.8, size.height * 0.8), 1.4, dotPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 // =====================
@@ -581,6 +677,139 @@ class _HomeFilters {
     required this.autoMileageTo,
     required this.onlyUncrashed,
   });
+}
+
+class _FilteredListingsScreen extends StatelessWidget {
+  final String search;
+  final _HomeFilters filters;
+
+  const _FilteredListingsScreen({
+    required this.search,
+    required this.filters,
+  });
+
+  ListingFeedFilters get _feedFilters => ListingFeedFilters(
+        category: filters.category,
+        search: search,
+        subcategory: filters.subcategory,
+        location: filters.location,
+        preferLocationFirst: filters.preferFirst,
+        radiusKm: filters.radiusKm,
+        autoBrand: filters.autoBrand,
+        autoModel: filters.autoModel,
+        autoCondition: filters.autoCondition,
+        autoMileageTo: filters.autoMileageTo,
+        onlyUncrashed: filters.onlyUncrashed,
+      );
+
+  String get _summaryText {
+    final parts = <String>[];
+
+    if (filters.category.trim().isNotEmpty && filters.category != 'Все') {
+      parts.add(filters.category);
+    }
+    if (filters.subcategory.trim().isNotEmpty && filters.subcategory != 'Все') {
+      parts.add(filters.subcategory);
+    }
+    if (filters.autoBrand.trim().isNotEmpty) {
+      parts.add(filters.autoBrand);
+    }
+    if (filters.autoModel.trim().isNotEmpty) {
+      parts.add(filters.autoModel);
+    }
+    if (filters.autoCondition.trim().isNotEmpty) {
+      parts.add(filters.autoCondition);
+    }
+    if (filters.autoMileageTo != null) {
+      parts.add('до ${filters.autoMileageTo} км');
+    }
+    if (filters.onlyUncrashed) {
+      parts.add('не битые');
+    }
+    if (filters.location.trim().isNotEmpty) {
+      parts.add(filters.location);
+    }
+    if (search.trim().isNotEmpty) {
+      parts.add('поиск: $search');
+    }
+
+    if (parts.isEmpty) {
+      return 'Все объявления';
+    }
+
+    return parts.join(' • ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final listings = context.read<ListingsService>();
+    final favs = context.read<FavoritesService>();
+    final feedAds = context.read<FeedAdsService>();
+    final history = context.watch<ListingHistoryService>();
+    final reviews = context.read<ReviewsService>();
+    final user = context.read<AuthService>().currentUser!;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Результаты поиска')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _summaryText,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).textTheme.bodySmall?.color?.withValues(alpha: 0.75),
+                    ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<Set<String>>(
+              stream: favs.streamFavoriteIds(user.uid),
+              builder: (context, favSnap) {
+                final favIds = favSnap.data ?? <String>{};
+
+                return StreamBuilder<List<Listing>>(
+                  stream: listings.streamListings(
+                    category: filters.category,
+                    search: search,
+                    filters: _feedFilters,
+                  ),
+                  builder: (context, snap) {
+                    if (!snap.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final items = snap.data!;
+                    if (items.isEmpty) {
+                      return const Center(child: Text('Ничего не найдено'));
+                    }
+
+                    return StreamBuilder<FeedAd?>(
+                      stream: feedAds.streamActiveAd(),
+                      builder: (context, adSnap) {
+                        return _HomeFeedView(
+                          items: items,
+                          ad: adSnap.data,
+                          favIds: favIds,
+                          history: history,
+                          reviews: reviews,
+                          favs: favs,
+                          userId: user.uid,
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _FiltersScreen extends StatefulWidget {
@@ -1102,7 +1331,7 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
                       TileLayer(
                         urlTemplate:
                             'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.chestore2',
+                        userAgentPackageName: 'com.example.atta',
                       ),
                       MarkerLayer(
                         markers: [

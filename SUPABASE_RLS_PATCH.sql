@@ -1,4 +1,4 @@
--- CHESTORE2 incremental RLS/permissions patch
+-- ATTA incremental RLS/permissions patch
 -- Run in Supabase SQL Editor
 
 create extension if not exists pgcrypto;

@@ -1,8 +1,8 @@
-import 'package:chestore2/src/features/listings/listing_detail_screen.dart';
-import 'package:chestore2/src/features/profile/seller_public_profile_screen.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/reports_service.dart';
-import 'package:chestore2/src/utils/app_snackbar.dart';
+import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/reports_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;

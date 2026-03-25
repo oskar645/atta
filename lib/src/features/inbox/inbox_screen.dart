@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
-import 'package:chestore2/src/features/inbox/chat_screen.dart';
-import 'package:chestore2/src/features/support/support_screen.dart';
-import 'package:chestore2/src/models/chat.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/chat_service.dart';
-import 'package:chestore2/src/services/presence_service.dart';
-import 'package:chestore2/src/services/profile_service.dart';
+import 'package:atta/src/features/inbox/chat_screen.dart';
+import 'package:atta/src/features/support/support_screen.dart';
+import 'package:atta/src/models/chat.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/presence_service.dart';
+import 'package:atta/src/services/profile_service.dart';
 
 class InboxScreen extends StatelessWidget {
   const InboxScreen({super.key});

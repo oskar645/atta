@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
 
-import 'package:chestore2/src/models/feed_ad.dart';
+import 'package:atta/src/models/feed_ad.dart';
 
 class FeedAdBanner extends StatelessWidget {
   final FeedAd ad;

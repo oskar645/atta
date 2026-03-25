@@ -1,13 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:chestore2/src/features/admin/admin_screen.dart';
-import 'package:chestore2/src/features/reviews/seller_reviews_screen.dart';
-import 'package:chestore2/src/features/profile/settings_screen.dart';
-import 'package:chestore2/src/services/admin_service.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/profile_service.dart';
-import 'package:chestore2/src/services/theme_service.dart';
+import 'package:atta/src/features/admin/admin_screen.dart';
+import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
+import 'package:atta/src/features/profile/settings_screen.dart';
+import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/theme_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';

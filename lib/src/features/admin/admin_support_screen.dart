@@ -1,9 +1,9 @@
 // lib/src/features/admin/admin_support_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:chestore2/src/features/profile/seller_public_profile_screen.dart';
-import 'package:chestore2/src/services/support_service.dart';
-import 'package:chestore2/src/utils/app_snackbar.dart';
+import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
+import 'package:atta/src/services/support_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 
 class AdminSupportTab extends StatelessWidget {
   const AdminSupportTab({super.key});

@@ -1,8 +1,8 @@
 // lib/src/services/listings_service.dart
 import 'dart:io';
 
-import 'package:chestore2/src/models/car_specs.dart';
-import 'package:chestore2/src/models/listing.dart';
+import 'package:atta/src/models/car_specs.dart';
+import 'package:atta/src/models/listing.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';

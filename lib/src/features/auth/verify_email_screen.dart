@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:chestore2/src/services/profile_service.dart';
+import 'package:atta/src/services/profile_service.dart';
 
 class VerifyEmailScreen extends StatefulWidget {
   final String email;

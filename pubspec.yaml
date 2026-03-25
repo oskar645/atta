@@ -1,5 +1,5 @@
-name: chestore2
-description: CheStore MVP - classifieds app (Flutter + Supabase)
+name: atta
+description: ATTA MVP - classifieds app (Flutter + Supabase)
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   # Supabase
   supabase_flutter: ^2.5.6
 

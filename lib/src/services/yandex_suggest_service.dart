@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-import 'package:chestore2/src/secrets/yandex_suggest_key.dart';
+import 'package:atta/src/secrets/yandex_suggest_key.dart';
 
 class YandexAddressSuggestion {
   final String value;

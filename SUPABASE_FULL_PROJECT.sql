@@ -1,4 +1,4 @@
--- CheStore: full SQL baseline (safe idempotent version)
+-- ATTA: full SQL baseline (safe idempotent version)
 -- Run in Supabase SQL Editor
 
 create extension if not exists pgcrypto;

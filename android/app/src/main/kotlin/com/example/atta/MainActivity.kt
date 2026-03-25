@@ -1,4 +1,4 @@
-package com.example.chestore2
+package com.example.atta
 
 import io.flutter.embedding.android.FlutterActivity
 

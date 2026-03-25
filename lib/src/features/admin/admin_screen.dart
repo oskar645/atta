@@ -2,13 +2,13 @@
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:chestore2/src/features/admin/admin_reports_screen.dart';
-import 'package:chestore2/src/features/admin/admin_ads_tab.dart';
+import 'package:atta/src/features/admin/admin_reports_screen.dart';
+import 'package:atta/src/features/admin/admin_ads_tab.dart';
 import 'admin_support_screen.dart';
-import 'package:chestore2/src/services/admin_service.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/notifications_service.dart';
-import 'package:chestore2/src/utils/app_snackbar.dart';
+import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -325,8 +325,15 @@ class _DashboardTab extends StatelessWidget {
 // ----------------
 // 1) МОДЕРАЦИЯ
 // ----------------
-class _ModerationTab extends StatelessWidget {
+class _ModerationTab extends StatefulWidget {
   const _ModerationTab();
+
+  @override
+  State<_ModerationTab> createState() => _ModerationTabState();
+}
+
+class _ModerationTabState extends State<_ModerationTab> {
+  final Set<String> _handledIds = <String>{};
 
   Stream<List<Map<String, dynamic>>> _getPendingListings() {
     return Supabase.instance.client
@@ -349,7 +356,9 @@ class _ModerationTab extends StatelessWidget {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final docs = snap.data!;
+        final docs = snap.data!
+            .where((doc) => !_handledIds.contains((doc['id'] ?? '').toString()))
+            .toList();
         if (docs.isEmpty) {
           return const Center(child: Text('Нет объявлений на модерации'));
         }
@@ -373,8 +382,8 @@ class _ModerationTab extends StatelessWidget {
                 : <String>[];
 
             return InkWell(
-              onTap: () {
-                Navigator.push(
+              onTap: () async {
+                final handled = await Navigator.push<bool>(
                   context,
                   MaterialPageRoute(
                     builder: (_) => AdminListingReviewScreen(
@@ -383,6 +392,9 @@ class _ModerationTab extends StatelessWidget {
                     ),
                   ),
                 );
+                if (handled == true && mounted) {
+                  setState(() => _handledIds.add(id));
+                }
               },
               child: Card(
                 child: Padding(
@@ -486,15 +498,15 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     _ModerationRejectReason(
       label: 'Не по теме сайта',
       rejectionReason:
-          'Товар или услуга не подходит для размещения на площадке CheStore.',
+          'Товар или услуга не подходит для размещения на площадке ATTA.',
       notificationBody:
-          'Ваше объявление отклонено: эта категория товара/услуги не размещается на CheStore.',
+          'Ваше объявление отклонено: эта категория товара/услуги не размещается на ATTA.',
     ),
     _ModerationRejectReason(
       label: 'Запрещённый товар',
       rejectionReason: 'Запрещённый к продаже товар.',
       notificationBody:
-          'Ваше объявление отклонено: товар запрещён к размещению правилами CheStore.',
+          'Ваше объявление отклонено: товар запрещён к размещению правилами ATTA.',
     ),
   ];
 
@@ -502,7 +514,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     _ModerationDeleteReason(
       label: 'Запрещенный товар',
       message:
-          'Ваше объявление удалено модератором: товар не разрешен правилами CheStore.',
+          'Ваше объявление удалено модератором: товар не разрешен правилами ATTA.',
     ),
     _ModerationDeleteReason(
       label: 'Спам/дубликат',
@@ -529,7 +541,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         'rejection_reason': null,
       }).eq('id', widget.listingId);
 
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
       debugPrint('Ошибка одобрения: $e');
     } finally {
@@ -573,7 +585,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
           isError: true,
         );
       }
-      Navigator.pop(context);
+      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Ошибка отклонения: $e', isError: true);
@@ -659,7 +671,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
           isError: true,
         );
       }
-      Navigator.pop(context);
+      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Ошибка удаления: $e', isError: true);
@@ -980,7 +992,7 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
     {
       'label': 'Обновление',
       'body':
-          'Скоро выйдет обновление CheStore: улучшим стабильность и добавим новые возможности. Спасибо, что пользуетесь приложением!',
+          'Скоро выйдет обновление ATTA: улучшим стабильность и добавим новые возможности. Спасибо, что пользуетесь приложением!',
     },
     {
       'label': 'Поддержка',

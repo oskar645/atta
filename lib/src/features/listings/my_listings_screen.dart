@@ -1,11 +1,11 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:chestore2/src/features/favorites/favorites_screen.dart';
-import 'package:chestore2/src/features/listings/add_listing_screen.dart';
-import 'package:chestore2/src/features/listings/edit_listing_screen.dart';
-import 'package:chestore2/src/features/listings/listing_detail_screen.dart';
-import 'package:chestore2/src/models/listing.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/listings_service.dart';
+import 'package:atta/src/features/favorites/favorites_screen.dart';
+import 'package:atta/src/features/listings/add_listing_screen.dart';
+import 'package:atta/src/features/listings/edit_listing_screen.dart';
+import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/listings_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -289,7 +289,7 @@ class _ArchiveListingDialogState extends State<_ArchiveListingDialog> {
   static const List<_ArchiveDecision> _options = [
     _ArchiveDecision(
       status: 'sold',
-      note: 'Продано через CheStore.',
+      note: 'Продано через ATTA.',
       successMessage: 'Объявление перенесено в архив как проданное',
     ),
     _ArchiveDecision(
@@ -347,7 +347,7 @@ class _ArchiveListingDialogState extends State<_ArchiveListingDialog> {
 
   String _labelFor(_ArchiveDecision decision) {
     switch (decision.note) {
-      case 'Продано через CheStore.':
+      case 'Продано через ATTA.':
         return 'Продано в приложении';
       case 'Продано в другом месте.':
         return 'Продано в другом месте';

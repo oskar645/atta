@@ -1,14 +1,14 @@
 ﻿import 'dart:async';
 
-import 'package:chestore2/src/features/favorites/favorites_screen.dart';
-import 'package:chestore2/src/features/home/home_screen.dart';
-import 'package:chestore2/src/features/inbox/inbox_screen.dart';
-import 'package:chestore2/src/features/listings/my_listings_screen.dart';
-import 'package:chestore2/src/features/profile/profile_screen.dart';
-import 'package:chestore2/src/services/admin_service.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/chat_service.dart';
-import 'package:chestore2/src/services/presence_service.dart';
+import 'package:atta/src/features/favorites/favorites_screen.dart';
+import 'package:atta/src/features/home/home_screen.dart';
+import 'package:atta/src/features/inbox/inbox_screen.dart';
+import 'package:atta/src/features/listings/my_listings_screen.dart';
+import 'package:atta/src/features/profile/profile_screen.dart';
+import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/presence_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 

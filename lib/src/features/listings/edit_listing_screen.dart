@@ -1,9 +1,9 @@
-import 'package:chestore2/src/data/auto_catalog.dart';
+import 'package:atta/src/data/auto_catalog.dart';
 
-import 'package:chestore2/src/features/listings/pick_location_screen.dart';
-import 'package:chestore2/src/models/car_specs.dart';
-import 'package:chestore2/src/models/listing.dart';
-import 'package:chestore2/src/services/auth_service.dart';
+import 'package:atta/src/features/listings/pick_location_screen.dart';
+import 'package:atta/src/models/car_specs.dart';
+import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:latlong2/latlong.dart' as latlng;

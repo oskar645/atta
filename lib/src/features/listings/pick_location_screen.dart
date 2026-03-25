@@ -6,7 +6,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
-import 'package:chestore2/src/services/yandex_suggest_service.dart';
+import 'package:atta/src/services/yandex_suggest_service.dart';
 
 class PickLocationScreen extends StatefulWidget {
   final String? initialAddress;
@@ -295,7 +295,7 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
       children: [
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.example.chestore2',
+          userAgentPackageName: 'com.example.atta',
         ),
         MarkerLayer(
           markers: [

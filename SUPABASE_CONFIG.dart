@@ -1,5 +1,5 @@
 /// ========================================
-/// SUPABASE CONFIGURATION FOR CHESTORE2
+/// SUPABASE CONFIGURATION FOR ATTA
 /// ========================================
 ///
 /// Этот файл содержит конфигурацию для подключения к Supabase.

@@ -1,7 +1,7 @@
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/profile_service.dart';
-import 'package:chestore2/src/services/support_service.dart';
-import 'package:chestore2/src/utils/app_snackbar.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/support_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 

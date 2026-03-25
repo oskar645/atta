@@ -1,5 +1,5 @@
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/notifications_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/notifications_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;

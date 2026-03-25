@@ -1,19 +1,19 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:chestore2/src/features/inbox/chat_screen.dart';
-import 'package:chestore2/src/features/listings/edit_listing_screen.dart';
-import 'package:chestore2/src/features/listings/photo_viewer_screen.dart';
-import 'package:chestore2/src/features/profile/seller_public_profile_screen.dart';
-import 'package:chestore2/src/features/reviews/seller_reviews_screen.dart';
-import 'package:chestore2/src/models/listing.dart';
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/chat_service.dart';
-import 'package:chestore2/src/services/favorites_service.dart';
-import 'package:chestore2/src/services/listing_history_service.dart';
-import 'package:chestore2/src/services/listings_service.dart';
-import 'package:chestore2/src/services/presence_service.dart';
-import 'package:chestore2/src/services/reviews_service.dart';
-import 'package:chestore2/src/utils/price_formatter.dart';
-import 'package:chestore2/src/widgets/listing_card.dart';
+import 'package:atta/src/features/inbox/chat_screen.dart';
+import 'package:atta/src/features/listings/edit_listing_screen.dart';
+import 'package:atta/src/features/listings/photo_viewer_screen.dart';
+import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
+import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
+import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/favorites_service.dart';
+import 'package:atta/src/services/listing_history_service.dart';
+import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/presence_service.dart';
+import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/widgets/listing_card.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -214,7 +214,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             DropdownButtonFormField<String>(
-              value: reason,
+              initialValue: reason,
               items: reasons
                   .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                   .toList(),
@@ -272,31 +272,38 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     String title, {
     String? photoUrl,
   }) async {
-    final shareLink = 'https://chestore.app/listing/$listingId';
+    final shareLink = 'https://atta.app/listing/$listingId';
 
-    final message = 'Посмотри это объявление в CheStore:\n$shareLink';
+    final message = 'Посмотри это объявление в ATTA:\n$shareLink';
 
     try {
       final url = (photoUrl ?? '').trim();
       if (url.isNotEmpty) {
         final res = await http.get(Uri.parse(url));
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          await Share.shareXFiles(
-            [
-              XFile.fromData(
-                res.bodyBytes,
-                name: 'listing.jpg',
-                mimeType: 'image/jpeg',
-              ),
-            ],
-            text: message,
-            subject: title,
+          await SharePlus.instance.share(
+            ShareParams(
+              files: [
+                XFile.fromData(
+                  res.bodyBytes,
+                  name: 'listing.jpg',
+                  mimeType: 'image/jpeg',
+                ),
+              ],
+              text: message,
+              subject: title,
+            ),
           );
           return;
         }
       }
 
-      await Share.share(message, subject: title);
+      await SharePlus.instance.share(
+        ShareParams(
+          text: message,
+          subject: title,
+        ),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -347,7 +354,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         borderRadius: BorderRadius.circular(16),
         color: Theme.of(context).colorScheme.surface,
         border:
-            Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
+            Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -398,7 +405,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         borderRadius: BorderRadius.circular(16),
         color: Theme.of(context).colorScheme.surface,
         border:
-            Border.all(color: Theme.of(context).dividerColor.withOpacity(0.2)),
+            Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -449,7 +456,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           color: Theme.of(context).scaffoldBackgroundColor,
           border: Border(
               top: BorderSide(
-                  color: Theme.of(context).dividerColor.withOpacity(0.2))),
+                  color: Theme.of(context).dividerColor.withValues(alpha: 0.2))),
         ),
         child: Row(
           children: [
@@ -670,10 +677,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
                                 color: _statusColor(context, status)
-                                    .withOpacity(0.12),
+                                    .withValues(alpha: 0.12),
                                 border: Border.all(
                                     color: _statusColor(context, status)
-                                        .withOpacity(0.35)),
+                                        .withValues(alpha: 0.35)),
                               ),
                               child: Row(
                                 children: [
@@ -721,9 +728,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
-                                color: Colors.red.withOpacity(0.08),
+                                color: Colors.red.withValues(alpha: 0.08),
                                 border: Border.all(
-                                    color: Colors.red.withOpacity(0.25)),
+                                    color: Colors.red.withValues(alpha: 0.25)),
                               ),
                               child: Text(
                                 'Причина отклонения: $rejectionReason',
@@ -773,7 +780,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               border: Border.all(
                                   color: Theme.of(context)
                                       .dividerColor
-                                      .withOpacity(0.18)),
+                                      .withValues(alpha: 0.18)),
                             ),
                             child: Column(
                               children: [
@@ -851,24 +858,46 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
                           Builder(
                             builder: (ctx) {
+                              final cityShort = listing.cityShort.trim();
                               final address = listing.cityFull.trim();
                               final hasAddress = address.isNotEmpty;
                               final color = Theme.of(ctx).colorScheme.primary;
-                              return InkWell(
-                                onTap: hasAddress
-                                    ? () => _openInMaps(address)
-                                    : null,
-                                borderRadius: BorderRadius.circular(8),
-                                child: Text(
-                                  hasAddress ? address : 'Город не указан',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: hasAddress ? color : null,
-                                    decoration: hasAddress
-                                        ? TextDecoration.underline
+                              final mapLabel =
+                                  cityShort.isNotEmpty ? cityShort : address;
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  InkWell(
+                                    onTap: hasAddress
+                                        ? () => _openInMaps(address)
                                         : null,
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: Text(
+                                      hasAddress
+                                          ? mapLabel
+                                          : '\u0413\u043e\u0440\u043e\u0434 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        color: hasAddress ? color : null,
+                                        decoration: hasAddress
+                                            ? TextDecoration.underline
+                                            : null,
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  if (address.isNotEmpty &&
+                                      address != mapLabel) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      address,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color:
+                                            Theme.of(ctx).colorScheme.outline,
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               );
                             },
                           ),
@@ -884,7 +913,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               border: Border.all(
                                   color: Theme.of(context)
                                       .dividerColor
-                                      .withOpacity(0.18)),
+                                      .withValues(alpha: 0.18)),
                             ),
                             child: Row(
                               children: [
@@ -926,7 +955,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                 border: Border.all(
                                     color: Theme.of(context)
                                         .dividerColor
-                                        .withOpacity(0.18)),
+                                        .withValues(alpha: 0.18)),
                               ),
                               child:
                                   Text('Доставка: ${deliveryNames.join(', ')}'),
@@ -940,7 +969,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                 border: Border.all(
                                     color: Theme.of(context)
                                         .dividerColor
-                                        .withOpacity(0.18)),
+                                        .withValues(alpha: 0.18)),
                               ),
                               child: Text('Доставка: не указано',
                                   style: TextStyle(
@@ -983,7 +1012,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                 border: Border.all(
                                     color: Theme.of(context)
                                         .dividerColor
-                                        .withOpacity(0.18)),
+                                        .withValues(alpha: 0.18)),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1326,7 +1355,7 @@ class _PhotosState extends State<_Photos> {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.55),
+                  color: Colors.black.withValues(alpha: 0.55),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
@@ -1342,3 +1371,4 @@ class _PhotosState extends State<_Photos> {
     );
   }
 }
+

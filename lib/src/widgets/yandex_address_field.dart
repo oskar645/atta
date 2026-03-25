@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import 'package:chestore2/src/services/yandex_suggest_service.dart';
+import 'package:atta/src/services/yandex_suggest_service.dart';
 
 class YandexAddressField extends StatefulWidget {
   final TextEditingController controller;

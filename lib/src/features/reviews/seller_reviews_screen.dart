@@ -1,5 +1,5 @@
-import 'package:chestore2/src/services/auth_service.dart';
-import 'package:chestore2/src/services/reviews_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/reviews_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 

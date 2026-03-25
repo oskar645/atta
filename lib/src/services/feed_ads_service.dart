@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
-import 'package:chestore2/src/models/feed_ad.dart';
+import 'package:atta/src/models/feed_ad.dart';
 
 class FeedAdsService {
   final SupabaseClient _db = Supabase.instance.client;
