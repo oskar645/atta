@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -561,92 +559,24 @@ class _HomeBrandTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.headlineSmall?.copyWith(
-          color: const Color(0xFFF8F5EF),
-          fontSize: 34,
-          fontWeight: FontWeight.w600,
-          fontStyle: FontStyle.italic,
-          fontFamily: 'serif',
-          letterSpacing: -0.4,
-          height: 1,
-          shadows: const [
-            Shadow(
-              color: Color(0x22000000),
-              blurRadius: 12,
-              offset: Offset(0, 4),
-            ),
-          ],
-        );
+    final color =
+        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.92);
 
-    return SizedBox(
-      height: 42,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Text('Atta', style: style),
-          Positioned(
-            left: 16,
-            right: -8,
-            bottom: -2,
-            child: IgnorePointer(
-              child: SizedBox(
-                height: 14,
-                child: CustomPaint(painter: _BrandFlourishPainter()),
-              ),
-            ),
-          ),
-        ],
+    return Text(
+      'Atta',
+      maxLines: 1,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: color,
+        fontSize: 30,
+        height: 1,
+        fontStyle: FontStyle.italic,
+        fontWeight: FontWeight.w600,
+        letterSpacing: -0.6,
+        fontFamily: 'serif',
       ),
     );
   }
-}
-
-class _BrandFlourishPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFFF8F5EF).withValues(alpha: 0.95)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.8
-      ..strokeCap = StrokeCap.round;
-
-    final path = ui.Path()
-      ..moveTo(0, size.height * 0.62)
-      ..cubicTo(
-        size.width * 0.14,
-        size.height * 0.98,
-        size.width * 0.34,
-        size.height * 0.98,
-        size.width * 0.54,
-        size.height * 0.56,
-      )
-      ..cubicTo(
-        size.width * 0.66,
-        size.height * 0.3,
-        size.width * 0.83,
-        size.height * 0.4,
-        size.width * 0.93,
-        size.height * 0.62,
-      )
-      ..cubicTo(
-        size.width * 0.98,
-        size.height * 0.74,
-        size.width * 0.97,
-        size.height * 0.18,
-        size.width * 0.88,
-        size.height * 0.14,
-      );
-
-    canvas.drawPath(path, paint);
-
-    final dotPaint = Paint()
-      ..color = const Color(0xFFF8F5EF).withValues(alpha: 0.95)
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset(size.width * 0.8, size.height * 0.8), 1.4, dotPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 // =====================

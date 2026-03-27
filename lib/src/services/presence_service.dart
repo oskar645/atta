@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 class PresenceService {
   final SupabaseClient _db = Supabase.instance.client;
+  bool _didLogNetworkIssue = false;
 
   Future<void> setOnline({
     required String uid,
@@ -33,13 +34,20 @@ class PresenceService {
         'last_seen': now,
         'updated_at': now,
       }, onConflict: 'user_id');
+      _didLogNetworkIssue = false;
     } on SocketException catch (e) {
-      debugPrint('Presence socket error: $e');
+      _logNetworkIssueOnce(e);
     } on http.ClientException catch (e) {
-      debugPrint('Presence client error: $e');
+      _logNetworkIssueOnce(e);
     } catch (e) {
       debugPrint('Presence upsert failed: $e');
     }
+  }
+
+  void _logNetworkIssueOnce(Object error) {
+    if (!kDebugMode || _didLogNetworkIssue) return;
+    _didLogNetworkIssue = true;
+    debugPrint('Presence temporarily unavailable: $error');
   }
 
   Stream<bool> streamIsOnline(
