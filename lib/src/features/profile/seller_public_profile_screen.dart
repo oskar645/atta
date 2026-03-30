@@ -6,6 +6,7 @@ import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
@@ -37,6 +38,7 @@ class SellerPublicProfileScreen extends StatefulWidget {
 class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
+  bool _followBusy = false;
 
   String _shortUserId(String uid) {
     final text = uid.trim();
@@ -111,12 +113,39 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     }
   }
 
+  Future<void> _toggleFollow({
+    required FollowService follows,
+    required String myUid,
+    required bool isFollowing,
+  }) async {
+    if (_followBusy) return;
+
+    setState(() => _followBusy = true);
+    try {
+      await follows.toggleFollow(
+        followerId: myUid,
+        sellerId: widget.sellerId,
+        isFollowing: isFollowing,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _followBusy = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final profile = context.read<ProfileService>();
     final reviews = context.read<ReviewsService>();
     final listingsSvc = context.read<ListingsService>();
     final chats = context.read<ChatService>();
+    final follows = context.read<FollowService>();
     final presence = context.read<PresenceService>();
     final admin = context.read<AdminService>();
     final me = context.read<AuthService>().currentUser;
@@ -220,14 +249,39 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            sellerName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  sellerName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              StreamBuilder<bool>(
+                                stream: myUid.isEmpty
+                                    ? const Stream<bool>.empty()
+                                    : admin.streamIsAdmin(myUid),
+                                initialData: false,
+                                builder: (context, adminSnap) {
+                                  final canCopyId = isMe || adminSnap.data == true;
+                                  if (!canCopyId) {
+                                    return const SizedBox.shrink();
+                                  }
+
+                                  return _CopyIdChip(
+                                    label: 'ID',
+                                    value: _shortUserId(widget.sellerId),
+                                    onTap: () => _copyUserId(context, widget.sellerId),
+                                  );
+                                },
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 6),
                           StreamBuilder<Map<String, dynamic>>(
@@ -272,6 +326,56 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 ),
               ),
               const SizedBox(height: 12),
+              if (!isMe && myUid.isNotEmpty)
+                StreamBuilder<bool>(
+                  stream: follows.streamIsFollowing(
+                    followerId: myUid,
+                    sellerId: widget.sellerId,
+                  ),
+                  initialData: false,
+                  builder: (context, followSnap) {
+                    final isFollowing = followSnap.data == true;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: FilledButton.icon(
+                        onPressed: _followBusy
+                            ? null
+                            : () => _toggleFollow(
+                                  follows: follows,
+                                  myUid: myUid,
+                                  isFollowing: isFollowing,
+                                ),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          backgroundColor: isFollowing
+                              ? Theme.of(context).colorScheme.secondaryContainer
+                              : null,
+                          foregroundColor: isFollowing
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .onSecondaryContainer
+                              : null,
+                        ),
+                        icon: _followBusy
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Icon(
+                                isFollowing
+                                    ? Icons.notifications_active_outlined
+                                    : Icons.person_add_alt_1_outlined,
+                              ),
+                        label: Text(
+                          isFollowing
+                              ? 'Вы подписаны на новые объявления'
+                              : 'Подписаться на продавца',
+                        ),
+                      ),
+                    );
+                  },
+                ),
               Row(
                 children: [
                   Expanded(
@@ -307,28 +411,6 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 ],
               ),
               const SizedBox(height: 12),
-              StreamBuilder<bool>(
-                stream: myUid.isEmpty
-                    ? const Stream<bool>.empty()
-                    : admin.streamIsAdmin(myUid),
-                initialData: false,
-                builder: (context, adminSnap) {
-                  final canCopyId = isMe || adminSnap.data == true;
-                  if (!canCopyId) return const SizedBox.shrink();
-
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _CopyIdChip(
-                        label: 'ID',
-                        value: _shortUserId(widget.sellerId),
-                        onTap: () => _copyUserId(context, widget.sellerId),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                  );
-                },
-              ),
               ListTile(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),

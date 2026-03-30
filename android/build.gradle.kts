@@ -1,3 +1,5 @@
+import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.dsl.LibraryExtension
 import org.gradle.api.tasks.compile.JavaCompile
 
 allprojects {
@@ -24,6 +26,24 @@ subprojects {
 subprojects {
     tasks.withType<JavaCompile>().configureEach {
         options.compilerArgs.add("-Xlint:-options")
+    }
+}
+
+subprojects {
+    pluginManager.withPlugin("com.android.application") {
+        extensions.configure<ApplicationExtension>("android") {
+            if ((compileSdk ?: 0) < 34) {
+                compileSdk = 34
+            }
+        }
+    }
+
+    pluginManager.withPlugin("com.android.library") {
+        extensions.configure<LibraryExtension>("android") {
+            if ((compileSdk ?: 0) < 34) {
+                compileSdk = 34
+            }
+        }
     }
 }
 

@@ -13,6 +13,7 @@ import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/feed_ads_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/theme_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
@@ -46,6 +47,7 @@ class AttaApp extends StatelessWidget {
 
         Provider<AuthService>(create: (_) => AuthService()),
         Provider<ListingsService>(create: (_) => ListingsService()),
+        Provider<FollowService>(create: (_) => FollowService()),
         Provider<FavoritesService>(create: (_) => FavoritesService()),
         Provider<FeedAdsService>(create: (_) => FeedAdsService()),
         ChangeNotifierProvider(create: (_) => ListingHistoryService()),

@@ -6,6 +6,7 @@ import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
 import 'package:atta/src/features/profile/settings_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/theme_service.dart';
 import 'package:flutter/material.dart';
@@ -201,6 +202,7 @@ class ProfileScreen extends StatelessWidget {
     final auth = context.read<AuthService>();
     final profile = context.read<ProfileService>();
     final admin = context.read<AdminService>();
+    final follows = context.read<FollowService>();
 
     final user = auth.currentUser;
     if (user == null) {
@@ -320,7 +322,8 @@ class ProfileScreen extends StatelessWidget {
                                 profile.streamMyReviewsCount(user.uid),
                             listingsStream:
                                 profile.streamMyListingsCount(user.uid),
-                            followers: '0',
+                            followersStream:
+                                follows.streamFollowersCount(user.uid),
                             onOpenReviews: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute(
@@ -575,14 +578,14 @@ class _StatsRow extends StatelessWidget {
   final Stream<double> ratingAvgStream;
   final Stream<int> reviewsCountStream;
   final Stream<int> listingsStream;
-  final String followers;
+  final Stream<int> followersStream;
   final VoidCallback onOpenReviews;
 
   const _StatsRow({
     required this.ratingAvgStream,
     required this.reviewsCountStream,
     required this.listingsStream,
-    required this.followers,
+    required this.followersStream,
     required this.onOpenReviews,
   });
 
@@ -634,7 +637,11 @@ class _StatsRow extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: _stat(context, followers, 'Подписчики'),
+          child: StreamBuilder<int>(
+            stream: followersStream,
+            builder: (_, s) =>
+                _stat(context, (s.data ?? 0).toString(), 'Подписчики'),
+          ),
         ),
       ],
     );
@@ -645,14 +652,14 @@ class _CompactStatsRow extends StatelessWidget {
   final Stream<double> ratingAvgStream;
   final Stream<int> reviewsCountStream;
   final Stream<int> listingsStream;
-  final String followers;
+  final Stream<int> followersStream;
   final VoidCallback onOpenReviews;
 
   const _CompactStatsRow({
     required this.ratingAvgStream,
     required this.reviewsCountStream,
     required this.listingsStream,
-    required this.followers,
+    required this.followersStream,
     required this.onOpenReviews,
   });
 
@@ -715,7 +722,11 @@ class _CompactStatsRow extends StatelessWidget {
         ),
         const SizedBox(width: 6),
         Expanded(
-          child: _stat(context, followers, 'Подписчики'),
+          child: StreamBuilder<int>(
+            stream: followersStream,
+            builder: (_, s) =>
+                _stat(context, (s.data ?? 0).toString(), 'Подписчики'),
+          ),
         ),
       ],
     );

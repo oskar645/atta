@@ -58,7 +58,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.add),
+            icon: const Icon(Icons.add_circle, color: Colors.blue, size: 28),
             tooltip: 'Добавить',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const AddListingScreen()),
