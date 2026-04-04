@@ -6,6 +6,32 @@ class NotificationsService {
   static final Map<String, DateTime> _lastSeenGlobalAt = <String, DateTime>{};
   static final StreamController<String> _unreadRecalc =
       StreamController<String>.broadcast();
+  static const String savedSearchNotificationTitle =
+      'Новое объявление по вашему поиску';
+
+  Stream<T> _safeStream<T>({
+    required Stream<List<Map<String, dynamic>>> source,
+    required T Function(List<Map<String, dynamic>> rows) mapData,
+    required T Function() fallback,
+  }) {
+    return Stream<T>.multi((controller) {
+      var latestRows = <Map<String, dynamic>>[];
+
+      final sub = source.listen(
+        (rows) {
+          latestRows = rows.map((r) => Map<String, dynamic>.from(r)).toList();
+          controller.add(mapData(latestRows));
+        },
+        onError: (_) {
+          controller.add(latestRows.isEmpty ? fallback() : mapData(latestRows));
+        },
+      );
+
+      controller.onCancel = () async {
+        await sub.cancel();
+      };
+    });
+  }
 
   int _computeUnreadBadgeCount(
     List<Map<String, dynamic>> rows,
@@ -62,40 +88,65 @@ class NotificationsService {
   Stream<List<Map<String, dynamic>>> streamGlobal() {
     final stream = _db.from('user_notifications').stream(primaryKey: ['id']);
 
-    return stream.map(
-      (rows) => _sortNewestFirst(
-        rows
-          .where((r) => r['scope'] == 'global')
-          .map((r) => Map<String, dynamic>.from(r))
-          .toList(),
+    return _safeStream<List<Map<String, dynamic>>>(
+      source: stream,
+      mapData: (rows) => _sortNewestFirst(
+        rows.where((r) => r['scope'] == 'global').toList(),
       ),
+      fallback: () => <Map<String, dynamic>>[],
     );
   }
 
   Stream<List<Map<String, dynamic>>> streamPersonal(String userId) {
     final stream = _db.from('user_notifications').stream(primaryKey: ['id']);
 
-    return stream.map(
-      (rows) => _sortNewestFirst(
+    return _safeStream<List<Map<String, dynamic>>>(
+      source: stream,
+      mapData: (rows) => _sortNewestFirst(
         rows
-          .where(
-            (r) => r['scope'] == 'personal' && r['user_id']?.toString() == userId,
-          )
-          .map((r) => Map<String, dynamic>.from(r))
-          .toList(),
+            .where(
+              (r) =>
+                  r['scope'] == 'personal' &&
+                  r['user_id']?.toString() == userId,
+            )
+            .toList(),
       ),
+      fallback: () => <Map<String, dynamic>>[],
     );
   }
 
   Stream<int> streamUnreadPersonalCount(String userId) {
     final stream = _db.from('user_notifications').stream(primaryKey: ['id']);
-    return stream.map(
-      (rows) => rows.where((r) {
+
+    return _safeStream<int>(
+      source: stream,
+      mapData: (rows) => rows.where((r) {
         final isPersonal = r['scope'] == 'personal';
         final sameUser = r['user_id']?.toString() == userId;
         final unread = r['is_read'] != true;
         return isPersonal && sameUser && unread;
       }).length,
+      fallback: () => 0,
+    );
+  }
+
+  bool isSavedSearchNotification(Map<String, dynamic> row) {
+    final scope = (row['scope'] ?? '').toString();
+    final title = (row['title'] ?? '').toString().trim();
+    return scope == 'personal' && title == savedSearchNotificationTitle;
+  }
+
+  Stream<int> streamUnreadSavedSearchCount(String userId) {
+    final stream = _db.from('user_notifications').stream(primaryKey: ['id']);
+
+    return _safeStream<int>(
+      source: stream,
+      mapData: (rows) => rows.where((r) {
+        final sameUser = r['user_id']?.toString() == userId;
+        final unread = r['is_read'] != true;
+        return sameUser && unread && isSavedSearchNotification(r);
+      }).length,
+      fallback: () => 0,
     );
   }
 
@@ -114,12 +165,12 @@ class NotificationsService {
           latestRows = rows.map((r) => Map<String, dynamic>.from(r)).toList();
           emit();
         },
-        onError: controller.addError,
+        onError: (_) => emit(),
       );
 
       final recalcSub = _unreadRecalc.stream.where((id) => id == userId).listen(
             (_) => emit(),
-            onError: controller.addError,
+            onError: (_) => emit(),
           );
 
       controller.onCancel = () async {
@@ -159,6 +210,17 @@ class NotificationsService {
         .update({'is_read': true})
         .eq('scope', 'personal')
         .eq('user_id', userId);
+    _unreadRecalc.add(userId);
+  }
+
+  Future<void> markSavedSearchNotificationsRead(String userId) async {
+    await _db
+        .from('user_notifications')
+        .update({'is_read': true})
+        .eq('scope', 'personal')
+        .eq('user_id', userId)
+        .eq('title', savedSearchNotificationTitle)
+        .eq('is_read', false);
     _unreadRecalc.add(userId);
   }
 

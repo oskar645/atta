@@ -8,6 +8,7 @@ import 'package:atta/src/features/profile/profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -85,6 +86,7 @@ class _MainShellState extends State<MainShell> {
     final auth = context.read<AuthService>();
     final chat = context.read<ChatService>();
     final admin = context.read<AdminService>();
+    final notifications = context.read<NotificationsService>();
     final uid = auth.currentUser!.uid;
 
     final navTheme = NavigationBarThemeData(
@@ -117,59 +119,74 @@ class _MainShellState extends State<MainShell> {
             );
           }
 
-          return StreamBuilder<bool>(
-            stream: admin.streamIsAdmin(uid),
-            builder: (context, adminSnap) {
-              final isAdmin = adminSnap.data == true;
+          return StreamBuilder<int>(
+            stream: notifications.streamUnreadSavedSearchCount(uid),
+            builder: (context, savedSnap) {
+              final hasSavedSearchAlerts = (savedSnap.data ?? 0) > 0;
 
               return StreamBuilder<bool>(
-                stream: isAdmin ? admin.streamNeedsAttention() : const Stream<bool>.empty(),
-                initialData: false,
-                builder: (context, attentionSnap) {
-                  final hasAdminAlert = isAdmin && (attentionSnap.data == true);
+                stream: admin.streamIsAdmin(uid),
+                builder: (context, adminSnap) {
+                  final isAdmin = adminSnap.data == true;
 
-                  return SafeArea(
-                    top: false,
-                    child: NavigationBarTheme(
-                      data: navTheme,
-                      child: NavigationBar(
-                        selectedIndex: _i,
-                        onDestinationSelected: (v) => setState(() => _i = v),
-                        destinations: [
-                          const NavigationDestination(
-                            icon: Icon(Icons.search, color: _inactive),
-                            selectedIcon: Icon(Icons.search, color: _search),
-                            label: 'Поиск',
+                  return StreamBuilder<bool>(
+                    stream: isAdmin
+                        ? admin.streamNeedsAttention()
+                        : const Stream<bool>.empty(),
+                    initialData: false,
+                    builder: (context, attentionSnap) {
+                      final hasAdminAlert = isAdmin && (attentionSnap.data == true);
+
+                      return SafeArea(
+                        top: false,
+                        child: NavigationBarTheme(
+                          data: navTheme,
+                          child: NavigationBar(
+                            selectedIndex: _i,
+                            onDestinationSelected: (v) => setState(() => _i = v),
+                            destinations: [
+                              const NavigationDestination(
+                                icon: Icon(Icons.search, color: _inactive),
+                                selectedIcon: Icon(Icons.search, color: _search),
+                                label: 'Поиск',
+                              ),
+                              NavigationDestination(
+                                icon: _dotIcon(
+                                  const Icon(Icons.favorite_border, color: _inactive),
+                                  hasSavedSearchAlerts,
+                                ),
+                                selectedIcon: _dotIcon(
+                                  const Icon(Icons.favorite, color: _fav),
+                                  hasSavedSearchAlerts,
+                                ),
+                                label: 'Избранное',
+                              ),
+                              const NavigationDestination(
+                                icon: Icon(Icons.list_alt, color: _inactive),
+                                selectedIcon: Icon(Icons.list_alt, color: _listings),
+                                label: 'Объявления',
+                              ),
+                              NavigationDestination(
+                                icon: msgIcon(_inactive),
+                                selectedIcon: msgIcon(_msgs),
+                                label: 'Сообщения',
+                              ),
+                              NavigationDestination(
+                                icon: _dotIcon(
+                                  const Icon(Icons.person_outline, color: _inactive),
+                                  hasAdminAlert,
+                                ),
+                                selectedIcon: _dotIcon(
+                                  const Icon(Icons.person, color: _profile),
+                                  hasAdminAlert,
+                                ),
+                                label: 'Профиль',
+                              ),
+                            ],
                           ),
-                          const NavigationDestination(
-                            icon: Icon(Icons.favorite_border, color: _inactive),
-                            selectedIcon: Icon(Icons.favorite, color: _fav),
-                            label: 'Избранное',
-                          ),
-                          const NavigationDestination(
-                            icon: Icon(Icons.list_alt, color: _inactive),
-                            selectedIcon: Icon(Icons.list_alt, color: _listings),
-                            label: 'Объявления',
-                          ),
-                          NavigationDestination(
-                            icon: msgIcon(_inactive),
-                            selectedIcon: msgIcon(_msgs),
-                            label: 'Сообщения',
-                          ),
-                          NavigationDestination(
-                            icon: _dotIcon(
-                              const Icon(Icons.person_outline, color: _inactive),
-                              hasAdminAlert,
-                            ),
-                            selectedIcon: _dotIcon(
-                              const Icon(Icons.person, color: _profile),
-                              hasAdminAlert,
-                            ),
-                            label: 'Профиль',
-                          ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    },
                   );
                 },
               );
