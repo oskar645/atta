@@ -56,8 +56,6 @@ class _EditListingScreenState extends State<EditListingScreen> {
   String _carColor = 'Чёрный';
   bool? _carCleared;
 
-  latlng.LatLng? _pickedLatLng;
-
   SupabaseClient get _sb => Supabase.instance.client;
 
   final Map<String, String> _deliveryNames = const {
@@ -206,14 +204,13 @@ class _EditListingScreenState extends State<EditListingScreen> {
     );
     if (res == null) return;
     if (res is latlng.LatLng) {
-      setState(() => _pickedLatLng = res);
       await _fillCityFromLatLng(res);
       if (mounted) setState(() {});
       return;
     }
     if (res is String) {
       _city.text = res;
-      if (mounted) setState(() => _pickedLatLng = null);
+      if (mounted) setState(() {});
     }
   }
 
@@ -693,7 +690,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     required ValueChanged<String?> onChanged,
   }) {
     return DropdownButtonFormField<String>(
-      value: value,
+      initialValue: value,
       items: items.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
       onChanged: onChanged,
       decoration: InputDecoration(labelText: label),

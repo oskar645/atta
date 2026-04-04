@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:atta/src/features/admin/admin_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
@@ -574,6 +572,7 @@ class _CopyIdChip extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _StatsRow extends StatelessWidget {
   final Stream<double> ratingAvgStream;
   final Stream<int> reviewsCountStream;

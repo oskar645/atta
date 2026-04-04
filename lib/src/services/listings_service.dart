@@ -68,6 +68,10 @@ class ListingsService {
     });
   }
 
+  bool matchesFeedFilters(Listing listing, ListingFeedFilters filters) {
+    return _matchesFilters(listing, filters);
+  }
+
   Stream<List<Listing>> streamMyListings(String uid) {
     final stream = _client
         .from('listings')

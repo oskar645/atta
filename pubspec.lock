@@ -9,6 +9,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.0.0"
+  app_badge_plus:
+    dependency: "direct main"
+    description:
+      name: app_badge_plus
+      sha256: ce3d8fdfcf39a1552cc8dea499ee3b4a86273ccf04c8de29e7960c739b045ae6
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.2.7"
   app_links:
     dependency: transitive
     description:

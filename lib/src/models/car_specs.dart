@@ -60,7 +60,7 @@ class CarSpecs {
 
   static CarSpecs? fromAny(dynamic raw) {
     if (raw is! Map) return null;
-    final m = Map<String, dynamic>.from(raw as Map);
+    final m = Map<String, dynamic>.from(raw);
 
     double parseDouble(dynamic v) {
       if (v is num) return v.toDouble();
@@ -86,7 +86,7 @@ class CarSpecs {
       drive: (m['drive'] ?? '').toString(),
       condition: (m['condition'] ?? '').toString(),
       color: (m['color'] ?? '').toString(),
-      isCleared: m['isCleared'] is bool ? m['isCleared'] as bool : null,
+      isCleared: m['isCleared'] is bool ? m['isCleared'] : null,
       owners: (m['owners'] is num) ? (m['owners'] as num).toInt() : int.tryParse('${m['owners']}'),
       vin: m['vin']?.toString(),
       note: m['note']?.toString(),

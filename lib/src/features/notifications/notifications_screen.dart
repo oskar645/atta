@@ -68,7 +68,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           child: ListTile(
             leading: Icon(
               unreadPersonal ? Icons.mark_email_unread : Icons.notifications_none,
-              color: unreadPersonal ? Colors.red : Theme.of(context).colorScheme.outline,
+              color: unreadPersonal
+                  ? Colors.red
+                  : Theme.of(context).colorScheme.outline,
             ),
             title: Row(
               children: [
@@ -77,19 +79,20 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     title,
                     style: TextStyle(
                       fontWeight: FontWeight.w700,
-                      color: unreadPersonal
-                          ? Theme.of(context).colorScheme.onSurface
-                          : Theme.of(context).colorScheme.onSurface,
+                      color: Theme.of(context).colorScheme.onSurface,
                     ),
                   ),
                 ),
                 if (showScopeTag)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: isPersonal
                           ? Theme.of(context).colorScheme.primaryContainer
-                          : Theme.of(context).colorScheme.surfaceContainerHighest,
+                          : Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(

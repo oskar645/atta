@@ -46,8 +46,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool _saving = false;
 
   final _picker = ImagePicker();
-  latlng.LatLng? _pickedLatLng;
-
   bool _phoneHidden = true;
 
   // ===== “умные” поля =====
@@ -352,14 +350,13 @@ class _AddListingScreenState extends State<AddListingScreen> {
     );
     if (res == null) return;
     if (res is latlng.LatLng) {
-      setState(() => _pickedLatLng = res);
       await _fillCityFromLatLng(res);
       if (mounted) setState(() {});
       return;
     }
     if (res is String) {
       _city.text = res;
-      if (mounted) setState(() => _pickedLatLng = null);
+      if (mounted) setState(() {});
     }
   }
 
@@ -1156,7 +1153,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     required ValueChanged<String?> onChanged,
   }) {
     return DropdownButtonFormField<String>(
-      value: value,
+      initialValue: value,
       items: items
           .map((x) => DropdownMenuItem(value: x, child: Text(x)))
           .toList(),
@@ -1196,7 +1193,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           DropdownButtonFormField<String>(
-            value: _category,
+            initialValue: _category,
             items: categories
                 .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                 .toList(),
@@ -1218,7 +1215,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
           // ✅ Подкатегория (если она есть)
           if (kSubcategories.containsKey(_category))
             DropdownButtonFormField<String>(
-              value: _subcategory,
+              initialValue: _subcategory,
               items: (kSubcategories[_category] ?? [])
                   .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                   .toList(),
@@ -1322,7 +1319,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
                 child: YandexAddressField(
                   controller: _city,
                   label: 'Город / адрес (Яндекс)',
-                  onSelected: (_) => setState(() => _pickedLatLng = null),
+                  onSelected: (_) => setState(() {}),
                 ),
               ),
               const SizedBox(width: 8),
@@ -1450,7 +1447,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
             const SizedBox(height: 12),
 
             DropdownButtonFormField<String>(
-              value: _carCleared == null
+              initialValue: _carCleared == null
                   ? 'Не указано'
                   : (_carCleared! ? 'Да' : 'Нет'),
               items: const [

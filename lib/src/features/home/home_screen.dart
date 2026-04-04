@@ -21,6 +21,8 @@ import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/services/saved_search_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 
@@ -677,10 +679,79 @@ class _FilteredListingsScreen extends StatelessWidget {
     final feedAds = context.read<FeedAdsService>();
     final history = context.watch<ListingHistoryService>();
     final reviews = context.read<ReviewsService>();
+    final savedSearches = context.read<SavedSearchService>();
     final user = context.read<AuthService>().currentUser!;
+    final queryKey = savedSearches.buildQueryKey(
+      search: search,
+      filters: _feedFilters,
+    );
+    final canSaveSearch = savedSearches.canSaveSearch(
+      search: search,
+      filters: _feedFilters,
+    );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Результаты поиска')),
+      appBar: AppBar(
+        title: const Text('Результаты поиска'),
+        actions: [
+          StreamBuilder<List<SavedSearch>>(
+            stream: savedSearches.streamSavedSearches(user.uid),
+            builder: (context, snap) {
+              final items = snap.data ?? const <SavedSearch>[];
+              final isSaved = items.any((item) => item.queryKey == queryKey);
+
+              return IconButton(
+                tooltip: isSaved
+                    ? 'Убрать из избранных поисков'
+                    : 'Сохранить поиск',
+                onPressed: !canSaveSearch
+                    ? null
+                    : () async {
+                        if (isSaved) {
+                          await savedSearches.deleteSavedSearch(
+                            userId: user.uid,
+                            queryKey: queryKey,
+                          );
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Поиск убран из избранного'),
+                            ),
+                          );
+                          return;
+                        }
+
+                        try {
+                          await savedSearches.saveSearch(
+                            userId: user.uid,
+                            search: search,
+                            filters: _feedFilters,
+                          );
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Поиск сохранен, уведомления включены',
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          final message = savedSearches.isMissingTableError(e)
+                              ? SavedSearchService.missingTableMessage
+                              : 'Не удалось сохранить поиск: $e';
+                          showAppSnack(context, message, isError: true);
+                        }
+                      },
+                icon: Icon(
+                  isSaved ? Icons.favorite : Icons.favorite_border,
+                  color: isSaved ? Colors.red : null,
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -791,14 +862,9 @@ class _FiltersScreenState extends State<_FiltersScreen> {
   }
 
   static const List<String> _carConditions = <String>[
-    'Отличное',
-    'Хорошее',
-    'Среднее',
-    'Требует ремонта',
-    'Небитый',
-    'Битый',
-    'После ДТП',
-    'Не битый',
+    'Все',
+    'Битые',
+    'Не битые',
   ];
 
   @override
@@ -946,11 +1012,17 @@ class _FiltersScreenState extends State<_FiltersScreen> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              initialValue: _autoCondition.isEmpty ? null : _autoCondition,
+              initialValue: _autoCondition.isEmpty ? 'Все' : _autoCondition,
               items: _carConditions
                   .map((x) => DropdownMenuItem(value: x, child: Text(x)))
                   .toList(),
-              onChanged: (v) => setState(() => _autoCondition = v ?? ''),
+              onChanged: (v) {
+                setState(() {
+                  final selected = v ?? 'Все';
+                  _autoCondition = selected == 'Все' ? '' : selected;
+                  _onlyUncrashed = selected == 'Не битые';
+                });
+              },
               decoration: const InputDecoration(
                 labelText: 'Состояние',
                 border: OutlineInputBorder(),
@@ -972,14 +1044,6 @@ class _FiltersScreenState extends State<_FiltersScreen> {
                 });
               },
             ),
-            const SizedBox(height: 8),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _onlyUncrashed,
-              onChanged: (v) => setState(() => _onlyUncrashed = v),
-              title: const Text('Только не битые'),
-            ),
-            const SizedBox(height: 8),
           ],
 
           // Where to search block.

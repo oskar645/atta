@@ -8,6 +8,7 @@ import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 
 class AdminScreen extends StatefulWidget {
@@ -175,6 +176,40 @@ class _DashboardTab extends StatelessWidget {
     }
   }
 
+  Future<List<int>> _soldSeries({int days = 14}) async {
+    final client = Supabase.instance.client;
+    final now = DateTime.now().toUtc();
+    final start = DateTime.utc(now.year, now.month, now.day)
+        .subtract(Duration(days: days - 1));
+
+    try {
+      final res = await client
+          .from('listings')
+          .select('status, updated_at')
+          .eq('status', 'sold');
+
+      final rows = List<Map<String, dynamic>>.from(res as List);
+      final counts = List<int>.filled(days, 0);
+
+      for (final row in rows) {
+        final raw = row['updated_at'];
+        final soldAt = DateTime.tryParse((raw ?? '').toString())?.toUtc();
+        if (soldAt == null || soldAt.isBefore(start)) continue;
+
+        final soldDay = DateTime.utc(soldAt.year, soldAt.month, soldAt.day);
+        final diff = soldDay.difference(start).inDays;
+        if (diff >= 0 && diff < days) {
+          counts[diff]++;
+        }
+      }
+
+      return counts;
+    } catch (e) {
+      debugPrint('Sold stats error: $e');
+      return <int>[];
+    }
+  }
+
   Future<int> _onlineUsers() async {
     final client = Supabase.instance.client;
     final cutoff = DateTime.now().toUtc().subtract(const Duration(minutes: 2));
@@ -204,11 +239,13 @@ class _DashboardTab extends StatelessWidget {
           _count('users'),
           _count('listings'),
           _count('listings', eqFilters: {'status': 'pending'}),
+          _count('listings', eqFilters: {'status': 'sold'}),
           _count('support_tickets'),
           _count('reports', eqFilters: {'status': 'open'}),
           _onlineUsers(),
         ]),
         _daily(),
+        _soldSeries(),
       ]),
       builder: (context, snap) {
         if (!snap.hasData) {
@@ -217,13 +254,15 @@ class _DashboardTab extends StatelessWidget {
 
         final counts = snap.data![0] as List<int>;
         final daily = snap.data![1] as List<Map<String, dynamic>>;
+        final soldSeries = snap.data![2] as List<int>;
 
         final users = counts[0];
         final listings = counts[1];
         final pending = counts[2];
-        final tickets = counts[3];
-        final reports = counts[4];
-        final online = counts[5];
+        final sold = counts[3];
+        final tickets = counts[4];
+        final reports = counts[5];
+        final online = counts[6];
 
         // серии для графика
         final listingsSeries =
@@ -263,6 +302,7 @@ class _DashboardTab extends StatelessWidget {
         Widget chartCard({
           required String title,
           required List<int> values,
+          bool compact = false,
         }) {
           return Card(
             child: Padding(
@@ -286,7 +326,58 @@ class _DashboardTab extends StatelessWidget {
                       ),
                     )
                   else
-                    MiniLineChart(values: values),
+                    MiniLineChart(
+                      values: values,
+                      height: compact ? 72 : 140,
+                    ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        Widget compactExpandableChartCard({
+          required String title,
+          required String subtitle,
+          required List<int> values,
+        }) {
+          return Card(
+            child: Theme(
+              data: Theme.of(context).copyWith(
+                dividerColor: Colors.transparent,
+              ),
+              child: ExpansionTile(
+                tilePadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 4,
+                ),
+                childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                title: Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+                subtitle: Text(
+                  subtitle,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+                children: [
+                  if (values.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Нет данных по продажам',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                    )
+                  else
+                    MiniLineChart(values: values, height: 72),
                 ],
               ),
             ),
@@ -299,10 +390,16 @@ class _DashboardTab extends StatelessWidget {
             card('Пользователей', '$users', Icons.people),
             card('Сейчас онлайн', '$online', Icons.circle),
             card('Объявлений всего', '$listings', Icons.list_alt),
+            card('Продано', '$sold', Icons.sell),
             card('На модерации', '$pending', Icons.shield),
             card('Тикетов поддержки', '$tickets', Icons.support_agent),
             card('Жалоб (open)', '$reports', Icons.report),
             const SizedBox(height: 8),
+            compactExpandableChartCard(
+              title: 'Продажи за 14 дней',
+              subtitle: 'Нажмите, чтобы открыть график',
+              values: soldSeries,
+            ),
             chartCard(
               title: 'Новые объявления за 14 дней',
               values: listingsSeries,
@@ -540,6 +637,14 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         'status': 'approved',
         'rejection_reason': null,
       }).eq('id', widget.listingId);
+
+      try {
+        await context
+            .read<SavedSearchService>()
+            .notifyMatchesForApprovedListing(widget.listingData);
+      } catch (e) {
+        debugPrint('Ошибка уведомлений по сохраненным поискам: $e');
+      }
 
       if (mounted) Navigator.pop(context, true);
     } catch (e) {

@@ -5,6 +5,11 @@ class SupportService {
   final SupabaseClient _db = Supabase.instance.client;
   final Uuid _uuid = const Uuid();
 
+  static const String _autoReplyText =
+      'Здравствуйте! Мы получили ваше обращение и уже передали его модераторам. '
+      'Обычно ответ приходит в ближайшее время. Если понадобятся уточнения, '
+      'мы напишем вам здесь.';
+
   /// Получить или создать тикет пользователя
   Future<String?> getOrCreateMyTicketId({required String uid}) async {
     final row = await _db
@@ -47,6 +52,14 @@ class SupportService {
       'ticket_id': uid,
       'sender': 'user',
       'text': text,
+      'created_at': now,
+    });
+
+    await _db.from('support_messages').insert({
+      'id': _uuid.v4(),
+      'ticket_id': uid,
+      'sender': 'admin',
+      'text': _autoReplyText,
       'created_at': now,
     });
 

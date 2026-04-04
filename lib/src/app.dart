@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:atta/src/features/auth/auth_gate.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/app_badge_service.dart';
 
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
@@ -17,6 +18,7 @@ import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/theme_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
@@ -54,18 +56,23 @@ class AttaApp extends StatelessWidget {
         Provider<ProfileService>(create: (_) => ProfileService()),
         Provider<ChatService>(create: (_) => ChatService()),
         Provider<ReviewsService>(create: (_) => ReviewsService()),
+        Provider<SavedSearchService>(create: (_) => SavedSearchService()),
         Provider<SupportService>(create: (_) => SupportService()),
         Provider<ReportsService>(create: (_) => ReportsService()),
         Provider<AdminService>(create: (_) => AdminService()),
         Provider<PresenceService>(create: (_) => PresenceService()),
 
 // новый сервис уведомлений
+        Provider<AppBadgeService>(
+          create: (_) => AppBadgeService(),
+          dispose: (_, service) => service.dispose(),
+        ),
         Provider<NotificationsService>(create: (_) => NotificationsService()),
       ],
       child: Consumer<ThemeService>(
         builder: (_, theme, __) {
           return MaterialApp(
-            title: 'ATTA',
+            title: 'Atta',
             debugShowCheckedModeBanner: false,
             theme: base,
             darkTheme: darkBase,
@@ -95,11 +102,17 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setOnline(true);
+    _syncBadge();
     final auth = context.read<AuthService>();
+    final badge = context.read<AppBadgeService>();
     _authSub = auth.onAuthStateChange.listen((_) async {
       final uid = auth.currentUser?.uid;
-      if (uid == null || uid.isEmpty) return;
+      if (uid == null || uid.isEmpty) {
+        await badge.clear();
+        return;
+      }
       await _setOnline(true);
+      await _syncBadge();
     });
   }
 
@@ -116,6 +129,22 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     final uid = auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) return;
     await presence.setOnline(uid: uid, isOnline: online);
+  }
+
+  Future<void> _syncBadge() async {
+    final auth = context.read<AuthService>();
+    final uid = auth.currentUser?.uid;
+    final badge = context.read<AppBadgeService>();
+    if (uid == null || uid.isEmpty) {
+      await badge.clear();
+      return;
+    }
+
+    await badge.bindForUser(
+      userId: uid,
+      chatService: context.read<ChatService>(),
+      notificationsService: context.read<NotificationsService>(),
+    );
   }
 
   @override
