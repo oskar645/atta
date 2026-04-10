@@ -168,6 +168,8 @@ create or replace function public.is_admin(p_uid uuid)
 returns boolean
 language sql
 stable
+security definer
+set search_path = public
 as $$
   select exists(
     select 1
@@ -175,6 +177,8 @@ as $$
     where a.uid = p_uid and coalesce(a.is_admin, false) = true
   );
 $$;
+
+grant execute on function public.is_admin(uuid) to authenticated;
 
 create or replace function public.touch_updated_at()
 returns trigger
@@ -331,6 +335,7 @@ create policy support_messages_insert on public.support_messages for insert to a
 );
 
 drop policy if exists notifications_select on public.user_notifications;
+grant select, insert, update, delete on public.user_notifications to authenticated;
 create policy notifications_select on public.user_notifications for select to authenticated using (scope = 'global' or user_id = auth.uid() or public.is_admin(auth.uid()));
 drop policy if exists notifications_insert_admin on public.user_notifications;
 create policy notifications_insert_admin on public.user_notifications for insert to authenticated with check (
@@ -339,6 +344,8 @@ create policy notifications_insert_admin on public.user_notifications for insert
 );
 drop policy if exists notifications_update_own_admin on public.user_notifications;
 create policy notifications_update_own_admin on public.user_notifications for update to authenticated using (user_id = auth.uid() or public.is_admin(auth.uid())) with check (user_id = auth.uid() or public.is_admin(auth.uid()));
+drop policy if exists notifications_delete_admin on public.user_notifications;
+create policy notifications_delete_admin on public.user_notifications for delete to authenticated using (public.is_admin(auth.uid()));
 
 -- =========================
 -- STORAGE (public buckets + policies)

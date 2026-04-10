@@ -176,11 +176,10 @@ class _DashboardTab extends StatelessWidget {
     }
   }
 
-  Future<List<int>> _soldSeries({int days = 14}) async {
+  Future<int> _soldThisMonth() async {
     final client = Supabase.instance.client;
     final now = DateTime.now().toUtc();
-    final start = DateTime.utc(now.year, now.month, now.day)
-        .subtract(Duration(days: days - 1));
+    final start = DateTime.utc(now.year, now.month);
 
     try {
       final res = await client
@@ -189,24 +188,19 @@ class _DashboardTab extends StatelessWidget {
           .eq('status', 'sold');
 
       final rows = List<Map<String, dynamic>>.from(res as List);
-      final counts = List<int>.filled(days, 0);
+      var count = 0;
 
       for (final row in rows) {
         final raw = row['updated_at'];
         final soldAt = DateTime.tryParse((raw ?? '').toString())?.toUtc();
         if (soldAt == null || soldAt.isBefore(start)) continue;
-
-        final soldDay = DateTime.utc(soldAt.year, soldAt.month, soldAt.day);
-        final diff = soldDay.difference(start).inDays;
-        if (diff >= 0 && diff < days) {
-          counts[diff]++;
-        }
+        count++;
       }
 
-      return counts;
+      return count;
     } catch (e) {
       debugPrint('Sold stats error: $e');
-      return <int>[];
+      return 0;
     }
   }
 
@@ -245,7 +239,7 @@ class _DashboardTab extends StatelessWidget {
           _onlineUsers(),
         ]),
         _daily(),
-        _soldSeries(),
+        _soldThisMonth(),
       ]),
       builder: (context, snap) {
         if (!snap.hasData) {
@@ -254,7 +248,7 @@ class _DashboardTab extends StatelessWidget {
 
         final counts = snap.data![0] as List<int>;
         final daily = snap.data![1] as List<Map<String, dynamic>>;
-        final soldSeries = snap.data![2] as List<int>;
+        final soldThisMonth = snap.data![2] as int;
 
         final users = counts[0];
         final listings = counts[1];
@@ -336,54 +330,6 @@ class _DashboardTab extends StatelessWidget {
           );
         }
 
-        Widget compactExpandableChartCard({
-          required String title,
-          required String subtitle,
-          required List<int> values,
-        }) {
-          return Card(
-            child: Theme(
-              data: Theme.of(context).copyWith(
-                dividerColor: Colors.transparent,
-              ),
-              child: ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 4,
-                ),
-                childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                title: Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-                subtitle: Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
-                ),
-                children: [
-                  if (values.isEmpty)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Нет данных по продажам',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.outline,
-                        ),
-                      ),
-                    )
-                  else
-                    MiniLineChart(values: values, height: 72),
-                ],
-              ),
-            ),
-          );
-        }
-
         return ListView(
           padding: const EdgeInsets.all(12),
           children: [
@@ -391,15 +337,11 @@ class _DashboardTab extends StatelessWidget {
             card('Сейчас онлайн', '$online', Icons.circle),
             card('Объявлений всего', '$listings', Icons.list_alt),
             card('Продано', '$sold', Icons.sell),
+            card('Продажи за 30 дней', '$soldThisMonth', Icons.sell_outlined),
             card('На модерации', '$pending', Icons.shield),
             card('Тикетов поддержки', '$tickets', Icons.support_agent),
             card('Жалоб (open)', '$reports', Icons.report),
             const SizedBox(height: 8),
-            compactExpandableChartCard(
-              title: 'Продажи за 14 дней',
-              subtitle: 'Нажмите, чтобы открыть график',
-              values: soldSeries,
-            ),
             chartCard(
               title: 'Новые объявления за 14 дней',
               values: listingsSeries,

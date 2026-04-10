@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class NotificationsService {
@@ -71,17 +72,24 @@ class NotificationsService {
   Future<bool> _userExists(String userId) async {
     final rows =
         await _db.from('users').select('id').eq('id', userId).limit(1);
-    return (rows as List).isNotEmpty;
+    return rows.isNotEmpty;
   }
 
   DateTime _parseCreatedAt(dynamic raw) {
     if (raw is DateTime) return raw.toUtc();
-    if (raw is String) return DateTime.tryParse(raw)?.toUtc() ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    if (raw is String) {
+      return DateTime.tryParse(raw)?.toUtc() ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    }
     return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
   }
 
   List<Map<String, dynamic>> _sortNewestFirst(List<Map<String, dynamic>> rows) {
-    rows.sort((a, b) => _parseCreatedAt(b['created_at']).compareTo(_parseCreatedAt(a['created_at'])));
+    rows.sort((a, b) {
+      final bCreatedAt = _parseCreatedAt(b['created_at']);
+      final aCreatedAt = _parseCreatedAt(a['created_at']);
+      return bCreatedAt.compareTo(aCreatedAt);
+    });
     return rows;
   }
 
@@ -222,6 +230,21 @@ class NotificationsService {
         .eq('title', savedSearchNotificationTitle)
         .eq('is_read', false);
     _unreadRecalc.add(userId);
+  }
+
+  Future<void> deleteById(String notificationId) async {
+    final row = await _db
+        .from('user_notifications')
+        .select('id, user_id')
+        .eq('id', notificationId)
+        .maybeSingle();
+
+    await _db.from('user_notifications').delete().eq('id', notificationId);
+
+    final uid = row?['user_id']?.toString();
+    if (uid != null && uid.isNotEmpty) {
+      _unreadRecalc.add(uid);
+    }
   }
 
   Future<void> sendGlobal({

@@ -324,7 +324,7 @@ class SavedSearchService {
     listingRow['status'] = 'approved';
     final listing = Listing.fromMap(listingRow);
 
-    final rows = await (() async {
+    final List<dynamic> rows = await (() async {
       try {
         return await _db
             .from('saved_searches')
@@ -336,7 +336,7 @@ class SavedSearchService {
       }
     })();
 
-    final searches = (rows as List)
+    final searches = rows
         .map((row) => SavedSearch.fromMap(Map<String, dynamic>.from(row)))
         .where((search) => search.userId != listing.ownerId)
         .toList();

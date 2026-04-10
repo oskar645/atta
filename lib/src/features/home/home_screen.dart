@@ -561,21 +561,33 @@ class _HomeBrandTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color =
-        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.92);
+    return SizedBox(
+      width: 82,
+      height: 34,
+      child: Image.asset(
+        'assets/branding/atta_logo.png',
+        fit: BoxFit.contain,
+        alignment: Alignment.centerLeft,
+        semanticLabel: 'ATTA',
+        errorBuilder: (context, error, stackTrace) {
+          final color =
+              Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.92);
 
-    return Text(
-      'Atta',
-      maxLines: 1,
-      overflow: TextOverflow.visible,
-      style: TextStyle(
-        color: color,
-        fontSize: 30,
-        height: 1,
-        fontStyle: FontStyle.italic,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -0.6,
-        fontFamily: 'serif',
+          return Text(
+            'Atta',
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            style: TextStyle(
+              color: color,
+              fontSize: 30,
+              height: 1,
+              fontStyle: FontStyle.italic,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.6,
+              fontFamily: 'serif',
+            ),
+          );
+        },
       ),
     );
   }

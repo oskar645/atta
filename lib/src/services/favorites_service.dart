@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class FavoritesService {
@@ -42,7 +43,7 @@ class FavoritesService {
             .eq('listing_id', listingId);
       }
     } catch (e) {
-      print('Ошибка при изменении избранного: $e');
+      debugPrint('Ошибка при изменении избранного: $e');
       rethrow;
     }
   }

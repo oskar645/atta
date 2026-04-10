@@ -311,7 +311,7 @@ class ChatService {
       return value;
     }
 
-    final marker = '/$_chatImagesBucket/';
+    const marker = '/chat_images/';
     final idx = value.indexOf(marker);
     if (idx == -1) return null;
 
@@ -353,7 +353,7 @@ class ChatService {
         .neq('sender_id', uid);
 
     final now = DateTime.now().toUtc().toIso8601String();
-    for (final raw in rows as List) {
+    for (final raw in rows) {
       final row = Map<String, dynamic>.from(raw as Map);
       if (row['delivered_at'] != null) continue;
       final id = (row['id'] ?? '').toString();
@@ -373,7 +373,7 @@ class ChatService {
         .neq('sender_id', uid);
 
     final now = DateTime.now().toUtc().toIso8601String();
-    for (final raw in rows as List) {
+    for (final raw in rows) {
       final row = Map<String, dynamic>.from(raw as Map);
       final id = (row['id'] ?? '').toString();
       if (id.isEmpty) continue;
