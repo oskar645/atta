@@ -26,8 +26,29 @@ import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 
+class HomeTabController {
+  VoidCallback? _scrollToTop;
+
+  void attach({required VoidCallback scrollToTop}) {
+    _scrollToTop = scrollToTop;
+  }
+
+  void detach() {
+    _scrollToTop = null;
+  }
+
+  void scrollToTop() {
+    _scrollToTop?.call();
+  }
+}
+
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final HomeTabController? controller;
+
+  const HomeScreen({
+    super.key,
+    this.controller,
+  });
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -38,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String _subcategory = 'Все';
   String _search = '';
   final _searchCtrl = TextEditingController();
+  final GlobalKey<_HomeFeedViewState> _feedKey = GlobalKey<_HomeFeedViewState>();
+  int _refreshShuffleSeed = 0;
 
   // Avito-like location filter.
   String _location = ''; // "Москва", "Чеченская Республика" и т.п.
@@ -52,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    widget.controller?.attach(scrollToTop: _handleScrollToTop);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _restoreFilters();
@@ -59,7 +83,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?.detach();
+      widget.controller?.attach(scrollToTop: _handleScrollToTop);
+    }
+  }
+
+  @override
   void dispose() {
+    widget.controller?.detach();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -102,6 +136,49 @@ class _HomeScreenState extends State<HomeScreen> {
       onlyUncrashed: _onlyUncrashed,
       search: _search,
     );
+  }
+
+  void _handleScrollToTop() {
+    _feedKey.currentState?.scrollToTop();
+  }
+
+  Future<void> _handleRefresh() async {
+    final listings = context.read<ListingsService>();
+    final feedAds = context.read<FeedAdsService>();
+    final nextSeed = DateTime.now().microsecondsSinceEpoch;
+
+    if (mounted) {
+      setState(() => _refreshShuffleSeed = nextSeed);
+    }
+
+    await Future.wait([
+      listings
+          .streamListings(
+            category: _category,
+            search: _search,
+            filters: ListingFeedFilters(
+              category: _category,
+              search: _search,
+              subcategory: _subcategory,
+              location: _location,
+              preferLocationFirst: _preferLocationFirst,
+              radiusKm: _radiusKm,
+              autoBrand: _autoBrand,
+              autoModel: _autoModel,
+              autoCondition: _autoCondition,
+              autoMileageTo: _autoMileageTo,
+              onlyUncrashed: _onlyUncrashed,
+              refreshShuffleSeed: nextSeed,
+            ),
+          )
+          .first,
+      feedAds.streamActiveAd().first,
+      Future<void>.delayed(const Duration(milliseconds: 350)),
+    ]);
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   void _selectCategory(String c) {
@@ -274,57 +351,80 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<Set<String>>(
-              stream: favs.streamFavoriteIds(user.uid),
-              builder: (context, favSnap) {
-                final favIds = favSnap.data ?? <String>{};
+            child: RefreshIndicator(
+              onRefresh: _handleRefresh,
+              edgeOffset: 8,
+              child: StreamBuilder<Set<String>>(
+                stream: favs.streamFavoriteIds(user.uid),
+                builder: (context, favSnap) {
+                  final favIds = favSnap.data ?? <String>{};
 
-                return StreamBuilder<List<Listing>>(
-                  stream: listings.streamListings(
-                    category: _category,
-                    search: _search,
-                    filters: ListingFeedFilters(
+                  return StreamBuilder<List<Listing>>(
+                    stream: listings.streamListings(
                       category: _category,
                       search: _search,
-                      subcategory: _subcategory,
-                      location: _location,
-                      preferLocationFirst: _preferLocationFirst,
-                      radiusKm: _radiusKm,
-                      autoBrand: _autoBrand,
-                      autoModel: _autoModel,
-                      autoCondition: _autoCondition,
-                      autoMileageTo: _autoMileageTo,
-                      onlyUncrashed: _onlyUncrashed,
+                      filters: ListingFeedFilters(
+                        category: _category,
+                        search: _search,
+                        subcategory: _subcategory,
+                        location: _location,
+                        preferLocationFirst: _preferLocationFirst,
+                        radiusKm: _radiusKm,
+                        autoBrand: _autoBrand,
+                        autoModel: _autoModel,
+                        autoCondition: _autoCondition,
+                        autoMileageTo: _autoMileageTo,
+                        onlyUncrashed: _onlyUncrashed,
+                        refreshShuffleSeed: _refreshShuffleSeed,
+                      ),
                     ),
-                  ),
-                  builder: (context, snap) {
-                    if (!snap.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    var items = snap.data!;
-                    if (items.isEmpty) {
-                      return const Center(
-                          child: Text('Пока нет объявлений'));
-                    }
-
-                    return StreamBuilder<FeedAd?>(
-                      stream: feedAds.streamActiveAd(),
-                      builder: (context, adSnap) {
-                        return _HomeFeedView(
-                          items: items,
-                          ad: adSnap.data,
-                          favIds: favIds,
-                          history: history,
-                          reviews: reviews,
-                          favs: favs,
-                          userId: user.uid,
+                    builder: (context, snap) {
+                      if (!snap.hasData) {
+                        return ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            SizedBox(
+                              height: 320,
+                              child: Center(child: CircularProgressIndicator()),
+                            ),
+                          ],
                         );
-                      },
-                    );
-                  },
-                );
-              },
+                      }
+
+                      final items = snap.data!;
+                      if (items.isEmpty) {
+                        return ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            SizedBox(
+                              height: 320,
+                              child: Center(
+                                child: Text('Пока нет объявлений'),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      return StreamBuilder<FeedAd?>(
+                        stream: feedAds.streamActiveAd(),
+                        builder: (context, adSnap) {
+                          return _HomeFeedView(
+                            key: _feedKey,
+                            items: items,
+                            ad: adSnap.data,
+                            favIds: favIds,
+                            history: history,
+                            reviews: reviews,
+                            favs: favs,
+                            userId: user.uid,
+                          );
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -343,6 +443,7 @@ class _HomeFeedView extends StatefulWidget {
   final String userId;
 
   const _HomeFeedView({
+    super.key,
     required this.items,
     required this.ad,
     required this.favIds,
@@ -394,6 +495,15 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
 
   void _scheduleVisibilityCheck() {
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+  }
+
+  void scrollToTop() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
   }
 
   Future<void> _checkAdVisibility() async {
@@ -481,6 +591,9 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     return CustomScrollView(
       controller: _scrollController,
       clipBehavior: Clip.hardEdge,
+      physics: const AlwaysScrollableScrollPhysics(
+        parent: BouncingScrollPhysics(),
+      ),
       slivers: [
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),

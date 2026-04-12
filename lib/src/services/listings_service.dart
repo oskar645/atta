@@ -19,6 +19,7 @@ class ListingFeedFilters {
   final String autoCondition;
   final int? autoMileageTo;
   final bool onlyUncrashed;
+  final int refreshShuffleSeed;
 
   const ListingFeedFilters({
     required this.category,
@@ -32,6 +33,7 @@ class ListingFeedFilters {
     this.autoCondition = '',
     this.autoMileageTo,
     this.onlyUncrashed = false,
+    this.refreshShuffleSeed = 0,
   });
 }
 
@@ -399,13 +401,34 @@ class ListingsService {
   int _compareListings(Listing a, Listing b, ListingFeedFilters filters) {
     final diff = _scoreListing(b, filters) - _scoreListing(a, filters);
     if (diff != 0) return diff;
-    return b.createdAt.compareTo(a.createdAt);
+
+    final timeBucketDiff =
+        _refreshShuffleTimeBucket(b).compareTo(_refreshShuffleTimeBucket(a));
+    if (timeBucketDiff != 0) return timeBucketDiff;
+
+    return _compareRefreshShuffle(a, b, filters.refreshShuffleSeed);
   }
 
   int _compareSimilarListings(Listing a, Listing b, Listing base) {
     final diff = _similarityScore(b, base) - _similarityScore(a, base);
     if (diff != 0) return diff;
     return b.createdAt.compareTo(a.createdAt);
+  }
+
+  int _compareRefreshShuffle(Listing a, Listing b, int seed) {
+    final aRank = _shuffleRank(a, seed);
+    final bRank = _shuffleRank(b, seed);
+    if (aRank != bRank) return aRank.compareTo(bRank);
+    return a.id.compareTo(b.id);
+  }
+
+  int _shuffleRank(Listing listing, int seed) {
+    return Object.hash(listing.id, _refreshShuffleTimeBucket(listing), seed);
+  }
+
+  int _refreshShuffleTimeBucket(Listing listing) {
+    const bucketMs = 5000;
+    return listing.createdAt.millisecondsSinceEpoch ~/ bucketMs;
   }
 
   int _scoreListing(Listing listing, ListingFeedFilters filters) {

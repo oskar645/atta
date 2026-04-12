@@ -23,13 +23,14 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _i = 0;
   Timer? _presenceTimer;
+  final _homeTabController = HomeTabController();
 
-  final _pages = const [
-    HomeScreen(),
-    FavoritesScreen(),
-    MyListingsScreen(),
-    InboxScreen(),
-    ProfileScreen(),
+  late final List<Widget> _pages = [
+    HomeScreen(controller: _homeTabController),
+    const FavoritesScreen(),
+    const MyListingsScreen(),
+    const InboxScreen(),
+    const ProfileScreen(),
   ];
 
   static const _inactive = Color(0xFF8E95A3);
@@ -81,6 +82,24 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  void _onDestinationSelected(int v) {
+    if (v == 0) {
+      if (_i != 0) {
+        setState(() => _i = 0);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _homeTabController.scrollToTop();
+        });
+        return;
+      }
+
+      _homeTabController.scrollToTop();
+      return;
+    }
+
+    if (v == _i) return;
+    setState(() => _i = v);
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.read<AuthService>();
@@ -104,7 +123,10 @@ class _MainShellState extends State<MainShell> {
     );
 
     return Scaffold(
-      body: _pages[_i],
+      body: IndexedStack(
+        index: _i,
+        children: _pages,
+      ),
       bottomNavigationBar: StreamBuilder<int>(
         stream: chat.streamUnreadTotal(uid),
         builder: (context, chatSnap) {
@@ -143,7 +165,7 @@ class _MainShellState extends State<MainShell> {
                           data: navTheme,
                           child: NavigationBar(
                             selectedIndex: _i,
-                            onDestinationSelected: (v) => setState(() => _i = v),
+                            onDestinationSelected: _onDestinationSelected,
                             destinations: [
                               const NavigationDestination(
                                 icon: Icon(Icons.search, color: _inactive),
