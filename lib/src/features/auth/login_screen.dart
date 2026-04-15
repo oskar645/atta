@@ -596,6 +596,7 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
   bool _movingForward = false;
   bool _loadingStart = true;
   bool _checkingStatus = false;
+  String? _statusHint;
   String? _checkId;
   String? _callPhone;
   String? _callPhonePretty;
@@ -617,7 +618,11 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _callStarted && !_movingForward) {
-      _checkStatusAndContinue();
+      _pollStatusAndContinue(
+        attempts: 6,
+        delay: const Duration(seconds: 2),
+        showPendingSnack: true,
+      );
     }
   }
 
@@ -667,34 +672,68 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
     }
   }
 
-  Future<void> _checkStatusAndContinue() async {
+  Future<bool> _checkStatusAndContinue({bool showPendingSnack = true}) async {
     final checkId = _checkId;
-    if (checkId == null || checkId.isEmpty || _checkingStatus) return;
+    if (checkId == null || checkId.isEmpty || _checkingStatus) return false;
 
-    setState(() => _checkingStatus = true);
+    setState(() {
+      _checkingStatus = true;
+      _statusHint = 'Проверяем подтверждение номера...';
+    });
     try {
       final result = await widget.callcheckService.checkStatus(checkId: checkId);
-      if (!mounted) return;
+      if (!mounted) return false;
 
       if (result.isConfirmed) {
+        setState(() {
+          _statusHint = 'Номер подтвержден';
+        });
         await _openProfileSetup();
-        return;
+        return true;
       }
 
       final text = result.checkStatusText.trim().isEmpty
           ? 'Номер пока не подтвержден'
           : result.checkStatusText.trim();
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+      setState(() {
+        _statusHint = text;
+      });
+      if (showPendingSnack) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(text)));
+      }
+      return false;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
+      setState(() {
+        _statusHint = null;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(e.toString().replaceFirst('Exception: ', 'Ошибка: ')),
         ),
       );
+      return false;
     } finally {
       if (mounted) {
         setState(() => _checkingStatus = false);
+      }
+    }
+  }
+
+  Future<void> _pollStatusAndContinue({
+    required int attempts,
+    required Duration delay,
+    required bool showPendingSnack,
+  }) async {
+    for (var i = 0; i < attempts; i++) {
+      final confirmed =
+          await _checkStatusAndContinue(showPendingSnack: i == attempts - 1 && showPendingSnack);
+      if (confirmed || !mounted || _movingForward) {
+        return;
+      }
+      if (i < attempts - 1) {
+        await Future<void>.delayed(delay);
       }
     }
   }
@@ -768,6 +807,16 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
+              if ((_statusHint ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _statusHint!,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
               const Spacer(),
               FilledButton(
                 onPressed:
@@ -781,7 +830,11 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
                 onPressed:
                     (_movingForward || _loadingStart || _errorText != null || _checkingStatus)
                         ? null
-                        : _checkStatusAndContinue,
+                        : () => _pollStatusAndContinue(
+                              attempts: 6,
+                              delay: const Duration(seconds: 2),
+                              showPendingSnack: true,
+                            ),
                 child: Text(
                   _checkingStatus ? 'Проверяем...' : 'Номер уже подтвержден',
                 ),
