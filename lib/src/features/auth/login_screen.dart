@@ -1,5 +1,6 @@
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/callcheck_service.dart';
+import 'package:atta/src/services/phone_auth_backend_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -33,6 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
   _AuthMethod _authMethod = _AuthMethod.phone;
 
   SupabaseClient get _sb => Supabase.instance.client;
+  final PhoneAuthBackendService _phoneAuth = PhoneAuthBackendService();
   bool get _canContinuePhoneRegistration =>
       !_loading &&
       _hasAcceptedLegal &&
@@ -105,6 +107,9 @@ class _LoginScreenState extends State<LoginScreen> {
         msg.contains('twilio')) {
       return 'Телефонный сценарий уже подготовлен, но сервис подтверждения телефона пока не подключен.';
     }
+    if (msg.contains('phone signups are disabled')) {
+      return 'Телефонная регистрация теперь идёт через backend. Проверьте, что функция phone-auth загружена в Supabase.';
+    }
     return e.message;
   }
 
@@ -149,21 +154,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _loading = true);
     try {
-      final res = isPhoneLogin
-          ? await _sb.auth.signInWithPassword(
-              phone: _normalizeRuPhone(loginValue),
-              password: pass,
-            )
-          : await _sb.auth.signInWithPassword(
-              email: loginValue,
-              password: pass,
-            );
+      AuthResponse? emailAuthResponse;
+      if (!isPhoneLogin) {
+        emailAuthResponse = await _sb.auth.signInWithPassword(
+          email: loginValue,
+          password: pass,
+        );
+      }
 
-      if (res.session == null) {
-        throw AuthException(
-          isPhoneLogin
-              ? 'Не удалось войти. Проверьте подтверждение телефона и попробуйте снова.'
-              : 'Не удалось войти. Подтвердите email и попробуйте снова.',
+      if (isPhoneLogin) {
+        await _phoneAuth.signInWithPhone(
+          phone: _normalizeRuPhone(loginValue),
+          password: pass,
+        );
+      } else if (emailAuthResponse?.session == null) {
+        throw const AuthException(
+          'Не удалось войти. Подтвердите email и попробуйте снова.',
         );
       }
     } on AuthException catch (e) {
@@ -198,6 +204,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 builder: (_) => _PhoneProfileSetupScreen(
                   phone: phone,
                   hasAcceptedLegal: _hasAcceptedLegal,
+                  phoneAuth: _phoneAuth,
                 ),
               ),
             );
@@ -850,10 +857,12 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
 class _PhoneProfileSetupScreen extends StatefulWidget {
   final String phone;
   final bool hasAcceptedLegal;
+  final PhoneAuthBackendService phoneAuth;
 
   const _PhoneProfileSetupScreen({
     required this.phone,
     required this.hasAcceptedLegal,
+    required this.phoneAuth,
   });
 
   @override
@@ -887,6 +896,9 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
     if (msg.contains('sms provider is not configured') || msg.contains('twilio')) {
       return 'Сервис подтверждения телефона еще не подключен.';
     }
+    if (msg.contains('phone signups are disabled')) {
+      return 'Телефонная регистрация теперь идёт через backend. Проверьте, что функция phone-auth загружена в Supabase.';
+    }
     return e.message;
   }
 
@@ -905,39 +917,28 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
 
     setState(() => _loading = true);
     try {
-      final res = await _sb.auth.signUp(
+      await widget.phoneAuth.signUpWithVerifiedPhone(
         phone: widget.phone,
         password: pass,
-        data: {
-          'name': name,
-          'displayName': name,
-          'phone': widget.phone,
-          'acceptedTerms': widget.hasAcceptedLegal,
-          'acceptedPrivacyPolicy': widget.hasAcceptedLegal,
-          'registrationMethod': 'phone',
-        },
-        channel: OtpChannel.sms,
+        displayName: name,
+        acceptedLegal: widget.hasAcceptedLegal,
       );
 
-      final user = res.user ?? _sb.auth.currentUser;
+      final user = _sb.auth.currentUser;
       if (user != null) {
         await ProfileService().updateProfile(user.id, {
           'display_name': name,
           'name': name,
           'phone': widget.phone,
+          'phone_verified': true,
         });
       }
 
       if (!mounted) return;
-
-      if (res.session != null || _sb.auth.currentSession != null) {
+      if (_sb.auth.currentSession != null) {
         Navigator.of(context).pop();
         return;
       }
-
-      _snack(
-        'Аккаунт создан, но серверное подтверждение телефона еще не завершено. Когда подключим сервис, этот шаг станет полностью автоматическим.',
-      );
     } on AuthException catch (e) {
       _snack(_niceAuthError(e));
     } catch (e) {

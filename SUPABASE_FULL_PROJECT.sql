@@ -12,6 +12,7 @@ create table if not exists public.users (
   display_name text,
   name text,
   phone text,
+  phone_verified boolean not null default false,
   avatar_url text,
   photo_url text,
   created_at timestamptz not null default now(),
@@ -213,13 +214,14 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.users (id, email, display_name, name, phone, avatar_url, photo_url)
+  insert into public.users (id, email, display_name, name, phone, phone_verified, avatar_url, photo_url)
   values (
     new.id,
     new.email,
     coalesce(new.raw_user_meta_data->>'display_name', new.raw_user_meta_data->>'name', ''),
     coalesce(new.raw_user_meta_data->>'name', new.raw_user_meta_data->>'display_name', ''),
     coalesce(new.raw_user_meta_data->>'phone', ''),
+    coalesce((new.raw_user_meta_data->>'phone_verified')::boolean, false),
     coalesce(new.raw_user_meta_data->>'avatar_url', ''),
     coalesce(new.raw_user_meta_data->>'photo_url', '')
   )
@@ -227,7 +229,8 @@ begin
   set email = excluded.email,
       display_name = case when public.users.display_name is null or public.users.display_name = '' then excluded.display_name else public.users.display_name end,
       name = case when public.users.name is null or public.users.name = '' then excluded.name else public.users.name end,
-      phone = case when public.users.phone is null or public.users.phone = '' then excluded.phone else public.users.phone end;
+      phone = case when public.users.phone is null or public.users.phone = '' then excluded.phone else public.users.phone end,
+      phone_verified = public.users.phone_verified or excluded.phone_verified;
 
   return new;
 end;
