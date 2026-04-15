@@ -312,6 +312,52 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     }
   }
 
+  Future<void> _deleteListingAsAdmin({
+    required Listing listing,
+    required ListingsService listingsSvc,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить объявление'),
+        content: const Text(
+          'Удалить это объявление для всех пользователей?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Нет'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Да'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await listingsSvc.archiveListing(
+        listingId: listing.id,
+        status: 'deleted',
+        note: 'Удалено администратором.',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Объявление удалено')),
+      );
+      Navigator.of(context).maybePop();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e')),
+      );
+    }
+  }
+
   List<MapEntry<String, String>> _carSpecsEntries(Listing listing) {
     if (listing.car == null) return [];
     final car = listing.car!;
@@ -629,6 +675,11 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                   listingId: listing.id,
                                   listingOwnerId: listing.ownerId,
                                 );
+                              } else if (v == 'delete_admin') {
+                                await _deleteListingAsAdmin(
+                                  listing: listing,
+                                  listingsSvc: listingsSvc,
+                                );
                               }
                             },
                             itemBuilder: (ctx) => [
@@ -651,6 +702,17 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                       Icon(Icons.flag_outlined, size: 18),
                                       SizedBox(width: 8),
                                       Text('Пожаловаться'),
+                                    ],
+                                  ),
+                                ),
+                              if (isAdmin)
+                                const PopupMenuItem(
+                                  value: 'delete_admin',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.delete_outline, size: 18),
+                                      SizedBox(width: 8),
+                                      Text('Удалить объявление'),
                                     ],
                                   ),
                                 ),
