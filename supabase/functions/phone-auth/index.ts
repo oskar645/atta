@@ -48,47 +48,71 @@ type PublicUserRow = {
   email?: string | null
 }
 
-async function findPublicUserByPhone(admin: AdminClient, phone: string) {
+async function findPublicUsersByPhone(admin: AdminClient, phone: string) {
   const rowRes = await admin
     .from('users')
     .select('id,email')
     .eq('phone', phone)
-    .limit(1)
-    .maybeSingle()
 
   if (rowRes.error != null) {
     throw new Error(rowRes.error.message)
   }
 
-  return (rowRes.data ?? null) as PublicUserRow | null
+  return ((rowRes.data ?? []) as PublicUserRow[]).filter((row) => row != null)
+}
+
+function isMissingAuthUserError(message: string) {
+  const normalized = message.trim().toLowerCase()
+  return normalized.includes('not found') || normalized.includes('user not found')
+}
+
+async function deleteStalePublicUsers(admin: AdminClient, userIds: string[]) {
+  const uniqueIds = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))]
+  if (uniqueIds.length === 0) return
+
+  const deleteRes = await admin.from('users').delete().in('id', uniqueIds)
+  if (deleteRes.error != null) {
+    throw new Error(deleteRes.error.message)
+  }
 }
 
 async function resolveAuthIdentityByPhone(admin: AdminClient, phone: string) {
-  const publicUser = await findPublicUserByPhone(admin, phone)
-  const publicUserId = `${publicUser?.id ?? ''}`.trim()
+  const publicUsers = await findPublicUsersByPhone(admin, phone)
+  const stalePublicUserIds: string[] = []
 
-  if (publicUserId.length > 0) {
+  for (const publicUser of publicUsers) {
+    const publicUserId = `${publicUser.id ?? ''}`.trim()
+    if (!publicUserId) continue
+
     const authUserRes = await admin.auth.admin.getUserById(publicUserId)
     if (authUserRes.error != null) {
+      if (isMissingAuthUserError(authUserRes.error.message)) {
+        stalePublicUserIds.push(publicUserId)
+        continue
+      }
+
       throw new Error(authUserRes.error.message)
     }
 
     const authUser = authUserRes.data.user
-    if (authUser != null) {
-      const authEmail = `${authUser.email ?? ''}`.trim()
-      return {
-        user: authUser,
-        email: authEmail.length > 0 ? authEmail : phoneEmail(phone),
-      }
+    if (authUser == null) {
+      stalePublicUserIds.push(publicUserId)
+      continue
+    }
+
+    if (stalePublicUserIds.length > 0) {
+      await deleteStalePublicUsers(admin, stalePublicUserIds)
+    }
+
+    const authEmail = `${authUser.email ?? ''}`.trim()
+    return {
+      user: authUser,
+      email: authEmail.length > 0 ? authEmail : phoneEmail(phone),
     }
   }
 
-  const rowEmail = `${publicUser?.email ?? ''}`.trim()
-  if (rowEmail.length > 0) {
-    return {
-      user: null,
-      email: rowEmail,
-    }
+  if (stalePublicUserIds.length > 0) {
+    await deleteStalePublicUsers(admin, stalePublicUserIds)
   }
 
   return {
@@ -271,54 +295,10 @@ Deno.serve(async (req) => {
       }
 
       if (resolvedIdentity.user != null) {
-        try {
-          const signInRes = await signInWithResolvedEmail(admin, {
-            email: resolvedIdentity.email,
-            password,
-          })
-
-          const mergedMetadata = {
-            ...(resolvedIdentity.user.user_metadata ?? {}),
-            name: displayName,
-            displayName,
-            display_name: displayName,
-            phone,
-            phone_verified: true,
-            acceptedTerms: acceptedLegal,
-            acceptedPrivacyPolicy: acceptedLegal,
-            registrationMethod: 'phone',
-          }
-
-          const updateRes = await admin.auth.admin.updateUserById(
-            resolvedIdentity.user.id,
-            {
-              user_metadata: mergedMetadata,
-            },
-          )
-
-          if (updateRes.error != null) {
-            throw new Error(updateRes.error.message)
-          }
-
-          await upsertPublicUser(admin, {
-            userId: resolvedIdentity.user.id,
-            email: resolvedIdentity.email,
-            displayName,
-            phone,
-            phoneVerified: true,
-          })
-
-          return json({
-            session: signInRes.data.session,
-            refresh_token: signInRes.data.session.refresh_token,
-            user: signInRes.data.user,
-          })
-        } catch (_) {
-          return json(
-            { error: 'Этот номер уже зарегистрирован. Попробуйте войти.' },
-            400,
-          )
-        }
+        return json(
+          { error: '\u042d\u0442\u043e\u0442 \u043d\u043e\u043c\u0435\u0440 \u0443\u0436\u0435 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0432\u043e\u0439\u0442\u0438.' },
+          400,
+        )
       }
 
       const initialEmail = phoneEmail(phone)
