@@ -221,25 +221,41 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _PhoneVerificationScreen(
-          phone: phone,
-          callcheckService: CallcheckService(),
-          onConfirmed: () async {
-            await Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => _PhoneProfileSetupScreen(
-                  phone: phone,
-                  hasAcceptedLegal: _hasAcceptedLegal,
-                  phoneAuth: _phoneAuth,
+    setState(() => _loading = true);
+    try {
+      final registered = await _phoneAuth.isPhoneRegistered(phone: phone);
+      if (registered) {
+        _snack('С этим номером уже есть регистрация');
+        return;
+      }
+
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => _PhoneVerificationScreen(
+            phone: phone,
+            callcheckService: CallcheckService(),
+            onConfirmed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _PhoneProfileSetupScreen(
+                    phone: phone,
+                    hasAcceptedLegal: _hasAcceptedLegal,
+                    phoneAuth: _phoneAuth,
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
-      ),
-    );
+      );
+    } on AuthException catch (e) {
+      _snack(_niceAuthError(e, isPhoneContext: true));
+    } catch (e) {
+      _snack('Ошибка: $e');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _submitEmailRegistration() async {

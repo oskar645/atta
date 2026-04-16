@@ -275,16 +275,23 @@ Deno.serve(async (req) => {
     }
 
     const phone = normalizePhone(`${body?.phone ?? ''}`)
-    const password = `${body?.password ?? ''}`.trim()
 
     if (!phone) {
       return json({ error: 'Введите корректный номер телефона' }, 400)
     }
+
+    const resolvedIdentity = await resolveAuthIdentityByPhone(admin, phone)
+
+    if (action === 'check_registration') {
+      return json({
+        registered: resolvedIdentity.user != null,
+      })
+    }
+
+    const password = `${body?.password ?? ''}`.trim()
     if (!password) {
       return json({ error: 'Введите пароль' }, 400)
     }
-
-    const resolvedIdentity = await resolveAuthIdentityByPhone(admin, phone)
 
     if (action === 'signup') {
       const displayName = `${body?.display_name ?? ''}`.trim()

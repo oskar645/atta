@@ -8,6 +8,19 @@ class PhoneAuthBackendService {
   static Uri get _endpoint =>
       Uri.parse('${SupabaseConfig.url}/functions/v1/phone-auth');
 
+  Future<bool> isPhoneRegistered({
+    required String phone,
+  }) async {
+    final body = await _invoke(
+      action: 'check_registration',
+      payload: {
+        'phone': phone,
+      },
+    );
+
+    return body['registered'] == true;
+  }
+
   Future<void> signInWithPhone({
     required String phone,
     required String password,
