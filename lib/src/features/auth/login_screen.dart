@@ -114,17 +114,45 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _resetPassword() async {
-    final email = _loginCtrl.text.trim();
+    final loginValue = _loginCtrl.text.trim();
 
-    if (email.isEmpty || _looksLikePhone(email)) {
-      _snack('Для восстановления пароля введите email');
+    if (loginValue.isEmpty) {
+      _snack('Введите телефон или email для восстановления пароля');
+      return;
+    }
+
+    if (_looksLikePhone(loginValue)) {
+      final phone = _normalizeRuPhone(loginValue);
+      if (phone.isEmpty) {
+        _snack('Введите корректный номер телефона');
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => _PhoneVerificationScreen(
+            phone: phone,
+            callcheckService: CallcheckService(),
+            onConfirmed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _PhonePasswordResetScreen(
+                    phone: phone,
+                    phoneAuth: _phoneAuth,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
       return;
     }
 
     setState(() => _loading = true);
     try {
       await _sb.auth.resetPasswordForEmail(
-        email,
+        loginValue,
         redirectTo: kIsWeb ? null : 'io.supabase.flutter://reset-callback/',
       );
       _snack('Письмо для смены пароля отправлено на почту');
@@ -984,6 +1012,127 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
           FilledButton(
             onPressed: _loading ? null : _submit,
             child: Text(_loading ? 'Подождите...' : 'Создать аккаунт'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PhonePasswordResetScreen extends StatefulWidget {
+  final String phone;
+  final PhoneAuthBackendService phoneAuth;
+
+  const _PhonePasswordResetScreen({
+    required this.phone,
+    required this.phoneAuth,
+  });
+
+  @override
+  State<_PhonePasswordResetScreen> createState() =>
+      _PhonePasswordResetScreenState();
+}
+
+class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
+  final _passCtrl = TextEditingController();
+  final _pass2Ctrl = TextEditingController();
+  bool _loading = false;
+
+  SupabaseClient get _sb => Supabase.instance.client;
+
+  @override
+  void dispose() {
+    _passCtrl.dispose();
+    _pass2Ctrl.dispose();
+    super.dispose();
+  }
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _submit() async {
+    final pass = _passCtrl.text.trim();
+    final pass2 = _pass2Ctrl.text.trim();
+
+    if (pass.isEmpty || pass2.isEmpty) {
+      _snack('Введите новый пароль и повторите его');
+      return;
+    }
+    if (pass.length < 6) {
+      _snack('Пароль должен быть минимум 6 символов');
+      return;
+    }
+    if (pass != pass2) {
+      _snack('Пароли не совпадают');
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      await widget.phoneAuth.resetPasswordWithVerifiedPhone(
+        phone: widget.phone,
+        newPassword: pass,
+      );
+
+      final user = _sb.auth.currentUser;
+      if (user != null) {
+        await ProfileService().updateProfile(user.id, {
+          'phone': widget.phone,
+          'phone_verified': true,
+        });
+      }
+
+      if (!mounted) return;
+      _snack('Пароль обновлен. Вход выполнен автоматически.');
+      Navigator.of(context).pop();
+    } catch (e) {
+      _snack('Ошибка: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Новый пароль')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          TextField(
+            enabled: false,
+            decoration: InputDecoration(
+              labelText: 'Телефон',
+              hintText: widget.phone,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passCtrl,
+            obscureText: true,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(labelText: 'Новый пароль'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _pass2Ctrl,
+            obscureText: true,
+            textInputAction: TextInputAction.done,
+            decoration: const InputDecoration(labelText: 'Повторите пароль'),
+            onSubmitted: (_) {
+              if (!_loading) {
+                _submit();
+              }
+            },
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _loading ? null : _submit,
+            child: Text(_loading ? 'Подождите...' : 'Сохранить пароль'),
           ),
         ],
       ),

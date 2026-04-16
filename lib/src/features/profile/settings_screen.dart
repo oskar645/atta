@@ -3,6 +3,7 @@ import 'package:atta/src/features/profile/about_app_screen.dart';
 import 'package:atta/src/features/profile/change_password_screen.dart';
 import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/phone_auth_backend_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,8 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _phoneAuth = PhoneAuthBackendService();
   bool _saving = false;
 
   @override
@@ -28,12 +31,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final profile = context.read<ProfileService>();
       final uid = auth.currentUser!.uid;
       final data = await profile.getProfile(uid);
+      final authEmail = _visibleEmail(auth.currentUser?.email);
+      final profileEmail = _visibleEmail((data['email'] ?? '').toString());
 
       _nameCtrl.text =
           (data['display_name'] ?? data['displayName'] ?? data['name'] ?? '')
               .toString();
       _phoneCtrl.text = (data['phone'] ?? '').toString();
-      if (mounted) setState(() {});
+      _emailCtrl.text = profileEmail.isNotEmpty ? profileEmail : authEmail;
+
+      if (mounted) {
+        setState(() {});
+      }
     });
   }
 
@@ -41,7 +50,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
+    _emailCtrl.dispose();
     super.dispose();
+  }
+
+  String _visibleEmail(String? value) {
+    final email = (value ?? '').trim();
+    if (email.isEmpty) return '';
+    if (email.endsWith('@phone.atta.local')) return '';
+    return email;
+  }
+
+  bool _looksLikeEmail(String value) {
+    final text = value.trim();
+    if (text.isEmpty) return true;
+    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
   }
 
   OutlineInputBorder _fieldBorder(BuildContext context) {
@@ -56,18 +79,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     final auth = context.read<AuthService>();
     final profile = context.read<ProfileService>();
-    final uid = auth.currentUser!.uid;
+    final currentUser = auth.currentUser!;
+    final uid = currentUser.uid;
 
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
+    final email = _emailCtrl.text.trim().toLowerCase();
+    final currentEmail = _visibleEmail(currentUser.email);
+
+    if (name.isEmpty) {
+      showAppSnack(context, 'Введите имя', isError: true);
+      return;
+    }
+    if (!_looksLikeEmail(email)) {
+      showAppSnack(context, 'Введите корректный email', isError: true);
+      return;
+    }
 
     setState(() => _saving = true);
     try {
+      if (email.isNotEmpty && email != currentEmail) {
+        await _phoneAuth.linkEmailToCurrentUser(email: email);
+      }
+
+      await auth.updateAuthMetadata(displayName: name);
+
       await profile.updateProfile(uid, {
         'display_name': name,
         'name': name,
         'phone': phone,
+        if (email.isNotEmpty) 'email': email,
       });
+
       if (!mounted) return;
       showAppSnack(context, 'Сохранено');
     } catch (e) {
@@ -118,16 +161,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _notReady() {
-    showAppSnack(context, 'Сделаем позже');
-  }
-
   @override
   Widget build(BuildContext context) {
-    final auth = context.read<AuthService>();
-    final user = auth.currentUser!;
-    final email = user.email ?? '';
     final border = _fieldBorder(context);
+    final email = _emailCtrl.text.trim();
 
     return Scaffold(
       appBar: AppBar(
@@ -161,6 +198,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     focusedBorder: border,
                   ),
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _emailCtrl,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    labelText: 'Email',
+                    hintText: 'name@example.com',
+                    border: border,
+                    enabledBorder: border,
+                    focusedBorder: border,
+                  ),
+                ),
               ],
             ),
           ),
@@ -173,12 +222,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           _sectionTitle('Аккаунт'),
-          _tile(
-            icon: Icons.mail_outline,
-            title: 'Почта',
-            subtitle: email.isEmpty ? 'Не указано' : email,
-            onTap: _notReady,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              email.isEmpty
+                  ? 'Добавьте email, чтобы он был привязан к вашему аккаунту и его можно было использовать для входа.'
+                  : 'Текущий email привязан к вашему аккаунту и сохраняется в профиле.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.outline,
+                height: 1.4,
+              ),
+            ),
           ),
+          const SizedBox(height: 8),
           _tile(
             icon: Icons.lock_outline,
             title: 'Сменить пароль',

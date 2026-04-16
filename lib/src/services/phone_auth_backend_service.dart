@@ -52,16 +52,50 @@ class PhoneAuthBackendService {
     await Supabase.instance.client.auth.setSession(refreshToken);
   }
 
+  Future<void> resetPasswordWithVerifiedPhone({
+    required String phone,
+    required String newPassword,
+  }) async {
+    final body = await _invoke(
+      action: 'reset_password',
+      payload: {
+        'phone': phone,
+        'password': newPassword,
+      },
+    );
+
+    final refreshToken = _extractRefreshToken(body);
+    if (refreshToken.isEmpty) {
+      throw Exception('Backend не вернул токен сессии');
+    }
+
+    await Supabase.instance.client.auth.setSession(refreshToken);
+  }
+
+  Future<void> linkEmailToCurrentUser({
+    required String email,
+  }) async {
+    await _invoke(
+      action: 'link_email',
+      payload: {
+        'email': email.trim(),
+      },
+      accessToken: Supabase.instance.client.auth.currentSession?.accessToken,
+    );
+  }
+
   Future<Map<String, dynamic>> _invoke({
     required String action,
     required Map<String, dynamic> payload,
+    String? accessToken,
   }) async {
     final response = await http.post(
       _endpoint,
       headers: {
         'Content-Type': 'application/json',
         'apikey': SupabaseConfig.anonKey,
-        'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+        'Authorization':
+            'Bearer ${(accessToken == null || accessToken.trim().isEmpty) ? SupabaseConfig.anonKey : accessToken.trim()}',
       },
       body: jsonEncode({
         'action': action,
