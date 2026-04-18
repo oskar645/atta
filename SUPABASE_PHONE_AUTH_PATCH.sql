@@ -5,6 +5,9 @@ alter table if exists public.users
 
 create index if not exists idx_users_phone on public.users(phone);
 
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update on public.users to authenticated, service_role;
+
 create or replace function public.handle_new_auth_user()
 returns trigger
 language plpgsql

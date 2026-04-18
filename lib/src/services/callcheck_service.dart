@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:atta/src/config/supabase_config.dart';
 import 'package:http/http.dart' as http;
 
 class CallcheckStartResult {
@@ -28,21 +29,18 @@ class CallcheckStatusResult {
 }
 
 class CallcheckService {
-  static const String _apiId = '4A57DED4-EF6C-FF72-6F7B-7AF0E542DC74';
-  static const String _baseUrl = 'sms.ru';
+  static Uri get _endpoint =>
+      Uri.parse('${SupabaseConfig.url}/functions/v1/phone-auth');
 
   Future<CallcheckStartResult> startVerification({
     required String phone,
   }) async {
-    final uri = Uri.https(_baseUrl, '/callcheck/add', {
-      'api_id': _apiId,
-      'phone': phone.replaceAll('+', ''),
-      'json': '1',
-    });
-
-    final response = await http.get(uri);
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    _ensureOk(body);
+    final body = await _invoke(
+      action: 'callcheck_start',
+      payload: {
+        'phone': phone,
+      },
+    );
 
     return CallcheckStartResult(
       checkId: (body['check_id'] ?? '').toString(),
@@ -54,15 +52,12 @@ class CallcheckService {
   Future<CallcheckStatusResult> checkStatus({
     required String checkId,
   }) async {
-    final uri = Uri.https(_baseUrl, '/callcheck/status', {
-      'api_id': _apiId,
-      'check_id': checkId,
-      'json': '1',
-    });
-
-    final response = await http.get(uri);
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    _ensureOk(body);
+    final body = await _invoke(
+      action: 'callcheck_status',
+      payload: {
+        'check_id': checkId,
+      },
+    );
 
     return CallcheckStatusResult(
       checkStatus: (body['check_status'] ?? '').toString(),
@@ -70,12 +65,49 @@ class CallcheckService {
     );
   }
 
-  void _ensureOk(Map<String, dynamic> body) {
-    final status = (body['status'] ?? '').toString();
-    if (status == 'OK') return;
+  Future<Map<String, dynamic>> _invoke({
+    required String action,
+    required Map<String, dynamic> payload,
+  }) async {
+    final response = await http.post(
+      _endpoint,
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SupabaseConfig.anonKey,
+        'Authorization': 'Bearer ${SupabaseConfig.anonKey}',
+      },
+      body: jsonEncode({
+        'action': action,
+        ...payload,
+      }),
+    );
 
-    final statusText = (body['status_text'] ?? 'Не удалось выполнить запрос')
-        .toString();
-    throw Exception(statusText);
+    if (response.statusCode == 404) {
+      throw Exception(
+        'Функция phone-auth ещё не загружена в Supabase. Нужно задеплоить backend.',
+      );
+    }
+
+    final raw = response.body.trim();
+    final body = raw.isEmpty
+        ? <String, dynamic>{}
+        : Map<String, dynamic>.from(jsonDecode(raw) as Map);
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final error = (body['error'] ?? body['message'] ?? 'Ошибка backend')
+          .toString()
+          .trim();
+      throw Exception(error.isEmpty ? 'Ошибка backend' : error);
+    }
+
+    final status = (body['status'] ?? '').toString();
+    if (status.isNotEmpty && status != 'OK') {
+      final statusText = (body['status_text'] ?? 'Не удалось выполнить запрос')
+          .toString()
+          .trim();
+      throw Exception(statusText.isEmpty ? 'Не удалось выполнить запрос' : statusText);
+    }
+
+    return body;
   }
 }

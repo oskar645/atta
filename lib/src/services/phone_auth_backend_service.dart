@@ -1,12 +1,61 @@
 import 'dart:convert';
 
 import 'package:atta/src/config/supabase_config.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+class PhoneAuthBackendException implements Exception {
+  final String message;
+  final String? technicalDetails;
+
+  const PhoneAuthBackendException(this.message, {this.technicalDetails});
+
+  @override
+  String toString() => message;
+}
 
 class PhoneAuthBackendService {
   static Uri get _endpoint =>
       Uri.parse('${SupabaseConfig.url}/functions/v1/phone-auth');
+
+  String userMessageForError(Object error, {bool isSignIn = false}) {
+    final raw = error.toString().replaceFirst('Exception: ', '').trim();
+    final msg = raw.toLowerCase();
+
+    if (msg.contains('user already registered') ||
+        msg.contains('уже зарегистрирован')) {
+      return isSignIn
+          ? 'Неверный номер телефона или пароль.'
+          : 'Этот номер уже зарегистрирован. Попробуйте войти.';
+    }
+    if (msg.contains('invalid login credentials') ||
+        msg.contains('неверный номер телефона или пароль')) {
+      return 'Неверный номер телефона или пароль.';
+    }
+    if (msg.contains('permission denied for schema public')) {
+      return 'Не удалось завершить регистрацию. Попробуйте еще раз.';
+    }
+    if (msg.contains('phone signups are disabled')) {
+      return 'Телефонная регистрация сейчас временно недоступна.';
+    }
+    if (msg.contains('sms provider is not configured') ||
+        msg.contains('twilio')) {
+      return 'Сервис подтверждения телефона сейчас недоступен.';
+    }
+    if (msg.contains('failed host lookup') ||
+        msg.contains('socketexception') ||
+        msg.contains('clientexception')) {
+      return 'Нет соединения с сервером. Проверьте интернет, приложение попробует еще раз.';
+    }
+    if (msg.contains('backend') ||
+        msg.contains('schema public') ||
+        msg.contains('permission denied')) {
+      return 'Не удалось выполнить операцию. Попробуйте еще раз.';
+    }
+
+    return 'Произошла ошибка. Попробуйте еще раз.';
+  }
 
   Future<bool> isPhoneRegistered({
     required String phone,
@@ -25,6 +74,7 @@ class PhoneAuthBackendService {
     required String phone,
     required String password,
   }) async {
+    debugPrint('Phone auth login: invoking backend for $phone');
     final body = await _invoke(
       action: 'login',
       payload: {
@@ -35,10 +85,17 @@ class PhoneAuthBackendService {
 
     final refreshToken = _extractRefreshToken(body);
     if (refreshToken.isEmpty) {
-      throw Exception('Backend не вернул токен сессии');
+      throw const PhoneAuthBackendException(
+        'Не удалось открыть сессию. Попробуйте еще раз.',
+        technicalDetails: 'Backend did not return refresh token for login.',
+      );
     }
 
-    await Supabase.instance.client.auth.setSession(refreshToken);
+    debugPrint('Phone auth login: backend ok, setting session');
+    await Supabase.instance.client.auth
+        .setSession(refreshToken)
+        .timeout(const Duration(seconds: 20));
+    debugPrint('Phone auth login: session ready');
   }
 
   Future<void> signUpWithVerifiedPhone({
@@ -47,6 +104,9 @@ class PhoneAuthBackendService {
     required String displayName,
     required bool acceptedLegal,
   }) async {
+    debugPrint(
+      'Phone auth signup: invoking backend for $phone, nameLen=${displayName.trim().length}, passLen=${password.trim().length}',
+    );
     final body = await _invoke(
       action: 'signup',
       payload: {
@@ -59,16 +119,24 @@ class PhoneAuthBackendService {
 
     final refreshToken = _extractRefreshToken(body);
     if (refreshToken.isEmpty) {
-      throw Exception('Backend не вернул токен сессии');
+      throw const PhoneAuthBackendException(
+        'Не удалось открыть сессию. Попробуйте еще раз.',
+        technicalDetails: 'Backend did not return refresh token for signup.',
+      );
     }
 
-    await Supabase.instance.client.auth.setSession(refreshToken);
+    debugPrint('Phone auth signup: backend ok, setting session');
+    await Supabase.instance.client.auth
+        .setSession(refreshToken)
+        .timeout(const Duration(seconds: 20));
+    debugPrint('Phone auth signup: session ready');
   }
 
   Future<void> resetPasswordWithVerifiedPhone({
     required String phone,
     required String newPassword,
   }) async {
+    debugPrint('Phone auth reset_password: invoking backend for $phone');
     final body = await _invoke(
       action: 'reset_password',
       payload: {
@@ -79,10 +147,18 @@ class PhoneAuthBackendService {
 
     final refreshToken = _extractRefreshToken(body);
     if (refreshToken.isEmpty) {
-      throw Exception('Backend не вернул токен сессии');
+      throw const PhoneAuthBackendException(
+        'Не удалось открыть сессию. Попробуйте еще раз.',
+        technicalDetails:
+            'Backend did not return refresh token for password reset.',
+      );
     }
 
-    await Supabase.instance.client.auth.setSession(refreshToken);
+    debugPrint('Phone auth reset_password: backend ok, setting session');
+    await Supabase.instance.client.auth
+        .setSession(refreshToken)
+        .timeout(const Duration(seconds: 20));
+    debugPrint('Phone auth reset_password: session ready');
   }
 
   Future<void> linkEmailToCurrentUser({
@@ -102,23 +178,26 @@ class PhoneAuthBackendService {
     required Map<String, dynamic> payload,
     String? accessToken,
   }) async {
-    final response = await http.post(
-      _endpoint,
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': SupabaseConfig.anonKey,
-        'Authorization':
-            'Bearer ${(accessToken == null || accessToken.trim().isEmpty) ? SupabaseConfig.anonKey : accessToken.trim()}',
-      },
-      body: jsonEncode({
-        'action': action,
-        ...payload,
-      }),
-    );
+    final response = await http
+        .post(
+          _endpoint,
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SupabaseConfig.anonKey,
+            'Authorization':
+                'Bearer ${(accessToken == null || accessToken.trim().isEmpty) ? SupabaseConfig.anonKey : accessToken.trim()}',
+          },
+          body: jsonEncode({
+            'action': action,
+            ...payload,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
 
     if (response.statusCode == 404) {
-      throw Exception(
-        'Функция phone-auth ещё не загружена в Supabase. Нужно задеплоить backend.',
+      throw const PhoneAuthBackendException(
+        'Телефонная регистрация сейчас недоступна.',
+        technicalDetails: 'Function phone-auth is missing in Supabase.',
       );
     }
 
@@ -131,7 +210,11 @@ class PhoneAuthBackendService {
       final error = (body['error'] ?? body['message'] ?? 'Ошибка backend')
           .toString()
           .trim();
-      throw Exception(error.isEmpty ? 'Ошибка backend' : error);
+      final technical = error.isEmpty ? 'Ошибка backend' : error;
+      throw PhoneAuthBackendException(
+        userMessageForError(technical, isSignIn: action == 'login'),
+        technicalDetails: technical,
+      );
     }
 
     return body;

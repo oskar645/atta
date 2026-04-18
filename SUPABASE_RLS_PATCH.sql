@@ -3,6 +3,8 @@
 
 create extension if not exists pgcrypto;
 
+grant usage on schema public to anon, authenticated, service_role;
+
 create or replace function public.is_admin(p_uid uuid)
 returns boolean
 language sql
@@ -23,6 +25,7 @@ grant execute on function public.is_admin(uuid) to authenticated;
 -- users
 -- ---------------------------
 alter table if exists public.users enable row level security;
+grant select, insert, update on public.users to authenticated, service_role;
 
 drop policy if exists "users_select_all" on public.users;
 create policy "users_select_all"

@@ -36,6 +36,47 @@ function normalizeEmail(raw: string) {
   return raw.trim().toLowerCase()
 }
 
+async function callSmsRu(
+  path: string,
+  query: Record<string, string>,
+) {
+  const apiId =
+    Deno.env.get('SMS_RU_API_ID')?.trim() ||
+    '4A57DED4-EF6C-FF72-6F7B-7AF0E542DC74'
+
+  if (!apiId) {
+    throw new Error('Не настроен SMS_RU_API_ID')
+  }
+
+  const url = new URL(`https://sms.ru${path}`)
+  url.searchParams.set('api_id', apiId)
+  url.searchParams.set('json', '1')
+  for (const [key, value] of Object.entries(query)) {
+    url.searchParams.set(key, value)
+  }
+
+  const response = await fetch(url)
+  const raw = await response.text()
+  const body = raw.trim().length === 0
+    ? {}
+    : JSON.parse(raw) as Record<string, unknown>
+
+  if (!response.ok) {
+    const error = `${body.error ?? body.status_text ?? 'Ошибка sms.ru'}`
+      .trim()
+    throw new Error(error || 'Ошибка sms.ru')
+  }
+
+  const status = `${body.status ?? ''}`.trim()
+  if (status.length > 0 && status !== 'OK') {
+    const error = `${body.status_text ?? 'Не удалось выполнить запрос к sms.ru'}`
+      .trim()
+    throw new Error(error || 'Не удалось выполнить запрос к sms.ru')
+  }
+
+  return body
+}
+
 function phoneEmail(phone: string) {
   const digits = phone.replace(/\D/g, '')
   return `phone_${digits}@phone.atta.local`
@@ -237,6 +278,18 @@ Deno.serve(async (req) => {
     const body = await req.json()
     const action = `${body?.action ?? ''}`.trim()
 
+    if (action === 'callcheck_status') {
+      const checkId = `${body?.check_id ?? ''}`.trim()
+      if (checkId.length === 0) {
+        return json({ error: 'Нужен check_id' }, 400)
+      }
+
+      const result = await callSmsRu('/callcheck/status', {
+        check_id: checkId,
+      })
+      return json(result)
+    }
+
     if (action === 'link_email') {
       const email = normalizeEmail(`${body?.email ?? ''}`)
       if (email.length === 0 || !email.includes('@')) {
@@ -280,6 +333,13 @@ Deno.serve(async (req) => {
       return json({ error: 'Введите корректный номер телефона' }, 400)
     }
 
+    if (action === 'callcheck_start') {
+      const result = await callSmsRu('/callcheck/add', {
+        phone: phone.replace(/\D/g, ''),
+      })
+      return json(result)
+    }
+
     const resolvedIdentity = await resolveAuthIdentityByPhone(admin, phone)
 
     if (action === 'check_registration') {
@@ -302,10 +362,23 @@ Deno.serve(async (req) => {
       }
 
       if (resolvedIdentity.user != null) {
-        return json(
-          { error: '\u042d\u0442\u043e\u0442 \u043d\u043e\u043c\u0435\u0440 \u0443\u0436\u0435 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0432\u043e\u0439\u0442\u0438.' },
-          400,
-        )
+        try {
+          const signInRes = await signInWithResolvedEmail(admin, {
+            email: resolvedIdentity.email,
+            password,
+          })
+
+          return json({
+            session: signInRes.data.session,
+            refresh_token: signInRes.data.session.refresh_token,
+            user: signInRes.data.user,
+          })
+        } catch (_) {
+          return json(
+            { error: '\u042d\u0442\u043e\u0442 \u043d\u043e\u043c\u0435\u0440 \u0443\u0436\u0435 \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0432\u043e\u0439\u0442\u0438.' },
+            400,
+          )
+        }
       }
 
       const initialEmail = phoneEmail(phone)

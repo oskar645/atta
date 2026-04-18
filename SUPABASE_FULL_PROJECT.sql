@@ -3,6 +3,8 @@
 
 create extension if not exists pgcrypto;
 
+grant usage on schema public to anon, authenticated, service_role;
+
 -- =========================
 -- TABLES
 -- =========================
@@ -18,6 +20,8 @@ create table if not exists public.users (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+grant select, insert, update on public.users to authenticated, service_role;
 
 create table if not exists public.admin_users (
   uid uuid primary key references auth.users(id) on delete cascade,
