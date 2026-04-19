@@ -36,6 +36,10 @@ function normalizeEmail(raw: string) {
   return raw.trim().toLowerCase()
 }
 
+function isValidPhonePassword(password: string) {
+  return /^\d{8,}$/.test(password)
+}
+
 async function callSmsRu(
   path: string,
   query: Record<string, string>,
@@ -351,6 +355,9 @@ Deno.serve(async (req) => {
     const password = `${body?.password ?? ''}`.trim()
     if (!password) {
       return json({ error: 'Введите пароль' }, 400)
+    }
+    if (!isValidPhonePassword(password)) {
+      return json({ error: 'Введите не менее 8 цифр' }, 400)
     }
 
     if (action === 'signup') {

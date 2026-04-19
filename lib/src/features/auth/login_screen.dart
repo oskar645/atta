@@ -16,6 +16,21 @@ import 'verify_email_screen.dart';
 
 enum _AuthMethod { phone, email }
 
+const int _minPhonePasswordDigits = 8;
+
+bool _isPhonePasswordValid(String value) {
+  final trimmed = value.trim();
+  return trimmed.length >= _minPhonePasswordDigits &&
+      RegExp(r'^\d+$').hasMatch(trimmed);
+}
+
+String _phonePasswordErrorText(String value) {
+  if (value.trim().isEmpty) {
+    return 'Введите пароль';
+  }
+  return 'Введите не менее 8 цифр';
+}
+
 class _PhoneRegistrationDraft {
   final String displayName;
   final String password;
@@ -72,7 +87,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool get _canContinuePhoneRegistrationFromTab =>
       !_loading &&
       _nameCtrl.text.trim().isNotEmpty &&
-      _passCtrl.text.trim().isNotEmpty &&
+      _isPhonePasswordValid(_passCtrl.text) &&
       _hasAcceptedLegal;
 
   @override
@@ -586,9 +601,14 @@ class _LoginScreenState extends State<LoginScreen> {
             TextField(
               controller: _passCtrl,
               obscureText: true,
+              keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
               onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(labelText: 'Пароль'),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'Пароль',
+                helperText: 'Введите не менее 8 цифр',
+              ),
             ),
             const SizedBox(height: 16),
             _buildLegalBlock(theme),
@@ -678,7 +698,7 @@ class _PhoneRegistrationCredentialsScreenState
   }
 
   bool get _isNameValid => _nameCtrl.text.trim().isNotEmpty;
-  bool get _isPasswordValid => _passCtrl.text.trim().isNotEmpty;
+  bool get _isPasswordValid => _isPhonePasswordValid(_passCtrl.text);
   bool get _canContinue => _isNameValid && _isPasswordValid && _acceptedOffer;
 
   Future<void> _continue() async {
@@ -726,12 +746,16 @@ class _PhoneRegistrationCredentialsScreenState
           TextField(
             controller: _passCtrl,
             obscureText: true,
+            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _continue(),
             onChanged: (_) => setState(() {}),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: InputDecoration(
               labelText: 'Пароль',
-              errorText: passInvalid ? 'Введите пароль' : null,
+              helperText: 'Введите не менее 8 цифр',
+              errorText:
+                  passInvalid ? _phonePasswordErrorText(_passCtrl.text) : null,
             ),
           ),
           const SizedBox(height: 16),
@@ -1120,6 +1144,10 @@ class _PhoneRegistrationConfirmScreenState
       _snack('Пароль не сохранился. Вернитесь назад и введите его снова.');
       return;
     }
+    if (!_isPhonePasswordValid(widget.draft.password)) {
+      _snack('Введите не менее 8 цифр.');
+      return;
+    }
     if (widget.draft.displayName.trim().isEmpty) {
       _snack('Имя не сохранилось. Вернитесь назад и введите его снова.');
       return;
@@ -1159,6 +1187,10 @@ class _PhoneRegistrationConfirmScreenState
     );
     if (widget.draft.password.trim().isEmpty) {
       _snack('Пароль не сохранился. Вернитесь назад и введите его снова.');
+      return;
+    }
+    if (!_isPhonePasswordValid(widget.draft.password)) {
+      _snack('Введите не менее 8 цифр.');
       return;
     }
     if (widget.draft.displayName.trim().isEmpty) {
@@ -1609,6 +1641,10 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
       _snack('Введите пароль');
       return;
     }
+    if (!_isPhonePasswordValid(pass)) {
+      _snack('Введите не менее 8 цифр.');
+      return;
+    }
 
     setState(() => _loading = true);
     try {
@@ -1655,8 +1691,13 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
           TextField(
             controller: _passCtrl,
             obscureText: true,
+            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(labelText: 'Пароль'),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: 'Пароль',
+              helperText: 'Введите не менее 8 цифр',
+            ),
             onSubmitted: (_) {
               if (!_loading) {
                 _submit();
@@ -1715,8 +1756,8 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
       _snack('Введите новый пароль и повторите его');
       return;
     }
-    if (pass.length < 6) {
-      _snack('Пароль должен быть минимум 6 символов');
+    if (!_isPhonePasswordValid(pass)) {
+      _snack('Введите не менее 8 цифр.');
       return;
     }
     if (pass != pass2) {
@@ -1769,14 +1810,21 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
           TextField(
             controller: _passCtrl,
             obscureText: true,
+            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.next,
-            decoration: const InputDecoration(labelText: 'Новый пароль'),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: const InputDecoration(
+              labelText: 'Новый пароль',
+              helperText: 'Введите не менее 8 цифр',
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _pass2Ctrl,
             obscureText: true,
+            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(labelText: 'Повторите пароль'),
             onSubmitted: (_) {
               if (!_loading) {

@@ -33,6 +33,10 @@ class PhoneAuthBackendService {
         msg.contains('неверный номер телефона или пароль')) {
       return 'Неверный номер телефона или пароль.';
     }
+    if (msg.contains('введите не менее 8 цифр') ||
+        msg.contains('minimum 8 digits')) {
+      return 'Введите не менее 8 цифр.';
+    }
     if (msg.contains('permission denied for schema public')) {
       return 'Не удалось завершить регистрацию. Попробуйте еще раз.';
     }
