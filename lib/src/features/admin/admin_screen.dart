@@ -232,6 +232,7 @@ class _DashboardTab extends StatelessWidget {
         Future.wait([
           _count('users'),
           _count('listings'),
+          _count('listings', eqFilters: {'status': 'approved'}),
           _count('listings', eqFilters: {'status': 'pending'}),
           _count('listings', eqFilters: {'status': 'sold'}),
           _count('support_tickets'),
@@ -252,11 +253,12 @@ class _DashboardTab extends StatelessWidget {
 
         final users = counts[0];
         final listings = counts[1];
-        final pending = counts[2];
-        final sold = counts[3];
-        final tickets = counts[4];
-        final reports = counts[5];
-        final online = counts[6];
+        final active = counts[2];
+        final pending = counts[3];
+        final sold = counts[4];
+        final tickets = counts[5];
+        final reports = counts[6];
+        final online = counts[7];
 
         // серии для графика
         final listingsSeries =
@@ -336,6 +338,7 @@ class _DashboardTab extends StatelessWidget {
             card('Пользователей', '$users', Icons.people),
             card('Сейчас онлайн', '$online', Icons.circle),
             card('Объявлений всего', '$listings', Icons.list_alt),
+            card('Активных объявлений', '$active', Icons.campaign),
             card('Продано', '$sold', Icons.sell),
             card('Продажи за 30 дней', '$soldThisMonth', Icons.sell_outlined),
             card('На модерации', '$pending', Icons.shield),

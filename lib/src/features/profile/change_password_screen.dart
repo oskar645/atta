@@ -1,5 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+const int _minPasswordDigits = 8;
+
+bool _isValidPassword(String value) {
+  final trimmed = value.trim();
+  return trimmed.length >= _minPasswordDigits &&
+      RegExp(r'^\d+$').hasMatch(trimmed);
+}
 
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
@@ -20,7 +29,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   Future<void> _change() async {
     final np = _newPass.text.trim();
-    if (np.length < 6) {
+    if (!_isValidPassword(np)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Новый пароль минимум 6 символов')),
       );
@@ -67,6 +76,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             TextField(
               controller: _newPass,
               obscureText: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(
                 labelText: 'Новый пароль (мин. 6)',
               ),

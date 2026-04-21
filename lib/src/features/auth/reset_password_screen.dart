@@ -1,5 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+const int _minPasswordDigits = 8;
+
+bool _isValidPassword(String value) {
+  final trimmed = value.trim();
+  return trimmed.length >= _minPasswordDigits &&
+      RegExp(r'^\d+$').hasMatch(trimmed);
+}
 
 class ResetPasswordScreen extends StatefulWidget {
   const ResetPasswordScreen({super.key});
@@ -39,7 +48,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       _snack('Пароли не совпадают');
       return;
     }
-    if (p1.length < 6) {
+    if (!_isValidPassword(p1)) {
       _snack('Пароль должен быть минимум 6 символов');
       return;
     }
@@ -71,12 +80,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
             TextField(
               controller: _pass1,
               obscureText: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(labelText: 'Новый пароль'),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _pass2,
               obscureText: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(labelText: 'Повторите пароль'),
             ),
             const SizedBox(height: 16),

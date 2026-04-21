@@ -299,6 +299,10 @@ class _LoginScreenState extends State<LoginScreen> {
       _snack('Введите email и пароль');
       return;
     }
+    if (!_isPhonePasswordValid(pass)) {
+      _snack('Введите не менее 8 цифр.');
+      return;
+    }
     if (!_hasAcceptedLegal) {
       _snack(
           'Примите Пользовательское соглашение и Политику конфиденциальности');
@@ -603,8 +607,8 @@ class _LoginScreenState extends State<LoginScreen> {
               obscureText: true,
               keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
-              onChanged: (_) => setState(() {}),
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Пароль',
                 helperText: 'Введите не менее 8 цифр',
