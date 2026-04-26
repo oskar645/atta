@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -33,6 +34,29 @@ class ProfileScreen extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  Future<void> _shareProfileInvite(
+    BuildContext context, {
+    required String uid,
+    required String name,
+  }) async {
+    final profileLink = 'https://atta.app/profile/$uid';
+    final message = 'Смотри мой профиль в ATTA:\n$profileLink';
+
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          text: message,
+          subject: 'Профиль $name в ATTA',
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e')),
+      );
+    }
   }
 
   Future<void> _editName(
@@ -350,6 +374,37 @@ class ProfileScreen extends StatelessWidget {
                           borderRadius: BorderRadius.circular(14)),
                       tileColor:
                           Theme.of(context).colorScheme.surfaceContainerHighest,
+                      leading: const Icon(Icons.settings_outlined),
+                      title: const Text('Настройки'),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const SettingsScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      tileColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      leading: const Icon(Icons.person_add_alt_1_outlined),
+                      title: const Text('Пригласить друга'),
+                      subtitle: const Text('Поделиться ссылкой на мой профиль'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _shareProfileInvite(
+                        context,
+                        uid: user.uid,
+                        name: name,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      tileColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
                       leading: const Icon(Icons.dark_mode_outlined),
                       title: const Text('Тёмная тема'),
                       trailing: Switch(
@@ -361,12 +416,12 @@ class ProfileScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     StreamBuilder<bool>(
-	                      stream: admin.streamIsAdmin(user.uid),
-	                      initialData: false,
-	                      builder: (context, adminSnap) {
-	                        if (adminSnap.data != true) {
-	                          return const SizedBox.shrink();
-	                        }
+                      stream: admin.streamIsAdmin(user.uid),
+                      initialData: false,
+                      builder: (context, adminSnap) {
+                        if (adminSnap.data != true) {
+                          return const SizedBox.shrink();
+                        }
 
                         return Column(
                           children: [
@@ -432,21 +487,6 @@ class ProfileScreen extends StatelessWidget {
                         );
                       },
                     ),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      leading: const Icon(Icons.settings_outlined),
-                      title: const Text('Настройки'),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => const SettingsScreen()),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 10),
                     ListTile(
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),

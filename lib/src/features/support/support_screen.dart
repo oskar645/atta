@@ -17,6 +17,20 @@ class _SupportScreenState extends State<SupportScreen> {
   String? _ticketId;
   bool _sending = false;
   bool _loadingTicket = true;
+  static const List<String> _ruMonthsGenitive = <String>[
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ];
 
   @override
   void initState() {
@@ -92,6 +106,27 @@ class _SupportScreenState extends State<SupportScreen> {
     }
   }
 
+  DateTime _parseCreatedAt(dynamic raw) {
+    if (raw is DateTime) return raw.toLocal();
+    final parsed = DateTime.tryParse((raw ?? '').toString());
+    return (parsed ?? DateTime.now()).toLocal();
+  }
+
+  String _formatTime(DateTime dt) {
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
+  String _formatCenterDate(DateTime dt) {
+    final month = _ruMonthsGenitive[dt.month - 1];
+    return '${dt.day} $month ${dt.year}';
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
   @override
   Widget build(BuildContext context) {
     final support = context.read<SupportService>();
@@ -113,11 +148,13 @@ class _SupportScreenState extends State<SupportScreen> {
                         stream: support.streamMessages(_ticketId!),
                         builder: (context, snap) {
                           if (!snap.hasData) {
-                            return const Center(child: CircularProgressIndicator());
+                            return const Center(
+                                child: CircularProgressIndicator());
                           }
                           final items = snap.data!;
                           if (items.isEmpty) {
-                            return const Center(child: Text('Сообщений пока нет'));
+                            return const Center(
+                                child: Text('Сообщений пока нет'));
                           }
 
                           return ListView.builder(
@@ -129,25 +166,80 @@ class _SupportScreenState extends State<SupportScreen> {
                               final sender = (m['sender'] ?? '').toString();
                               final text = (m['text'] ?? '').toString();
                               final mine = sender == 'user';
+                              final createdAt =
+                                  _parseCreatedAt(m['created_at']);
+                              final nextCreatedAt = i + 1 < items.length
+                                  ? _parseCreatedAt(items[i + 1]['created_at'])
+                                  : null;
+                              final showDateDivider = nextCreatedAt == null ||
+                                  !_isSameDay(createdAt, nextCreatedAt);
 
-                              return Align(
-                                alignment: mine
-                                    ? Alignment.centerRight
-                                    : Alignment.centerLeft,
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(vertical: 4),
-                                  padding: const EdgeInsets.all(10),
-                                  constraints: const BoxConstraints(maxWidth: 280),
-                                  decoration: BoxDecoration(
-                                    color: mine
-                                        ? Theme.of(context).colorScheme.primaryContainer
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .surfaceContainerHighest,
-                                    borderRadius: BorderRadius.circular(14),
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  if (showDateDivider)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          top: 8, bottom: 8),
+                                      child: Center(
+                                        child: Text(
+                                          _formatCenterDate(createdAt),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelMedium
+                                              ?.copyWith(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .outline,
+                                              ),
+                                        ),
+                                      ),
+                                    ),
+                                  Align(
+                                    alignment: mine
+                                        ? Alignment.centerRight
+                                        : Alignment.centerLeft,
+                                    child: Container(
+                                      margin: const EdgeInsets.symmetric(
+                                          vertical: 4),
+                                      padding: const EdgeInsets.all(10),
+                                      constraints:
+                                          const BoxConstraints(maxWidth: 280),
+                                      decoration: BoxDecoration(
+                                        color: mine
+                                            ? Theme.of(context)
+                                                .colorScheme
+                                                .primaryContainer
+                                            : Theme.of(context)
+                                                .colorScheme
+                                                .surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Align(
+                                            alignment: Alignment.centerLeft,
+                                            child: Text(text),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            _formatTime(createdAt),
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .outline,
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   ),
-                                  child: Text(text),
-                                ),
+                                ],
                               );
                             },
                           );
@@ -167,8 +259,9 @@ class _SupportScreenState extends State<SupportScreen> {
                         hintText: 'Напишите в поддержку...',
                         isDense: true,
                         filled: true,
-                        fillColor:
-                            Theme.of(context).colorScheme.surfaceContainerHighest,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 16,
                           vertical: 14,

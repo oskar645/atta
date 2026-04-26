@@ -136,7 +136,14 @@ class ProfileService {
   Stream<int> streamMyListingsCount(String uid) {
     final stream = _db.from('listings').stream(primaryKey: ['id']);
     return stream.map(
-        (rows) => rows.where((r) => r['owner_id']?.toString() == uid).length);
+      (rows) => rows
+          .where(
+            (r) =>
+                r['owner_id']?.toString() == uid &&
+                (r['status'] ?? '').toString() == 'approved',
+          )
+          .length,
+    );
   }
 
   Stream<double> streamMyRatingAvg(String uid) {

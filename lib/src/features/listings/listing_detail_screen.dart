@@ -44,6 +44,26 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   SupabaseClient get _sb => Supabase.instance.client;
 
+  String _formatExactTime(DateTime? value) {
+    if (value == null) return '';
+    try {
+      final dt = value.toLocal();
+      final hh = dt.hour.toString().padLeft(2, '0');
+      final mm = dt.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  String _publishedTimeText(DateTime? value) {
+    if (value == null) return '';
+    final relative = timeago.format(value, locale: 'ru');
+    final exactTime = _formatExactTime(value);
+    if (exactTime.isEmpty) return relative;
+    return '$relative · $exactTime';
+  }
+
   // ✅ имя продавца
   String _displayNameFromUserRow(Map<String, dynamic> u) {
     String pick(dynamic v) => (v ?? '').toString().trim();
@@ -399,8 +419,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: Theme.of(context).colorScheme.surface,
-        border:
-            Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
+        border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -450,8 +470,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: Theme.of(context).colorScheme.surface,
-        border:
-            Border.all(color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
+        border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -502,7 +522,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           color: Theme.of(context).scaffoldBackgroundColor,
           border: Border(
               top: BorderSide(
-                  color: Theme.of(context).dividerColor.withValues(alpha: 0.2))),
+                  color:
+                      Theme.of(context).dividerColor.withValues(alpha: 0.2))),
         ),
         child: Row(
           children: [
@@ -592,7 +613,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
             final isOwner = listing.ownerId == me.uid;
             final canSee = (status == 'approved') || isOwner || isAdmin;
-            final canEdit = isOwner && (status == 'approved' || status == 'rejected');
+            final canEdit =
+                isOwner && (status == 'approved' || status == 'rejected');
             if (!canSee) {
               return Scaffold(
                 appBar: AppBar(),
@@ -778,7 +800,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               ),
                               child: Text(
                                 listing.archiveNote,
-                                style: const TextStyle(fontWeight: FontWeight.w600),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600),
                               ),
                             ),
                           ],
@@ -984,9 +1007,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                     color:
                                         Theme.of(context).colorScheme.outline),
                                 const SizedBox(width: 6),
-                                Text(
-                                    timeago.format(listing.createdAt,
-                                        locale: 'ru'),
+                                Text(_publishedTimeText(listing.createdAt),
                                     style: TextStyle(
                                         color: Theme.of(context)
                                             .colorScheme
@@ -1283,7 +1304,8 @@ class _SimilarListingsSection extends StatelessWidget {
                           },
                           onOpen: () => Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (_) => ListingDetailScreen(listingId: item.id),
+                              builder: (_) =>
+                                  ListingDetailScreen(listingId: item.id),
                             ),
                           ),
                         ),
@@ -1433,4 +1455,3 @@ class _PhotosState extends State<_Photos> {
     );
   }
 }
-

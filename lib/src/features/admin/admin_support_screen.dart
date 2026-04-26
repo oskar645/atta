@@ -118,6 +118,20 @@ class AdminTicketScreen extends StatefulWidget {
 class _AdminTicketScreenState extends State<AdminTicketScreen> {
   final TextEditingController _text = TextEditingController();
   bool _sending = false;
+  static const List<String> _ruMonthsGenitive = <String>[
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ];
 
   void _openUserProfile() {
     if (widget.userUid.trim().isEmpty) return;
@@ -132,24 +146,21 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
   final List<Map<String, String>> _quickReplies = const [
     {
       'label': 'Приветствие',
-      'text':
-          'Здравствуйте! 👋 Спасибо за обращение в поддержку. Мы получили ваше сообщение и уже начали разбираться. '
-              'Пожалуйста, подождите немного — мы ответим вам здесь, как только появится информация.',
+      'text': 'Здравствуйте! 👋 Спасибо за обращение в поддержку. Мы получили ваше сообщение и уже начали разбираться. '
+          'Пожалуйста, подождите немного — мы ответим вам здесь, как только появится информация.',
     },
     {
       'label': 'На проверке',
-      'text':
-          'Мы передали ваш вопрос на проверку и уточнение. ✅ '
-              'Обычно это занимает немного времени. Если понадобятся детали — мы обязательно напишем вам в этом чате.',
+      'text': 'Мы передали ваш вопрос на проверку и уточнение. ✅ '
+          'Обычно это занимает немного времени. Если понадобятся детали — мы обязательно напишем вам в этом чате.',
     },
     {
       'label': 'Нужны детали',
-      'text':
-          'Чтобы быстрее помочь, уточните, пожалуйста:\n'
-              '1) что именно не работает/что произошло,\n'
-              '2) на каком устройстве (Android/iPhone),\n'
-              '3) можно ли скриншот.\n'
-              'После этого мы сразу продолжим проверку.',
+      'text': 'Чтобы быстрее помочь, уточните, пожалуйста:\n'
+          '1) что именно не работает/что произошло,\n'
+          '2) на каком устройстве (Android/iPhone),\n'
+          '3) можно ли скриншот.\n'
+          'После этого мы сразу продолжим проверку.',
     },
     {
       'label': 'Решено',
@@ -205,6 +216,27 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
       TextPosition(offset: _text.text.length),
     );
     setState(() {});
+  }
+
+  DateTime _parseCreatedAt(dynamic raw) {
+    if (raw is DateTime) return raw.toLocal();
+    final parsed = DateTime.tryParse((raw ?? '').toString());
+    return (parsed ?? DateTime.now()).toLocal();
+  }
+
+  String _formatTime(DateTime dt) {
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
+  String _formatCenterDate(DateTime dt) {
+    final month = _ruMonthsGenitive[dt.month - 1];
+    return '${dt.day} $month ${dt.year}';
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
   Widget _buildQuickReplies() {
@@ -279,25 +311,74 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                     final sender = (m['sender'] ?? '').toString();
                     final text = (m['text'] ?? '').toString();
                     final isAdmin = sender == 'admin';
+                    final createdAt = _parseCreatedAt(m['created_at']);
+                    final nextCreatedAt = i + 1 < items.length
+                        ? _parseCreatedAt(items[i + 1]['created_at'])
+                        : null;
+                    final showDateDivider = nextCreatedAt == null ||
+                        !_isSameDay(createdAt, nextCreatedAt);
 
-                    return Align(
-                      alignment: isAdmin
-                          ? Alignment.centerRight
-                          : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        padding: const EdgeInsets.all(10),
-                        constraints: const BoxConstraints(maxWidth: 320),
-                        decoration: BoxDecoration(
-                          color: isAdmin
-                              ? Theme.of(context).colorScheme.primaryContainer
-                              : Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(14),
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (showDateDivider)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8, bottom: 8),
+                            child: Center(
+                              child: Text(
+                                _formatCenterDate(createdAt),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelMedium
+                                    ?.copyWith(
+                                      color:
+                                          Theme.of(context).colorScheme.outline,
+                                    ),
+                              ),
+                            ),
+                          ),
+                        Align(
+                          alignment: isAdmin
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 4),
+                            padding: const EdgeInsets.all(10),
+                            constraints: const BoxConstraints(maxWidth: 320),
+                            decoration: BoxDecoration(
+                              color: isAdmin
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .primaryContainer
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(text),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _formatTime(createdAt),
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        child: Text(text),
-                      ),
+                      ],
                     );
                   },
                 );

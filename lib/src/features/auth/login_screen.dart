@@ -642,8 +642,13 @@ class _LoginScreenState extends State<LoginScreen> {
             TextField(
               controller: _passCtrl,
               obscureText: true,
+              keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(labelText: 'Пароль'),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                labelText: 'Пароль',
+                helperText: 'Введите не менее 8 цифр',
+              ),
               onSubmitted: (_) {
                 if (!_loading) {
                   _submitEmailRegistration();
