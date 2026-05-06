@@ -39,6 +39,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Нужно, чтобы отправлять фото в сообщениях и делать снимки с камеры</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Приложению нужен доступ к геолокации, чтобы показывать ваше местоположение на карте и помогать выбирать место для объявления.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Приложению нужен доступ к геолокации, чтобы показывать ваше местоположение на карте и помогать выбирать место для объявления.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
@@ -75,17 +77,13 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Приложению нужен доступ к геолокации, чтобы показывать ваше местоположение на карте и помогать выбирать место для объявления.</string>
 </dict>
 </plist>

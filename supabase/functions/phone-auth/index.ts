@@ -93,6 +93,19 @@ type PublicUserRow = {
   email?: string | null
 }
 
+type ListingOwnerRow = {
+  id?: string | null
+  photo_urls?: string[] | null
+}
+
+type ChatIdRow = {
+  id?: string | null
+}
+
+type ChatImageRow = {
+  image_url?: string | null
+}
+
 async function findPublicUsersByPhone(admin: AdminClient, phone: string) {
   const rowRes = await admin
     .from('users')
@@ -109,6 +122,25 @@ async function findPublicUsersByPhone(admin: AdminClient, phone: string) {
 function isMissingAuthUserError(message: string) {
   const normalized = message.trim().toLowerCase()
   return normalized.includes('not found') || normalized.includes('user not found')
+}
+
+function isMissingRelationError(message: string) {
+  const normalized = message.trim().toLowerCase()
+  return normalized.includes('relation') && normalized.includes('does not exist')
+}
+
+function isMissingColumnError(message: string) {
+  const normalized = message.trim().toLowerCase()
+  return (
+    (normalized.includes('column') && normalized.includes('does not exist')) ||
+    (normalized.includes('could not find') &&
+      normalized.includes('column') &&
+      normalized.includes('schema cache'))
+  )
+}
+
+function isIgnorableSchemaError(message: string) {
+  return isMissingRelationError(message) || isMissingColumnError(message)
 }
 
 async function deleteStalePublicUsers(admin: AdminClient, userIds: string[]) {
@@ -255,6 +287,89 @@ async function requireCurrentUser(
   return userRes.data.user
 }
 
+function extractStoragePathFromPublicUrl(
+  value: string,
+  bucket: string,
+) {
+  const raw = value.trim()
+  if (!raw) return ''
+
+  if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+    return raw.replace(/^\/+/, '')
+  }
+
+  try {
+    const url = new URL(raw)
+    const marker = `/object/public/${bucket}/`
+    const idx = url.pathname.indexOf(marker)
+    if (idx === -1) return ''
+    const encodedPath = url.pathname.slice(idx + marker.length)
+    return decodeURIComponent(encodedPath).replace(/^\/+/, '')
+  } catch (_) {
+    return ''
+  }
+}
+
+async function deleteStorageByPrefixes(
+  admin: AdminClient,
+  bucket: string,
+  prefixes: string[],
+) {
+  const normalized = [...new Set(prefixes.map((x) => x.trim()).filter(Boolean))]
+  for (const prefix of normalized) {
+    const listRes = await admin.storage.from(bucket).list(prefix, {
+      limit: 1000,
+      offset: 0,
+    })
+    if (listRes.error != null) {
+      throw new Error(`storage list ${bucket}/${prefix}: ${listRes.error.message}`)
+    }
+
+    const paths = (listRes.data ?? [])
+      .map((entry) => entry.name?.trim() ?? '')
+      .filter((name) => name.length > 0)
+      .map((name) => `${prefix}/${name}`)
+
+    if (paths.length === 0) continue
+
+    const removeRes = await admin.storage.from(bucket).remove(paths)
+    if (removeRes.error != null) {
+      throw new Error(`storage remove ${bucket}/${prefix}: ${removeRes.error.message}`)
+    }
+  }
+}
+
+async function deleteStorageByPaths(
+  admin: AdminClient,
+  bucket: string,
+  paths: string[],
+) {
+  const normalized = [...new Set(paths.map((x) => x.trim()).filter(Boolean))]
+  if (normalized.length === 0) return
+  const removeRes = await admin.storage.from(bucket).remove(normalized)
+  if (removeRes.error != null) {
+    throw new Error(`storage remove ${bucket}: ${removeRes.error.message}`)
+  }
+}
+
+async function runDeleteStep(
+  step: string,
+  action: () => Promise<void>,
+) {
+  try {
+    await action()
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : 'Неизвестная ошибка удаления'
+    throw new Error(`Шаг "${step}" не выполнен: ${message}`)
+  }
+}
+
+function hasSchemaColumn(tableColumns: string[], column: string) {
+  return tableColumns.includes(column.trim())
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -329,6 +444,276 @@ Deno.serve(async (req) => {
         email,
         user: updateRes.data.user,
       })
+    }
+
+    if (action === 'delete_account') {
+      if (!anonKey) {
+        return json({ error: 'Не настроен anon key для проверки пользователя' }, 500)
+      }
+
+      const currentUser = await requireCurrentUser(req, supabaseUrl, anonKey)
+      const currentUserId = currentUser.id
+      const listingRowsRes = await admin
+        .from('listings')
+        .select('id,photo_urls')
+        .eq('owner_id', currentUserId)
+      if (listingRowsRes.error != null && !isIgnorableSchemaError(listingRowsRes.error.message)) {
+        return json({ error: `Не удалось получить объявления: ${listingRowsRes.error.message}` }, 400)
+      }
+      const listingRows = (listingRowsRes.data ?? []) as ListingOwnerRow[]
+      const listingIds = listingRows
+        .map((row) => `${row.id ?? ''}`.trim())
+        .filter((id) => id.length > 0)
+
+      const chatRowsRes = await admin
+        .from('chats')
+        .select('id')
+        .or(`buyer_id.eq.${currentUserId},seller_id.eq.${currentUserId}`)
+      if (chatRowsRes.error != null && !isIgnorableSchemaError(chatRowsRes.error.message)) {
+        return json({ error: `Не удалось получить чаты: ${chatRowsRes.error.message}` }, 400)
+      }
+      const chatIds = ((chatRowsRes.data ?? []) as ChatIdRow[])
+        .map((row) => `${row.id ?? ''}`.trim())
+        .filter((id) => id.length > 0)
+
+      const sentImageRowsRes = await admin
+        .from('chat_messages')
+        .select('image_url')
+        .eq('sender_id', currentUserId)
+        .not('image_url', 'is', null)
+      if (sentImageRowsRes.error != null && !isIgnorableSchemaError(sentImageRowsRes.error.message)) {
+        return json({ error: `Не удалось получить изображения чатов: ${sentImageRowsRes.error.message}` }, 400)
+      }
+      const sentImageRows = (sentImageRowsRes.data ?? []) as ChatImageRow[]
+
+      const listingPhotoPaths = listingRows
+        .flatMap((row) => (row.photo_urls ?? []))
+        .map((raw) => extractStoragePathFromPublicUrl(`${raw ?? ''}`, 'listing-photos'))
+        .filter((path) => path.length > 0)
+
+      const chatImagePaths = sentImageRows
+        .map((row) => extractStoragePathFromPublicUrl(`${row.image_url ?? ''}`, 'chat_images'))
+        .filter((path) => path.length > 0)
+
+      const userMeta = currentUser.user_metadata ?? {}
+      const avatarCandidates = [
+        `${userMeta.avatar_url ?? ''}`,
+        `${userMeta.photo_url ?? ''}`,
+        `${userMeta.photoUrl ?? ''}`,
+        `${userMeta.picture ?? ''}`,
+      ]
+      const avatarPaths = avatarCandidates
+        .map((raw) => extractStoragePathFromPublicUrl(raw, 'avatars'))
+        .filter((path) => path.length > 0)
+      avatarPaths.push(`${currentUserId}/avatar.jpg`, `${currentUserId}/avatar.png`)
+
+      try {
+        await runDeleteStep('Удаление аватаров из Storage', async () => {
+          await deleteStorageByPrefixes(admin, 'avatars', [currentUserId])
+          await deleteStorageByPaths(admin, 'avatars', avatarPaths)
+        })
+
+        await runDeleteStep('Удаление фото объявлений из Storage', async () => {
+          await deleteStorageByPrefixes(admin, 'listing-photos', listingIds)
+          await deleteStorageByPaths(admin, 'listing-photos', listingPhotoPaths)
+        })
+
+        await runDeleteStep('Удаление изображений чатов из Storage', async () => {
+          await deleteStorageByPrefixes(admin, 'chat_images', chatIds)
+          await deleteStorageByPaths(admin, 'chat_images', chatImagePaths)
+        })
+
+        await runDeleteStep('Удаление сохранённых поисков', async () => {
+          const res = await admin.from('saved_searches').delete().eq('user_id', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление избранного', async () => {
+          const byUser = await admin.from('favorites').delete().eq('user_id', currentUserId)
+          if (byUser.error != null && !isIgnorableSchemaError(byUser.error.message)) {
+            throw new Error(byUser.error.message)
+          }
+          if (listingIds.length > 0) {
+            const byListing = await admin.from('favorites').delete().in('listing_id', listingIds)
+            if (byListing.error != null && !isIgnorableSchemaError(byListing.error.message)) {
+              throw new Error(byListing.error.message)
+            }
+          }
+        })
+
+        await runDeleteStep('Удаление подписок', async () => {
+          const res = await admin
+            .from('user_follows')
+            .delete()
+            .or(`follower_id.eq.${currentUserId},seller_id.eq.${currentUserId}`)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление user_presence', async () => {
+          const res = await admin.from('user_presence').delete().eq('user_id', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление уведомлений', async () => {
+          const res = await admin.from('user_notifications').delete().eq('user_id', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление сообщений чатов', async () => {
+          const sent = await admin.from('chat_messages').delete().eq('sender_id', currentUserId)
+          if (sent.error != null && !isIgnorableSchemaError(sent.error.message)) {
+            throw new Error(sent.error.message)
+          }
+          if (chatIds.length > 0) {
+            const byChat = await admin.from('chat_messages').delete().in('chat_id', chatIds)
+            if (byChat.error != null && !isIgnorableSchemaError(byChat.error.message)) {
+              throw new Error(byChat.error.message)
+            }
+          }
+        })
+
+        await runDeleteStep('Удаление чатов', async () => {
+          const res = await admin
+            .from('chats')
+            .delete()
+            .or(`buyer_id.eq.${currentUserId},seller_id.eq.${currentUserId}`)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление отзывов', async () => {
+          const res = await admin
+            .from('reviews')
+            .delete()
+            .or(`reviewer_id.eq.${currentUserId},seller_id.eq.${currentUserId}`)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление жалоб', async () => {
+          const res = await admin.from('reports').delete().eq('reporter_id', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Обезличивание ссылок в reports', async () => {
+          const schemaRes = await admin
+            .from('reports')
+            .select('*')
+            .limit(1)
+          if (schemaRes.error != null && !isIgnorableSchemaError(schemaRes.error.message)) {
+            throw new Error(schemaRes.error.message)
+          }
+
+          const firstRow = (schemaRes.data?.[0] ?? {}) as Record<string, unknown>
+          const columns = Object.keys(firstRow)
+
+          const updatePayload: Record<string, unknown> = {}
+          const filters: string[] = []
+          if (hasSchemaColumn(columns, 'listing_owner_id')) {
+            updatePayload.listing_owner_id = null
+            filters.push(`listing_owner_id.eq.${currentUserId}`)
+          }
+          if (hasSchemaColumn(columns, 'admin_uid')) {
+            updatePayload.admin_uid = null
+            filters.push(`admin_uid.eq.${currentUserId}`)
+          }
+          if (hasSchemaColumn(columns, 'handled_by')) {
+            updatePayload.handled_by = null
+            filters.push(`handled_by.eq.${currentUserId}`)
+          }
+
+          if (Object.keys(updatePayload).length === 0 || filters.length === 0) {
+            return
+          }
+
+          const res = await admin
+            .from('reports')
+            .update(updatePayload)
+            .or(filters.join(','))
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление поддержки', async () => {
+          const ticketRows = await admin
+            .from('support_tickets')
+            .select('id')
+            .or(`uid.eq.${currentUserId},user_id.eq.${currentUserId}`)
+          if (ticketRows.error != null && !isIgnorableSchemaError(ticketRows.error.message)) {
+            throw new Error(ticketRows.error.message)
+          }
+
+          const ticketIds = ((ticketRows.data ?? []) as ChatIdRow[])
+            .map((row) => `${row.id ?? ''}`.trim())
+            .filter((id) => id.length > 0)
+
+          if (ticketIds.length > 0) {
+            const messages = await admin
+              .from('support_messages')
+              .delete()
+              .in('ticket_id', ticketIds)
+            if (messages.error != null && !isIgnorableSchemaError(messages.error.message)) {
+              throw new Error(messages.error.message)
+            }
+          }
+
+          const tickets = await admin
+            .from('support_tickets')
+            .delete()
+            .or(`uid.eq.${currentUserId},user_id.eq.${currentUserId}`)
+          if (tickets.error != null && !isIgnorableSchemaError(tickets.error.message)) {
+            throw new Error(tickets.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление объявлений', async () => {
+          const res = await admin.from('listings').delete().eq('owner_id', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление admin_users', async () => {
+          const res = await admin.from('admin_users').delete().eq('uid', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление профиля users', async () => {
+          const res = await admin.from('users').delete().eq('id', currentUserId)
+          if (res.error != null && !isIgnorableSchemaError(res.error.message)) {
+            throw new Error(res.error.message)
+          }
+        })
+
+        await runDeleteStep('Удаление пользователя Auth', async () => {
+          const res = await admin.auth.admin.deleteUser(currentUserId)
+          if (res.error != null) {
+            throw new Error(res.error.message)
+          }
+        })
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : 'Неизвестная ошибка удаления'
+        return json({ error: message }, 400)
+      }
+
+      return json({ ok: true })
     }
 
     const phone = normalizePhone(`${body?.phone ?? ''}`)

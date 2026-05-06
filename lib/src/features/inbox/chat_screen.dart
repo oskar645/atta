@@ -7,6 +7,7 @@ import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/models/message.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
@@ -113,7 +114,8 @@ class _ChatScreenState extends State<ChatScreen> {
       await chat.markChatRead(chatId: widget.chatId, uid: uid);
     } catch (e) {
       if (!mounted) return;
-      showAppSnack(context, 'Ошибка: $e', isError: true);
+      final message = isNetworkException(e) ? kServerUnavailableMessage : 'Ошибка: $e';
+      showAppSnack(context, message, isError: true);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -136,7 +138,8 @@ class _ChatScreenState extends State<ChatScreen> {
       await chat.markChatRead(chatId: widget.chatId, uid: uid);
     } catch (e) {
       if (!mounted) return;
-      showAppSnack(context, 'Ошибка: $e', isError: true);
+      final message = isNetworkException(e) ? kServerUnavailableMessage : 'Ошибка: $e';
+      showAppSnack(context, message, isError: true);
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -187,6 +190,18 @@ class _ChatScreenState extends State<ChatScreen> {
     return FutureBuilder<String>(
       future: chatSvc.resolveMessageImageUrl(rawImageUrl),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Container(
+            width: 240,
+            height: 180,
+            color: Colors.black12,
+            alignment: Alignment.center,
+            child: const Text(
+              'Не удалось загрузить фото',
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
         final resolvedUrl = (snap.data ?? '').trim();
 
         if (snap.connectionState != ConnectionState.done) {
@@ -490,6 +505,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? Stream.value('')
                   : _streamListingThumb(listingId),
               builder: (context, photoSnap) {
+                if (photoSnap.hasError) {
+                  return const Scaffold(
+                    body: Center(
+                      child: Text(kServerUnavailableMessage),
+                    ),
+                  );
+                }
                 final thumb = photoSnap.data ?? '';
 
                 return Scaffold(
@@ -578,6 +600,11 @@ class _ChatScreenState extends State<ChatScreen> {
                         child: StreamBuilder<List<ChatMessage>>(
                           stream: chatSvc.streamMessages(widget.chatId),
                           builder: (context, snap) {
+                            if (snap.hasError) {
+                              return const Center(
+                                child: Text(kServerUnavailableMessage),
+                              );
+                            }
                             if (!snap.hasData) {
                               return const Center(
                                   child: CircularProgressIndicator());

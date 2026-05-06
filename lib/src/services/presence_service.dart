@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:atta/src/services/network_resilience.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -28,12 +29,16 @@ class PresenceService {
     final now = DateTime.now().toUtc().toIso8601String();
 
     try {
-      await _db.from('user_presence').upsert({
-        'user_id': uid,
-        'is_online': isOnline,
-        'last_seen': now,
-        'updated_at': now,
-      }, onConflict: 'user_id');
+      await NetworkResilience.run(
+        () => _db.from('user_presence').upsert({
+          'user_id': uid,
+          'is_online': isOnline,
+          'last_seen': now,
+          'updated_at': now,
+        }, onConflict: 'user_id'),
+        timeout: const Duration(seconds: 6),
+        retries: 1,
+      );
       _didLogNetworkIssue = false;
     } on SocketException catch (e) {
       _logNetworkIssueOnce(e);
@@ -60,6 +65,9 @@ class PresenceService {
         .from('user_presence')
         .stream(primaryKey: ['user_id'])
         .eq('user_id', uid)
+        .handleError((e) {
+      _logNetworkIssueOnce(e);
+    })
         .map((rows) {
       if (rows.isEmpty) return false;
       final row = rows.first;

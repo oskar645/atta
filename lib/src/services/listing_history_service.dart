@@ -14,6 +14,9 @@ class ListingHistoryService extends ChangeNotifier {
 
   bool get isLoaded => _loaded;
 
+  List<String> get viewedIdsNewestFirst =>
+      _viewedIds.toList(growable: false).reversed.toList(growable: false);
+
   bool hasViewed(String listingId) {
     return _viewedIds.contains(listingId.trim());
   }
@@ -22,7 +25,7 @@ class ListingHistoryService extends ChangeNotifier {
     final id = listingId.trim();
     if (id.isEmpty) return;
 
-    final before = _viewedIds.length;
+    final before = _viewedIds.toList(growable: false);
     _viewedIds.remove(id);
     _viewedIds.add(id);
 
@@ -31,7 +34,7 @@ class ListingHistoryService extends ChangeNotifier {
       _viewedIds.removeAll(_viewedIds.take(overflow));
     }
 
-    if (_viewedIds.length != before || !_loaded) {
+    if (!_listEquals(before, _viewedIds.toList(growable: false)) || !_loaded) {
       notifyListeners();
     }
 
@@ -53,5 +56,13 @@ class ListingHistoryService extends ChangeNotifier {
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(_prefsKey, _viewedIds.toList(growable: false));
+  }
+
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }

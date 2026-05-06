@@ -22,6 +22,9 @@ class PhoneAuthBackendService {
   String userMessageForError(Object error, {bool isSignIn = false}) {
     final raw = error.toString().replaceFirst('Exception: ', '').trim();
     final msg = raw.toLowerCase();
+    if (msg.startsWith('шаг "') || msg.startsWith('step "')) {
+      return raw;
+    }
 
     if (msg.contains('user already registered') ||
         msg.contains('уже зарегистрирован')) {
@@ -51,6 +54,13 @@ class PhoneAuthBackendService {
         msg.contains('socketexception') ||
         msg.contains('clientexception')) {
       return 'Нет соединения с сервером. Проверьте интернет, приложение попробует еще раз.';
+    }
+    if (msg.contains('нужна авторизация') ||
+        msg.contains('jwt') ||
+        msg.contains('token') ||
+        msg.contains('unauthorized') ||
+        msg.contains('auth session missing')) {
+      return 'Сессия истекла. Войдите снова и повторите удаление аккаунта.';
     }
     if (msg.contains('backend') ||
         msg.contains('schema public') ||
@@ -177,6 +187,14 @@ class PhoneAuthBackendService {
     );
   }
 
+  Future<void> deleteCurrentAccount() async {
+    await _invoke(
+      action: 'delete_account',
+      payload: const {},
+      accessToken: Supabase.instance.client.auth.currentSession?.accessToken,
+    );
+  }
+
   Future<Map<String, dynamic>> _invoke({
     required String action,
     required Map<String, dynamic> payload,
@@ -215,6 +233,9 @@ class PhoneAuthBackendService {
           .toString()
           .trim();
       final technical = error.isEmpty ? 'Ошибка backend' : error;
+      debugPrint(
+        'Phone auth backend error: action=$action, status=${response.statusCode}, technical=$technical',
+      );
       throw PhoneAuthBackendException(
         userMessageForError(technical, isSignIn: action == 'login'),
         technicalDetails: technical,

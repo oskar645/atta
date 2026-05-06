@@ -81,6 +81,20 @@ class ReviewsService {
         .eq('seller_id', sellerId);
   }
 
+  /// Удалить отзыв (используется из админского UI)
+  Future<void> deleteReview({
+    required String reviewId,
+  }) async {
+    final id = reviewId.trim();
+    if (id.isEmpty) return;
+    final deleted = await _c.from('reviews').delete().eq('id', id).select('id');
+    if (deleted.isEmpty) {
+      throw Exception(
+        'Не удалось удалить отзыв. Проверьте права администратора для DELETE в Supabase.',
+      );
+    }
+  }
+
   /// Пока no-op (если у тебя нет счетчика новых отзывов)
   Future<void> resetNewReviewsCount(String sellerId) async {
     return;

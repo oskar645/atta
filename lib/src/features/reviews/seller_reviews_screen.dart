@@ -1,4 +1,5 @@
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -30,7 +31,9 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
 
       if (me.uid == widget.sellerId) {
         try {
-          await context.read<ReviewsService>().resetNewReviewsCount(widget.sellerId);
+          await context
+              .read<ReviewsService>()
+              .resetNewReviewsCount(widget.sellerId);
         } catch (_) {}
       }
     });
@@ -61,62 +64,76 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
   @override
   Widget build(BuildContext context) {
     final reviews = context.read<ReviewsService>();
+    final admin = context.read<AdminService>();
+    final me = context.read<AuthService>().currentUser;
+    final canCheckAdmin = me != null && me.uid.trim().isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(title: Text('Отзывы: ${widget.sellerName}')),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: reviews.streamSellerReviews(widget.sellerId),
-        builder: (context, snap) {
-          if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  'Ошибка отзывов:\n${snap.error}',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            );
-          }
+      body: StreamBuilder<bool>(
+        stream: canCheckAdmin
+            ? admin.streamIsAdmin(me!.uid)
+            : Stream<bool>.value(false),
+        initialData: false,
+        builder: (context, adminSnap) {
+          final isAdmin = adminSnap.data == true;
 
-          if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final items = snap.data ?? const <Map<String, dynamic>>[];
-
-          return ListView(
-            padding: const EdgeInsets.all(12),
-            children: [
-              FilledButton.icon(
-                onPressed: _openAddReview,
-                icon: Icon(
-                  Icons.rate_review_outlined,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                label: const Text('Оставить отзыв'),
-              ),
-              const SizedBox(height: 12),
-
-              if (items.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 40),
-                  child: Center(
+          return StreamBuilder<List<Map<String, dynamic>>>(
+            stream: reviews.streamSellerReviews(widget.sellerId),
+            builder: (context, snap) {
+              if (snap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
                     child: Text(
-                      'Пока нет отзывов.\nБудь первым 🙂',
+                      'Ошибка отзывов:\n${snap.error}',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Theme.of(context).colorScheme.outline),
                     ),
                   ),
-                ),
+                );
+              }
 
-              ...items.map(
-                (r) => _ReviewTile(
-                  sellerId: widget.sellerId,
-                  review: r,
-                ),
-              ),
-            ],
+              if (snap.connectionState == ConnectionState.waiting &&
+                  !snap.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final items = snap.data ?? const <Map<String, dynamic>>[];
+
+              return ListView(
+                padding: const EdgeInsets.all(12),
+                children: [
+                  FilledButton.icon(
+                    onPressed: _openAddReview,
+                    icon: Icon(
+                      Icons.rate_review_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    label: const Text('Оставить отзыв'),
+                  ),
+                  const SizedBox(height: 12),
+                  if (items.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 40),
+                      child: Center(
+                        child: Text(
+                          'Пока нет отзывов.\nБудь первым 🙂',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.outline),
+                        ),
+                      ),
+                    ),
+                  ...items.map(
+                    (r) => _ReviewTile(
+                      sellerId: widget.sellerId,
+                      review: r,
+                      isAdmin: isAdmin,
+                    ),
+                  ),
+                ],
+              );
+            },
           );
         },
       ),
@@ -127,8 +144,13 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
 class _ReviewTile extends StatelessWidget {
   final String sellerId;
   final Map<String, dynamic> review;
+  final bool isAdmin;
 
-  const _ReviewTile({required this.sellerId, required this.review});
+  const _ReviewTile({
+    required this.sellerId,
+    required this.review,
+    required this.isAdmin,
+  });
 
   String _dateText(dynamic v) {
     DateTime? dt;
@@ -142,6 +164,44 @@ class _ReviewTile extends StatelessWidget {
     final s = v.trim();
     if (s.length <= 10) return s;
     return '${s.substring(0, 6)}…${s.substring(s.length - 4)}';
+  }
+
+  Future<void> _deleteReview(BuildContext context) async {
+    final reviewId = (review['id'] ?? '').toString().trim();
+    if (reviewId.isEmpty) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить отзыв?'),
+        content: const Text('Это действие нельзя отменить.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await context.read<ReviewsService>().deleteReview(reviewId: reviewId);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Отзыв удалён')),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e')),
+      );
+    }
   }
 
   @override
@@ -179,8 +239,21 @@ class _ReviewTile extends StatelessWidget {
                 ),
                 Text(
                   createdAt,
-                  style: TextStyle(color: Theme.of(context).colorScheme.outline),
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.outline),
                 ),
+                if (isAdmin)
+                  IconButton(
+                    onPressed: () => _deleteReview(context),
+                    tooltip: 'Удалить отзыв',
+                    iconSize: 18,
+                    splashRadius: 18,
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      Icons.delete_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(height: 6),
@@ -191,7 +264,9 @@ class _ReviewTile extends StatelessWidget {
                 return Icon(
                   filled ? Icons.star : Icons.star_border,
                   size: 16,
-                  color: filled ? Colors.amber : Theme.of(context).colorScheme.outline,
+                  color: filled
+                      ? Colors.amber
+                      : Theme.of(context).colorScheme.outline,
                 );
               }),
             ),
@@ -288,9 +363,9 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Ваш отзыв', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+          const Text('Ваш отзыв',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
           const SizedBox(height: 10),
-
           Row(
             children: List.generate(5, (i) {
               final idx = i + 1;
@@ -299,12 +374,13 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
                 onPressed: () => setState(() => _rating = idx),
                 icon: Icon(
                   filled ? Icons.star : Icons.star_border,
-                  color: filled ? Colors.amber : Theme.of(context).colorScheme.outline,
+                  color: filled
+                      ? Colors.amber
+                      : Theme.of(context).colorScheme.outline,
                 ),
               );
             }),
           ),
-
           TextField(
             controller: _ctrl,
             maxLines: 3,
@@ -312,7 +388,6 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
               hintText: 'Напишите, как прошла сделка…',
             ),
           ),
-
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -340,7 +415,8 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
                         if (!context.mounted) return;
                         Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Отзыв отправлен успешно')),
+                          const SnackBar(
+                              content: Text('Отзыв отправлен успешно')),
                         );
                       } catch (e) {
                         if (!mounted) return;
@@ -369,7 +445,8 @@ class _ReplyDialog extends StatefulWidget {
 }
 
 class _ReplyDialogState extends State<_ReplyDialog> {
-  late final TextEditingController _c = TextEditingController(text: widget.initial);
+  late final TextEditingController _c =
+      TextEditingController(text: widget.initial);
 
   @override
   void dispose() {
@@ -384,11 +461,16 @@ class _ReplyDialogState extends State<_ReplyDialog> {
       content: TextField(
         controller: _c,
         maxLines: 3,
-        decoration: const InputDecoration(hintText: 'Например: Спасибо за отзыв!'),
+        decoration:
+            const InputDecoration(hintText: 'Например: Спасибо за отзыв!'),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
-        FilledButton(onPressed: () => Navigator.pop(context, _c.text), child: const Text('Сохранить')),
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена')),
+        FilledButton(
+            onPressed: () => Navigator.pop(context, _c.text),
+            child: const Text('Сохранить')),
       ],
     );
   }

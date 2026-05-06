@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:atta/src/services/network_resilience.dart';
 
 /// Адаптер под проект:
 /// Supabase auth: user.id
@@ -65,9 +66,13 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    final res = await _db.auth.signInWithPassword(
-      email: email.trim(),
-      password: password,
+    final res = await NetworkResilience.run(
+      () => _db.auth.signInWithPassword(
+        email: email.trim(),
+        password: password,
+      ),
+      timeout: const Duration(seconds: 12),
+      retries: 1,
     );
 
     final u = res.user;
@@ -85,16 +90,20 @@ class AuthService {
     String? displayName,
     String? phone,
   }) async {
-    final res = await _db.auth.signUp(
-      email: email.trim(),
-      password: password,
-      data: {
-        if (displayName != null && displayName.trim().isNotEmpty)
-          'display_name': displayName.trim(),
-        if (displayName != null && displayName.trim().isNotEmpty)
-          'name': displayName.trim(),
-        if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
-      },
+    final res = await NetworkResilience.run(
+      () => _db.auth.signUp(
+        email: email.trim(),
+        password: password,
+        data: {
+          if (displayName != null && displayName.trim().isNotEmpty)
+            'display_name': displayName.trim(),
+          if (displayName != null && displayName.trim().isNotEmpty)
+            'name': displayName.trim(),
+          if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+        },
+      ),
+      timeout: const Duration(seconds: 12),
+      retries: 0,
     );
 
     final u = res.user;
@@ -107,7 +116,11 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    await _db.auth.signOut();
+    await NetworkResilience.run(
+      () => _db.auth.signOut(),
+      timeout: const Duration(seconds: 8),
+      retries: 0,
+    );
   }
 
   /// Обновить metadata в Auth (не таблицу users!)
@@ -127,7 +140,11 @@ class AuthService {
 
     if (data.isEmpty) return;
 
-    await _db.auth.updateUser(UserAttributes(data: data));
+    await NetworkResilience.run(
+      () => _db.auth.updateUser(UserAttributes(data: data)),
+      timeout: const Duration(seconds: 12),
+      retries: 0,
+    );
   }
 
   /// ВАЖНО: алиас под твой UI-код (ProfileScreen вызывает updateProfile)

@@ -1069,15 +1069,34 @@ class _PhoneRegistrationConfirmScreenState
     final number = _normalizeDialablePhone((_callPhone ?? '').trim());
     if (number.isEmpty) return false;
 
-    final uri = Uri.parse('tel:$number');
+    final candidates = <Uri>[
+      Uri.parse('tel://$number'),
+      Uri.parse('tel:$number'),
+    ];
     try {
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!opened) {
-        _snack('Не удалось открыть звонилку. Номер: $number');
+      for (final uri in candidates) {
+        final canOpen = await canLaunchUrl(uri);
+        debugPrint('Dial canLaunchUrl($uri) => $canOpen');
+        if (!canOpen) continue;
+        final openedDefault = await launchUrl(uri);
+        if (openedDefault) return true;
+        final openedExternal = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (openedExternal) return true;
       }
-      return opened;
+
+      final hint = defaultTargetPlatform == TargetPlatform.iOS
+          ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
+          : '';
+      _snack('Не удалось открыть звонилку. Номер: $number.$hint');
+      return false;
     } catch (_) {
-      _snack('Не удалось открыть звонилку. Номер: $number');
+      final hint = defaultTargetPlatform == TargetPlatform.iOS
+          ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
+          : '';
+      _snack('Не удалось открыть звонилку. Номер: $number.$hint');
       return false;
     }
   }
@@ -1397,19 +1416,39 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
     }
     setState(() => _callStarted = true);
 
-    final uri = Uri.parse('tel:$number');
+    final candidates = <Uri>[
+      Uri.parse('tel://$number'),
+      Uri.parse('tel:$number'),
+    ];
     try {
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      var opened = false;
+      for (final uri in candidates) {
+        final canOpen = await canLaunchUrl(uri);
+        debugPrint('Dial canLaunchUrl($uri) => $canOpen');
+        if (!canOpen) continue;
+        opened = await launchUrl(uri);
+        if (!opened) {
+          opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+        if (opened) break;
+      }
+
       if (!opened) {
         if (!mounted) return;
+        final hint = defaultTargetPlatform == TargetPlatform.iOS
+            ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
+            : '';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось открыть звонилку. Номер: $number')),
+          SnackBar(content: Text('Не удалось открыть звонилку. Номер: $number.$hint')),
         );
       }
     } catch (_) {
       if (!mounted) return;
+      final hint = defaultTargetPlatform == TargetPlatform.iOS
+          ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
+          : '';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть звонилку. Номер: $number')),
+        SnackBar(content: Text('Не удалось открыть звонилку. Номер: $number.$hint')),
       );
     }
   }

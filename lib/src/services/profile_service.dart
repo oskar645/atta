@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:atta/src/services/network_resilience.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ProfileService {
@@ -52,8 +53,10 @@ class ProfileService {
       yield seeded;
     }
 
-    await for (final rows
-        in _db.from('users').stream(primaryKey: ['id']).eq('id', id)) {
+    await for (final rows in NetworkResilience.guardStream<List<Map<String, dynamic>>>(
+      _db.from('users').stream(primaryKey: ['id']).eq('id', id),
+      fallbackValue: const [],
+    )) {
       final live = rows.isNotEmpty
           ? Map<String, dynamic>.from(rows.first)
           : getCachedProfile(id);
@@ -63,14 +66,22 @@ class ProfileService {
   }
 
   Future<Map<String, dynamic>> getProfile(String uid) async {
-    final row = await _db.from('users').select().eq('id', uid).maybeSingle();
+    final row = await NetworkResilience.run(
+      () => _db.from('users').select().eq('id', uid).maybeSingle(),
+      timeout: const Duration(seconds: 12),
+      retries: 1,
+    );
     final normalized = _normalizeRow(row);
     if (normalized.isNotEmpty) _cacheProfile(uid, normalized);
     return normalized;
   }
 
   Future<void> updateProfile(String uid, Map<String, dynamic> data) async {
-    await _db.from('users').upsert({'id': uid, ...data}, onConflict: 'id');
+    await NetworkResilience.run(
+      () => _db.from('users').upsert({'id': uid, ...data}, onConflict: 'id'),
+      timeout: const Duration(seconds: 12),
+      retries: 0,
+    );
     _cacheProfile(uid, _mergeRows(getCachedProfile(uid), {'id': uid, ...data}));
   }
 
@@ -109,15 +120,19 @@ class ProfileService {
     final ext = contentType.contains('png') ? 'png' : 'jpg';
     final path = '$uid/avatar.$ext';
 
-    await _db.storage.from(bucket).uploadBinary(
-          path,
-          bytes,
-          fileOptions: FileOptions(
-            cacheControl: '3600',
-            upsert: true,
-            contentType: contentType,
+    await NetworkResilience.run(
+      () => _db.storage.from(bucket).uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(
+              cacheControl: '3600',
+              upsert: true,
+              contentType: contentType,
+            ),
           ),
-        );
+      timeout: const Duration(seconds: 20),
+      retries: 1,
+    );
 
     // Public bucket returns a URL immediately.
     final url = _db.storage.from(bucket).getPublicUrl(path);

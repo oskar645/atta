@@ -22,6 +22,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _emailCtrl = TextEditingController();
   final _phoneAuth = PhoneAuthBackendService();
   bool _saving = false;
+  bool _deletingAccount = false;
 
   @override
   void initState() {
@@ -118,6 +119,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
       showAppSnack(context, 'Ошибка: $e', isError: true);
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _deleteAccount() async {
+    if (_deletingAccount) return;
+    final auth = context.read<AuthService>();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить аккаунт'),
+        content: const Text(
+          'Вы уверены, что хотите удалить аккаунт? Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _deletingAccount = true);
+    try {
+      await _phoneAuth.deleteCurrentAccount();
+      await auth.signOut();
+      if (!mounted) return;
+      showAppSnack(context, 'Ваш аккаунт удалён.');
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is PhoneAuthBackendException
+          ? ((e.technicalDetails ?? '').trim().isNotEmpty
+              ? e.technicalDetails!.trim()
+              : e.message)
+          : _phoneAuth.userMessageForError(e);
+      showAppSnack(context, message, isError: true);
+    } finally {
+      if (mounted) setState(() => _deletingAccount = false);
     }
   }
 
@@ -246,6 +292,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               );
             },
+          ),
+          _tile(
+            icon: Icons.delete_outline,
+            iconColor: Theme.of(context).colorScheme.error,
+            title: _deletingAccount ? 'Удаляем аккаунт...' : 'Удалить аккаунт',
+            subtitle: 'Полное удаление аккаунта и связанных данных',
+            onTap: _deletingAccount ? null : _deleteAccount,
           ),
           _sectionTitle('Приложение'),
           _tile(

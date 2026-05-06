@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:atta/src/models/chat.dart';
 import 'package:atta/src/models/message.dart';
+import 'package:atta/src/services/network_resilience.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
@@ -11,11 +12,24 @@ class ChatService {
 
   static const String _chatImagesBucket = 'chat_images';
 
+  Future<T> _run<T>(
+    Future<T> Function() task, {
+    Duration timeout = const Duration(seconds: 12),
+    int retries = 0,
+  }) {
+    return NetworkResilience.run(
+      task,
+      timeout: timeout,
+      retries: retries,
+    );
+  }
+
   Stream<List<Chat>> streamMyChats(String uid) {
     final stream = _db
         .from('chats')
         .stream(primaryKey: ['id'])
-        .order('updated_at', ascending: false);
+        .order('updated_at', ascending: false)
+        .handleError((_) {});
 
     return stream.map((rows) {
       final out = <Chat>[];
@@ -34,7 +48,7 @@ class ChatService {
   }
 
   Stream<int> streamUnreadTotal(String uid) {
-    final stream = _db.from('chats').stream(primaryKey: ['id']);
+    final stream = _db.from('chats').stream(primaryKey: ['id']).handleError((_) {});
 
     return stream.map((rows) {
       var total = 0;
@@ -57,7 +71,8 @@ class ChatService {
     final stream = _db
         .from('chat_messages')
         .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .handleError((_) {});
 
     return stream.map((rows) {
       final out = <ChatMessage>[];
@@ -75,13 +90,16 @@ class ChatService {
     required String buyerId,
     required String sellerId,
   }) async {
-    final existing = await _db
-        .from('chats')
-        .select('id')
-        .eq('listing_id', listingId)
-        .eq('buyer_id', buyerId)
-        .eq('seller_id', sellerId)
-        .maybeSingle();
+    final existing = await _run(
+      () => _db
+          .from('chats')
+          .select('id')
+          .eq('listing_id', listingId)
+          .eq('buyer_id', buyerId)
+          .eq('seller_id', sellerId)
+          .maybeSingle(),
+      retries: 1,
+    );
 
     if (existing != null && existing['id'] != null) {
       return existing['id'].toString();
@@ -89,7 +107,7 @@ class ChatService {
 
     final newId = _uuid.v4();
 
-    await _db.from('chats').insert({
+    await _run(() => _db.from('chats').insert({
       'id': newId,
       'listing_id': listingId,
       'listing_title': listingTitle,
@@ -99,7 +117,7 @@ class ChatService {
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       'unread_for_buyer': 0,
       'unread_for_seller': 0,
-    });
+    }));
 
     return newId;
   }
@@ -108,11 +126,14 @@ class ChatService {
     required String chatId,
     required String uid,
   }) async {
-    final chat = await _db
-        .from('chats')
-        .select('buyer_id, seller_id')
-        .eq('id', chatId)
-        .maybeSingle();
+    final chat = await _run(
+      () => _db
+          .from('chats')
+          .select('buyer_id, seller_id')
+          .eq('id', chatId)
+          .maybeSingle(),
+      retries: 1,
+    );
 
     if (chat == null) return;
 
@@ -123,9 +144,9 @@ class ChatService {
     await _markIncomingMessagesRead(chatId: chatId, uid: uid);
 
     if (uid == buyerId) {
-      await _db.from('chats').update({'unread_for_buyer': 0}).eq('id', chatId);
+      await _run(() => _db.from('chats').update({'unread_for_buyer': 0}).eq('id', chatId));
     } else if (uid == sellerId) {
-      await _db.from('chats').update({'unread_for_seller': 0}).eq('id', chatId);
+      await _run(() => _db.from('chats').update({'unread_for_seller': 0}).eq('id', chatId));
     }
   }
 
@@ -154,18 +175,21 @@ class ChatService {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    final chat = await _db
-        .from('chats')
-        .select('buyer_id, seller_id, unread_for_buyer, unread_for_seller')
-        .eq('id', chatId)
-        .maybeSingle();
+    final chat = await _run(
+      () => _db
+          .from('chats')
+          .select('buyer_id, seller_id, unread_for_buyer, unread_for_seller')
+          .eq('id', chatId)
+          .maybeSingle(),
+      retries: 1,
+    );
 
     if (chat == null) throw Exception('Чат не найден');
 
     final buyerId = (chat['buyer_id'] ?? '').toString();
     final sellerId = (chat['seller_id'] ?? '').toString();
 
-    await _db.from('chat_messages').insert({
+    await _run(() => _db.from('chat_messages').insert({
       'id': _uuid.v4(),
       'chat_id': chatId,
       'sender_id': senderId,
@@ -174,7 +198,7 @@ class ChatService {
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'delivered_at': null,
       'read_at': null,
-    });
+    }));
 
     var unreadForBuyer = (chat['unread_for_buyer'] as num?)?.toInt() ?? 0;
     var unreadForSeller = (chat['unread_for_seller'] as num?)?.toInt() ?? 0;
@@ -185,12 +209,12 @@ class ChatService {
       unreadForBuyer += 1;
     }
 
-    await _db.from('chats').update({
+    await _run(() => _db.from('chats').update({
       'last_message': trimmed,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       'unread_for_buyer': unreadForBuyer,
       'unread_for_seller': unreadForSeller,
-    }).eq('id', chatId);
+    }).eq('id', chatId));
   }
 
   Future<void> sendImage({
@@ -198,11 +222,14 @@ class ChatService {
     required String senderId,
     required File file,
   }) async {
-    final chat = await _db
-        .from('chats')
-        .select('buyer_id, seller_id, unread_for_buyer, unread_for_seller')
-        .eq('id', chatId)
-        .maybeSingle();
+    final chat = await _run(
+      () => _db
+          .from('chats')
+          .select('buyer_id, seller_id, unread_for_buyer, unread_for_seller')
+          .eq('id', chatId)
+          .maybeSingle(),
+      retries: 1,
+    );
 
     if (chat == null) throw Exception('Чат не найден');
 
@@ -214,17 +241,21 @@ class ChatService {
     final path = '$chatId/$fileId.$extension';
 
     final bytes = await file.readAsBytes();
-    await _db.storage.from(_chatImagesBucket).uploadBinary(
-      path,
-      bytes,
-      fileOptions: FileOptions(
-        cacheControl: '3600',
-        upsert: false,
-        contentType: contentType,
-      ),
+    await _run(
+      () => _db.storage.from(_chatImagesBucket).uploadBinary(
+            path,
+            bytes,
+            fileOptions: FileOptions(
+              cacheControl: '3600',
+              upsert: false,
+              contentType: contentType,
+            ),
+          ),
+      timeout: const Duration(seconds: 20),
+      retries: 1,
     );
 
-    await _db.from('chat_messages').insert({
+    await _run(() => _db.from('chat_messages').insert({
       'id': _uuid.v4(),
       'chat_id': chatId,
       'sender_id': senderId,
@@ -233,7 +264,7 @@ class ChatService {
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'delivered_at': null,
       'read_at': null,
-    });
+    }));
 
     var unreadForBuyer = (chat['unread_for_buyer'] as num?)?.toInt() ?? 0;
     var unreadForSeller = (chat['unread_for_seller'] as num?)?.toInt() ?? 0;
@@ -244,12 +275,12 @@ class ChatService {
       unreadForBuyer += 1;
     }
 
-    await _db.from('chats').update({
+    await _run(() => _db.from('chats').update({
       'last_message': 'Фото',
       'updated_at': DateTime.now().toUtc().toIso8601String(),
       'unread_for_buyer': unreadForBuyer,
       'unread_for_seller': unreadForSeller,
-    }).eq('id', chatId);
+    }).eq('id', chatId));
   }
 
   String _pickImageExtension(String path) {
@@ -300,10 +331,14 @@ class ChatService {
       return value;
     }
 
-    return _db.storage.from(_chatImagesBucket).createSignedUrl(
-          normalizedPath,
-          60 * 60 * 24 * 30,
-        );
+    return _run(
+      () => _db.storage.from(_chatImagesBucket).createSignedUrl(
+            normalizedPath,
+            60 * 60 * 24 * 30,
+          ),
+      timeout: const Duration(seconds: 12),
+      retries: 1,
+    );
   }
 
   String? _extractChatImagePath(String value) {

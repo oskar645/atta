@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/network_resilience.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -194,15 +195,19 @@ class ListingsService {
             _ => 'image/jpeg',
           };
 
-          await _client.storage.from(_bucket).uploadBinary(
-                path,
-                bytes,
-                fileOptions: FileOptions(
-                  cacheControl: '3600',
-                  upsert: false,
-                  contentType: contentType,
+          await NetworkResilience.run(
+            () => _client.storage.from(_bucket).uploadBinary(
+                  path,
+                  bytes,
+                  fileOptions: FileOptions(
+                    cacheControl: '3600',
+                    upsert: false,
+                    contentType: contentType,
+                  ),
                 ),
-              );
+            timeout: const Duration(seconds: 20),
+            retries: 1,
+          );
 
           final publicUrl = _client.storage.from(_bucket).getPublicUrl(path);
 
@@ -244,7 +249,11 @@ class ListingsService {
       'updated_at': null,
     };
 
-    await _client.from('listings').insert(data);
+    await NetworkResilience.run(
+      () => _client.from('listings').insert(data),
+      timeout: const Duration(seconds: 12),
+      retries: 0,
+    );
   }
 
   Future<void> deleteListing({required Listing listing}) async {
@@ -262,16 +271,24 @@ class ListingsService {
   }) async {
     final normalizedStatus = status.trim().isEmpty ? 'archived' : status.trim();
     final normalizedNote = (note ?? '').trim();
-    await _client.from('listings').update({
-      'status': normalizedStatus,
-      'rejection_reason': normalizedNote.isEmpty ? null : normalizedNote,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', listingId);
+    await NetworkResilience.run(
+      () => _client.from('listings').update({
+        'status': normalizedStatus,
+        'rejection_reason': normalizedNote.isEmpty ? null : normalizedNote,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', listingId),
+      timeout: const Duration(seconds: 12),
+      retries: 0,
+    );
   }
 
   Future<void> incrementView(String listingId) async {
     try {
-      await _client.rpc('increment_listing_view', params: {'p_listing_id': listingId});
+      await NetworkResilience.run(
+        () => _client.rpc('increment_listing_view', params: {'p_listing_id': listingId}),
+        timeout: const Duration(seconds: 8),
+        retries: 1,
+      );
       return;
     } catch (_) {
       final row = await _client
@@ -290,7 +307,11 @@ class ListingsService {
   }
 
   Future<Listing?> getListingById(String id) async {
-    final row = await _client.from('listings').select('*').eq('id', id).maybeSingle();
+    final row = await NetworkResilience.run(
+      () => _client.from('listings').select('*').eq('id', id).maybeSingle(),
+      timeout: const Duration(seconds: 12),
+      retries: 1,
+    );
     if (row == null) return null;
     return Listing.fromMap(row);
   }
@@ -322,7 +343,11 @@ class ListingsService {
       'updated_at': now,
     };
 
-    await _client.from('listings').update(data).eq('id', listingId);
+    await NetworkResilience.run(
+      () => _client.from('listings').update(data).eq('id', listingId),
+      timeout: const Duration(seconds: 12),
+      retries: 0,
+    );
   }
 
   bool _matchesFilters(Listing listing, ListingFeedFilters filters) {

@@ -24,6 +24,9 @@ class _MainShellState extends State<MainShell> {
   int _i = 0;
   Timer? _presenceTimer;
   final _homeTabController = HomeTabController();
+  AuthService? _auth;
+  PresenceService? _presence;
+  String? _presenceUid;
 
   late final List<Widget> _pages = [
     HomeScreen(controller: _homeTabController),
@@ -44,10 +47,12 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final auth = context.read<AuthService>();
-      final presence = context.read<PresenceService>();
+      final auth = _auth;
+      final presence = _presence;
+      if (auth == null || presence == null) return;
       final uid = auth.currentUser?.uid;
       if (uid == null || uid.isEmpty) return;
+      _presenceUid = uid;
       await presence.setOnline(uid: uid, isOnline: true);
       _presenceTimer = Timer.periodic(const Duration(seconds: 45), (_) {
         presence.heartbeat(uid);
@@ -56,13 +61,19 @@ class _MainShellState extends State<MainShell> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _auth ??= context.read<AuthService>();
+    _presence ??= context.read<PresenceService>();
+  }
+
+  @override
   void dispose() {
     _presenceTimer?.cancel();
-    final auth = context.read<AuthService>();
-    final presence = context.read<PresenceService>();
-    final uid = auth.currentUser?.uid;
+    final presence = _presence;
+    final uid = _presenceUid;
     if (uid != null && uid.isNotEmpty) {
-      presence.setOnline(uid: uid, isOnline: false);
+      presence?.setOnline(uid: uid, isOnline: false);
     }
     super.dispose();
   }
