@@ -1,9 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/listing.dart';
 import '../services/reviews_service.dart';
 import '../utils/price_formatter.dart';
+import 'listing_promotion_badges.dart';
+import 'media_preview_box.dart';
 
 class ListingCard extends StatelessWidget {
   final Listing listing;
@@ -25,8 +26,13 @@ class ListingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
+    final photo = listing.firstPhotoUrl;
     final cityShort = listing.cityShort.trim();
+    final hasVipPromotion = listing.hasVipPromotion;
+    final hasBumpPromotion = listing.hasBumpPromotion;
+    final borderColor = hasVipPromotion
+        ? vipBorderColor(context)
+        : Theme.of(context).colorScheme.outlineVariant;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -34,8 +40,14 @@ class ListingCard extends StatelessWidget {
         color: Theme.of(context).colorScheme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+          side: BorderSide(
+            color: borderColor,
+            width: hasVipPromotion ? 1.25 : 1,
+          ),
         ),
+        shadowColor: hasVipPromotion
+            ? vipAccentColor(context).withValues(alpha: 0.20)
+            : null,
         child: InkWell(
           onTap: onOpen,
           child: Column(
@@ -54,34 +66,20 @@ class ListingCard extends StatelessWidget {
                             .colorScheme
                             .surfaceContainerHighest,
                         child: photo == null || photo.isEmpty
-                            ? Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.image_not_supported_outlined,
-                                      size: 34,
-                                      color:
-                                          Theme.of(context).colorScheme.outline,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Нет фото',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                            ? const MediaPreviewBox(
+                                imageUrl: '',
+                                categoryHint: 'listings',
+                                borderRadius: 0,
                               )
-                            : _ListingCardPhoto(photoUrl: photo),
+                            : MediaPreviewBox(
+                                imageUrl: photo,
+                                categoryHint: 'listings',
+                                borderRadius: 0,
+                              ),
                       ),
                       if (isSeen)
                         Positioned(
-                          left: 8,
+                          right: 8,
                           top: 8,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
@@ -99,6 +97,10 @@ class ListingCard extends StatelessWidget {
                             ),
                           ),
                         ),
+                      ListingPromotionBadges(
+                        showVip: false,
+                        showBump: hasBumpPromotion,
+                      ),
                     ],
                   ),
                 ),
@@ -114,7 +116,7 @@ class ListingCard extends StatelessWidget {
                           Expanded(
                             child: Text(
                               listing.title,
-                              maxLines: 1,
+                              maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
@@ -145,13 +147,39 @@ class ListingCard extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        '${formatPrice(listing.price)} ₽',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: hasVipPromotion
+                                ? Border.all(
+                                    color: vipBorderColor(context),
+                                    width: 1.1,
+                                  )
+                                : null,
+                            color: hasVipPromotion
+                                ? vipAccentColor(context).withValues(alpha: 0.08)
+                                : Colors.transparent,
+                          ),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: hasVipPromotion ? 8 : 0,
+                              vertical: hasVipPromotion ? 4 : 0,
+                            ),
+                            child: Text(
+                              '${formatPrice(listing.price)} ₽',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: hasVipPromotion
+                                    ? vipBorderColor(context)
+                                    : null,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -185,14 +213,52 @@ class ListingCard extends StatelessWidget {
                         },
                       ),
                       const SizedBox(height: 4),
-                      Text(
-                        cityShort.isEmpty ? 'Город не указан' : cityShort,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.outline,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              cityShort.isEmpty ? 'Город не указан' : cityShort,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
+                            ),
+                          ),
+                          if (hasVipPromotion) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(999),
+                                color: vipAccentColor(context),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  Icon(
+                                    Icons.workspace_premium_rounded,
+                                    size: 11,
+                                    color: Colors.white,
+                                  ),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'VIP',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),
@@ -200,45 +266,6 @@ class ListingCard extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ListingCardPhoto extends StatelessWidget {
-  final String photoUrl;
-
-  const _ListingCardPhoto({required this.photoUrl});
-
-  @override
-  Widget build(BuildContext context) {
-    final outline = Theme.of(context).colorScheme.outline;
-
-    return CachedNetworkImage(
-      imageUrl: photoUrl,
-      fit: BoxFit.cover,
-      alignment: Alignment.center,
-      placeholder: (_, __) => const Center(
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
-      errorWidget: (_, __, ___) => Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(
-              Icons.broken_image_outlined,
-              size: 34,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Ошибка загрузки',
-              style: TextStyle(
-                fontSize: 12,
-                color: outline,
-              ),
-            ),
-          ],
         ),
       ),
     );

@@ -1,8 +1,16 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/api_config.dart';
+import 'package:atta/src/services/api/viewed_listings_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
 
 class ListingHistoryService extends ChangeNotifier {
-  static const String _prefsKey = 'listing_history_v1';
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  static final ViewedListingsApi _api = ViewedListingsApi(_apiClient);
+  static const String _legacyPrefsKey = 'listing_history_v1';
+  static const String _prefsKeyPrefix = 'listing_history_v2';
   static const int _maxItems = 300;
 
   final Set<String> _viewedIds = <String>{};
@@ -39,11 +47,20 @@ class ListingHistoryService extends ChangeNotifier {
     }
 
     await _save();
+    if (ApiConfig.useTimewebBackend) {
+      try {
+        await _api.mark(id);
+      } catch (_) {}
+    }
+  }
+
+  Future<void> activateSession() async {
+    await _load();
   }
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getStringList(_prefsKey) ?? const <String>[];
+    final stored = prefs.getStringList(await _prefsKey()) ?? const <String>[];
     _viewedIds
       ..clear()
       ..addAll(
@@ -55,7 +72,28 @@ class ListingHistoryService extends ChangeNotifier {
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_prefsKey, _viewedIds.toList(growable: false));
+    await prefs.setStringList(
+      await _prefsKey(),
+      _viewedIds.toList(growable: false),
+    );
+  }
+
+  Future<void> resetSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(await _prefsKey());
+    await prefs.remove(_legacyPrefsKey);
+    _viewedIds.clear();
+    _loaded = true;
+    notifyListeners();
+  }
+
+  Future<String> _prefsKey() async {
+    final user = await _tokenStorage.readCurrentUser();
+    final uid = user?.uid.trim() ?? '';
+    if (uid.isEmpty) {
+      return '$_prefsKeyPrefix:anonymous';
+    }
+    return '$_prefsKeyPrefix:$uid';
   }
 
   bool _listEquals(List<String> a, List<String> b) {

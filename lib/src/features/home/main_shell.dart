@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 
 import 'package:atta/src/features/favorites/favorites_screen.dart';
 import 'package:atta/src/features/home/home_screen.dart';
@@ -8,23 +8,27 @@ import 'package:atta/src/features/profile/profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+  const MainShell({super.key, this.initialIndex = 0});
+
+  final int initialIndex;
 
   @override
   State<MainShell> createState() => _MainShellState();
 }
 
 class _MainShellState extends State<MainShell> {
-  int _i = 0;
+  late int _i = widget.initialIndex;
   Timer? _presenceTimer;
   final _homeTabController = HomeTabController();
   AuthService? _auth;
+  MainShellController? _shellController;
   PresenceService? _presence;
   String? _presenceUid;
 
@@ -65,11 +69,19 @@ class _MainShellState extends State<MainShell> {
     super.didChangeDependencies();
     _auth ??= context.read<AuthService>();
     _presence ??= context.read<PresenceService>();
+    final nextController = context.read<MainShellController>();
+    if (!identical(_shellController, nextController)) {
+      _shellController?.removeListener(_handleExternalTabSelection);
+      _shellController = nextController;
+      _i = nextController.selectedIndex;
+      _shellController?.addListener(_handleExternalTabSelection);
+    }
   }
 
   @override
   void dispose() {
     _presenceTimer?.cancel();
+    _shellController?.removeListener(_handleExternalTabSelection);
     final presence = _presence;
     final uid = _presenceUid;
     if (uid != null && uid.isNotEmpty) {
@@ -93,10 +105,19 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  void _handleExternalTabSelection() {
+    final controller = _shellController;
+    if (controller == null || !mounted || controller.selectedIndex == _i) {
+      return;
+    }
+    setState(() => _i = controller.selectedIndex);
+  }
+
   void _onDestinationSelected(int v) {
     if (v == 0) {
       if (_i != 0) {
         setState(() => _i = 0);
+        _shellController?.selectTab(0);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _homeTabController.scrollToTop();
         });
@@ -109,6 +130,7 @@ class _MainShellState extends State<MainShell> {
 
     if (v == _i) return;
     setState(() => _i = v);
+    _shellController?.selectTab(v);
   }
 
   @override
@@ -168,7 +190,8 @@ class _MainShellState extends State<MainShell> {
                         : const Stream<bool>.empty(),
                     initialData: false,
                     builder: (context, attentionSnap) {
-                      final hasAdminAlert = isAdmin && (attentionSnap.data == true);
+                      final hasAdminAlert =
+                          isAdmin && (attentionSnap.data == true);
 
                       return SafeArea(
                         top: false,
@@ -180,12 +203,14 @@ class _MainShellState extends State<MainShell> {
                             destinations: [
                               const NavigationDestination(
                                 icon: Icon(Icons.search, color: _inactive),
-                                selectedIcon: Icon(Icons.search, color: _search),
+                                selectedIcon:
+                                    Icon(Icons.search, color: _search),
                                 label: 'Поиск',
                               ),
                               NavigationDestination(
                                 icon: _dotIcon(
-                                  const Icon(Icons.favorite_border, color: _inactive),
+                                  const Icon(Icons.favorite_border,
+                                      color: _inactive),
                                   hasSavedSearchAlerts,
                                 ),
                                 selectedIcon: _dotIcon(
@@ -196,7 +221,8 @@ class _MainShellState extends State<MainShell> {
                               ),
                               const NavigationDestination(
                                 icon: Icon(Icons.list_alt, color: _inactive),
-                                selectedIcon: Icon(Icons.list_alt, color: _listings),
+                                selectedIcon:
+                                    Icon(Icons.list_alt, color: _listings),
                                 label: 'Объявления',
                               ),
                               NavigationDestination(
@@ -206,7 +232,8 @@ class _MainShellState extends State<MainShell> {
                               ),
                               NavigationDestination(
                                 icon: _dotIcon(
-                                  const Icon(Icons.person_outline, color: _inactive),
+                                  const Icon(Icons.person_outline,
+                                      color: _inactive),
                                   hasAdminAlert,
                                 ),
                                 selectedIcon: _dotIcon(

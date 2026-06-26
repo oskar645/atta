@@ -125,8 +125,9 @@ class FeedAd {
       imageUrl: (row['image_url'] ?? '').toString(),
       targetUrl: (row['target_url'] ?? '').toString(),
       isActive: row['is_active'] == true,
-      durationDays:
-          (row['duration_days'] is num) ? (row['duration_days'] as num).toInt() : 0,
+      durationDays: (row['duration_days'] is num)
+          ? (row['duration_days'] as num).toInt()
+          : 0,
       placement: (row['placement'] ?? 'home').toString(),
       createdAt: _parseDate(row['created_at']),
       activatedAt: _parseNullableDate(row['activated_at']),

@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/saved_searches_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 class SavedSearch {
@@ -102,46 +105,86 @@ class SavedSearch {
 
 class SavedSearchService {
   static const String missingTableMessage =
-      'Таблица saved_searches ещё не создана в Supabase. Сначала примените SQL-патч.';
+      'Сохранённые поиски временно недоступны. Попробуйте позже.';
 
-  final SupabaseClient _db = Supabase.instance.client;
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
   final ListingsService _listings = ListingsService();
   final NotificationsService _notifications = NotificationsService();
   final Uuid _uuid = const Uuid();
+  final SavedSearchesApi _api = SavedSearchesApi(_apiClient);
+  final Map<String, List<SavedSearch>> _cache = <String, List<SavedSearch>>{};
+  final Map<String, DateTime> _cacheAt = <String, DateTime>{};
+  final Map<String, Future<List<SavedSearch>>> _inFlight =
+      <String, Future<List<SavedSearch>>>{};
 
-  bool _isMissingTableError(Object error) {
-    if (error is! PostgrestException) return false;
-    final code = (error.code ?? '').toUpperCase();
-    final message = error.message.toLowerCase();
-    return code == 'PGRST205' ||
-        message.contains("could not find the table 'public.saved_searches'") ||
-        message.contains('schema cache') &&
-            message.contains('saved_searches') &&
-            message.contains('table');
+  static const Duration _cacheTtl = Duration(minutes: 2);
+
+  void _debugSource(String message) {
+    if (!kDebugMode) return;
+    debugPrint(message);
   }
 
-  bool isMissingTableError(Object error) => _isMissingTableError(error);
+  List<SavedSearch> _extractItems(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <SavedSearch>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => SavedSearch.fromMap(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  bool isMissingTableError(Object error) => false;
 
   Stream<List<SavedSearch>> streamSavedSearches(String userId) {
-    final stream = _db.from('saved_searches').stream(primaryKey: ['id']);
+    _debugSource('SavedSearches source: Timeweb');
+    final cached = peekSavedSearches(userId);
+    return Stream<List<SavedSearch>>.fromFuture(
+      getSavedSearches(userId),
+    ).startWith(cached);
+  }
 
-    return Stream<List<SavedSearch>>.multi((controller) {
-      final sub = stream.listen(
-        (rows) {
-          final items = rows
-              .where((row) => row['user_id']?.toString() == userId)
-              .map((row) => SavedSearch.fromMap(Map<String, dynamic>.from(row)))
-              .toList()
-            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-          controller.add(items);
-        },
-        onError: (_) => controller.add(<SavedSearch>[]),
-      );
+  Future<List<SavedSearch>> getSavedSearches(String userId) async {
+    final id = userId.trim();
+    if (id.isEmpty) return const <SavedSearch>[];
+    _debugSource('SavedSearches source: Timeweb');
+    final cached = _cache[id];
+    final cachedAt = _cacheAt[id];
+    if (cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _cacheTtl) {
+      return List<SavedSearch>.from(cached);
+    }
+    return refreshSavedSearches(id);
+  }
 
-      controller.onCancel = () async {
-        await sub.cancel();
-      };
-    });
+  List<SavedSearch> peekSavedSearches(String userId) {
+    final id = userId.trim();
+    if (id.isEmpty) return const <SavedSearch>[];
+    return List<SavedSearch>.from(_cache[id] ?? const <SavedSearch>[]);
+  }
+
+  Future<List<SavedSearch>> refreshSavedSearches(String userId) async {
+    final id = userId.trim();
+    if (id.isEmpty) return const <SavedSearch>[];
+    final existing = _inFlight[id];
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.list();
+      final items = _extractItems(response)
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      _cache[id] = List<SavedSearch>.from(items);
+      _cacheAt[id] = DateTime.now();
+      return items;
+    }();
+    _inFlight[id] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_inFlight[id], future)) {
+        _inFlight.remove(id);
+      }
+    }
   }
 
   String buildQueryKey({
@@ -218,8 +261,7 @@ class SavedSearchService {
     if (filters.category.trim().isNotEmpty && filters.category != 'Все') {
       parts.add(filters.category);
     }
-    if (filters.subcategory.trim().isNotEmpty &&
-        filters.subcategory != 'Все') {
+    if (filters.subcategory.trim().isNotEmpty && filters.subcategory != 'Все') {
       parts.add(filters.subcategory);
     }
     if (filters.autoBrand.trim().isNotEmpty) {
@@ -252,51 +294,39 @@ class SavedSearchService {
     required String search,
     required ListingFeedFilters filters,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-    final queryKey = buildQueryKey(search: search, filters: filters);
-
-    try {
-      await _db.from('saved_searches').upsert({
-        'id': _uuid.v4(),
-        'user_id': userId,
-        'title': buildTitle(search: search, filters: filters),
-        'query_key': queryKey,
-        'category': filters.category,
-        'search': search.trim(),
-        'subcategory': filters.subcategory,
-        'location': filters.location.trim(),
-        'prefer_location_first': filters.preferLocationFirst,
-        'radius_km': filters.radiusKm,
-        'auto_brand': filters.autoBrand.trim(),
-        'auto_model': filters.autoModel.trim(),
-        'auto_condition': filters.autoCondition.trim(),
-        'auto_mileage_to': filters.autoMileageTo,
-        'only_uncrashed': filters.onlyUncrashed,
-        'alerts_enabled': true,
-        'updated_at': now,
-        'created_at': now,
-      }, onConflict: 'user_id,query_key');
-    } catch (e) {
-      if (_isMissingTableError(e)) {
-        throw StateError(missingTableMessage);
-      }
-      rethrow;
-    }
+    _debugSource('SavedSearches source: Timeweb');
+    await _api.save({
+      'id': _uuid.v4(),
+      'title': buildTitle(search: search, filters: filters),
+      'query_key': buildQueryKey(search: search, filters: filters),
+      'category': filters.category,
+      'search': search.trim(),
+      'subcategory': filters.subcategory,
+      'location': filters.location.trim(),
+      'prefer_location_first': filters.preferLocationFirst,
+      'radius_km': filters.radiusKm,
+      'auto_brand': filters.autoBrand.trim(),
+      'auto_model': filters.autoModel.trim(),
+      'auto_condition': filters.autoCondition.trim(),
+      'auto_mileage_to': filters.autoMileageTo,
+      'only_uncrashed': filters.onlyUncrashed,
+      'alerts_enabled': true,
+    });
   }
 
   Future<void> deleteSavedSearch({
     required String userId,
     required String queryKey,
   }) async {
-    try {
-      await _db
-          .from('saved_searches')
-          .delete()
-          .eq('user_id', userId)
-          .eq('query_key', queryKey);
-    } catch (e) {
-      if (_isMissingTableError(e)) return;
-      rethrow;
+    _debugSource('SavedSearches source: Timeweb');
+    final response = await _api.list();
+    final items = _extractItems(response);
+    final item = items.cast<SavedSearch?>().firstWhere(
+          (entry) => entry?.queryKey == queryKey,
+          orElse: () => null,
+        );
+    if (item != null) {
+      await _api.remove(item.id);
     }
   }
 
@@ -304,40 +334,22 @@ class SavedSearchService {
     required String savedSearchId,
     required bool enabled,
   }) async {
-    try {
-      await _db.from('saved_searches').update({
-        'alerts_enabled': enabled,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', savedSearchId);
-    } catch (e) {
-      if (_isMissingTableError(e)) {
-        throw StateError(missingTableMessage);
-      }
-      rethrow;
-    }
+    _debugSource('SavedSearches source: Timeweb');
+    await _api.update(savedSearchId, {
+      'alerts_enabled': enabled,
+    });
   }
 
   Future<void> notifyMatchesForApprovedListing(
     Map<String, dynamic> rawListing,
   ) async {
+    _debugSource('SavedSearches source: Timeweb');
     final listingRow = Map<String, dynamic>.from(rawListing);
     listingRow['status'] = 'approved';
     final listing = Listing.fromMap(listingRow);
-
-    final List<dynamic> rows = await (() async {
-      try {
-        return await _db
-            .from('saved_searches')
-            .select('*')
-            .eq('alerts_enabled', true);
-      } catch (e) {
-        if (_isMissingTableError(e)) return <dynamic>[];
-        rethrow;
-      }
-    })();
-
-    final searches = rows
-        .map((row) => SavedSearch.fromMap(Map<String, dynamic>.from(row)))
+    final response = await _api.list();
+    final searches = _extractItems(response)
+        .where((search) => search.alertsEnabled)
         .where((search) => search.userId != listing.ownerId)
         .toList();
 
@@ -356,5 +368,12 @@ class SavedSearchService {
       );
       notifiedUsers.add(savedSearch.userId);
     }
+  }
+}
+
+extension<T> on Stream<T> {
+  Stream<T> startWith(T initial) async* {
+    yield initial;
+    yield* this;
   }
 }

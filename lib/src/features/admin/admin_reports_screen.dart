@@ -43,7 +43,8 @@ class AdminReportsScreen extends StatelessWidget {
     _DecisionTemplate(
       label: 'Запрещенный товар',
       title: '🚫 Объявление удалено',
-      body: 'Ваше объявление удалено: размещение такого товара запрещено правилами.',
+      body:
+          'Ваше объявление удалено: размещение такого товара запрещено правилами.',
     ),
     _DecisionTemplate(
       label: 'Мошенничество/фейк',
@@ -98,7 +99,8 @@ class AdminReportsScreen extends StatelessWidget {
               final createdRaw = x['created_at'];
               DateTime? createdAt;
               if (createdRaw is DateTime) createdAt = createdRaw;
-              if (createdRaw is String) createdAt = DateTime.tryParse(createdRaw);
+              if (createdRaw is String)
+                createdAt = DateTime.tryParse(createdRaw);
 
               Future<void> doDecision({
                 required String decision,
@@ -108,7 +110,9 @@ class AdminReportsScreen extends StatelessWidget {
                 final options = await _askDecisionOptions(
                   context,
                   templates: templates,
-                  title: deleteListing ? 'Удаление объявления' : 'Решение по жалобе',
+                  title: deleteListing
+                      ? 'Удаление объявления'
+                      : 'Решение по жалобе',
                 );
                 if (options == null) return;
 
@@ -199,9 +203,12 @@ class AdminReportsScreen extends StatelessWidget {
                           : 'Время: ${timeago.format(createdAt, locale: 'ru')}',
                     ),
                     const SizedBox(height: 8),
-                    Text('Объявление: ${listingId.isEmpty ? 'не указано' : listingId}'),
-                    Text('Владелец: ${ownerUid.isEmpty ? 'не указан' : ownerUid}'),
-                    Text('Кто пожаловался: ${reporterId.isEmpty ? 'не указан' : reporterId}'),
+                    Text(
+                        'Объявление: ${listingId.isEmpty ? 'не указано' : listingId}'),
+                    Text(
+                        'Владелец: ${ownerUid.isEmpty ? 'не указан' : ownerUid}'),
+                    Text(
+                        'Кто пожаловался: ${reporterId.isEmpty ? 'не указан' : reporterId}'),
                     if (comment.trim().isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Text('Комментарий: $comment'),
@@ -329,7 +336,8 @@ class AdminReportsScreen extends StatelessWidget {
                         minLines: 2,
                         maxLines: 4,
                         decoration: const InputDecoration(
-                          hintText: 'Комментарий администратора (необязательно)',
+                          hintText:
+                              'Комментарий администратора (необязательно)',
                           border: OutlineInputBorder(),
                         ),
                       ),

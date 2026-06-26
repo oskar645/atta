@@ -3,7 +3,6 @@ import 'package:atta/src/features/profile/about_app_screen.dart';
 import 'package:atta/src/features/profile/change_password_screen.dart';
 import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
-import 'package:atta/src/services/phone_auth_backend_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
@@ -20,13 +19,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
-  final _phoneAuth = PhoneAuthBackendService();
   bool _saving = false;
   bool _deletingAccount = false;
 
   @override
   void initState() {
     super.initState();
+    final currentUser = context.read<AuthService>().currentUser;
+    if (currentUser != null) {
+      _nameCtrl.text = (currentUser.displayName ?? '').trim();
+      _emailCtrl.text = _visibleEmail(currentUser.email);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final auth = context.read<AuthService>();
       final profile = context.read<ProfileService>();
@@ -35,11 +38,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final authEmail = _visibleEmail(auth.currentUser?.email);
       final profileEmail = _visibleEmail((data['email'] ?? '').toString());
 
-      _nameCtrl.text =
+      final loadedName =
           (data['display_name'] ?? data['displayName'] ?? data['name'] ?? '')
-              .toString();
-      _phoneCtrl.text = (data['phone'] ?? '').toString();
-      _emailCtrl.text = profileEmail.isNotEmpty ? profileEmail : authEmail;
+              .toString()
+              .trim();
+      final loadedPhone = (data['phone'] ?? '').toString().trim();
+
+      _nameCtrl.text = loadedName.isNotEmpty ? loadedName : _nameCtrl.text;
+      _phoneCtrl.text = _formatPhoneForField(
+        loadedPhone.isNotEmpty ? loadedPhone : _phoneCtrl.text,
+      );
+      _emailCtrl.text = profileEmail.isNotEmpty
+          ? profileEmail
+          : (_emailCtrl.text.isNotEmpty ? _emailCtrl.text : authEmail);
 
       if (mounted) {
         setState(() {});
@@ -60,6 +71,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (email.isEmpty) return '';
     if (email.endsWith('@phone.atta.local')) return '';
     return email;
+  }
+
+  String _formatPhoneForField(String value) {
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    String normalized = digits;
+    if (normalized.length == 11 &&
+        (normalized.startsWith('7') || normalized.startsWith('8'))) {
+      normalized = normalized.substring(1);
+    }
+    if (normalized.length != 10) return value;
+    return '+7 ${normalized.substring(0, 3)} ${normalized.substring(3, 6)}-${normalized.substring(6, 8)}-${normalized.substring(8)}';
   }
 
   bool _looksLikeEmail(String value) {
@@ -99,8 +121,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _saving = true);
     try {
-      if (email.isNotEmpty && email != currentEmail) {
-        await _phoneAuth.linkEmailToCurrentUser(email: email);
+      if (!auth.useTimewebBackend &&
+          email.isNotEmpty &&
+          email != currentEmail) {
+        await auth.linkEmailToCurrentUser(email: email);
       }
 
       await auth.updateAuthMetadata(displayName: name);
@@ -150,17 +174,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _deletingAccount = true);
     try {
-      await _phoneAuth.deleteCurrentAccount();
+      await auth.deleteAccount();
       await auth.signOut();
       if (!mounted) return;
       showAppSnack(context, 'Ваш аккаунт удалён.');
     } catch (e) {
       if (!mounted) return;
-      final message = e is PhoneAuthBackendException
-          ? ((e.technicalDetails ?? '').trim().isNotEmpty
-              ? e.technicalDetails!.trim()
-              : e.message)
-          : _phoneAuth.userMessageForError(e);
+      final message = auth.userMessageForError(e);
       showAppSnack(context, message, isError: true);
     } finally {
       if (mounted) setState(() => _deletingAccount = false);
@@ -211,6 +231,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final border = _fieldBorder(context);
     final email = _emailCtrl.text.trim();
+    final useTimewebBackend = context.read<AuthService>().useTimewebBackend;
 
     return Scaffold(
       appBar: AppBar(
@@ -247,10 +268,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: _emailCtrl,
+                  enabled: !useTimewebBackend,
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     labelText: 'Email',
-                    hintText: 'name@example.com',
+                    hintText: useTimewebBackend
+                        ? 'Email временно недоступен'
+                        : 'name@example.com',
+                    helperText: useTimewebBackend
+                        ? 'Email auth disabled temporarily until Timeweb email verification flow is ready.'
+                        : null,
                     border: border,
                     enabledBorder: border,
                     focusedBorder: border,
@@ -272,7 +299,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               email.isEmpty
-                  ? 'Добавьте email, чтобы он был привязан к вашему аккаунту и его можно было использовать для входа.'
+                  ? (useTimewebBackend
+                      ? 'В Timeweb-режиме email временно скрыт и не используется для входа.'
+                      : 'Добавьте email, чтобы он был привязан к вашему аккаунту и его можно было использовать для входа.')
                   : 'Текущий email привязан к вашему аккаунту и сохраняется в профиле.',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.outline,

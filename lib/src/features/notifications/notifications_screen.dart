@@ -1,7 +1,12 @@
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
+import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -16,6 +21,9 @@ class NotificationsScreen extends StatefulWidget {
 class _NotificationsScreenState extends State<NotificationsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
+  Stream<List<Map<String, dynamic>>>? _globalStream;
+  Stream<List<Map<String, dynamic>>>? _personalStream;
+  Future<void>? _preloadFuture;
 
   @override
   void initState() {
@@ -26,7 +34,10 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final me = context.read<AuthService>().currentUser;
       if (me == null) return;
-      await context.read<NotificationsService>().markAllSeen(me.uid);
+      final notifications = context.read<NotificationsService>();
+      _globalStream ??= notifications.streamGlobal();
+      _personalStream ??= notifications.streamPersonal(me.uid);
+      _preloadFuture ??= notifications.preload(me.uid);
     });
   }
 
@@ -101,6 +112,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         final body = (n['body'] ?? '').toString();
         final scope = (n['scope'] ?? '').toString();
         final isRead = n['is_read'] == true;
+        final notificationType =
+            (n['type'] ?? '').toString().trim().toLowerCase();
+        final chatId = (n['chatId'] ?? n['chat_id'] ?? '').toString().trim();
+        final senderName =
+            (n['senderName'] ?? n['sender_name'] ?? '').toString().trim();
+        final senderAvatar =
+            (n['senderAvatarUrl'] ?? n['sender_avatar_url'] ?? '')
+                .toString()
+                .trim();
         final createdRaw = n['created_at'];
         DateTime? created;
         if (createdRaw is String) created = DateTime.tryParse(createdRaw);
@@ -112,7 +132,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
         return Card(
           child: ListTile(
             leading: Icon(
-              unreadPersonal ? Icons.mark_email_unread : Icons.notifications_none,
+              unreadPersonal
+                  ? Icons.mark_email_unread
+                  : Icons.notifications_none,
               color: unreadPersonal
                   ? Colors.red
                   : Theme.of(context).colorScheme.outline,
@@ -183,9 +205,26 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     ),
                   )
                 : null,
-            onTap: allowMarkRead && unreadPersonal
+            onTap: notificationType == 'chat_message'
                 ? () async {
-                    await notifications.markPersonalReadById(id);
+                    if (allowMarkRead && unreadPersonal) {
+                      await notifications.markPersonalReadById(id);
+                      if (!mounted) return;
+                    }
+                    if (chatId.isNotEmpty) {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ChatScreen(
+                            chatId: chatId,
+                            initialOtherUserName: senderName,
+                            initialOtherUserAvatar: senderAvatar,
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+                    context.read<MainShellController>().selectTab(3);
+                    Navigator.of(context).popUntil((route) => route.isFirst);
                   }
                 : null,
           ),
@@ -194,10 +233,22 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
+  Widget _buildSkeletonList() {
+    return ListView.separated(
+      padding: const EdgeInsets.all(12),
+      itemCount: 6,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (_, __) => const SkeletonNotificationRow(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final me = context.read<AuthService>().currentUser!;
     final notifications = context.read<NotificationsService>();
+    _globalStream ??= notifications.streamGlobal();
+    _personalStream ??= notifications.streamPersonal(me.uid);
+    _preloadFuture ??= notifications.preload(me.uid);
     final admin = context.read<AdminService>();
 
     return StreamBuilder<bool>(
@@ -218,25 +269,87 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 icon: const Icon(Icons.done_all),
               ),
             ],
-            bottom: TabBar(
-              controller: _tab,
-              tabs: const [
-                Tab(text: 'Общие'),
-                Tab(text: 'Личные'),
-              ],
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(kTextTabBarHeight),
+              child: StreamBuilder<int>(
+                stream: notifications.streamUnreadGlobalCount(me.uid),
+                initialData: 0,
+                builder: (context, globalSnap) {
+                  return StreamBuilder<int>(
+                    stream: notifications.streamUnreadPersonalCount(me.uid),
+                    initialData: 0,
+                    builder: (context, personalSnap) {
+                      return TabBar(
+                        controller: _tab,
+                        tabs: [
+                          _NotificationTab(
+                            text: 'Общие',
+                            hasUnread: (globalSnap.data ?? 0) > 0,
+                          ),
+                          _NotificationTab(
+                            text: 'Личные',
+                            hasUnread: (personalSnap.data ?? 0) > 0,
+                          ),
+                        ],
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ),
           body: TabBarView(
             controller: _tab,
             children: [
               StreamBuilder<List<Map<String, dynamic>>>(
-                stream: notifications.streamGlobal(),
+                stream: _globalStream,
+                initialData: notifications.peekGlobal(),
                 builder: (context, snap) {
                   if (snap.hasError) {
-                    return Center(child: Text('Ошибка: ${snap.error}'));
+                    return Center(
+                      child: AppErrorView(
+                        message: shouldShowNetworkVpnHint(snap.error!)
+                            ? kNetworkVpnHintMessage
+                            : 'Не удалось загрузить уведомления.',
+                        onRetry: () async {
+                          if (mounted) {
+                            setState(() {
+                              _globalStream = notifications.streamGlobal();
+                            });
+                          }
+                        },
+                      ),
+                    );
                   }
-                  if (!snap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
+                  if (!snap.hasData ||
+                      (snap.data!.isEmpty && _preloadFuture != null)) {
+                    return FutureBuilder<void>(
+                      future: _preloadFuture,
+                      builder: (context, preloadSnap) {
+                        if (snap.hasData && snap.data!.isNotEmpty) {
+                          return _buildList(
+                            items: snap.data!,
+                            notifications: notifications,
+                            allowMarkRead: false,
+                            isAdmin: isAdmin,
+                            showScopeTag: false,
+                            emptyText: 'Пока нет общих уведомлений',
+                          );
+                        }
+                        if (preloadSnap.connectionState !=
+                            ConnectionState.done) {
+                          return _buildSkeletonList();
+                        }
+                        return _buildList(
+                          items: snap.data ?? const <Map<String, dynamic>>[],
+                          notifications: notifications,
+                          allowMarkRead: false,
+                          isAdmin: isAdmin,
+                          showScopeTag: false,
+                          emptyText: 'Пока нет общих уведомлений',
+                        );
+                      },
+                    );
                   }
 
                   return _buildList(
@@ -250,13 +363,55 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 },
               ),
               StreamBuilder<List<Map<String, dynamic>>>(
-                stream: notifications.streamPersonal(me.uid),
+                stream: _personalStream,
+                initialData: notifications.peekPersonal(me.uid),
                 builder: (context, snap) {
                   if (snap.hasError) {
-                    return Center(child: Text('Ошибка: ${snap.error}'));
+                    return Center(
+                      child: AppErrorView(
+                        message: shouldShowNetworkVpnHint(snap.error!)
+                            ? kNetworkVpnHintMessage
+                            : 'Не удалось загрузить уведомления.',
+                        onRetry: () async {
+                          if (mounted) {
+                            setState(() {
+                              _personalStream =
+                                  notifications.streamPersonal(me.uid);
+                            });
+                          }
+                        },
+                      ),
+                    );
                   }
-                  if (!snap.hasData) {
-                    return const Center(child: CircularProgressIndicator());
+                  if (!snap.hasData ||
+                      (snap.data!.isEmpty && _preloadFuture != null)) {
+                    return FutureBuilder<void>(
+                      future: _preloadFuture,
+                      builder: (context, preloadSnap) {
+                        if (snap.hasData && snap.data!.isNotEmpty) {
+                          return _buildList(
+                            items: snap.data!,
+                            notifications: notifications,
+                            allowMarkRead: true,
+                            isAdmin: isAdmin,
+                            showScopeTag: false,
+                            emptyText: 'Пока нет личных уведомлений',
+                          );
+                        }
+                        if (preloadSnap.connectionState !=
+                            ConnectionState.done) {
+                          return _buildSkeletonList();
+                        }
+                        return _buildList(
+                          items: snap.data ?? const <Map<String, dynamic>>[],
+                          notifications: notifications,
+                          allowMarkRead: true,
+                          isAdmin: isAdmin,
+                          showScopeTag: false,
+                          emptyText: 'Пока нет личных уведомлений',
+                        );
+                      },
+                    );
                   }
 
                   return _buildList(
@@ -273,6 +428,40 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           ),
         );
       },
+    );
+  }
+}
+
+class _NotificationTab extends StatelessWidget {
+  const _NotificationTab({
+    required this.text,
+    required this.hasUnread,
+  });
+
+  final String text;
+  final bool hasUnread;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tab(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(text),
+          if (hasUnread) ...[
+            const SizedBox(width: 6),
+            Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                color: Colors.red,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -1,26 +1,44 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
+import 'package:atta/src/features/listings/listing_archive_flow.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
+import 'package:atta/src/features/promotions/listing_stats_screen.dart';
+import 'package:atta/src/features/promotions/sell_faster_screen.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
+import 'package:atta/src/features/wallet/wallet_screen.dart';
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
+import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/listing_promotion_badges.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/skeletons.dart';
 import 'package:atta/src/widgets/listing_card.dart';
+import 'package:atta/src/widgets/presence_badge.dart';
+import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:atta/src/services/network_resilience.dart';
 
 class ListingDetailScreen extends StatefulWidget {
   final String listingId;
@@ -35,6 +53,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   bool _showFullDescription = false;
   bool _showAllSpecs = false;
+  Future<Listing?>? _listingFuture;
+  Future<dynamic>? _walletFuture;
 
   @override
   void initState() {
@@ -42,7 +62,15 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     timeago.setLocaleMessages('ru', timeago.RuMessages());
   }
 
-  SupabaseClient get _sb => Supabase.instance.client;
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _listingFuture ??= context.read<ListingsService>().getListingById(
+          widget.listingId,
+        );
+    _walletFuture ??=
+        context.read<WalletService>().maybeCheckAccrualOncePerSession();
+  }
 
   String _formatExactTime(DateTime? value) {
     if (value == null) return '';
@@ -62,41 +90,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final exactTime = _formatExactTime(value);
     if (exactTime.isEmpty) return relative;
     return '$relative · $exactTime';
-  }
-
-  // ✅ имя продавца
-  String _displayNameFromUserRow(Map<String, dynamic> u) {
-    String pick(dynamic v) => (v ?? '').toString().trim();
-
-    final d1 = pick(u['display_name']);
-    if (d1.isNotEmpty) return d1;
-
-    final d2 = pick(u['name']);
-    if (d2.isNotEmpty) return d2;
-
-    final d3 = pick(u['displayName']);
-    if (d3.isNotEmpty) return d3;
-
-    return 'Пользователь';
-  }
-
-  // ✅ аватар продавца
-  String _avatarUrlFromUserRow(Map<String, dynamic> u) {
-    String pick(dynamic v) => (v ?? '').toString().trim();
-
-    final a1 = pick(u['avatar_url']);
-    if (a1.isNotEmpty) return a1;
-
-    final a2 = pick(u['avatarUrl']);
-    if (a2.isNotEmpty) return a2;
-
-    final a3 = pick(u['photo_url']);
-    if (a3.isNotEmpty) return a3;
-
-    final a4 = pick(u['photoUrl']);
-    if (a4.isNotEmpty) return a4;
-
-    return '';
   }
 
   String _sellerInitial(String name) {
@@ -171,41 +164,42 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     }
   }
 
+  String _promotionTitle(Listing listing) {
+    final promotion = listing.primaryActivePromotion;
+    if (promotion == null) return '';
+    return promotion.title;
+  }
+
+  String _cannotPromoteText(String? reason) {
+    switch (reason) {
+      case 'pending':
+        return 'Доступно после модерации';
+      case 'archived':
+        return 'Снятые с публикации объявления нельзя продвигать';
+      case 'deleted':
+        return 'Удалённые объявления нельзя продвигать';
+      case 'rejected':
+        return 'Отклонённые объявления нельзя продвигать';
+      case 'sold':
+      case 'unpublished':
+        return 'Объявление снято с публикации';
+      case 'not_owner':
+        return 'Продвижение доступно только владельцу';
+      default:
+        return 'Проверьте статус объявления';
+    }
+  }
+
   Stream<bool> _streamIsAdmin(String uid) {
-    return _sb
-        .from('admin_users')
-        .stream(primaryKey: ['uid'])
-        .eq('uid', uid)
-        .map((rows) {
-          if (rows.isEmpty) return false;
-          final r = rows.first;
-          return (r['is_admin'] == true) || (r['isAdmin'] == true);
-        });
+    return context.read<AdminService>().streamIsAdmin(uid);
   }
 
-  Stream<Map<String, dynamic>> _streamSellerProfile(String sellerId) {
-    return _sb.from('users').stream(primaryKey: ['id']).eq('id', sellerId).map(
-        (rows) => rows.isNotEmpty
-            ? Map<String, dynamic>.from(rows.first)
-            : <String, dynamic>{});
-  }
-
-  Stream<List<Map<String, dynamic>>> _streamSellerReviews(String sellerId) {
-    return _sb
-        .from('reviews')
-        .stream(primaryKey: ['id'])
-        .eq('seller_id', sellerId)
-        .order('created_at', ascending: false)
-        .map((rows) => rows.map((e) => Map<String, dynamic>.from(e)).toList());
-  }
-
-  Stream<Map<String, dynamic>?> _streamListingRow(String listingId) {
-    return _sb
-        .from('listings')
-        .stream(primaryKey: ['id'])
-        .eq('id', listingId)
-        .map((rows) =>
-            rows.isEmpty ? null : Map<String, dynamic>.from(rows.first));
+  void _reloadListing() {
+    setState(() {
+      _listingFuture = context.read<ListingsService>().getListingById(
+            widget.listingId,
+          );
+    });
   }
 
   Future<void> _openReportDialog({
@@ -213,6 +207,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     required String listingOwnerId,
   }) async {
     final me = context.read<AuthService>().currentUser!;
+    final reports = context.read<ReportsService>();
 
     final reasons = <String>[
       'Запрещённый товар',
@@ -267,15 +262,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     if (ok != true) return;
 
     try {
-      await _sb.from('reports').insert({
-        'listing_id': listingId,
-        'listing_owner_id': listingOwnerId,
-        'reporter_id': me.uid,
-        'reason': reason,
-        'comment': c.text.trim(),
-        'status': 'open',
-        'created_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      await reports.reportListing(
+        listingId: listingId,
+        listingOwnerId: listingOwnerId,
+        reporterId: me.uid,
+        reason: reason,
+        comment: c.text.trim(),
+      );
 
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -290,11 +283,14 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   Future<void> _shareAnnouncement(
     String listingId,
     String title, {
+    required int price,
+    required String city,
     String? photoUrl,
   }) async {
     final shareLink = 'https://atta.app/listing/$listingId';
-
-    final message = 'Посмотри это объявление в ATTA:\n$shareLink';
+    final cityText = city.trim().isEmpty ? 'Город не указан' : city.trim();
+    final message =
+        'Объявление в ATTA: $title\nЦена: ${formatPrice(price)} ₽\nГород: $cityText\n$shareLink';
 
     try {
       final url = (photoUrl ?? '').trim();
@@ -321,36 +317,40 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       await SharePlus.instance.share(
         ShareParams(
           text: message,
-          subject: title,
+          subject: 'Объявление в ATTA',
         ),
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+        showAppSnack(
+          context,
+          'Не удалось открыть меню отправки. Попробуйте ещё раз.',
+          isError: true,
+        );
       }
     }
   }
 
   Future<void> _deleteListingAsAdmin({
     required Listing listing,
+    required AdminService adminService,
     required ListingsService listingsSvc,
   }) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Удалить объявление'),
+        title: const Text('Удалить объявление?'),
         content: const Text(
-          'Удалить это объявление для всех пользователей?',
+          'Это действие скроет объявление из приложения.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Нет'),
+            child: const Text('Отмена'),
           ),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Да'),
+            child: const Text('Удалить'),
           ),
         ],
       ),
@@ -359,21 +359,34 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     if (confirmed != true) return;
 
     try {
-      await listingsSvc.archiveListing(
-        listingId: listing.id,
-        status: 'deleted',
-        note: 'Удалено администратором.',
+      final response = await adminService.deleteListing(
+        listing.id,
+        reason: 'Удалено администратором.',
+        moderationNote: 'Это действие выполнено администратором.',
       );
+      final rawListing = response['listing'];
+      if (rawListing is Map) {
+        final updated = Listing.fromMap(
+          rawListing.map((key, value) => MapEntry(key.toString(), value)),
+        );
+        listingsSvc.applyExternalListingUpdate(updated);
+      }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Объявление удалено')),
+      showAppSnack(
+        context,
+        'Объявление удалено',
       );
       Navigator.of(context).maybePop();
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('Admin delete listing failed listing=${listing.id} error=$e');
+      }
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: $e')),
+      showAppSnack(
+        context,
+        _adminDeleteErrorText(e),
+        isError: true,
       );
     }
   }
@@ -532,7 +545,14 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 onPressed: (!canContact || listing.phone.trim().isEmpty)
                     ? null
                     : () async {
-                        final uri = Uri(scheme: 'tel', path: listing.phone);
+                        final normalizedPhone =
+                            normalizeRuPhoneForApi(listing.phone);
+                        final uri = Uri(
+                          scheme: 'tel',
+                          path: normalizedPhone.isEmpty
+                              ? listing.phone.trim()
+                              : '+$normalizedPhone',
+                        );
                         await launchUrl(uri);
                       },
                 icon: const Icon(Icons.call),
@@ -565,7 +585,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                         );
                       },
                 icon: const Icon(Icons.chat_bubble_outline),
-                label: Text(status == 'approved' ? 'Написать' : 'Недоступно'),
+                label: Text(
+                  listing.ownerId == myUid
+                      ? 'Это ваше объявление'
+                      : status == 'approved'
+                          ? 'Написать'
+                          : 'Недоступно',
+                ),
               ),
             ),
           ],
@@ -588,28 +614,60 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       builder: (context, adminSnap) {
         final isAdmin = adminSnap.data == true;
 
-        return StreamBuilder<Map<String, dynamic>?>(
-          stream: _streamListingRow(widget.listingId),
+        return FutureBuilder<Listing?>(
+          future: _listingFuture,
           builder: (context, snap) {
+            if (snap.hasError) {
+              return Scaffold(
+                appBar: AppBar(),
+                body: AppErrorView(
+                  message: shouldShowNetworkVpnHint(snap.error!)
+                      ? kNetworkVpnHintMessage
+                      : 'Не удалось открыть объявление.',
+                  onRetry: () async {
+                    _reloadListing();
+                  },
+                ),
+              );
+            }
             if (!snap.hasData) {
-              return const Scaffold(
-                  body: Center(child: CircularProgressIndicator()));
+              return Scaffold(
+                appBar: AppBar(),
+                body: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: const [
+                    SkeletonBox(height: 260, radius: 20),
+                    SizedBox(height: 16),
+                    SkeletonLine(width: 220, height: 24),
+                    SizedBox(height: 12),
+                    SkeletonLine(width: 120, height: 28),
+                    SizedBox(height: 16),
+                    SkeletonLine(height: 14),
+                    SizedBox(height: 8),
+                    SkeletonLine(height: 14),
+                    SizedBox(height: 8),
+                    SkeletonLine(width: 180, height: 14),
+                    SizedBox(height: 24),
+                    SkeletonProfileHeader(),
+                    SizedBox(height: 24),
+                    SkeletonListingGrid(
+                      itemCount: 2,
+                      shrinkWrap: true,
+                      physics: NeverScrollableScrollPhysics(),
+                    ),
+                  ],
+                ),
+              );
             }
 
-            final row = snap.data;
-            if (row == null) {
+            final listing = snap.data;
+            if (listing == null) {
               return Scaffold(
                   appBar: AppBar(),
                   body: const Center(child: Text('Объявление удалено')));
             }
-
-            final listing = Listing.fromMap(row);
-
-            final status = (row['status'] ?? 'approved').toString();
-            final rejectionReason =
-                (row['rejection_reason'] ?? row['rejectionReason'] ?? '')
-                    .toString()
-                    .trim();
+            final status = listing.status;
+            final rejectionReason = listing.rejectionReason.trim();
 
             final isOwner = listing.ownerId == me.uid;
             final canSee = (status == 'approved') || isOwner || isAdmin;
@@ -646,593 +704,597 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               stream: favs.streamFavoriteIds(me.uid),
               builder: (context, favSnap) {
                 final isFav = (favSnap.data ?? <String>{}).contains(listing.id);
+                final sellerName = listing.ownerName.trim().isEmpty
+                    ? 'Пользователь'
+                    : listing.ownerName.trim();
+                const sellerAvatar = '';
 
-                return StreamBuilder<Map<String, dynamic>>(
-                  stream: _streamSellerProfile(listing.ownerId),
-                  builder: (context, sellerSnap) {
-                    final u = sellerSnap.data ?? const <String, dynamic>{};
-                    final sellerName = _displayNameFromUserRow(u);
-                    final sellerAvatar = _avatarUrlFromUserRow(u);
-
-                    return Scaffold(
-                      appBar: AppBar(
-                        centerTitle: false,
-                        title: Text(listing.title,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        actions: [
-                          IconButton(
-                            tooltip: 'Поделиться',
-                            onPressed: () => _shareAnnouncement(
-                              listing.id,
-                              listing.title,
-                              photoUrl: listing.photoUrls.isEmpty
-                                  ? null
-                                  : listing.photoUrls.first,
-                            ),
-                            icon: const Icon(Icons.share_outlined),
-                          ),
-                          IconButton(
-                            onPressed: () => favs.toggleFavorite(
-                              uid: me.uid,
+                return Scaffold(
+                  appBar: AppBar(
+                    centerTitle: false,
+                    title: Text(listing.title,
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    actions: [
+                      IconButton(
+                        tooltip: 'Поделиться',
+                        onPressed: () => _shareAnnouncement(
+                          listing.id,
+                          listing.title,
+                          price: listing.price,
+                          city: listing.cityShort,
+                          photoUrl: listing.photoUrls.isEmpty
+                              ? null
+                              : listing.photoUrls.first,
+                        ),
+                        icon: const Icon(Icons.share_outlined),
+                      ),
+                      IconButton(
+                        onPressed: () => favs.toggleFavorite(
+                          uid: me.uid,
+                          listingId: listing.id,
+                          makeFavorite: !isFav,
+                        ),
+                        icon: Icon(
+                          isFav ? Icons.favorite : Icons.favorite_border,
+                          color: isFav
+                              ? Colors.red
+                              : Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      PopupMenuButton<String>(
+                        onSelected: (v) async {
+                          if (v == 'edit') {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      EditListingScreen(listingId: listing.id)),
+                            );
+                          } else if (v == 'report') {
+                            await _openReportDialog(
                               listingId: listing.id,
-                              makeFavorite: !isFav,
-                            ),
-                            icon: Icon(
-                              isFav ? Icons.favorite : Icons.favorite_border,
-                              color: isFav
-                                  ? Colors.red
-                                  : Theme.of(context).colorScheme.outline,
-                            ),
-                          ),
-                          PopupMenuButton<String>(
-                            onSelected: (v) async {
-                              if (v == 'edit') {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                      builder: (_) => EditListingScreen(
-                                          listingId: listing.id)),
-                                );
-                              } else if (v == 'report') {
-                                await _openReportDialog(
-                                  listingId: listing.id,
-                                  listingOwnerId: listing.ownerId,
-                                );
-                              } else if (v == 'delete_admin') {
-                                await _deleteListingAsAdmin(
-                                  listing: listing,
-                                  listingsSvc: listingsSvc,
-                                );
-                              }
-                            },
-                            itemBuilder: (ctx) => [
-                              if (canEdit)
-                                const PopupMenuItem(
-                                  value: 'edit',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.edit_outlined, size: 18),
-                                      SizedBox(width: 8),
-                                      Text('Редактировать'),
-                                    ],
-                                  ),
-                                ),
-                              if (!isOwner)
-                                const PopupMenuItem(
-                                  value: 'report',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.flag_outlined, size: 18),
-                                      SizedBox(width: 8),
-                                      Text('Пожаловаться'),
-                                    ],
-                                  ),
-                                ),
-                              if (isAdmin)
-                                const PopupMenuItem(
-                                  value: 'delete_admin',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.delete_outline, size: 18),
-                                      SizedBox(width: 8),
-                                      Text('Удалить объявление'),
-                                    ],
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      bottomNavigationBar: _buildBottomActions(
-                        context: context,
-                        canContact: canContact,
-                        status: status,
-                        listing: listing,
-                        myUid: me.uid,
-                        chats: chats,
-                        sellerName: sellerName,
-                        sellerAvatar: sellerAvatar,
-                      ),
-                      body: ListView(
-                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-                        children: [
-                          if (status != 'approved')
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                color: _statusColor(context, status)
-                                    .withValues(alpha: 0.12),
-                                border: Border.all(
-                                    color: _statusColor(context, status)
-                                        .withValues(alpha: 0.35)),
-                              ),
+                              listingOwnerId: listing.ownerId,
+                            );
+                          } else if (v == 'delete_admin') {
+                            await _deleteListingAsAdmin(
+                              listing: listing,
+                              adminService: context.read<AdminService>(),
+                              listingsSvc: listingsSvc,
+                            );
+                          }
+                        },
+                        itemBuilder: (ctx) => [
+                          if (canEdit)
+                            const PopupMenuItem(
+                              value: 'edit',
                               child: Row(
                                 children: [
-                                  Icon(_statusIcon(status),
-                                      color: _statusColor(context, status)),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      '${_statusTitle(status)}${status == 'pending' ? ' — проверяем объявление' : ''}',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.w800),
-                                    ),
-                                  ),
+                                  Icon(Icons.edit_outlined, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Редактировать'),
                                 ],
                               ),
                             ),
-                          if (status != 'approved' &&
-                              status != 'pending' &&
-                              listing.archiveNote.trim().isNotEmpty) ...[
-                            const SizedBox(height: 10),
-                            Container(
-                              padding: const EdgeInsets.all(12),
+                          if (!isOwner)
+                            const PopupMenuItem(
+                              value: 'report',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.flag_outlined, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Пожаловаться'),
+                                ],
+                              ),
+                            ),
+                          if (isAdmin)
+                            const PopupMenuItem(
+                              value: 'delete_admin',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.delete_outline, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Удалить объявление'),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  bottomNavigationBar: _buildBottomActions(
+                    context: context,
+                    canContact: canContact,
+                    status: status,
+                    listing: listing,
+                    myUid: me.uid,
+                    chats: chats,
+                    sellerName: sellerName,
+                    sellerAvatar: sellerAvatar,
+                  ),
+                  body: ListView(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+                    children: [
+                      if (status != 'approved')
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: _statusColor(context, status)
+                                .withValues(alpha: 0.12),
+                            border: Border.all(
+                                color: _statusColor(context, status)
+                                    .withValues(alpha: 0.35)),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(_statusIcon(status),
+                                  color: _statusColor(context, status)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  '${_statusTitle(status)}${status == 'pending' ? ' — проверяем объявление' : ''}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (status != 'approved' &&
+                          status != 'pending' &&
+                          listing.archiveNote.trim().isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            border: Border.all(
+                              color:
+                                  Theme.of(context).colorScheme.outlineVariant,
+                            ),
+                          ),
+                          child: Text(
+                            listing.archiveNote,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                      if (status == 'rejected' &&
+                          rejectionReason.isNotEmpty &&
+                          (isOwner || isAdmin)) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: Colors.red.withValues(alpha: 0.08),
+                            border: Border.all(
+                                color: Colors.red.withValues(alpha: 0.25)),
+                          ),
+                          child: Text(
+                            'Причина отклонения: $rejectionReason',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      _Photos(photoUrls: listing.photoUrls),
+                      const SizedBox(height: 14),
+                      Text(
+                        '${formatPrice(listing.price)} ₽',
+                        style: const TextStyle(
+                            fontSize: 26, fontWeight: FontWeight.w800),
+                      ),
+                      if (listing.hasVipPromotion) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'VIP-объявление',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: vipBorderColor(context),
+                          ),
+                        ),
+                      ],
+                      if (listing.primaryActivePromotion != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: Colors.blue.withValues(alpha: 0.08),
+                            border: Border.all(
+                              color: Colors.blue.withValues(alpha: 0.24),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Активно: ${_promotionTitle(listing)}',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              if (listing.primaryActivePromotion?.endsAt !=
+                                  null) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Действует до: ${_formatExactTime(listing.primaryActivePromotion!.endsAt)} ${listing.primaryActivePromotion!.endsAt!.day.toString().padLeft(2, '0')}.${listing.primaryActivePromotion!.endsAt!.month.toString().padLeft(2, '0')}',
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (listing.car != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(Icons.speed_outlined,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.outline),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Пробег: ${listing.car!.mileageKm} км',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 10),
+                      if (isOwner) ...[
+                        FutureBuilder<dynamic>(
+                          future: _walletFuture,
+                          builder: (context, walletSnap) {
+                            final walletService = context.read<WalletService>();
+                            final cachedWallet = walletService.cachedWallet;
+                            final wallet = walletSnap.data ?? cachedWallet;
+                            final balance = wallet?.balance;
+                            final canShowSellFaster =
+                                listing.status == 'approved';
+                            final walletError =
+                                walletSnap.hasError && cachedWallet == null;
+                            return Container(
+                              padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(16),
+                                color: Theme.of(context).colorScheme.surface,
                                 border: Border.all(
                                   color: Theme.of(context)
                                       .colorScheme
                                       .outlineVariant,
                                 ),
                               ),
-                              child: Text(
-                                listing.archiveNote,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ],
-                          if (status == 'rejected' &&
-                              rejectionReason.isNotEmpty &&
-                              (isOwner || isAdmin)) ...[
-                            const SizedBox(height: 10),
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                color: Colors.red.withValues(alpha: 0.08),
-                                border: Border.all(
-                                    color: Colors.red.withValues(alpha: 0.25)),
-                              ),
-                              child: Text(
-                                'Причина отклонения: $rejectionReason',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 12),
-
-                          _Photos(photoUrls: listing.photoUrls),
-                          const SizedBox(height: 14),
-
-                          Text(
-                            '${formatPrice(listing.price)} ₽',
-                            style: const TextStyle(
-                                fontSize: 26, fontWeight: FontWeight.w800),
-                          ),
-
-                          if (listing.car != null) ...[
-                            const SizedBox(height: 6),
-                            Row(
-                              children: [
-                                Icon(Icons.speed_outlined,
-                                    size: 18,
-                                    color:
-                                        Theme.of(context).colorScheme.outline),
-                                const SizedBox(width: 6),
-                                Text(
-                                  'Пробег: ${listing.car!.mileageKm} км',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color:
-                                        Theme.of(context).colorScheme.onSurface,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-
-                          const SizedBox(height: 10),
-
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              color: Theme.of(context).colorScheme.surface,
-                              border: Border.all(
-                                  color: Theme.of(context)
-                                      .dividerColor
-                                      .withValues(alpha: 0.18)),
-                            ),
-                            child: Column(
-                              children: [
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                                  child:
-                                      StreamBuilder<List<Map<String, dynamic>>>(
-                                    stream:
-                                        _streamSellerReviews(listing.ownerId),
-                                    builder: (context, rSnap) {
-                                      final rows = rSnap.data ??
-                                          const <Map<String, dynamic>>[];
-                                      double sum = 0;
-                                      int cnt = 0;
-
-                                      for (final x in rows) {
-                                        final r = x['rating'];
-                                        if (r is num) {
-                                          sum += r.toDouble();
-                                          cnt++;
-                                        }
-                                      }
-
-                                      final avg =
-                                          (cnt == 0) ? 0.0 : (sum / cnt);
-
-                                      return Row(
-                                        children: [
-                                          const Icon(Icons.star,
-                                              size: 18, color: Colors.amber),
-                                          const SizedBox(width: 6),
-                                          Text(avg.toStringAsFixed(1),
-                                              style: const TextStyle(
-                                                  fontWeight: FontWeight.w700)),
-                                          const SizedBox(width: 6),
-                                          Text('($cnt)',
-                                              style: TextStyle(
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .outline)),
-                                        ],
-                                      );
-                                    },
-                                  ),
-                                ),
-                                const Divider(height: 1),
-                                ListTile(
-                                  dense: true,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                      horizontal: 12),
-                                  leading: Icon(Icons.rate_review_outlined,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary),
-                                  title: const Text('Отзывы'),
-                                  trailing: const Icon(Icons.chevron_right),
-                                  onTap: () {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => SellerReviewsScreen(
-                                          sellerId: listing.ownerId,
-                                          sellerName: sellerName,
-                                          listingId: listing.id,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 12),
-
-                          Builder(
-                            builder: (ctx) {
-                              final cityShort = listing.cityShort.trim();
-                              final address = listing.cityFull.trim();
-                              final hasAddress = address.isNotEmpty;
-                              final color = Theme.of(ctx).colorScheme.primary;
-                              final mapLabel =
-                                  cityShort.isNotEmpty ? cityShort : address;
-                              return Column(
+                              child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  InkWell(
-                                    onTap: hasAddress
-                                        ? () => _openInMaps(address)
-                                        : null,
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Text(
-                                      hasAddress
-                                          ? mapLabel
-                                          : '\u0413\u043e\u0440\u043e\u0434 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        color: hasAddress ? color : null,
-                                        decoration: hasAddress
-                                            ? TextDecoration.underline
-                                            : null,
+                                  Row(
+                                    children: [
+                                      const Expanded(
+                                        child: Text(
+                                          'Управление объявлением',
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
                                       ),
+                                      if (listing.hasShowcasePromotion)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.blue
+                                                .withValues(alpha: 0.10),
+                                            borderRadius:
+                                                BorderRadius.circular(999),
+                                          ),
+                                          child: const Text(
+                                            'Витрина',
+                                            style: TextStyle(
+                                              color: Colors.blue,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: canShowSellFaster
+                                        ? FilledButton.icon(
+                                            onPressed: () async {
+                                              final updated =
+                                                  await Navigator.of(context)
+                                                      .push<bool>(
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      SellFasterScreen(
+                                                    listing: listing,
+                                                  ),
+                                                ),
+                                              );
+                                              if (updated == true && mounted) {
+                                                setState(() {
+                                                  _walletFuture = context
+                                                      .read<WalletService>()
+                                                      .getWallet();
+                                                  _listingFuture = context
+                                                      .read<ListingsService>()
+                                                      .getListingById(
+                                                        widget.listingId,
+                                                      );
+                                                });
+                                              }
+                                            },
+                                            icon:
+                                                const Icon(Icons.bolt_outlined),
+                                            label:
+                                                const Text('Продать быстрее'),
+                                          )
+                                        : const SizedBox.shrink(),
+                                  ),
+                                  if (canShowSellFaster)
+                                    const SizedBox(height: 10),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    ListingStatsScreen(
+                                                  listingId: listing.id,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                          child: const Text('Статистика'),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: OutlinedButton(
+                                          onPressed: status == 'approved'
+                                              ? () async {
+                                                  final updated =
+                                                      await runListingArchiveFlow(
+                                                    context,
+                                                    listingId: listing.id,
+                                                    listingsService:
+                                                        listingsSvc,
+                                                  );
+                                                  if (updated && mounted) {
+                                                    setState(() {});
+                                                  }
+                                                }
+                                              : null,
+                                          child:
+                                              const Text('Снять с публикации'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    balance != null
+                                        ? 'Доступно: $balance поинтов'
+                                        : walletError
+                                            ? 'Не удалось загрузить кошелёк'
+                                            : 'Загрузка поинтов...',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
-                                  if (address.isNotEmpty &&
-                                      address != mapLabel) ...[
-                                    const SizedBox(height: 4),
+                                  if (walletError) ...[
+                                    const SizedBox(height: 6),
+                                    OutlinedButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _walletFuture = context
+                                              .read<WalletService>()
+                                              .getWallet();
+                                        });
+                                      },
+                                      child: const Text('Повторить'),
+                                    ),
+                                  ],
+                                  if (!listing.canPromote &&
+                                      canShowSellFaster) ...[
+                                    const SizedBox(height: 6),
                                     Text(
-                                      address,
+                                      _cannotPromoteText(
+                                        listing.cannotPromoteReason,
+                                      ),
                                       style: TextStyle(
-                                        fontSize: 12,
-                                        color:
-                                            Theme.of(ctx).colorScheme.outline,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: TextButton(
+                                        onPressed: () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  const WalletScreen(),
+                                            ),
+                                          );
+                                        },
+                                        child: const Text('Получить поинты'),
                                       ),
                                     ),
                                   ],
                                 ],
-                              );
-                            },
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(14),
-                              color: Theme.of(context).colorScheme.surface,
-                              border: Border.all(
-                                  color: Theme.of(context)
-                                      .dividerColor
-                                      .withValues(alpha: 0.18)),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(Icons.schedule,
-                                    size: 18,
-                                    color:
-                                        Theme.of(context).colorScheme.outline),
-                                const SizedBox(width: 6),
-                                Text(_publishedTimeText(listing.createdAt),
-                                    style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline)),
-                                const Spacer(),
-                                Icon(Icons.remove_red_eye_outlined,
-                                    size: 18,
-                                    color:
-                                        Theme.of(context).colorScheme.outline),
-                                const SizedBox(width: 6),
-                                Text('${listing.viewCount}',
-                                    style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline)),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 10),
-
-                          if (deliveryNames.isNotEmpty)
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                color: Theme.of(context).colorScheme.surface,
-                                border: Border.all(
-                                    color: Theme.of(context)
-                                        .dividerColor
-                                        .withValues(alpha: 0.18)),
                               ),
-                              child:
-                                  Text('Доставка: ${deliveryNames.join(', ')}'),
-                            )
-                          else
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                color: Theme.of(context).colorScheme.surface,
-                                border: Border.all(
-                                    color: Theme.of(context)
-                                        .dividerColor
-                                        .withValues(alpha: 0.18)),
-                              ),
-                              child: Text('Доставка: не указано',
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      _SellerReviewsOverviewSection(
+                        sellerId: listing.ownerId,
+                        sellerName: sellerName,
+                        listingId: listing.id,
+                        reviewsService: context.read<ReviewsService>(),
+                      ),
+                      const SizedBox(height: 12),
+                      Builder(
+                        builder: (ctx) {
+                          final cityShort = listing.cityShort.trim();
+                          final address = listing.cityFull.trim();
+                          final hasAddress = address.isNotEmpty;
+                          final color = Theme.of(ctx).colorScheme.primary;
+                          final mapLabel =
+                              cityShort.isNotEmpty ? cityShort : address;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InkWell(
+                                onTap: hasAddress
+                                    ? () => _openInMaps(address)
+                                    : null,
+                                borderRadius: BorderRadius.circular(8),
+                                child: Text(
+                                  hasAddress
+                                      ? mapLabel
+                                      : '\u0413\u043e\u0440\u043e\u0434 \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d',
                                   style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .outline)),
-                            ),
-
-                          const SizedBox(height: 12),
-
-                          if (specs.isNotEmpty)
-                            _buildCarSpecsSection(context, specs),
-                          if (specs.isNotEmpty) const SizedBox(height: 12),
-
-                          _buildDescriptionSection(
-                              context, listing.description),
-
-                          const SizedBox(height: 12),
-
-                          // ✅ ПРОДАВЕЦ + АВАТАР
-                          InkWell(
-                            borderRadius: BorderRadius.circular(16),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => SellerPublicProfileScreen(
-                                    sellerId: listing.ownerId,
-                                    initialSellerName: sellerName,
-                                    initialSellerAvatar: sellerAvatar,
-                                    initialSellerPhone: listing.phone,
+                                    fontWeight: FontWeight.w700,
+                                    color: hasAddress ? color : null,
+                                    decoration: hasAddress
+                                        ? TextDecoration.underline
+                                        : null,
                                   ),
                                 ),
-                              );
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(16),
-                                color: Theme.of(context).colorScheme.surface,
-                                border: Border.all(
-                                    color: Theme.of(context)
-                                        .dividerColor
-                                        .withValues(alpha: 0.18)),
                               ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text('Продавец',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 16)),
-                                  const SizedBox(height: 10),
-                                  Row(
-                                    children: [
-                                      StreamBuilder<bool>(
-                                        stream: presence
-                                            .streamIsOnline(listing.ownerId),
-                                        builder: (context, onlineSnap) {
-                                          final isOnline =
-                                              onlineSnap.data == true;
-                                          return Stack(
-                                            clipBehavior: Clip.none,
-                                            children: [
-                                              CircleAvatar(
-                                                radius: 22,
-                                                backgroundColor: Theme.of(
-                                                        context)
-                                                    .colorScheme
-                                                    .surfaceContainerHighest,
-                                                backgroundImage: (sellerAvatar
-                                                        .isNotEmpty)
-                                                    ? NetworkImage(sellerAvatar)
-                                                    : null,
-                                                child: (sellerAvatar.isNotEmpty)
-                                                    ? null
-                                                    : Text(
-                                                        _sellerInitial(
-                                                            sellerName),
-                                                        style: const TextStyle(
-                                                            fontWeight:
-                                                                FontWeight
-                                                                    .w900),
-                                                      ),
-                                              ),
-                                              Positioned(
-                                                right: -1,
-                                                bottom: -1,
-                                                child: Container(
-                                                  width: 12,
-                                                  height: 12,
-                                                  decoration: BoxDecoration(
-                                                    shape: BoxShape.circle,
-                                                    color: isOnline
-                                                        ? Colors.green
-                                                        : Theme.of(context)
-                                                            .colorScheme
-                                                            .outlineVariant,
-                                                    border: Border.all(
-                                                      color: Theme.of(context)
-                                                          .scaffoldBackgroundColor,
-                                                      width: 2,
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              sellerName,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                  fontWeight: FontWeight.w800),
-                                            ),
-                                            const SizedBox(height: 6),
-                                            Text(
-                                              listing.phoneHidden
-                                                  ? 'Телефон: скрыт'
-                                                  : 'Телефон: ${listing.phone}',
-                                              style: TextStyle(
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurfaceVariant),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Icon(Icons.chevron_right,
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .outline),
-                                    ],
+                              if (address.isNotEmpty &&
+                                  address != mapLabel) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  address,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(ctx).colorScheme.outline,
                                   ),
-                                  const SizedBox(height: 10),
-                                  Text(
-                                    'Открыть профиль продавца',
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(context).colorScheme.outline,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 12),
-
-                          _SimilarListingsSection(
-                            baseListing: listing,
-                            currentUserId: me.uid,
-                            listingsSvc: listingsSvc,
-                            favs: favs,
-                            history: history,
-                            reviews: context.read<ReviewsService>(),
-                          ),
-
-                          const SizedBox(height: 12),
-
-                          if (listing.ownerId == me.uid)
-                            Text(
-                              status == 'approved'
-                                  ? 'Это ваше объявление. Сообщения доступны покупателям.'
-                                  : 'Это ваше объявление. Сейчас оно: ${_statusTitle(status)}.',
-                              style: TextStyle(
-                                  color: Theme.of(context).colorScheme.outline),
-                            ),
-                        ],
+                                ),
+                              ],
+                            ],
+                          );
+                        },
                       ),
-                    );
-                  },
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          color: Theme.of(context).colorScheme.surface,
+                          border: Border.all(
+                              color: Theme.of(context)
+                                  .dividerColor
+                                  .withValues(alpha: 0.18)),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.schedule,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.outline),
+                            const SizedBox(width: 6),
+                            Text(_publishedTimeText(listing.createdAt),
+                                style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.outline)),
+                            const Spacer(),
+                            Icon(Icons.remove_red_eye_outlined,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.outline),
+                            const SizedBox(width: 6),
+                            Text('${listing.viewCount}',
+                                style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.outline)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (deliveryNames.isNotEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: Theme.of(context).colorScheme.surface,
+                            border: Border.all(
+                                color: Theme.of(context)
+                                    .dividerColor
+                                    .withValues(alpha: 0.18)),
+                          ),
+                          child: Text('Доставка: ${deliveryNames.join(', ')}'),
+                        )
+                      else
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            color: Theme.of(context).colorScheme.surface,
+                            border: Border.all(
+                                color: Theme.of(context)
+                                    .dividerColor
+                                    .withValues(alpha: 0.18)),
+                          ),
+                          child: Text('Доставка: не указано',
+                              style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.outline)),
+                        ),
+                      const SizedBox(height: 12),
+                      if (specs.isNotEmpty)
+                        _buildCarSpecsSection(context, specs),
+                      if (specs.isNotEmpty) const SizedBox(height: 12),
+                      _buildDescriptionSection(context, listing.description),
+                      const SizedBox(height: 12),
+                      _SellerInfoSection(
+                        sellerId: listing.ownerId,
+                        initialSellerName: sellerName,
+                        initialSellerAvatar: sellerAvatar,
+                        phone: listing.phone,
+                        phoneHidden: listing.phoneHidden,
+                        presence: presence,
+                        profileService: context.read<ProfileService>(),
+                        sellerInitialBuilder: _sellerInitial,
+                      ),
+                      const SizedBox(height: 12),
+                      _SimilarListingsSection(
+                        baseListing: listing,
+                        currentUserId: me.uid,
+                        listingsSvc: listingsSvc,
+                        favs: favs,
+                        history: history,
+                        reviews: context.read<ReviewsService>(),
+                      ),
+                      const SizedBox(height: 12),
+                      if (listing.ownerId == me.uid)
+                        Text(
+                          status == 'approved'
+                              ? 'Это ваше объявление. Сообщения доступны покупателям.'
+                              : 'Это ваше объявление. Сейчас оно: ${_statusTitle(status)}.',
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.outline),
+                        ),
+                    ],
+                  ),
                 );
               },
             );
@@ -1243,7 +1305,405 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   }
 }
 
-class _SimilarListingsSection extends StatelessWidget {
+String _adminDeleteErrorText(Object error) {
+  if (error is ApiException && error.message.trim().isNotEmpty) {
+    return error.message.trim();
+  }
+  return 'Не удалось удалить объявление. Попробуйте ещё раз.';
+}
+
+class _SellerReviewsOverviewSection extends StatefulWidget {
+  const _SellerReviewsOverviewSection({
+    required this.sellerId,
+    required this.sellerName,
+    required this.listingId,
+    required this.reviewsService,
+  });
+
+  final String sellerId;
+  final String sellerName;
+  final String listingId;
+  final ReviewsService reviewsService;
+
+  @override
+  State<_SellerReviewsOverviewSection> createState() =>
+      _SellerReviewsOverviewSectionState();
+}
+
+class _SellerReviewsOverviewSectionState
+    extends State<_SellerReviewsOverviewSection> {
+  List<Map<String, dynamic>> _rows = const <Map<String, dynamic>>[];
+  Object? _error;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rows = widget.reviewsService.peekSellerReviews(widget.sellerId);
+    _loadReviews();
+  }
+
+  Future<void> _loadReviews() async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final rows = await widget.reviewsService.refreshSellerReviews(
+        widget.sellerId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rows = rows;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading && _rows.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+          ),
+        ),
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SkeletonLine(width: 90, height: 18),
+            SizedBox(height: 14),
+            SkeletonLine(width: 140, height: 16),
+            SizedBox(height: 14),
+            SkeletonLine(height: 48),
+          ],
+        ),
+      );
+    }
+
+    if (_error != null && _rows.isEmpty) {
+      return _InlineSectionError(
+        title: 'Не удалось загрузить отзывы',
+        onRetry: _loadReviews,
+      );
+    }
+
+    double sum = 0;
+    var count = 0;
+    for (final row in _rows) {
+      final rating = row['rating'];
+      if (rating is num) {
+        sum += rating.toDouble();
+        count += 1;
+      }
+    }
+    final average = count == 0 ? 0.0 : (sum / count);
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(
+          color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            child: Row(
+              children: [
+                const Icon(Icons.star, size: 18, color: Colors.amber),
+                const SizedBox(width: 6),
+                Text(
+                  average.toStringAsFixed(1),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '($count)',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+                if (_isLoading) ...[
+                  const SizedBox(width: 8),
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (_error != null) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Не удалось обновить отзывы',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _loadReviews,
+                    child: const Text('Повторить'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const Divider(height: 1),
+          ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            leading: Icon(
+              Icons.rate_review_outlined,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            title: const Text('Отзывы'),
+            subtitle: count == 0 ? const Text('Пока нет отзывов') : null,
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SellerReviewsScreen(
+                    sellerId: widget.sellerId,
+                    sellerName: widget.sellerName,
+                    listingId: widget.listingId,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SellerInfoSection extends StatefulWidget {
+  const _SellerInfoSection({
+    required this.sellerId,
+    required this.initialSellerName,
+    required this.initialSellerAvatar,
+    required this.phone,
+    required this.phoneHidden,
+    required this.presence,
+    required this.profileService,
+    required this.sellerInitialBuilder,
+  });
+
+  final String sellerId;
+  final String initialSellerName;
+  final String initialSellerAvatar;
+  final String phone;
+  final bool phoneHidden;
+  final PresenceService presence;
+  final ProfileService profileService;
+  final String Function(String name) sellerInitialBuilder;
+
+  @override
+  State<_SellerInfoSection> createState() => _SellerInfoSectionState();
+}
+
+class _SellerInfoSectionState extends State<_SellerInfoSection> {
+  Map<String, dynamic> _profile = const <String, dynamic>{};
+  Object? _error;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _profile = widget.profileService.getCachedProfile(widget.sellerId);
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final profile = await widget.profileService.getProfile(widget.sellerId);
+      if (!mounted) return;
+      setState(() {
+        _profile = profile;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
+    }
+  }
+
+  String get _sellerName {
+    final row = _profile;
+    final displayName =
+        (row['display_name'] ?? row['name'] ?? '').toString().trim();
+    if (displayName.isNotEmpty) return displayName;
+    final fallback = widget.initialSellerName.trim();
+    return fallback.isEmpty ? 'Пользователь' : fallback;
+  }
+
+  String get _sellerAvatar {
+    final row = _profile;
+    final avatar =
+        (row['avatar_url'] ?? row['photo_url'] ?? '').toString().trim();
+    if (avatar.isNotEmpty) return avatar;
+    return widget.initialSellerAvatar.trim();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SellerPublicProfileScreen(
+              sellerId: widget.sellerId,
+              initialSellerName: _sellerName,
+              initialSellerAvatar: _sellerAvatar,
+              initialSellerPhone: widget.phone,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          color: Theme.of(context).colorScheme.surface,
+          border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Text(
+                  'Продавец',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+                if (_isLoading) ...[
+                  const SizedBox(width: 8),
+                  const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ],
+              ],
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Не удалось обновить данные продавца',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _loadProfile,
+                    child: const Text('Повторить'),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                StreamBuilder<bool>(
+                  stream: widget.presence.streamIsOnline(widget.sellerId),
+                  builder: (context, onlineSnap) {
+                    final isOnline = onlineSnap.data == true;
+                    return PresenceBadge(
+                      isOnline: isOnline,
+                      child: RemoteAvatar(
+                        imageUrl: _sellerAvatar,
+                        fallbackText: widget.sellerInitialBuilder(_sellerName),
+                        radius: 22,
+                        textStyle: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _sellerName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        widget.phoneHidden
+                            ? 'Телефон: скрыт'
+                            : 'Телефон: ${widget.phone}',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Открыть профиль продавца',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.outline,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SimilarListingsSection extends StatefulWidget {
   final Listing baseListing;
   final String currentUserId;
   final ListingsService listingsSvc;
@@ -1261,63 +1721,210 @@ class _SimilarListingsSection extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<Listing>>(
-      stream: listingsSvc.streamSimilarListings(baseListing),
-      builder: (context, snap) {
-        final items = snap.data ?? const <Listing>[];
-        if (items.isEmpty) return const SizedBox.shrink();
+  State<_SimilarListingsSection> createState() =>
+      _SimilarListingsSectionState();
+}
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Похожие объявления',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 270,
-              child: StreamBuilder<Set<String>>(
-                stream: favs.streamFavoriteIds(currentUserId),
-                builder: (context, favSnap) {
-                  final favIds = favSnap.data ?? const <String>{};
-                  return ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-                      return SizedBox(
-                        width: 190,
-                        child: ListingCard(
-                          listing: item,
-                          isFav: favIds.contains(item.id),
-                          isSeen: history.hasViewed(item.id),
-                          reviews: reviews,
-                          onToggleFav: (makeFav) async {
-                            await favs.toggleFavorite(
-                              uid: currentUserId,
-                              listingId: item.id,
-                              makeFavorite: makeFav,
-                            );
-                          },
-                          onOpen: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ListingDetailScreen(listingId: item.id),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
+class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
+  List<Listing> _items = const <Listing>[];
+  Object? _error;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSimilar();
+  }
+
+  Future<void> _loadSimilar() async {
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final items = await widget.listingsSvc.getSimilarListings(
+        widget.baseListing,
+      );
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading && _items.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Похожие объявления',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 270,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: 2,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, __) => Container(
+                width: 190,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: Theme.of(context).colorScheme.surface,
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SkeletonBox(height: 120, radius: 12),
+                    SizedBox(height: 12),
+                    SkeletonLine(width: 120, height: 14),
+                    SizedBox(height: 8),
+                    SkeletonLine(width: 90, height: 18),
+                    SizedBox(height: 8),
+                    SkeletonLine(width: 60, height: 12),
+                    SizedBox(height: 8),
+                    SkeletonLine(width: 80, height: 12),
+                  ],
+                ),
               ),
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      );
+    }
+
+    if (_error != null && _items.isEmpty) {
+      return _InlineSectionError(
+        title: 'Не удалось загрузить похожие объявления',
+        onRetry: _loadSimilar,
+      );
+    }
+
+    if (_items.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Похожие объявления',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Не удалось обновить похожие объявления',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: _loadSimilar,
+                child: const Text('Повторить'),
+              ),
+            ],
+          ),
+        ] else
+          const SizedBox(height: 10),
+        SizedBox(
+          height: 270,
+          child: StreamBuilder<Set<String>>(
+            stream: widget.favs.streamFavoriteIds(widget.currentUserId),
+            builder: (context, favSnap) {
+              final favIds = favSnap.data ?? const <String>{};
+              return ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _items.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  final item = _items[index];
+                  return SizedBox(
+                    width: 190,
+                    child: ListingCard(
+                      listing: item,
+                      isFav: favIds.contains(item.id),
+                      isSeen: widget.history.hasViewed(item.id),
+                      reviews: widget.reviews,
+                      onToggleFav: (makeFav) async {
+                        await widget.favs.toggleFavorite(
+                          uid: widget.currentUserId,
+                          listingId: item.id,
+                          makeFavorite: makeFav,
+                        );
+                      },
+                      onOpen: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ListingDetailScreen(listingId: item.id),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InlineSectionError extends StatelessWidget {
+  const _InlineSectionError({
+    required this.title,
+    required this.onRetry,
+  });
+
+  final String title;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          OutlinedButton(
+            onPressed: onRetry,
+            child: const Text('Повторить'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1413,22 +2020,10 @@ class _PhotosState extends State<_Photos> {
                     ),
                   );
                 },
-                child: CachedNetworkImage(
+                child: MediaPreviewBox(
                   imageUrl: photoUrls[i],
-                  fit: BoxFit.cover,
-                  alignment: Alignment.center,
-                  placeholder: (_, __) => Container(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                    alignment: Alignment.center,
-                    child: const CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  errorWidget: (_, __, ___) => Container(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.broken_image_outlined, size: 40),
-                  ),
+                  categoryHint: 'listings',
+                  borderRadius: 0,
                 ),
               ),
             ),

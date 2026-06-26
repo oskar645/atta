@@ -1,34 +1,41 @@
 import 'dart:async';
 
+import 'package:atta/src/services/api/api_config.dart';
+import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
-import 'package:atta/src/services/callcheck_service.dart';
-import 'package:atta/src/services/phone_auth_backend_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 
 import 'privacy_screen.dart';
 import 'terms_screen.dart';
-import 'verify_email_screen.dart';
 
 enum _AuthMethod { phone, email }
 
-const int _minPhonePasswordDigits = 8;
+const int _minPhonePasswordLength = 8;
+const String _emailAuthDisabledMessage =
+    'Вход по email временно недоступен. Используйте номер телефона.';
+
+String _maskPhone(String input) {
+  final digits = input.replaceAll(RegExp(r'\D'), '');
+  if (digits.length < 4) return '***';
+  return '***${digits.substring(digits.length - 4)}';
+}
 
 bool _isPhonePasswordValid(String value) {
   final trimmed = value.trim();
-  return trimmed.length >= _minPhonePasswordDigits &&
-      RegExp(r'^\d+$').hasMatch(trimmed);
+  return trimmed.length >= _minPhonePasswordLength;
 }
 
 String _phonePasswordErrorText(String value) {
   if (value.trim().isEmpty) {
     return 'Введите пароль';
   }
-  return 'Введите не менее 8 цифр';
+  return 'Введите не менее 8 символов';
 }
 
 class _PhoneRegistrationDraft {
@@ -37,6 +44,7 @@ class _PhoneRegistrationDraft {
   final String phone;
   final bool acceptedOffer;
   final bool phoneVerified;
+  final String verificationCheckId;
 
   const _PhoneRegistrationDraft({
     required this.displayName,
@@ -44,6 +52,7 @@ class _PhoneRegistrationDraft {
     required this.phone,
     required this.acceptedOffer,
     this.phoneVerified = false,
+    this.verificationCheckId = '',
   });
 
   _PhoneRegistrationDraft copyWith({
@@ -52,6 +61,7 @@ class _PhoneRegistrationDraft {
     String? phone,
     bool? acceptedOffer,
     bool? phoneVerified,
+    String? verificationCheckId,
   }) {
     return _PhoneRegistrationDraft(
       displayName: displayName ?? this.displayName,
@@ -59,6 +69,7 @@ class _PhoneRegistrationDraft {
       phone: phone ?? this.phone,
       acceptedOffer: acceptedOffer ?? this.acceptedOffer,
       phoneVerified: phoneVerified ?? this.phoneVerified,
+      verificationCheckId: verificationCheckId ?? this.verificationCheckId,
     );
   }
 }
@@ -82,13 +93,17 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _hasAcceptedLegal = false;
   _AuthMethod _authMethod = _AuthMethod.phone;
 
-  SupabaseClient get _sb => Supabase.instance.client;
-  final PhoneAuthBackendService _phoneAuth = PhoneAuthBackendService();
+  AuthService get _auth => context.read<AuthService>();
+  bool get _showPhoneAuth => ApiConfig.enablePhoneAuth;
+  bool get _showEmailLogin => ApiConfig.enableEmailLogin;
+  bool get _showEmailSignup => ApiConfig.enableEmailSignup;
   bool get _canContinuePhoneRegistrationFromTab =>
       !_loading &&
       _nameCtrl.text.trim().isNotEmpty &&
       _isPhonePasswordValid(_passCtrl.text) &&
       _hasAcceptedLegal;
+  bool get _canContinuePhoneLogin =>
+      !_loading && _isValidRuPhone(_loginCtrl.text);
 
   @override
   void dispose() {
@@ -105,19 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
-  String _normalizeRuPhone(String input) {
-    final digits = input.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return '';
-
-    String localDigits = digits;
-    if (localDigits.length == 11 &&
-        (localDigits.startsWith('7') || localDigits.startsWith('8'))) {
-      localDigits = localDigits.substring(1);
-    }
-
-    if (localDigits.length != 10) return '';
-    return '+7$localDigits';
-  }
+  String _normalizeRuPhone(String input) => normalizeRuPhoneForApi(input);
 
   bool _isValidRuPhone(String input) => _normalizeRuPhone(input).isNotEmpty;
 
@@ -127,8 +130,9 @@ class _LoginScreenState extends State<LoginScreen> {
     return RegExp(r'^[\d+\s()\-]+$').hasMatch(trimmed);
   }
 
-  String _niceAuthError(AuthException e, {bool? isPhoneContext}) {
-    final msg = e.message.toLowerCase();
+  String _niceAuthError(Object error, {bool? isPhoneContext}) {
+    final rawMessage = error.toString().replaceFirst('Exception: ', '').trim();
+    final msg = rawMessage.toLowerCase();
     final phoneContext = isPhoneContext ?? (_authMethod == _AuthMethod.phone);
 
     if (msg.contains('email rate limit exceeded')) {
@@ -139,7 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
     if (msg.contains('invalid login credentials')) {
       return phoneContext
-          ? 'Неверный номер телефона или пароль.'
+          ? 'Номер или пароль указаны неверно'
           : 'Неверный email или пароль.';
     }
     if (msg.contains('email not confirmed')) {
@@ -158,102 +162,93 @@ class _LoginScreenState extends State<LoginScreen> {
       return 'Телефонный сценарий уже подготовлен, но сервис подтверждения телефона пока не подключен.';
     }
     if (msg.contains('phone signups are disabled')) {
-      return 'Телефонная регистрация теперь идёт через backend. Проверьте, что функция phone-auth загружена в Supabase.';
+      return 'Телефонная регистрация временно недоступна.';
     }
-    return e.message;
+    return rawMessage;
   }
 
   Future<void> _resetPassword() async {
     final loginValue = _loginCtrl.text.trim();
 
     if (loginValue.isEmpty) {
-      _snack('Введите телефон или email для восстановления пароля');
+      _snack('Введите номер телефона для восстановления пароля');
       return;
     }
 
-    if (_looksLikePhone(loginValue)) {
-      final phone = _normalizeRuPhone(loginValue);
-      if (phone.isEmpty) {
-        _snack('Введите корректный номер телефона');
-        return;
-      }
-
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => _PhoneVerificationScreen(
-            phone: phone,
-            callcheckService: CallcheckService(),
-            onConfirmed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => _PhonePasswordResetScreen(
-                    phone: phone,
-                    phoneAuth: _phoneAuth,
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      );
+    final phone = _normalizeRuPhone(loginValue);
+    if (phone.isEmpty) {
+      _snack('Введите номер телефона полностью');
       return;
     }
 
     setState(() => _loading = true);
     try {
-      await _sb.auth.resetPasswordForEmail(
-        loginValue,
-        redirectTo: kIsWeb ? null : 'io.supabase.flutter://reset-callback/',
-      );
-      _snack('Письмо для смены пароля отправлено на почту');
-    } on AuthException catch (e) {
-      _snack(_niceAuthError(e, isPhoneContext: false));
+      final exists = await _auth.isPhoneRegistered(phone: phone);
+      if (!exists) {
+        _snack('Аккаунт с таким номером не найден.');
+        return;
+      }
     } catch (e) {
-      _snack('Ошибка: $e');
+      _snack(_auth.userMessageForError(e));
+      return;
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _PhoneVerificationScreen(
+          phone: phone,
+          authService: _auth,
+          purpose: 'reset_password',
+          onConfirmed: (verificationCheckId) async {
+            await Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => _PhonePasswordResetScreen(
+                  phone: phone,
+                  authService: _auth,
+                  verificationCheckId: verificationCheckId,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
-  Future<void> _submitLogin() async {
+  Future<void> _continuePhoneLogin() async {
     final loginValue = _loginCtrl.text.trim();
-    final pass = _passCtrl.text.trim();
-
-    if (loginValue.isEmpty || pass.isEmpty) {
-      _snack('Введите телефон или email и пароль');
+    if (loginValue.isEmpty) {
+      _snack('Введите номер телефона');
+      return;
+    }
+    if (!_looksLikePhone(loginValue) || !_isValidRuPhone(loginValue)) {
+      _snack('Введите номер телефона полностью');
       return;
     }
 
-    final isPhoneLogin = _looksLikePhone(loginValue);
-    if (isPhoneLogin && !_isValidRuPhone(loginValue)) {
-      _snack('Введите корректный номер телефона');
-      return;
-    }
-
+    final phone = _normalizeRuPhone(loginValue);
     setState(() => _loading = true);
     try {
-      AuthResponse? emailAuthResponse;
-      if (!isPhoneLogin) {
-        emailAuthResponse = await _sb.auth.signInWithPassword(
-          email: loginValue,
-          password: pass,
-        );
+      final exists = await _auth.isPhoneRegistered(phone: phone);
+      if (!exists) {
+        _snack('На этом номере аккаунта нет');
+        return;
       }
 
-      if (isPhoneLogin) {
-        await _phoneAuth.signInWithPhone(
-          phone: _normalizeRuPhone(loginValue),
-          password: pass,
-        );
-      } else if (emailAuthResponse?.session == null) {
-        throw const AuthException(
-          'Не удалось войти. Подтвердите email и попробуйте снова.',
-        );
-      }
-    } on AuthException catch (e) {
-      _snack(_niceAuthError(e, isPhoneContext: isPhoneLogin));
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => _PhonePasswordLoginScreen(
+            phone: phone,
+            authService: _auth,
+          ),
+        ),
+      );
     } catch (e) {
-      _snack('Ошибка: $e');
+      _snack(_niceAuthError(e, isPhoneContext: true));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -274,8 +269,7 @@ class _LoginScreenState extends State<LoginScreen> {
             phone: '',
             acceptedOffer: _hasAcceptedLegal,
           ),
-          phoneAuth: _phoneAuth,
-          callcheckService: CallcheckService(),
+          authService: _auth,
         ),
       ),
     );
@@ -300,7 +294,7 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     if (!_isPhonePasswordValid(pass)) {
-      _snack('Введите не менее 8 цифр.');
+      _snack('Введите не менее 8 символов');
       return;
     }
     if (!_hasAcceptedLegal) {
@@ -311,34 +305,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _loading = true);
     try {
-      await _sb.auth.signUp(
+      await _auth.signUp(
         email: email,
         password: pass,
-        data: {
-          'name': name,
-          'displayName': name,
-          'phone': phone,
-          'acceptedTerms': _hasAcceptedLegal,
-          'acceptedPrivacyPolicy': _hasAcceptedLegal,
-          'registrationMethod': 'email',
-        },
+        displayName: name,
+        phone: phone,
       );
-
       if (!mounted) return;
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => VerifyEmailScreen(
-            email: email,
-            password: pass,
-            name: name,
-            phone: phone,
-          ),
-        ),
-      );
-    } on AuthException catch (e) {
-      _snack(_niceAuthError(e, isPhoneContext: false));
+      Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
-      _snack('Ошибка: $e');
+      _snack(_niceAuthError(e, isPhoneContext: false));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -399,11 +375,16 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 8),
           Text(
             _isLogin
-                ? 'Войдите по телефону или email.'
-                : (_authMethod == _AuthMethod.phone
-                    ? 'Регистрация по телефону в 3 шага: профиль, номер и подтверждение звонком.'
-                    : 'Создайте аккаунт по email и сохраните телефон в профиле.'),
+                ? 'Войдите по номеру телефона.'
+                : 'Регистрация по телефону в 3 шага: профиль, номер и подтверждение звонком.',
             style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            ApiConfig.emailAuthDisabledMessage,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -411,6 +392,9 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildMethodSwitch(ThemeData theme) {
+    if (!_showEmailSignup) {
+      return const SizedBox.shrink();
+    }
     return Container(
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
@@ -524,19 +508,34 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildPhonePrefixField() {
-    return TextField(
+    return _buildPhoneField(
       controller: _phoneDigitsCtrl,
+      onChanged: (_) => setState(() {}),
+    );
+  }
+
+  Widget _buildPhoneField({
+    required TextEditingController controller,
+    ValueChanged<String>? onChanged,
+    ValueChanged<String>? onSubmitted,
+    String labelText = 'Номер телефона',
+    String hintText = '928 123-45-67',
+    String? errorText,
+  }) {
+    return TextField(
+      controller: controller,
       keyboardType: TextInputType.phone,
       textInputAction: TextInputAction.done,
-      onChanged: (_) => setState(() {}),
-      inputFormatters: [
-        FilteringTextInputFormatter.digitsOnly,
-        LengthLimitingTextInputFormatter(10),
+      onChanged: onChanged,
+      onSubmitted: onSubmitted,
+      inputFormatters: const [
+        RuPhoneInputFormatter(),
       ],
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         prefixText: '+7 ',
-        labelText: 'Номер телефона',
-        hintText: '9001234567',
+        labelText: labelText,
+        hintText: hintText,
+        errorText: errorText,
       ),
     );
   }
@@ -555,31 +554,20 @@ class _LoginScreenState extends State<LoginScreen> {
         children: [
           _buildWelcomeCard(theme),
           const SizedBox(height: 16),
-          if (!_isLogin) ...[
+          if (!_isLogin && _showEmailSignup) ...[
             _buildMethodSwitch(theme),
             const SizedBox(height: 16),
           ],
           if (_isLogin) ...[
-            TextField(
+            _buildPhoneField(
               controller: _loginCtrl,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(
-                labelText: 'Телефон или email',
-                hintText: '+7 9001234567 или example@mail.com',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _passCtrl,
-              obscureText: true,
-              textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(labelText: 'Пароль'),
+              onChanged: (_) => setState(() {}),
               onSubmitted: (_) {
-                if (!_loading) {
-                  _submitLogin();
+                if (_canContinuePhoneLogin) {
+                  _continuePhoneLogin();
                 }
               },
+              labelText: 'Номер телефона',
             ),
             const SizedBox(height: 8),
             Align(
@@ -589,12 +577,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: const Text('Забыли пароль?'),
               ),
             ),
+            if (!_showEmailLogin) ...[
+              const SizedBox(height: 4),
+              Text(
+                _emailAuthDisabledMessage,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             FilledButton(
-              onPressed: _loading ? null : _submitLogin,
-              child: Text(_loading ? 'Подождите...' : 'Войти'),
+              onPressed: _canContinuePhoneLogin ? _continuePhoneLogin : null,
+              child: Text(_loading ? 'Подождите...' : 'Продолжить'),
             ),
-          ] else if (_authMethod == _AuthMethod.phone) ...[
+          ] else if (_showPhoneAuth &&
+              (_authMethod == _AuthMethod.phone || !_showEmailSignup)) ...[
             TextField(
               controller: _nameCtrl,
               textInputAction: TextInputAction.next,
@@ -605,13 +603,11 @@ class _LoginScreenState extends State<LoginScreen> {
             TextField(
               controller: _passCtrl,
               obscureText: true,
-              keyboardType: TextInputType.number,
               textInputAction: TextInputAction.done,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Пароль',
-                helperText: 'Введите не менее 8 цифр',
+                helperText: 'Минимум 8 символов',
               ),
             ),
             const SizedBox(height: 16),
@@ -623,7 +619,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   : null,
               child: const Text('Продолжить'),
             ),
-          ] else ...[
+          ] else if (_showEmailSignup) ...[
             TextField(
               controller: _nameCtrl,
               textInputAction: TextInputAction.next,
@@ -662,6 +658,11 @@ class _LoginScreenState extends State<LoginScreen> {
               onPressed: _loading ? null : _submitEmailRegistration,
               child: Text(_loading ? 'Подождите...' : 'Зарегистрироваться'),
             ),
+          ] else ...[
+            Text(
+              _emailAuthDisabledMessage,
+              style: theme.textTheme.bodyMedium,
+            ),
           ],
           const SizedBox(height: 10),
           TextButton(
@@ -679,12 +680,10 @@ class _LoginScreenState extends State<LoginScreen> {
 }
 
 class _PhoneRegistrationCredentialsScreen extends StatefulWidget {
-  final PhoneAuthBackendService phoneAuth;
-  final CallcheckService callcheckService;
+  final AuthService authService;
 
   const _PhoneRegistrationCredentialsScreen({
-    required this.phoneAuth,
-    required this.callcheckService,
+    required this.authService,
   });
 
   @override
@@ -723,8 +722,7 @@ class _PhoneRegistrationCredentialsScreenState
             phone: '',
             acceptedOffer: _acceptedOffer,
           ),
-          phoneAuth: widget.phoneAuth,
-          callcheckService: widget.callcheckService,
+          authService: widget.authService,
         ),
       ),
     );
@@ -755,14 +753,12 @@ class _PhoneRegistrationCredentialsScreenState
           TextField(
             controller: _passCtrl,
             obscureText: true,
-            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _continue(),
             onChanged: (_) => setState(() {}),
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: InputDecoration(
               labelText: 'Пароль',
-              helperText: 'Введите не менее 8 цифр',
+              helperText: 'Минимум 8 символов',
               errorText:
                   passInvalid ? _phonePasswordErrorText(_passCtrl.text) : null,
             ),
@@ -827,13 +823,11 @@ class _PhoneRegistrationCredentialsScreenState
 
 class _PhoneRegistrationPhoneScreen extends StatefulWidget {
   final _PhoneRegistrationDraft draft;
-  final PhoneAuthBackendService phoneAuth;
-  final CallcheckService callcheckService;
+  final AuthService authService;
 
   const _PhoneRegistrationPhoneScreen({
     required this.draft,
-    required this.phoneAuth,
-    required this.callcheckService,
+    required this.authService,
   });
 
   @override
@@ -853,19 +847,7 @@ class _PhoneRegistrationPhoneScreenState
     super.dispose();
   }
 
-  String _normalizeRuPhone(String input) {
-    final digits = input.replaceAll(RegExp(r'\D'), '');
-    if (digits.isEmpty) return '';
-
-    String localDigits = digits;
-    if (localDigits.length == 11 &&
-        (localDigits.startsWith('7') || localDigits.startsWith('8'))) {
-      localDigits = localDigits.substring(1);
-    }
-
-    if (localDigits.length != 10) return '';
-    return '+7$localDigits';
-  }
+  String _normalizeRuPhone(String input) => normalizeRuPhoneForApi(input);
 
   bool get _isPhoneValid => _normalizeRuPhone(_phoneCtrl.text).isNotEmpty;
 
@@ -880,14 +862,14 @@ class _PhoneRegistrationPhoneScreenState
 
     final phone = _normalizeRuPhone(_phoneCtrl.text);
     debugPrint(
-      'Phone registration phone step: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, phone=$phone',
+      'Phone registration phone step: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, phone=${_maskPhone(phone)}',
     );
     setState(() => _loading = true);
     try {
       final alreadyRegistered =
-          await widget.phoneAuth.isPhoneRegistered(phone: phone);
+          await widget.authService.isPhoneRegistered(phone: phone);
       if (alreadyRegistered) {
-        _snack('Этот номер уже зарегистрирован. Попробуйте войти.');
+        _snack('На этом номере уже есть аккаунт');
         return;
       }
 
@@ -898,13 +880,12 @@ class _PhoneRegistrationPhoneScreenState
         MaterialPageRoute(
           builder: (_) => _PhoneRegistrationConfirmScreen(
             draft: widget.draft.copyWith(phone: phone),
-            phoneAuth: widget.phoneAuth,
-            callcheckService: widget.callcheckService,
+            authService: widget.authService,
           ),
         ),
       );
     } catch (e) {
-      _snack(widget.phoneAuth.userMessageForError(e));
+      _snack(widget.authService.userMessageForError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -925,16 +906,15 @@ class _PhoneRegistrationPhoneScreenState
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _continue(),
             onChanged: (_) => setState(() {}),
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(11),
+            inputFormatters: const [
+              RuPhoneInputFormatter(),
             ],
             decoration: InputDecoration(
               prefixText: '+7 ',
               labelText: 'Номер телефона',
-              hintText: '9001234567',
+              hintText: '928 123-45-67',
               errorText:
-                  phoneInvalid ? 'Введите корректный номер телефона' : null,
+                  phoneInvalid ? 'Введите номер телефона полностью' : null,
             ),
           ),
           const SizedBox(height: 18),
@@ -952,13 +932,11 @@ class _PhoneRegistrationPhoneScreenState
 
 class _PhoneRegistrationConfirmScreen extends StatefulWidget {
   final _PhoneRegistrationDraft draft;
-  final PhoneAuthBackendService phoneAuth;
-  final CallcheckService callcheckService;
+  final AuthService authService;
 
   const _PhoneRegistrationConfirmScreen({
     required this.draft,
-    required this.phoneAuth,
-    required this.callcheckService,
+    required this.authService,
   });
 
   @override
@@ -970,13 +948,14 @@ class _PhoneRegistrationConfirmScreenState
     extends State<_PhoneRegistrationConfirmScreen> with WidgetsBindingObserver {
   bool _starting = true;
   bool _confirming = false;
+  bool _pollingActive = false;
   bool _movingForward = false;
   bool _callStarted = false;
   String? _errorText;
   String? _statusText;
-  String? _checkId;
-  String? _callPhone;
-  String? _callPhonePretty;
+  String? _verificationId;
+  String? _callToPhone;
+  String? _callToPhonePretty;
 
   @override
   void initState() {
@@ -988,6 +967,7 @@ class _PhoneRegistrationConfirmScreenState
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pollingActive = false;
     super.dispose();
   }
 
@@ -999,7 +979,7 @@ class _PhoneRegistrationConfirmScreenState
         !_starting &&
         !_confirming &&
         _errorText == null) {
-      _pollAndFinish(showPendingSnack: false);
+      _startAutoPolling(showTimeoutSnack: true);
     }
   }
 
@@ -1009,10 +989,8 @@ class _PhoneRegistrationConfirmScreenState
   }
 
   String _friendlyError(Object error) {
-    final message = widget.phoneAuth.userMessageForError(error);
-    final technical = error is PhoneAuthBackendException
-        ? error.technicalDetails
-        : error.toString();
+    final message = widget.authService.userMessageForError(error);
+    final technical = error.toString();
     debugPrint('Phone registration flow error: $technical');
     return message;
   }
@@ -1031,18 +1009,22 @@ class _PhoneRegistrationConfirmScreenState
       _statusText = null;
     });
     debugPrint(
-      'Phone registration confirm step opened: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, phone=${widget.draft.phone}',
+      'Phone registration confirm step opened: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, phone=${_maskPhone(widget.draft.phone)}',
     );
 
     try {
-      final result = await widget.callcheckService.startVerification(
+      final result = await widget.authService.startPhoneVerification(
         phone: widget.draft.phone,
+        purpose: 'signup',
       );
       if (!mounted) return;
       setState(() {
-        _checkId = result.checkId;
-        _callPhone = result.callPhone;
-        _callPhonePretty = result.callPhonePretty;
+        _verificationId = result.verificationId;
+        _callToPhone = result.callToPhone;
+        _callToPhonePretty = result.callToPhonePretty;
+        _errorText = result.hasCallToPhone
+            ? null
+            : 'Подтверждение телефона временно недоступно. Попробуйте позже.';
       });
     } catch (e) {
       if (!mounted) return;
@@ -1066,7 +1048,7 @@ class _PhoneRegistrationConfirmScreenState
   }
 
   Future<bool> _launchCall() async {
-    final number = _normalizeDialablePhone((_callPhone ?? '').trim());
+    final number = _normalizeDialablePhone((_callToPhone ?? '').trim());
     if (number.isEmpty) return false;
 
     final candidates = <Uri>[
@@ -1101,25 +1083,35 @@ class _PhoneRegistrationConfirmScreenState
     }
   }
 
-  Future<void> _pollAndFinish({bool showPendingSnack = true}) async {
-    final checkId = _checkId;
-    if (checkId == null || checkId.isEmpty || _confirming) return;
+  Future<void> _startAutoPolling({required bool showTimeoutSnack}) async {
+    final verificationId = _verificationId;
+    if (verificationId == null ||
+        verificationId.isEmpty ||
+        _confirming ||
+        _pollingActive) {
+      return;
+    }
 
     setState(() {
+      _pollingActive = true;
       _confirming = true;
-      _statusText = 'Ожидаем подтверждение звонка...';
+      _statusText = 'Проверяем звонок...';
     });
 
     try {
       for (var i = 0; i < 30; i++) {
-        CallcheckStatusResult result;
+        late final dynamic result;
         try {
-          result = await widget.callcheckService.checkStatus(checkId: checkId);
+          result = await widget.authService.checkPhoneVerification(
+            phone: widget.draft.phone,
+            verificationId: verificationId,
+            purpose: 'signup',
+          );
         } catch (e) {
           if (_isTransientNetworkError(e) && i < 29) {
             if (!mounted) return;
             setState(() {
-              _statusText = 'Проверяем соединение и подтверждение номера...';
+              _statusText = 'Проверяем звонок...';
             });
             await Future<void>.delayed(const Duration(seconds: 2));
             continue;
@@ -1133,14 +1125,24 @@ class _PhoneRegistrationConfirmScreenState
           return;
         }
 
+        if (result.isExpired || result.status == 'failed') {
+          final text = result.isExpired
+              ? 'Время подтверждения истекло. Попробуйте ещё раз позже.'
+              : 'Не удалось подтвердить звонок. Попробуйте ещё раз позже.';
+          setState(() => _statusText = text);
+          if (showTimeoutSnack) {
+            _snack(text);
+          }
+          return;
+        }
+
         if (i < 29) {
           await Future<void>.delayed(const Duration(seconds: 2));
         } else {
-          final text = result.checkStatusText.trim().isEmpty
-              ? 'Номер пока не подтвержден'
-              : result.checkStatusText.trim();
+          final text =
+              'Не удалось подтвердить звонок. Попробуйте ещё раз позже.';
           setState(() => _statusText = text);
-          if (showPendingSnack) {
+          if (showTimeoutSnack) {
             _snack(text);
           }
         }
@@ -1152,19 +1154,26 @@ class _PhoneRegistrationConfirmScreenState
           _statusText =
               'Нет соединения с сервером. Как только интернет появится, проверка продолжится.';
         });
-        if (showPendingSnack) {
-          _snack('Нет соединения с сервером. Проверьте интернет и попробуйте еще раз.');
+        if (showTimeoutSnack) {
+          _snack(
+              'Нет соединения с сервером. Проверьте интернет и попробуйте еще раз.');
         }
         return;
       }
       _snack(_friendlyError(e));
     } finally {
-      if (mounted) setState(() => _confirming = false);
+      if (mounted) {
+        setState(() {
+          _confirming = false;
+          _pollingActive = false;
+        });
+      }
     }
   }
 
   Future<void> _finishRegistration() async {
     if (_movingForward) return;
+    final verificationCheckId = _verificationId;
     debugPrint(
       'Phone registration finish requested: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, callStarted=$_callStarted',
     );
@@ -1173,11 +1182,15 @@ class _PhoneRegistrationConfirmScreenState
       return;
     }
     if (!_isPhonePasswordValid(widget.draft.password)) {
-      _snack('Введите не менее 8 цифр.');
+      _snack('Введите не менее 8 символов');
       return;
     }
     if (widget.draft.displayName.trim().isEmpty) {
       _snack('Имя не сохранилось. Вернитесь назад и введите его снова.');
+      return;
+    }
+    if (verificationCheckId == null || verificationCheckId.isEmpty) {
+      _snack('Не найдено подтверждение номера. Попробуйте снова.');
       return;
     }
     setState(() {
@@ -1186,12 +1199,15 @@ class _PhoneRegistrationConfirmScreenState
     });
 
     try {
-      await widget.phoneAuth.signUpWithVerifiedPhone(
-        phone: widget.draft.phone,
-        password: widget.draft.password,
-        displayName: widget.draft.displayName,
-        acceptedLegal: widget.draft.acceptedOffer,
-      ).timeout(const Duration(seconds: 25));
+      await widget.authService
+          .signUpWithVerifiedPhone(
+            phone: widget.draft.phone,
+            password: widget.draft.password,
+            displayName: widget.draft.displayName,
+            acceptedLegal: widget.draft.acceptedOffer,
+            verificationCheckId: verificationCheckId,
+          )
+          .timeout(const Duration(seconds: 25));
 
       if (!mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
@@ -1211,21 +1227,30 @@ class _PhoneRegistrationConfirmScreenState
       return;
     }
     debugPrint(
-      'Phone registration call tapped: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, phone=${widget.draft.phone}',
+      'Phone registration call tapped: nameLen=${widget.draft.displayName.trim().length}, passLen=${widget.draft.password.trim().length}, phone=${_maskPhone(widget.draft.phone)}',
     );
     if (widget.draft.password.trim().isEmpty) {
       _snack('Пароль не сохранился. Вернитесь назад и введите его снова.');
       return;
     }
     if (!_isPhonePasswordValid(widget.draft.password)) {
-      _snack('Введите не менее 8 цифр.');
+      _snack('Введите не менее 8 символов');
       return;
     }
     if (widget.draft.displayName.trim().isEmpty) {
       _snack('Имя не сохранилось. Вернитесь назад и введите его снова.');
       return;
     }
-    setState(() => _statusText = 'Открываем приложение звонков...');
+    final supportNumber = (_callToPhone ?? '').trim();
+    if (supportNumber.isEmpty) {
+      setState(() {
+        _errorText =
+            'Подтверждение телефона временно недоступно. Попробуйте позже.';
+      });
+      return;
+    }
+
+    setState(() => _statusText = 'Проверяем звонок...');
     final opened = await _launchCall();
     if (!mounted) return;
     if (!opened) {
@@ -1233,23 +1258,26 @@ class _PhoneRegistrationConfirmScreenState
       return;
     }
     _callStarted = true;
-    setState(() => _statusText = 'Проверяем подтверждение номера...');
-    await _pollAndFinish(showPendingSnack: false);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final supportNumber = (_callPhonePretty ?? _callPhone ?? '').trim();
+    final supportNumber = (_callToPhone ?? '').trim();
+    final supportNumberPretty = (_callToPhonePretty ?? '').trim();
+    final supportNumberLabel =
+        supportNumberPretty.isNotEmpty ? supportNumberPretty : supportNumber;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Подтверждение номера телефона')),
+      appBar: AppBar(title: const Text('Подтвердите номер')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           const SizedBox(height: 12),
           Text(
-            'Чтобы подтвердить номер телефона, необходимо совершить звонок на указанный номер',
+            supportNumber.isEmpty
+                ? 'Подтверждение телефона временно недоступно. Попробуйте позже.'
+                : 'Позвоните на указанный номер. Звонок бесплатный, трубку брать не нужно.',
             style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
             textAlign: TextAlign.center,
           ),
@@ -1264,14 +1292,14 @@ class _PhoneRegistrationConfirmScreenState
             child: Column(
               children: [
                 Text(
-                  'Номер для подтверждения',
+                  'Номер для звонка',
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  supportNumber.isEmpty ? 'Подготавливаем...' : supportNumber,
+                  supportNumber.isEmpty ? 'Недоступно' : supportNumberLabel,
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
@@ -1281,7 +1309,7 @@ class _PhoneRegistrationConfirmScreenState
           ),
           const SizedBox(height: 10),
           Text(
-            'Ваш номер: ${widget.draft.phone}',
+            'Ваш номер: ${formatRuPhoneForDisplay(widget.draft.phone)}',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
@@ -1306,22 +1334,37 @@ class _PhoneRegistrationConfirmScreenState
                 color: theme.colorScheme.error,
               ),
             ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: _starting || _confirming || _movingForward
+                  ? null
+                  : () => Navigator.of(context).pop(),
+              child: const Text('Назад'),
+            ),
           ],
           const SizedBox(height: 18),
           FilledButton(
             onPressed: (_starting ||
                     _confirming ||
                     _movingForward ||
-                    _errorText != null)
+                    _errorText != null ||
+                    supportNumber.isEmpty)
                 ? null
                 : _confirm,
             child: Text(
               _starting
                   ? 'Подготавливаем...'
                   : (_confirming || _movingForward
-                      ? 'Подтверждаем...'
+                      ? 'Проверяем звонок...'
                       : 'Позвонить'),
             ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: _starting || _confirming || _movingForward
+                ? null
+                : () => Navigator.of(context).pop(),
+            child: const Text('Изменить номер'),
           ),
         ],
       ),
@@ -1331,12 +1374,14 @@ class _PhoneRegistrationConfirmScreenState
 
 class _PhoneVerificationScreen extends StatefulWidget {
   final String phone;
-  final CallcheckService callcheckService;
-  final Future<void> Function() onConfirmed;
+  final AuthService authService;
+  final String purpose;
+  final Future<void> Function(String verificationCheckId) onConfirmed;
 
   const _PhoneVerificationScreen({
     required this.phone,
-    required this.callcheckService,
+    required this.authService,
+    required this.purpose,
     required this.onConfirmed,
   });
 
@@ -1348,13 +1393,14 @@ class _PhoneVerificationScreen extends StatefulWidget {
 class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
     with WidgetsBindingObserver {
   bool _callStarted = false;
+  bool _pollingActive = false;
   bool _movingForward = false;
   bool _loadingStart = true;
   bool _checkingStatus = false;
   String? _statusHint;
-  String? _checkId;
-  String? _callPhone;
-  String? _callPhonePretty;
+  String? _verificationId;
+  String? _callToPhone;
+  String? _callToPhonePretty;
   String? _errorText;
 
   @override
@@ -1367,6 +1413,7 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pollingActive = false;
     super.dispose();
   }
 
@@ -1374,7 +1421,7 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _callStarted && !_movingForward) {
       _pollStatusAndContinue(
-        attempts: 6,
+        attempts: 30,
         delay: const Duration(seconds: 2),
         showPendingSnack: true,
       );
@@ -1388,19 +1435,23 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
     });
 
     try {
-      final result = await widget.callcheckService.startVerification(
+      final result = await widget.authService.startPhoneVerification(
         phone: widget.phone,
+        purpose: widget.purpose,
       );
       if (!mounted) return;
       setState(() {
-        _checkId = result.checkId;
-        _callPhone = result.callPhone;
-        _callPhonePretty = result.callPhonePretty;
+        _verificationId = result.verificationId;
+        _callToPhone = result.callToPhone;
+        _callToPhonePretty = result.callToPhonePretty;
+        _errorText = result.hasCallToPhone
+            ? null
+            : 'Подтверждение телефона временно недоступно. Попробуйте позже.';
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorText = e.toString().replaceFirst('Exception: ', '');
+        _errorText = widget.authService.userMessageForError(e);
       });
     } finally {
       if (mounted) {
@@ -1410,11 +1461,14 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
   }
 
   Future<void> _call() async {
-    final number = _normalizeDialablePhone((_callPhone ?? '').trim());
+    final number = _normalizeDialablePhone((_callToPhone ?? '').trim());
     if (number.isEmpty) {
       return;
     }
-    setState(() => _callStarted = true);
+    setState(() {
+      _callStarted = true;
+      _statusHint = 'Проверяем звонок...';
+    });
 
     final candidates = <Uri>[
       Uri.parse('tel://$number'),
@@ -1439,7 +1493,9 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
             ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
             : '';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Не удалось открыть звонилку. Номер: $number.$hint')),
+          SnackBar(
+              content:
+                  Text('Не удалось открыть звонилку. Номер: $number.$hint')),
         );
       }
     } catch (_) {
@@ -1448,7 +1504,8 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
           ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
           : '';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть звонилку. Номер: $number.$hint')),
+        SnackBar(
+            content: Text('Не удалось открыть звонилку. Номер: $number.$hint')),
       );
     }
   }
@@ -1463,16 +1520,21 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
   }
 
   Future<bool> _checkStatusAndContinue({bool showPendingSnack = true}) async {
-    final checkId = _checkId;
-    if (checkId == null || checkId.isEmpty || _checkingStatus) return false;
+    final verificationId = _verificationId;
+    if (verificationId == null || verificationId.isEmpty || _checkingStatus) {
+      return false;
+    }
 
     setState(() {
       _checkingStatus = true;
       _statusHint = 'Проверяем подтверждение номера...';
     });
     try {
-      final result =
-          await widget.callcheckService.checkStatus(checkId: checkId);
+      final result = await widget.authService.checkPhoneVerification(
+        phone: widget.phone,
+        verificationId: verificationId,
+        purpose: widget.purpose,
+      );
       if (!mounted) return false;
 
       if (result.isConfirmed) {
@@ -1483,16 +1545,24 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
         return true;
       }
 
-      final text = result.checkStatusText.trim().isEmpty
-          ? 'Номер пока не подтвержден'
-          : result.checkStatusText.trim();
+      if (result.isExpired || result.status == 'failed') {
+        final text = result.isExpired
+            ? 'Время подтверждения истекло. Попробуйте ещё раз позже.'
+            : 'Не удалось подтвердить звонок. Попробуйте ещё раз позже.';
+        setState(() {
+          _statusHint = text;
+        });
+        if (showPendingSnack) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(text)));
+        }
+        return true;
+      }
+
+      final text = 'Проверяем звонок...';
       setState(() {
         _statusHint = text;
       });
-      if (showPendingSnack) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(text)));
-      }
       return false;
     } catch (e) {
       if (!mounted) return false;
@@ -1501,7 +1571,7 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', 'Ошибка: ')),
+          content: Text(widget.authService.userMessageForError(e)),
         ),
       );
       return false;
@@ -1517,34 +1587,61 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
     required Duration delay,
     required bool showPendingSnack,
   }) async {
+    if (_pollingActive) return;
+    _pollingActive = true;
     for (var i = 0; i < attempts; i++) {
       final confirmed = await _checkStatusAndContinue(
           showPendingSnack: i == attempts - 1 && showPendingSnack);
       if (confirmed || !mounted || _movingForward) {
+        _pollingActive = false;
         return;
       }
       if (i < attempts - 1) {
         await Future<void>.delayed(delay);
       }
     }
+    _pollingActive = false;
+    if (!mounted) return;
+    const text = 'Не удалось подтвердить звонок. Попробуйте ещё раз позже.';
+    setState(() {
+      _statusHint = text;
+    });
+    if (showPendingSnack) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text(text)),
+      );
+    }
   }
 
   Future<void> _openProfileSetup() async {
     if (_movingForward) return;
+    final verificationCheckId = _verificationId;
+    if (verificationCheckId == null || verificationCheckId.isEmpty) {
+      _snack('Не удалось получить подтверждение номера.');
+      return;
+    }
     setState(() => _movingForward = true);
-    await widget.onConfirmed();
+    await widget.onConfirmed(verificationCheckId);
     if (mounted) {
       Navigator.of(context).pop();
     }
   }
 
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final supportNumber = (_callPhonePretty ?? _callPhone ?? '').trim();
+    final supportNumber = (_callToPhone ?? '').trim();
+    final supportNumberPretty = (_callToPhonePretty ?? '').trim();
+    final supportNumberLabel =
+        supportNumberPretty.isNotEmpty ? supportNumberPretty : supportNumber;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Подтверждение')),
+      appBar: AppBar(title: const Text('Подтвердите номер')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -1559,7 +1656,7 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
               ),
               const SizedBox(height: 24),
               Text(
-                'Подтверждение',
+                'Подтверждение номера телефона',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w800,
@@ -1583,16 +1680,43 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
                     color: theme.colorScheme.error,
                   ),
                 ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed:
+                      _loadingStart ? null : () => Navigator.of(context).pop(),
+                  child: const Text('Назад'),
+                ),
               ] else ...[
                 Text(
-                  'Для автоматического подтверждения номера позвоните по бесплатному номеру: $supportNumber',
+                  supportNumber.isEmpty
+                      ? 'Подтверждение телефона временно недоступно. Попробуйте позже.'
+                      : 'Позвоните на указанный номер. Звонок бесплатный, трубку брать не нужно.',
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
                 ),
+                if (supportNumber.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Номер для звонка',
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    supportNumberLabel,
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
               ],
               const SizedBox(height: 8),
               Text(
-                'Ваш номер: ${widget.phone}',
+                'Ваш номер: ${formatRuPhoneForDisplay(widget.phone)}',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
@@ -1616,23 +1740,18 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
                         supportNumber.isEmpty)
                     ? null
                     : _call,
-                child: const Text('Позвонить'),
+                child: Text(
+                  (_checkingStatus || _pollingActive)
+                      ? 'Проверяем звонок...'
+                      : 'Позвонить',
+                ),
               ),
               const SizedBox(height: 10),
-              OutlinedButton(
-                onPressed: (_movingForward ||
-                        _loadingStart ||
-                        _errorText != null ||
-                        _checkingStatus)
+              TextButton(
+                onPressed: _movingForward || _loadingStart
                     ? null
-                    : () => _pollStatusAndContinue(
-                          attempts: 6,
-                          delay: const Duration(seconds: 2),
-                          showPendingSnack: true,
-                        ),
-                child: Text(
-                  _checkingStatus ? 'Проверяем...' : 'Номер уже подтвержден',
-                ),
+                    : () => Navigator.of(context).pop(),
+                child: const Text('Назад'),
               ),
             ],
           ),
@@ -1645,12 +1764,14 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
 class _PhoneProfileSetupScreen extends StatefulWidget {
   final String phone;
   final bool hasAcceptedLegal;
-  final PhoneAuthBackendService phoneAuth;
+  final AuthService authService;
+  final String verificationCheckId;
 
   const _PhoneProfileSetupScreen({
     required this.phone,
     required this.hasAcceptedLegal,
-    required this.phoneAuth,
+    required this.authService,
+    required this.verificationCheckId,
   });
 
   @override
@@ -1662,8 +1783,6 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
   final _nameCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _loading = false;
-
-  SupabaseClient get _sb => Supabase.instance.client;
 
   @override
   void dispose() {
@@ -1690,26 +1809,27 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
       return;
     }
     if (!_isPhonePasswordValid(pass)) {
-      _snack('Введите не менее 8 цифр.');
+      _snack('Введите не менее 8 символов');
       return;
     }
 
     setState(() => _loading = true);
     try {
-      await widget.phoneAuth.signUpWithVerifiedPhone(
+      await widget.authService.signUpWithVerifiedPhone(
         phone: widget.phone,
         password: pass,
         displayName: name,
         acceptedLegal: widget.hasAcceptedLegal,
+        verificationCheckId: widget.verificationCheckId,
       );
 
       if (!mounted) return;
-      if (_sb.auth.currentSession != null) {
+      if (widget.authService.isAuthenticated) {
         Navigator.of(context).pop();
         return;
       }
     } catch (e) {
-      _snack(widget.phoneAuth.userMessageForError(e));
+      _snack(widget.authService.userMessageForError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -1726,7 +1846,7 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
             enabled: false,
             decoration: InputDecoration(
               labelText: 'Телефон',
-              hintText: widget.phone,
+              hintText: formatRuPhoneForDisplay(widget.phone),
             ),
           ),
           const SizedBox(height: 12),
@@ -1739,12 +1859,10 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
           TextField(
             controller: _passCtrl,
             obscureText: true,
-            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
               labelText: 'Пароль',
-              helperText: 'Введите не менее 8 цифр',
+              helperText: 'Минимум 8 символов',
             ),
             onSubmitted: (_) {
               if (!_loading) {
@@ -1765,11 +1883,13 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
 
 class _PhonePasswordResetScreen extends StatefulWidget {
   final String phone;
-  final PhoneAuthBackendService phoneAuth;
+  final AuthService authService;
+  final String verificationCheckId;
 
   const _PhonePasswordResetScreen({
     required this.phone,
-    required this.phoneAuth,
+    required this.authService,
+    required this.verificationCheckId,
   });
 
   @override
@@ -1781,8 +1901,6 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
   final _passCtrl = TextEditingController();
   final _pass2Ctrl = TextEditingController();
   bool _loading = false;
-
-  SupabaseClient get _sb => Supabase.instance.client;
 
   @override
   void dispose() {
@@ -1805,7 +1923,7 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
       return;
     }
     if (!_isPhonePasswordValid(pass)) {
-      _snack('Введите не менее 8 цифр.');
+      _snack('Введите не менее 8 символов');
       return;
     }
     if (pass != pass2) {
@@ -1815,24 +1933,25 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
 
     setState(() => _loading = true);
     try {
-      await widget.phoneAuth.resetPasswordWithVerifiedPhone(
+      await widget.authService.resetPasswordWithVerifiedPhone(
         phone: widget.phone,
         newPassword: pass,
+        verificationCheckId: widget.verificationCheckId,
       );
 
-      final user = _sb.auth.currentUser;
-      if (user != null) {
-        await ProfileService().updateProfile(user.id, {
+      final currentUser = widget.authService.currentUser;
+      if (currentUser != null) {
+        await ProfileService().updateProfile(currentUser.uid, {
           'phone': widget.phone,
           'phone_verified': true,
         });
       }
 
       if (!mounted) return;
-      _snack('Пароль обновлен. Вход выполнен автоматически.');
+      _snack('Пароль обновлен.');
       Navigator.of(context).pop();
     } catch (e) {
-      _snack('Ошибка: $e');
+      _snack(widget.authService.userMessageForError(e));
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -1851,28 +1970,24 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
             enabled: false,
             decoration: InputDecoration(
               labelText: 'Телефон',
-              hintText: widget.phone,
+              hintText: formatRuPhoneForDisplay(widget.phone),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _passCtrl,
             obscureText: true,
-            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.next,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(
               labelText: 'Новый пароль',
-              helperText: 'Введите не менее 8 цифр',
+              helperText: 'Минимум 8 символов',
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _pass2Ctrl,
             obscureText: true,
-            keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(labelText: 'Повторите пароль'),
             onSubmitted: (_) {
               if (!_loading) {
@@ -1884,6 +1999,105 @@ class _PhonePasswordResetScreenState extends State<_PhonePasswordResetScreen> {
           FilledButton(
             onPressed: _loading ? null : _submit,
             child: Text(_loading ? 'Подождите...' : 'Сохранить пароль'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PhonePasswordLoginScreen extends StatefulWidget {
+  const _PhonePasswordLoginScreen({
+    required this.phone,
+    required this.authService,
+  });
+
+  final String phone;
+  final AuthService authService;
+
+  @override
+  State<_PhonePasswordLoginScreen> createState() =>
+      _PhonePasswordLoginScreenState();
+}
+
+class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
+  final _passwordCtrl = TextEditingController();
+  bool _loading = false;
+
+  @override
+  void dispose() {
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _canSubmit => !_loading && _isPhonePasswordValid(_passwordCtrl.text);
+
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _submit() async {
+    final password = _passwordCtrl.text.trim();
+    if (password.isEmpty) {
+      _snack('Введите пароль');
+      return;
+    }
+    if (!_isPhonePasswordValid(password)) {
+      _snack('Введите не менее 8 символов');
+      return;
+    }
+
+    setState(() => _loading = true);
+    try {
+      await widget.authService.signInWithPhone(
+        phone: widget.phone,
+        password: password,
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } catch (e) {
+      _snack(widget.authService.userMessageForError(e, isSignIn: true));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Вход')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          TextField(
+            enabled: false,
+            decoration: InputDecoration(
+              labelText: 'Номер телефона',
+              hintText: formatRuPhoneForDisplay(widget.phone),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _passwordCtrl,
+            obscureText: true,
+            textInputAction: TextInputAction.done,
+            onChanged: (_) => setState(() {}),
+            onSubmitted: (_) {
+              if (_canSubmit) {
+                _submit();
+              }
+            },
+            decoration: const InputDecoration(
+              labelText: 'Пароль',
+              helperText: 'Минимум 8 символов',
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _canSubmit ? _submit : null,
+            child: Text(_loading ? 'Подождите...' : 'Войти'),
           ),
         ],
       ),

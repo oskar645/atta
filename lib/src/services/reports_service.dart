@@ -1,21 +1,42 @@
-﻿import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
+import 'dart:async';
+
 import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/reports_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:flutter/foundation.dart';
 
 class ReportsService {
-  final SupabaseClient _db = Supabase.instance.client;
-  final Uuid _uuid = const Uuid();
-  final NotificationsService _notifications = NotificationsService();
+  ReportsService({
+    ReportsApi? api,
+    NotificationsService? notifications,
+  })  : _api = api ?? ReportsApi(_apiClient),
+        _notifications = notifications ?? NotificationsService();
 
-  bool _isMissingColumnError(Object error) {
-    if (error is PostgrestException) {
-      final code = (error.code ?? '').toUpperCase();
-      final msg = error.message.toLowerCase();
-      // 42703: postgres undefined_column
-      // PGRST204: column is missing in PostgREST schema cache
-      return code == '42703' || code == 'PGRST204' || msg.contains('column');
-    }
-    return false;
+  final NotificationsService _notifications;
+  final ReportsApi _api;
+  final StreamController<List<Map<String, dynamic>>> _openReportsController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+  List<Map<String, dynamic>> _openReportsCache = const <Map<String, dynamic>>[];
+  Future<List<Map<String, dynamic>>>? _openReportsInFlight;
+  DateTime? _lastOpenReportsFetchAt;
+
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  static const Duration _openReportsTtl = Duration(seconds: 20);
+
+  void _debugSource(String message) {
+    if (!kDebugMode || !message.contains('unavailable')) return;
+    debugPrint(message);
+  }
+
+  List<Map<String, dynamic>> _extractItems(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   Future<void> reportListing({
@@ -25,36 +46,59 @@ class ReportsService {
     required String reason,
     required String comment,
   }) async {
-    await _db.from('reports').insert({
-      'listing_id': listingId,
-      'listing_owner_id': listingOwnerId,
-      'reporter_id': reporterId,
-      'reason': reason,
-      'comment': comment.trim(),
-      'status': 'open',
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-      'handled_at': null,
-      'handled_by': null,
-      'admin_note': null,
-      'admin_uid': null,
-      'decision': null,
-      'admin_comment': null,
-      'closed_at': null,
-    });
+    _debugSource('Reports source: Timeweb');
+    await _api.create(
+      listingId: listingId,
+      listingOwnerId: listingOwnerId,
+      reason: reason,
+      comment: comment,
+    );
   }
 
   Stream<List<Map<String, dynamic>>> streamOpenReports() {
-    final stream = _db
-        .from('reports')
-        .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false);
-
-    return stream.map((rows) {
-      return rows
-          .where((r) => (r['status'] ?? '').toString() == 'open')
-          .map((r) => Map<String, dynamic>.from(r))
-          .toList();
+    if (_openReportsCache.isEmpty || _isOpenReportsStale()) {
+      unawaited(refreshOpenReports(force: _openReportsCache.isEmpty));
+    }
+    return Stream<List<Map<String, dynamic>>>.multi((controller) {
+      controller.add(List<Map<String, dynamic>>.from(_openReportsCache));
+      final sub = _openReportsController.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      controller.onCancel = () async {
+        await sub.cancel();
+      };
     });
+  }
+
+  Future<List<Map<String, dynamic>>> refreshOpenReports({
+    bool force = false,
+  }) async {
+    if (!force && !_isOpenReportsStale() && _openReportsCache.isNotEmpty) {
+      return List<Map<String, dynamic>>.from(_openReportsCache);
+    }
+    final existing = _openReportsInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    final future = () async {
+      final response = await _api.listAdmin();
+      final items = _extractItems(response)
+          .where((r) => (r['status'] ?? '').toString() == 'open')
+          .toList(growable: false);
+      _openReportsCache = items;
+      _lastOpenReportsFetchAt = DateTime.now();
+      _openReportsController.add(List<Map<String, dynamic>>.from(items));
+      return items;
+    }();
+    _openReportsInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_openReportsInFlight, future)) {
+        _openReportsInFlight = null;
+      }
+    }
   }
 
   Future<void> closeReportDecision({
@@ -63,50 +107,24 @@ class ReportsService {
     required String decision,
     String? adminComment,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-    final comment =
-        (adminComment ?? '').trim().isEmpty ? null : adminComment!.trim();
-
-    try {
-      await _db.from('reports').update({
-        'status': 'closed',
-        'admin_uid': adminUid,
-        'decision': decision,
-        'admin_comment': comment,
-        'closed_at': now,
-        'handled_at': now,
-        'handled_by': adminUid,
-        'admin_note': comment,
-      }).eq('id', reportId);
-    } catch (e) {
-      if (!_isMissingColumnError(e)) rethrow;
-      try {
-        await _db.from('reports').update({
-          'status': 'closed',
-          'handled_at': now,
-          'handled_by': adminUid,
-          'admin_note': comment,
-        }).eq('id', reportId);
-      } catch (e2) {
-        if (!_isMissingColumnError(e2)) rethrow;
-        // Final fallback for old/minimal reports schema.
-        await _db.from('reports').update({
-          'status': 'closed',
-        }).eq('id', reportId);
-      }
+    _debugSource('Reports source: Timeweb');
+    if (decision == 'rejected' || decision == 'no_violation') {
+      await _api.reject(reportId, comment: adminComment);
+    } else {
+      await _api.resolve(reportId, comment: adminComment);
     }
+    _openReportsCache = _openReportsCache
+        .where((item) => (item['id'] ?? '').toString() != reportId)
+        .toList(growable: false);
+    _openReportsController
+        .add(List<Map<String, dynamic>>.from(_openReportsCache));
   }
 
   Future<void> deleteListingById(
     String listingId, {
     String? reason,
   }) async {
-    final note = (reason ?? '').trim();
-    await _db.from('listings').update({
-      'status': 'deleted',
-      'rejection_reason': note.isEmpty ? 'Объявление удалено администратором.' : note,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', listingId);
+    _debugSource('Reports source: Timeweb');
   }
 
   Future<void> notifyOwnerViaSupport({
@@ -114,28 +132,7 @@ class ReportsService {
     required String ownerName,
     required String messageFromAdmin,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-
-    await _db.from('support_tickets').upsert({
-      'id': ownerUid,
-      'uid': ownerUid,
-      'user_id': ownerUid,
-      'name': ownerName,
-      'subject': 'Moderation',
-      'status': 'open',
-      'created_at': now,
-      'updated_at': now,
-      'last_message': messageFromAdmin,
-      'unread_for_admin': false,
-    }, onConflict: 'id');
-
-    await _db.from('support_messages').insert({
-      'id': _uuid.v4(),
-      'ticket_id': ownerUid,
-      'sender': 'admin',
-      'text': messageFromAdmin,
-      'created_at': now,
-    });
+    _debugSource('Reports source: Timeweb');
   }
 
   Future<void> notifyOwnerPersonal({
@@ -149,5 +146,10 @@ class ReportsService {
       body: body,
     );
   }
-}
 
+  bool _isOpenReportsStale() {
+    final lastFetchAt = _lastOpenReportsFetchAt;
+    if (lastFetchAt == null) return true;
+    return DateTime.now().difference(lastFetchAt) >= _openReportsTtl;
+  }
+}

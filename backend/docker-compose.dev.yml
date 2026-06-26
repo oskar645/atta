@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: atta-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: atta_dev
+      POSTGRES_USER: atta
+      POSTGRES_PASSWORD: atta_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - atta_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atta -d atta_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: atta-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - atta_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: atta-minio-dev
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: atta_minio
+      MINIO_ROOT_PASSWORD: atta_minio_password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - atta_minio_data:/data
+    command: server /data --console-address ":9001"
+
+volumes:
+  atta_postgres_data:
+  atta_redis_data:
+  atta_minio_data:

@@ -1,21 +1,133 @@
 import 'dart:async';
-import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/reviews_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:flutter/foundation.dart';
 
 class ReviewsService {
-  final SupabaseClient _c = Supabase.instance.client;
+  ReviewsService({
+    ReviewsApi? api,
+  }) : _api = api ?? ReviewsApi(_apiClient);
 
-  /// Все отзывы продавца (лента) — по seller_id
-  Stream<List<Map<String, dynamic>>> streamSellerReviews(String sellerId) {
-    final stream = _c
-        .from('reviews')
-        .stream(primaryKey: ['id'])
-        .eq('seller_id', sellerId)
-        .order('created_at', ascending: false);
+  final ReviewsApi _api;
 
-    return stream.map((rows) => rows.cast<Map<String, dynamic>>());
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+
+  final Map<String, List<Map<String, dynamic>>> _cache =
+      <String, List<Map<String, dynamic>>>{};
+  final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
+      <String, StreamController<List<Map<String, dynamic>>>>{};
+  final Map<String, Future<List<Map<String, dynamic>>>> _inFlight =
+      <String, Future<List<Map<String, dynamic>>>>{};
+  final Map<String, DateTime> _cachedAt = <String, DateTime>{};
+
+  static const Duration _cacheTtl = Duration(minutes: 2);
+
+  StreamController<List<Map<String, dynamic>>> _controllerFor(String sellerId) {
+    return _controllers.putIfAbsent(
+      sellerId,
+      () => StreamController<List<Map<String, dynamic>>>.broadcast(),
+    );
   }
 
-  /// Рейтинг продавца: avg + count (считаем на клиенте)
+  void _debugSource(String message) {
+    if (!kDebugMode) return;
+    debugPrint(message);
+  }
+
+  List<Map<String, dynamic>> _extractItems(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _sortNewestFirst(List<Map<String, dynamic>> rows) {
+    final copy = rows.map((item) => Map<String, dynamic>.from(item)).toList();
+    copy.sort((a, b) {
+      final left = DateTime.tryParse((a['created_at'] ?? '').toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final right = DateTime.tryParse((b['created_at'] ?? '').toString()) ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return right.compareTo(left);
+    });
+    return copy;
+  }
+
+  void _publish(String sellerId, List<Map<String, dynamic>> rows) {
+    final next = _sortNewestFirst(rows);
+    _cache[sellerId] = next;
+    _cachedAt[sellerId] = DateTime.now();
+    _controllerFor(sellerId).add(
+      next
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false),
+    );
+  }
+
+  List<Map<String, dynamic>> peekSellerReviews(String sellerId) {
+    return List<Map<String, dynamic>>.from(
+      _cache[sellerId] ?? const <Map<String, dynamic>>[],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> refreshSellerReviews(
+    String sellerId,
+  ) async {
+    final id = sellerId.trim();
+    if (id.isEmpty) return const <Map<String, dynamic>>[];
+    final existing = _inFlight[id];
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.listSellerReviews(id);
+      final items = _extractItems(response);
+      _publish(id, items);
+      return List<Map<String, dynamic>>.from(_cache[id] ?? items);
+    }();
+    _inFlight[id] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_inFlight[id], future)) {
+        _inFlight.remove(id);
+      }
+    }
+  }
+
+  Stream<List<Map<String, dynamic>>> streamSellerReviews(String sellerId) {
+    _debugSource('Reviews source: Timeweb');
+    final id = sellerId.trim();
+    if (id.isEmpty) {
+      return Stream<List<Map<String, dynamic>>>.value(
+        const <Map<String, dynamic>>[],
+      ).asBroadcastStream();
+    }
+    final controller = _controllerFor(id);
+    final cached = _cache[id];
+    final cachedAt = _cachedAt[id];
+    final initial = cached
+            ?.map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false) ??
+        const <Map<String, dynamic>>[];
+    final isFresh = cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _cacheTtl;
+    if (!isFresh) {
+      unawaited(
+        refreshSellerReviews(id).catchError((Object error, StackTrace stack) {
+          _debugSource('Reviews source: refresh failed for $id: $error');
+          return initial;
+        }),
+      );
+    }
+
+    return controller.stream.startWith(initial).asBroadcastStream();
+  }
+
   Stream<Map<String, dynamic>> streamSellerRating(String sellerId) {
     return streamSellerReviews(sellerId).map((items) {
       if (items.isEmpty) return {'avg': 0.0, 'count': 0};
@@ -28,6 +140,12 @@ class ReviewsService {
         if (v is num) {
           sum += v.toDouble();
           cnt++;
+        } else {
+          final parsed = double.tryParse(v?.toString() ?? '');
+          if (parsed != null) {
+            sum += parsed;
+            cnt++;
+          }
         }
       }
 
@@ -36,9 +154,6 @@ class ReviewsService {
     });
   }
 
-  /// Добавить отзыв — под твою схему:
-  /// seller_id / reviewer_id / listing_id / rating / comment
-  /// + сохраняем reviewer_name (чтобы в отзывах было имя, а не "Пользователь")
   Future<void> addReview({
     required String sellerId,
     required String reviewerId,
@@ -47,56 +162,89 @@ class ReviewsService {
     required int rating,
     required String text,
   }) async {
-    final t = text.trim();
-    if (t.isEmpty) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
 
-    await _c.from('reviews').insert({
-      'seller_id': sellerId,
-      'reviewer_id': reviewerId,
-      'reviewer_name': reviewerName.trim().isEmpty ? null : reviewerName.trim(),
-      'listing_id': listingId,
-      'rating': rating,
-      'comment': t,
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-    });
+    _debugSource('Reviews source: Timeweb');
+    final response = await _api.addReview(
+      sellerId: sellerId,
+      listingId: listingId,
+      rating: rating,
+      text: trimmed,
+      reviewerName: reviewerName,
+    );
+    final item = response['item'];
+    if (item is Map) {
+      final current =
+          List<Map<String, dynamic>>.from(_cache[sellerId] ?? const []);
+      current.insert(0, Map<String, dynamic>.from(item));
+      _publish(sellerId, current);
+      return;
+    }
+    await refreshSellerReviews(sellerId);
   }
 
-  /// Ответ продавца на отзыв
   Future<void> replyToReview({
     required String sellerId,
     required String reviewId,
     required String replyText,
   }) async {
-    final t = replyText.trim();
-    if (t.isEmpty) return;
+    final trimmed = replyText.trim();
+    if (trimmed.isEmpty) return;
 
-    await _c
-        .from('reviews')
-        .update({
-          'reply_text': t,
-          'reply_at': DateTime.now().toUtc().toIso8601String(),
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', reviewId)
-        .eq('seller_id', sellerId);
+    _debugSource('Reviews source: Timeweb');
+    final response = await _api.updateReview(
+      reviewId,
+      replyText: trimmed,
+    );
+    final item = response['item'];
+    if (item is Map) {
+      final current =
+          List<Map<String, dynamic>>.from(_cache[sellerId] ?? const []);
+      final index = current.indexWhere(
+        (entry) => (entry['id'] ?? '').toString() == reviewId,
+      );
+      if (index != -1) {
+        current[index] = Map<String, dynamic>.from(item);
+        _publish(sellerId, current);
+        return;
+      }
+    }
+    await refreshSellerReviews(sellerId);
   }
 
-  /// Удалить отзыв (используется из админского UI)
   Future<void> deleteReview({
     required String reviewId,
   }) async {
     final id = reviewId.trim();
     if (id.isEmpty) return;
-    final deleted = await _c.from('reviews').delete().eq('id', id).select('id');
-    if (deleted.isEmpty) {
-      throw Exception(
-        'Не удалось удалить отзыв. Проверьте права администратора для DELETE в Supabase.',
-      );
+
+    _debugSource('Reviews source: Timeweb');
+    await _api.deleteReview(id);
+    for (final entry in _cache.entries.toList()) {
+      final filtered = entry.value
+          .where((item) => (item['id'] ?? '').toString() != id)
+          .toList(growable: false);
+      if (filtered.length != entry.value.length) {
+        _publish(entry.key, filtered);
+      }
     }
   }
 
-  /// Пока no-op (если у тебя нет счетчика новых отзывов)
   Future<void> resetNewReviewsCount(String sellerId) async {
-    return;
+    _debugSource('Reviews source: Timeweb');
+  }
+
+  void resetSession() {
+    _cache.clear();
+    _cachedAt.clear();
+    _inFlight.clear();
+  }
+}
+
+extension<T> on Stream<T> {
+  Stream<T> startWith(T initial) async* {
+    yield initial;
+    yield* this;
   }
 }

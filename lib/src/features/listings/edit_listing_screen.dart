@@ -1,14 +1,21 @@
+import 'dart:io';
+
 import 'package:atta/src/data/auto_catalog.dart';
 
 import 'package:atta/src/features/listings/pick_location_screen.dart';
 import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/utils/price_formatter.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' as latlng;
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 class EditListingScreen extends StatefulWidget {
   final String listingId;
@@ -21,6 +28,12 @@ class EditListingScreen extends StatefulWidget {
 class _EditListingScreenState extends State<EditListingScreen> {
   bool _inited = false;
   bool _saving = false;
+  bool _loading = true;
+  String? _loadError;
+  Listing? _listing;
+  final _newPhotos = <XFile>[];
+  final _removedPhotoIds = <String>{};
+  final _picker = ImagePicker();
 
   final _title = TextEditingController();
   final _city = TextEditingController();
@@ -56,8 +69,6 @@ class _EditListingScreenState extends State<EditListingScreen> {
   String _carColor = 'Чёрный';
   bool? _carCleared;
 
-  SupabaseClient get _sb => Supabase.instance.client;
-
   final Map<String, String> _deliveryNames = const {
     'cdek': 'СДЭК',
     'ozon': 'Ozon',
@@ -81,19 +92,41 @@ class _EditListingScreenState extends State<EditListingScreen> {
       _isAuto && isPassengerCarsSubcategory(_subcategory);
 
   static const _bodyTypes = <String>[
-    'Седан','Хэтчбек','Универсал','Кроссовер','Внедорожник','Купе','Кабриолет','Минивэн','Пикап','Фургон','Лифтбек','Другое',
+    'Седан',
+    'Хэтчбек',
+    'Универсал',
+    'Кроссовер',
+    'Внедорожник',
+    'Купе',
+    'Кабриолет',
+    'Минивэн',
+    'Пикап',
+    'Фургон',
+    'Лифтбек',
+    'Другое',
   ];
 
   static const _fuelTypes = <String>[
-    'Бензин','Дизель','Гибрид','Электро','Газ','Другое',
+    'Бензин',
+    'Дизель',
+    'Гибрид',
+    'Электро',
+    'Газ',
+    'Другое',
   ];
 
   static const _transmissions = <String>[
-    'Механика','Автомат','Вариатор','Робот','Другое',
+    'Механика',
+    'Автомат',
+    'Вариатор',
+    'Робот',
+    'Другое',
   ];
 
   static const _drives = <String>[
-    'Передний','Задний','Полный',
+    'Передний',
+    'Задний',
+    'Полный',
   ];
 
   static const _conditions = <String>[
@@ -106,8 +139,26 @@ class _EditListingScreenState extends State<EditListingScreen> {
   ];
 
   static const _colors = <String>[
-    'Чёрный','Белый','Серый','Серебристый','Синий','Красный','Зелёный','Жёлтый','Коричневый','Бежевый','Оранжевый','Фиолетовый','Другой',
+    'Чёрный',
+    'Белый',
+    'Серый',
+    'Серебристый',
+    'Синий',
+    'Красный',
+    'Зелёный',
+    'Жёлтый',
+    'Коричневый',
+    'Бежевый',
+    'Оранжевый',
+    'Фиолетовый',
+    'Другой',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadListing());
+  }
 
   @override
   void dispose() {
@@ -127,13 +178,36 @@ class _EditListingScreenState extends State<EditListingScreen> {
     super.dispose();
   }
 
-  // -------- listing stream (supabase) --------
-  Stream<Map<String, dynamic>?> _streamListingRow(String id) {
-    return _sb
-        .from('listings')
-        .stream(primaryKey: ['id'])
-        .eq('id', id)
-        .map((rows) => rows.isEmpty ? null : Map<String, dynamic>.from(rows.first));
+  Future<void> _loadListing() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
+    try {
+      final listing = await context
+          .read<ListingsService>()
+          .getListingById(widget.listingId);
+      if (!mounted) return;
+      if (listing == null) {
+        setState(() {
+          _loadError = 'Не удалось загрузить объявление';
+          _loading = false;
+        });
+        return;
+      }
+      _initFromListing(listing);
+      setState(() {
+        _listing = listing;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Не удалось загрузить объявление';
+        _loading = false;
+      });
+    }
   }
 
   void _initFromListing(Listing l) {
@@ -146,7 +220,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     _title.text = l.title;
     _city.text = l.city;
     _desc.text = l.description;
-    _price.text = l.price.toString();
+    _price.text = formatPrice(l.price);
     _phone.text = l.phone;
     _phoneHidden = l.phoneHidden;
 
@@ -182,13 +256,16 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
   Future<void> _fillCityFromLatLng(latlng.LatLng p) async {
     try {
-      final placemarks = await placemarkFromCoordinates(p.latitude, p.longitude);
+      final placemarks =
+          await placemarkFromCoordinates(p.latitude, p.longitude);
       if (placemarks.isEmpty) return;
       final pm = placemarks.first;
 
       final parts = <String>[
-        if ((pm.administrativeArea ?? '').trim().isNotEmpty) pm.administrativeArea!,
-        if ((pm.subAdministrativeArea ?? '').trim().isNotEmpty) pm.subAdministrativeArea!,
+        if ((pm.administrativeArea ?? '').trim().isNotEmpty)
+          pm.administrativeArea!,
+        if ((pm.subAdministrativeArea ?? '').trim().isNotEmpty)
+          pm.subAdministrativeArea!,
         if ((pm.locality ?? '').trim().isNotEmpty) pm.locality!,
         if ((pm.subLocality ?? '').trim().isNotEmpty) pm.subLocality!,
       ];
@@ -239,7 +316,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
                 padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Text('Выберите доставку', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  child: Text('Выберите доставку',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                 ),
               ),
               Flexible(
@@ -276,7 +355,44 @@ class _EditListingScreenState extends State<EditListingScreen> {
     });
   }
 
-  Future<String?> _askText({required String title, required String hint}) async {
+  List<ListingPhotoItem> get _visibleExistingPhotos {
+    final listing = _listing;
+    if (listing == null) return const <ListingPhotoItem>[];
+    return listing.photoItems
+        .where((item) => !_removedPhotoIds.contains(item.id))
+        .toList();
+  }
+
+  int get _totalPhotoCount => _visibleExistingPhotos.length + _newPhotos.length;
+
+  Future<void> _pickMorePhotos() async {
+    final remain = 10 - _totalPhotoCount;
+    if (remain <= 0) return;
+
+    final picked = await _picker.pickMultiImage(imageQuality: 80);
+    if (picked.isEmpty) return;
+    if (!mounted) return;
+
+    setState(() {
+      _newPhotos.addAll(picked.take(remain));
+    });
+
+    if (picked.length > remain) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Можно максимум 10 фото. Добавлено: $remain')),
+      );
+    }
+  }
+
+  String _friendlyError(Object error) {
+    if (error is ApiException && error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+    return 'Не удалось обновить объявление';
+  }
+
+  Future<String?> _askText(
+      {required String title, required String hint}) async {
     final c = TextEditingController();
     final res = await showDialog<String?>(
       context: context,
@@ -284,11 +400,15 @@ class _EditListingScreenState extends State<EditListingScreen> {
         title: Text(title),
         content: TextField(
           controller: c,
-          decoration: InputDecoration(hintText: hint, border: const OutlineInputBorder()),
+          decoration: InputDecoration(
+              hintText: hint, border: const OutlineInputBorder()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Ок')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, c.text.trim()),
+              child: const Text('Ок')),
         ],
       ),
     );
@@ -324,7 +444,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
     }
 
     String? nextText;
-    if (current.trim().isEmpty || (previous.isNotEmpty && current.trim() == previous)) {
+    if (current.trim().isEmpty ||
+        (previous.isNotEmpty && current.trim() == previous)) {
       nextText = nextSuggestion;
     } else if (previous.isNotEmpty && current.startsWith(previous)) {
       nextText = '$nextSuggestion${current.substring(previous.length)}';
@@ -376,18 +497,22 @@ class _EditListingScreenState extends State<EditListingScreen> {
             }
 
             final items = currentItems()
-                .where((x) => q.trim().isEmpty ? true : x.toLowerCase().contains(q.trim().toLowerCase()))
+                .where((x) => q.trim().isEmpty
+                    ? true
+                    : x.toLowerCase().contains(q.trim().toLowerCase()))
                 .toList();
 
-            String title() => step == 0 ? 'Выбор марки' : (step == 1 ? 'Выбор модели' : 'Поколение / серия');
+            String title() => step == 0
+                ? 'Выбор марки'
+                : (step == 1 ? 'Выбор модели' : 'Поколение / серия');
 
             Future<void> pickItem(String v) async {
               if (step == 0) {
-                  if (v == kAutoCustomBrandLabel) {
-                    final custom = await _askText(
-                      title: kAutoCustomBrandLabel,
-                      hint: 'Например: Porsche',
-                    );
+                if (v == kAutoCustomBrandLabel) {
+                  final custom = await _askText(
+                    title: kAutoCustomBrandLabel,
+                    hint: 'Например: Porsche',
+                  );
                   if (custom == null) return;
                   v = custom;
                 }
@@ -402,11 +527,11 @@ class _EditListingScreenState extends State<EditListingScreen> {
               }
 
               if (step == 1) {
-                  if (v == kAutoCustomModelLabel) {
-                    final custom = await _askText(
-                      title: kAutoCustomModelLabel,
-                      hint: 'Например: Camry',
-                    );
+                if (v == kAutoCustomModelLabel) {
+                  final custom = await _askText(
+                    title: kAutoCustomModelLabel,
+                    hint: 'Например: Camry',
+                  );
                   if (custom == null) return;
                   v = custom;
                 }
@@ -437,21 +562,26 @@ class _EditListingScreenState extends State<EditListingScreen> {
                 children: [
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-	                    child: Row(
-	                      children: [
-	                        IconButton(
-	                          onPressed: step == 0
-	                              ? null
-	                              : () => setM(() {
-	                                  step -= 1;
-	                                  q = '';
-	                                }),
-	                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
-	                          iconSize: 18,
-	                          tooltip: 'Назад',
-	                        ),
-	                        Expanded(child: Text(title(), style: const TextStyle(fontWeight: FontWeight.w800))),
-                        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: step == 0
+                              ? null
+                              : () => setM(() {
+                                    step -= 1;
+                                    q = '';
+                                  }),
+                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                          iconSize: 18,
+                          tooltip: 'Назад',
+                        ),
+                        Expanded(
+                            child: Text(title(),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800))),
+                        TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Закрыть')),
                       ],
                     ),
                   ),
@@ -474,7 +604,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (_, i) {
                         final v = items[i];
-                        return ListTile(title: Text(v), onTap: () => pickItem(v));
+                        return ListTile(
+                            title: Text(v), onTap: () => pickItem(v));
                       },
                     ),
                   ),
@@ -486,7 +617,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
                         onPressed: () {
                           if (brand == null || model == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Выберите марку и модель')),
+                              const SnackBar(
+                                  content: Text('Выберите марку и модель')),
                             );
                             return;
                           }
@@ -516,10 +648,12 @@ class _EditListingScreenState extends State<EditListingScreen> {
   }
 
   bool _validInt(String s) => int.tryParse(s.trim()) != null;
-  bool _validDouble(String s) => double.tryParse(s.trim().replaceAll(',', '.')) != null;
+  bool _validDouble(String s) =>
+      double.tryParse(s.trim().replaceAll(',', '.')) != null;
 
   Future<void> _save(Listing listing) async {
     final me = context.read<AuthService>().currentUser!;
+    final listingsService = context.read<ListingsService>();
     if (listing.ownerId != me.uid) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Нельзя редактировать чужое объявление')),
@@ -531,7 +665,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     final city = _city.text.trim();
     final desc = _desc.text.trim();
     final phone = _phone.text.trim();
-    final price = int.tryParse(_price.text.trim()) ?? 0;
+    final price = parseFormattedPrice(_price.text);
 
     if (title.isEmpty || desc.isEmpty || price <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -563,7 +697,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
           !_validDouble(_carEngine.text) ||
           !_validInt(_carPower.text)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Заполните авто: год, пробег, объём (л) и мощность (л.с.)')),
+          const SnackBar(
+              content: Text(
+                  'Заполните авто: год, пробег, объём (л) и мощность (л.с.)')),
         );
         return;
       }
@@ -573,16 +709,17 @@ class _EditListingScreenState extends State<EditListingScreen> {
       final engine = double.parse(_carEngine.text.trim().replaceAll(',', '.'));
       final power = int.parse(_carPower.text.trim());
 
-      final owners = _carOwners.text.trim().isEmpty ? null : int.tryParse(_carOwners.text.trim());
+      final owners = _carOwners.text.trim().isEmpty
+          ? null
+          : int.tryParse(_carOwners.text.trim());
       final vin = _carVin.text.trim().isEmpty ? null : _carVin.text.trim();
       final note = _carNote.text.trim().isEmpty ? null : _carNote.text.trim();
 
       final autoBrand = ((_autoBrand ?? '').trim().isNotEmpty)
           ? _autoBrand!.trim()
           : _subcategory.trim();
-      final autoModel = ((_autoModel ?? '').trim().isNotEmpty)
-          ? _autoModel!.trim()
-          : title;
+      final autoModel =
+          ((_autoModel ?? '').trim().isNotEmpty) ? _autoModel!.trim() : title;
 
       car = CarSpecs(
         brand: autoBrand,
@@ -607,36 +744,97 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
     setState(() => _saving = true);
     try {
-      // ✅ Supabase UPDATE вместо Firestore
-      await _sb.from('listings').update({
-        'title': title,
-        'description': desc,
-        'price': price,
-        'phone': phone,
-        'phone_hidden': _phoneHidden,
-        'city': city,
-        'delivery': _delivery,
+      await listingsService.updateListing(
+        listingId: listing.id,
+        title: title,
+        description: desc,
+        price: price,
+        phone: phone,
+        phoneHidden: _phoneHidden,
+        city: city,
+        delivery: _delivery,
+        car: _isAuto ? car : null,
+      );
 
-        // авто параметры (json)
-        'car': _isAuto ? (car?.toMap() ?? {}) : null,
+      for (final photoId in _removedPhotoIds.where((id) => id.isNotEmpty)) {
+        await listingsService.deleteListingPhoto(
+          listingId: listing.id,
+          photoId: photoId,
+        );
+      }
 
-        // снова на модерацию
-        'status': 'pending',
-        'moderated_at': null,
-        'rejection_reason': null,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', listing.id);
+      final uploadResult = await listingsService.uploadListingPhotos(
+        listingId: listing.id,
+        photos: _newPhotos.map((photo) => File(photo.path)).toList(),
+        startIndex: _visibleExistingPhotos.length,
+      );
 
       if (!mounted) return;
-      Navigator.of(context).pop();
+      if (uploadResult.hasFailures) {
+        final retry = await showDialog<bool>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Часть фото не загрузилась'),
+                content: Text(
+                  uploadResult.allFailed
+                      ? 'Не удалось загрузить фото. Попробовать ещё раз?'
+                      : 'Загружено ${uploadResult.uploadedCount} из ${uploadResult.requestedCount} фото. Повторить загрузку?',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Позже'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Повторить'),
+                  ),
+                ],
+              ),
+            ) ??
+            false;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Сохранено. Объявление снова на модерации')),
-      );
+        if (retry) {
+          final retried = await listingsService.uploadListingPhotos(
+            listingId: listing.id,
+            photos: uploadResult.failures.map((item) => item.file).toList(),
+            sortOrders:
+                uploadResult.failures.map((item) => item.index).toList(),
+          );
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                retried.hasFailures
+                    ? 'Объявление обновлено, но ${retried.failedCount} фото не загрузились'
+                    : 'Объявление обновлено',
+              ),
+            ),
+          );
+        } else {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                uploadResult.allFailed
+                    ? 'Не удалось загрузить фото. Попробуйте ещё раз.'
+                    : 'Объявление обновлено, но ${uploadResult.failedCount} фото не загрузились',
+              ),
+            ),
+          );
+        }
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Объявление обновлено')),
+        );
+      }
+      if (!mounted) return;
+      Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: $e')),
+        SnackBar(content: Text(_friendlyError(e))),
       );
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -656,7 +854,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          border:
+              Border.all(color: Theme.of(context).colorScheme.outlineVariant),
         ),
         child: Row(
           children: [
@@ -691,7 +890,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
   }) {
     return DropdownButtonFormField<String>(
       initialValue: value,
-      items: items.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+      items:
+          items.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
       onChanged: onChanged,
       decoration: InputDecoration(labelText: label),
     );
@@ -699,228 +899,374 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<Map<String, dynamic>?>(
-      stream: _streamListingRow(widget.listingId),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
-        }
-        final row = snap.data;
-        if (row == null) {
-          return Scaffold(appBar: AppBar(), body: const Center(child: Text('Объявление удалено')));
-        }
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
-        final listing = Listing.fromMap(row);
-        _initFromListing(listing);
+    if (_loadError != null || _listing == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(_loadError ?? 'Не удалось загрузить объявление'),
+                const SizedBox(height: 12),
+                FilledButton(
+                  onPressed: _loadListing,
+                  child: const Text('Повторить'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
-        final autoLine = [
-          if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
-          if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
-          if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
-        ].join(' ').trim();
+    final listing = _listing!;
+    final autoLine = [
+      if ((_autoBrand ?? '').trim().isNotEmpty) _autoBrand!.trim(),
+      if ((_autoModel ?? '').trim().isNotEmpty) _autoModel!.trim(),
+      if ((_autoGen ?? '').trim().isNotEmpty) _autoGen!.trim(),
+    ].join(' ').trim();
 
-        return Scaffold(
-          appBar: AppBar(title: const Text('Редактирование')),
-          bottomNavigationBar: SafeArea(
-            top: false,
-            child: Padding(
-              padding: EdgeInsets.only(
-                left: 12,
-                right: 12,
-                bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
+    return Scaffold(
+      appBar: AppBar(title: const Text('Редактирование')),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            bottom: 12 + MediaQuery.of(context).viewInsets.bottom,
+          ),
+          child: FilledButton(
+            onPressed: _saving ? null : () => _save(listing),
+            child: Text(_saving ? 'Сохраняем...' : 'Сохранить'),
+          ),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: Text(
+              'Категория: ${listing.category}\nПосле сохранения изменения применятся к объявлению.',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Фотографии',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 92,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _visibleExistingPhotos.length + _newPhotos.length + 1,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                if (index ==
+                    _visibleExistingPhotos.length + _newPhotos.length) {
+                  return InkWell(
+                    onTap: _totalPhotoCount >= 10 ? null : _pickMorePhotos,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      width: 92,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.add_a_photo_outlined),
+                    ),
+                  );
+                }
+
+                if (index < _visibleExistingPhotos.length) {
+                  final photo = _visibleExistingPhotos[index];
+                  return Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: CachedNetworkImage(
+                          imageUrl: photo.url,
+                          width: 92,
+                          height: 92,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) => Container(
+                            width: 92,
+                            height: 92,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.broken_image_outlined),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: InkWell(
+                          onTap: photo.id.isEmpty
+                              ? null
+                              : () {
+                                  setState(() {
+                                    _removedPhotoIds.add(photo.id);
+                                  });
+                                },
+                          child: const CircleAvatar(
+                            radius: 12,
+                            child: Icon(Icons.close, size: 14),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+
+                final localPhoto =
+                    _newPhotos[index - _visibleExistingPhotos.length];
+                return Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.file(
+                        File(localPhoto.path),
+                        width: 92,
+                        height: 92,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 92,
+                          height: 92,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.image_not_supported_outlined),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: InkWell(
+                        onTap: () {
+                          setState(() {
+                            _newPhotos.remove(localPhoto);
+                          });
+                        },
+                        child: const CircleAvatar(
+                          radius: 12,
+                          child: Icon(Icons.close, size: 14),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_isPassengerCar) ...[
+            _selectTile(
+              title: 'Марка • Модель • Поколение (в одном окне)',
+              value: autoLine,
+              onTap: _openAutoPickerOneWindow,
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _title,
+            decoration: InputDecoration(
+              labelText: _isPassengerCar
+                  ? 'Название (автозаполнение можно править)'
+                  : 'Название',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _price,
+            keyboardType: TextInputType.number,
+            inputFormatters: [PriceThousandsInputFormatter()],
+            decoration: const InputDecoration(labelText: 'Цена (₽)'),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _selectTile(
+                  title: 'Город / регион / село (выбрать)',
+                  value: _city.text.trim(),
+                  onTap:
+                      () {}, // у тебя был большой city picker — если надо, вставишь обратно
+                  leading: const Icon(Icons.location_city_outlined),
+                ),
               ),
-              child: FilledButton(
-                onPressed: _saving ? null : () => _save(listing),
-                child: Text(_saving ? 'Сохраняем...' : 'Сохранить'),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _openMap,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Theme.of(context).colorScheme.primaryContainer,
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.map_outlined, color: Colors.green),
+                ),
+              ),
+            ],
+          ),
+          if (_isAuto) ...[
+            const SizedBox(height: 18),
+            const Text('Параметры авто',
+                style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _carYear,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Год выпуска (например: 2018)'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _carMileage,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Пробег (км)'),
+            ),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'Кузов',
+                value: _carBody,
+                items: _bodyTypes,
+                onChanged: (v) => setState(() => _carBody = v ?? _carBody)),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'Топливо',
+                value: _carFuel,
+                items: _fuelTypes,
+                onChanged: (v) => setState(() => _carFuel = v ?? _carFuel)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _carEngine,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                  labelText: 'Объём двигателя (л), например: 2.5'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _carPower,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                  labelText: 'Мощность (л.с.), например: 181'),
+            ),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'Коробка передач',
+                value: _carTransmission,
+                items: _transmissions,
+                onChanged: (v) =>
+                    setState(() => _carTransmission = v ?? _carTransmission)),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'Привод',
+                value: _carDrive,
+                items: _drives,
+                onChanged: (v) => setState(() => _carDrive = v ?? _carDrive)),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'Состояние',
+                value: _carCondition,
+                items: _conditions,
+                onChanged: (v) =>
+                    setState(() => _carCondition = v ?? _carCondition)),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'Цвет',
+                value: _carColor,
+                items: _colors,
+                onChanged: (v) => setState(() => _carColor = v ?? _carColor)),
+            const SizedBox(height: 12),
+          ],
+          const SizedBox(height: 12),
+          TextField(
+            controller: _phone,
+            keyboardType: TextInputType.phone,
+            decoration:
+                const InputDecoration(labelText: 'Телефон (для звонка)'),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Скрывать номер в объявлении'),
+            subtitle: const Text(
+                'Номер не будет виден, но кнопка “Позвонить” останется'),
+            value: _phoneHidden,
+            onChanged: (v) => setState(() => _phoneHidden = v),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _desc,
+            maxLines: 5,
+            decoration: const InputDecoration(labelText: 'Описание'),
+          ),
+          const SizedBox(height: 16),
+          Text('Доставка',
+              style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(context).colorScheme.onSurface)),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _openDeliveryPicker,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.local_shipping_outlined, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _deliverySummary(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.outline),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
               ),
             ),
           ),
-          body: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                ),
-                child: Text(
-                  'Категория: ${listing.category}\nФото не редактируем. После сохранения — снова модерация.',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-
-              const SizedBox(height: 14),
-
-              if (_isPassengerCar) ...[
-                _selectTile(
-                  title: 'Марка • Модель • Поколение (в одном окне)',
-                  value: autoLine,
-                  onTap: _openAutoPickerOneWindow,
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              TextField(
-                controller: _title,
-                decoration: InputDecoration(
-                  labelText: _isPassengerCar
-                      ? 'Название (автозаполнение можно править)'
-                      : 'Название',
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              TextField(
-                controller: _price,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Цена (₽)'),
-              ),
-
-              const SizedBox(height: 12),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: _selectTile(
-                      title: 'Город / регион / село (выбрать)',
-                      value: _city.text.trim(),
-                      onTap: () {}, // у тебя был большой city picker — если надо, вставишь обратно
-                      leading: const Icon(Icons.location_city_outlined),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  InkWell(
-                    onTap: _openMap,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.map_outlined, color: Colors.green),
-                    ),
-                  ),
-                ],
-              ),
-
-              if (_isAuto) ...[
-                const SizedBox(height: 18),
-                const Text('Параметры авто', style: TextStyle(fontWeight: FontWeight.w900)),
-                const SizedBox(height: 10),
-
-                TextField(
-                  controller: _carYear,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Год выпуска (например: 2018)'),
-                ),
-                const SizedBox(height: 12),
-
-                TextField(
-                  controller: _carMileage,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Пробег (км)'),
-                ),
-                const SizedBox(height: 12),
-
-                _drop(label: 'Кузов', value: _carBody, items: _bodyTypes, onChanged: (v) => setState(() => _carBody = v ?? _carBody)),
-                const SizedBox(height: 12),
-
-                _drop(label: 'Топливо', value: _carFuel, items: _fuelTypes, onChanged: (v) => setState(() => _carFuel = v ?? _carFuel)),
-                const SizedBox(height: 12),
-
-                TextField(
-                  controller: _carEngine,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(labelText: 'Объём двигателя (л), например: 2.5'),
-                ),
-                const SizedBox(height: 12),
-
-                TextField(
-                  controller: _carPower,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: 'Мощность (л.с.), например: 181'),
-                ),
-                const SizedBox(height: 12),
-
-                _drop(label: 'Коробка передач', value: _carTransmission, items: _transmissions, onChanged: (v) => setState(() => _carTransmission = v ?? _carTransmission)),
-                const SizedBox(height: 12),
-
-                _drop(label: 'Привод', value: _carDrive, items: _drives, onChanged: (v) => setState(() => _carDrive = v ?? _carDrive)),
-                const SizedBox(height: 12),
-
-                _drop(label: 'Состояние', value: _carCondition, items: _conditions, onChanged: (v) => setState(() => _carCondition = v ?? _carCondition)),
-                const SizedBox(height: 12),
-
-                _drop(label: 'Цвет', value: _carColor, items: _colors, onChanged: (v) => setState(() => _carColor = v ?? _carColor)),
-                const SizedBox(height: 12),
-              ],
-
-              const SizedBox(height: 12),
-
-              TextField(
-                controller: _phone,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Телефон (для звонка)'),
-              ),
-
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Скрывать номер в объявлении'),
-                subtitle: const Text('Номер не будет виден, но кнопка “Позвонить” останется'),
-                value: _phoneHidden,
-                onChanged: (v) => setState(() => _phoneHidden = v),
-              ),
-
-              const SizedBox(height: 12),
-
-              TextField(
-                controller: _desc,
-                maxLines: 5,
-                decoration: const InputDecoration(labelText: 'Описание'),
-              ),
-
-              const SizedBox(height: 16),
-
-              Text('Доставка', style: TextStyle(fontWeight: FontWeight.w700, color: Theme.of(context).colorScheme.onSurface)),
-              const SizedBox(height: 8),
-
-              InkWell(
-                onTap: _openDeliveryPicker,
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.local_shipping_outlined, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _deliverySummary(),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: Theme.of(context).colorScheme.outline),
-                        ),
-                      ),
-                      const Icon(Icons.chevron_right),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 90),
-            ],
-          ),
-        );
-      },
+          const SizedBox(height: 90),
+        ],
+      ),
     );
   }
 }

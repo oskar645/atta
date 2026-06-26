@@ -71,7 +71,8 @@ class _AdminAdsTabState extends State<AdminAdsTab> {
               const Card(
                 child: Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text('Рекламы пока нет. Можно добавить баннер вручную.'),
+                  child:
+                      Text('Рекламы пока нет. Можно добавить баннер вручную.'),
                 ),
               ),
             for (final ad in items) ...[
@@ -140,7 +141,8 @@ class _AdCard extends StatelessWidget {
                   ? () async {
                       final uri = Uri.tryParse(ad.targetUrl);
                       if (uri == null) return;
-                      await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      await launchUrl(uri,
+                          mode: LaunchMode.externalApplication);
                     }
                   : null,
             ),
@@ -174,7 +176,8 @@ class _AdCard extends StatelessWidget {
                 _MetaPill(label: 'Показы ${_metricValue(ad.impressionCount)}'),
                 _MetaPill(label: 'Клики ${_metricValue(ad.clickCount)}'),
                 _MetaPill(
-                  label: 'CTR ${_metricValue(ad.ctrPercent, fractionDigits: 1)}%',
+                  label:
+                      'CTR ${_metricValue(ad.ctrPercent, fractionDigits: 1)}%',
                 ),
               ],
             ),
@@ -357,7 +360,8 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
 
     if (targetUrl.isNotEmpty) {
       final targetUri = Uri.tryParse(targetUrl);
-      if (targetUri == null || !(targetUri.hasScheme && targetUri.hasAuthority)) {
+      if (targetUri == null ||
+          !(targetUri.hasScheme && targetUri.hasAuthority)) {
         showAppSnack(context, 'Ссылка перехода некорректна', isError: true);
         return;
       }
@@ -386,7 +390,8 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
       }
       if (!mounted) return;
       Navigator.pop(context, true);
-      showAppSnack(context, widget.existing == null ? 'Реклама добавлена' : 'Реклама обновлена');
+      showAppSnack(context,
+          widget.existing == null ? 'Реклама добавлена' : 'Реклама обновлена');
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Ошибка: $e', isError: true);
@@ -413,6 +418,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
       final ads = context.read<FeedAdsService>();
       setState(() => _uploadingImage = true);
       final url = await ads.uploadAdImage(
+        feedAdId: widget.existing?.id,
         bytes: edited.bytes,
         contentType: edited.contentType,
       );
@@ -469,7 +475,8 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
     );
 
     return AlertDialog(
-      title: Text(widget.existing == null ? 'Новая реклама' : 'Изменить рекламу'),
+      title:
+          Text(widget.existing == null ? 'Новая реклама' : 'Изменить рекламу'),
       content: SizedBox(
         width: 480,
         child: SingleChildScrollView(
@@ -500,8 +507,9 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
                 runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
-                    onPressed:
-                        (_saving || _uploadingImage) ? null : _showImageSourcePicker,
+                    onPressed: (_saving || _uploadingImage)
+                        ? null
+                        : _showImageSourcePicker,
                     icon: _uploadingImage
                         ? const SizedBox(
                             width: 16,
@@ -546,7 +554,8 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
               DropdownButtonFormField<int>(
                 initialValue: _durationDays,
                 items: _durations
-                    .map((d) => DropdownMenuItem<int>(value: d, child: Text('$d дней')))
+                    .map((d) =>
+                        DropdownMenuItem<int>(value: d, child: Text('$d дней')))
                     .toList(),
                 onChanged: (value) {
                   if (value == null) return;
@@ -570,7 +579,9 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: (_saving || _uploadingImage) ? null : () => Navigator.pop(context),
+          onPressed: (_saving || _uploadingImage)
+              ? null
+              : () => Navigator.pop(context),
           child: const Text('Отмена'),
         ),
         FilledButton(
@@ -650,7 +661,8 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
       image.height * coverScale,
     );
 
-    final viewportChanged = _viewportSize != viewport || _baseImageSize != fittedSize;
+    final viewportChanged =
+        _viewportSize != viewport || _baseImageSize != fittedSize;
     _viewportSize = viewport;
     _baseImageSize = fittedSize;
 
@@ -818,7 +830,8 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
                                       transformationController: _controller,
                                       minScale: 1,
                                       maxScale: _maxScale,
-                                      boundaryMargin: const EdgeInsets.all(100000),
+                                      boundaryMargin:
+                                          const EdgeInsets.all(100000),
                                       constrained: false,
                                       onInteractionUpdate: (_) {
                                         _controller.value = _clampMatrix(
@@ -838,7 +851,8 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
                                       child: DecoratedBox(
                                         decoration: BoxDecoration(
                                           border: Border.all(
-                                            color: Colors.white.withValues(alpha: 0.85),
+                                            color: Colors.white
+                                                .withValues(alpha: 0.85),
                                             width: 2,
                                           ),
                                         ),
@@ -857,7 +871,8 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     child: Text(
                       'Раздвинь пальцами, чтобы увеличить фото, и подвигай его так, как оно должно выглядеть в рекламной карточке.',
-                      style: TextStyle(color: Theme.of(context).colorScheme.outline),
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.outline),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -876,7 +891,8 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.check),
-          label: Text(_exporting ? 'Готовим картинку...' : 'Использовать для рекламы'),
+          label: Text(
+              _exporting ? 'Готовим картинку...' : 'Использовать для рекламы'),
         ),
       ),
     );

@@ -1,44 +1,132 @@
+import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
-
 import 'package:atta/src/models/feed_ad.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/services/api/feed_ads_api.dart';
+import 'package:atta/src/services/api/media_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:flutter/foundation.dart';
 
 class FeedAdsService {
-  final SupabaseClient _db = Supabase.instance.client;
-  final Uuid _uuid = const Uuid();
+  FeedAdsService()
+      : _api = FeedAdsApi(_apiClient),
+        _mediaApi = MediaApi(_apiClient);
 
-  static const String _bucket = 'feed-ads';
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  final FeedAdsApi _api;
+  final MediaApi _mediaApi;
+  bool _timewebFeedAdsUnavailable = false;
+  FeedAd? _cachedActiveAd;
+  DateTime? _cachedActiveAdAt;
+  Future<FeedAd?>? _activeAdInFlight;
+  final StreamController<FeedAd?> _activeAdController =
+      StreamController<FeedAd?>.broadcast();
+
+  static const Duration _activeAdTtl = Duration(minutes: 2);
+
+  void _debugSource(String message) {
+    if (!kDebugMode) return;
+    debugPrint(message);
+  }
+
+  void _markTimewebUnavailable(String message) {
+    if (_timewebFeedAdsUnavailable) return;
+    _timewebFeedAdsUnavailable = true;
+    _debugSource(message);
+  }
+
+  List<FeedAd> _extractItems(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <FeedAd>[];
+    return raw
+        .whereType<Map>()
+        .map((row) => FeedAd.fromMap(Map<String, dynamic>.from(row)))
+        .toList();
+  }
 
   Stream<List<FeedAd>> streamAllAds({String placement = 'home'}) {
-    return _db
-        .from('feed_ads')
-        .stream(primaryKey: ['id'])
-        .eq('placement', placement)
-        .order('created_at', ascending: false)
-        .map(
-          (rows) => rows
-              .map((row) => FeedAd.fromMap(row))
-              .toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
-        );
+    _debugSource('FeedAds source: Timeweb');
+    if (_timewebFeedAdsUnavailable) {
+      return Stream<List<FeedAd>>.value(const <FeedAd>[]);
+    }
+    return Stream<int>.periodic(
+      const Duration(seconds: 8),
+      (tick) => tick,
+    ).asyncMap((_) async {
+      try {
+        final response = await _api.adminList(placement: placement);
+        final items = _extractItems(response);
+        items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return items;
+      } on ApiException catch (error) {
+        if (error.isNotFound) {
+          _markTimewebUnavailable(
+            'FeedAds source: Timeweb unavailable (404). Falling back to empty state until backend is updated.',
+          );
+          return const <FeedAd>[];
+        }
+        rethrow;
+      }
+    }).startWith(const <FeedAd>[]);
   }
 
   Stream<FeedAd?> streamActiveAd({String placement = 'home'}) {
-    return streamAllAds(placement: placement).map((ads) {
-      final visible = ads.where((ad) => ad.isVisibleNow).toList()
-        ..sort((a, b) {
-          final aTime = a.activatedAt ?? a.createdAt;
-          final bTime = b.activatedAt ?? b.createdAt;
-          return bTime.compareTo(aTime);
-        });
-      return visible.isEmpty ? null : visible.first;
-    });
+    _debugSource('FeedAds source: Timeweb');
+    if (_timewebFeedAdsUnavailable) {
+      return Stream<FeedAd?>.value(null);
+    }
+    final cached = _cachedActiveAd;
+    final cachedAt = _cachedActiveAdAt;
+    if (cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _activeAdTtl) {
+      return _activeAdController.stream.startWith(cached);
+    }
+    return Stream<FeedAd?>.fromFuture(refreshActiveAd(placement: placement))
+        .asyncExpand((ad) => _activeAdController.stream.startWith(ad));
+  }
+
+  Future<FeedAd?> refreshActiveAd({String placement = 'home'}) async {
+    final existing = _activeAdInFlight;
+    if (existing != null) return existing;
+    final future = () async {
+      try {
+        final response = await _api.active(placement: placement);
+        final raw = response['ad'];
+        final ad =
+            raw is! Map ? null : FeedAd.fromMap(Map<String, dynamic>.from(raw));
+        _cachedActiveAd = ad;
+        _cachedActiveAdAt = DateTime.now();
+        _activeAdController.add(ad);
+        return ad;
+      } on ApiException catch (error) {
+        if (error.isNotFound) {
+          _markTimewebUnavailable(
+            'FeedAds source: Timeweb unavailable (404). Falling back to no active ad until backend is updated.',
+          );
+          _cachedActiveAd = null;
+          _cachedActiveAdAt = DateTime.now();
+          _activeAdController.add(null);
+          return null;
+        }
+        rethrow;
+      }
+    }();
+    _activeAdInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_activeAdInFlight, future)) {
+        _activeAdInFlight = null;
+      }
+    }
   }
 
   Future<void> createAd(FeedAd ad) async {
-    await _db.from('feed_ads').insert(ad.toMap());
+    _debugSource('FeedAds source: Timeweb');
+    await _api.create(ad.toMap());
   }
 
   Future<void> updateAd({
@@ -48,47 +136,28 @@ class FeedAdsService {
     required String targetUrl,
     required int durationDays,
   }) async {
-    await _db.from('feed_ads').update({
+    _debugSource('FeedAds source: Timeweb');
+    await _api.update(adId, {
       'title': title.trim(),
       'image_url': imageUrl.trim(),
       'target_url': targetUrl.trim(),
       'duration_days': durationDays,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', adId);
+    });
   }
 
   Future<void> activateAd(String adId, {String placement = 'home'}) async {
-    final now = DateTime.now().toUtc();
-    final row = await _db.from('feed_ads').select('*').eq('id', adId).maybeSingle();
-    if (row == null) {
-      throw Exception('Реклама не найдена');
-    }
-
-    final ad = FeedAd.fromMap(row);
-    final expiresAt = now.add(Duration(days: ad.durationDays));
-
-    await _db.from('feed_ads').update({
-      'is_active': false,
-      'updated_at': now.toIso8601String(),
-    }).eq('placement', placement);
-
-    await _db.from('feed_ads').update({
-      'is_active': true,
-      'activated_at': now.toIso8601String(),
-      'expires_at': expiresAt.toIso8601String(),
-      'updated_at': now.toIso8601String(),
-    }).eq('id', adId);
+    _debugSource('FeedAds source: Timeweb');
+    await _api.activate(adId);
   }
 
   Future<void> deactivateAd(String adId) async {
-    await _db.from('feed_ads').update({
-      'is_active': false,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', adId);
+    _debugSource('FeedAds source: Timeweb');
+    await _api.deactivate(adId);
   }
 
   Future<void> deleteAd(String adId) async {
-    await _db.from('feed_ads').delete().eq('id', adId);
+    _debugSource('FeedAds source: Timeweb');
+    await _api.remove(adId);
   }
 
   Future<void> recordImpression(String adId) async {
@@ -103,33 +172,49 @@ class FeedAdsService {
     required String adId,
     required String event,
   }) async {
-    await _db.rpc('track_feed_ad_event', params: {
-      'p_ad_id': adId,
-      'p_event': event,
-    });
+    _debugSource('FeedAds source: Timeweb');
+    if (event == 'click') {
+      await _api.recordClick(adId);
+    } else {
+      await _api.recordImpression(adId);
+    }
   }
 
   Future<String> uploadAdImage({
+    String? feedAdId,
     required Uint8List bytes,
     String contentType = 'image/jpeg',
   }) async {
+    final id = (feedAdId ?? '').trim();
+    if (id.isEmpty) {
+      throw UnsupportedError(
+        'Сначала создайте баннер, затем загрузите изображение для Timeweb media.',
+      );
+    }
     final ext = switch (contentType) {
       'image/png' => 'png',
       'image/webp' => 'webp',
+      'image/heic' => 'heic',
+      'image/heif' => 'heif',
       _ => 'jpg',
     };
-    final path = 'home/${DateTime.now().millisecondsSinceEpoch}-${_uuid.v4()}.$ext';
+    final response = await _mediaApi.uploadFeedAdImage(
+      feedAdId: id,
+      bytes: bytes,
+      fileName: 'feed-ad.$ext',
+      contentType: contentType,
+    );
+    final ad = response['ad'];
+    if (ad is Map) {
+      return (ad['image_url'] ?? '').toString();
+    }
+    return '';
+  }
+}
 
-    await _db.storage.from(_bucket).uploadBinary(
-          path,
-          bytes,
-          fileOptions: FileOptions(
-            cacheControl: '3600',
-            upsert: false,
-            contentType: contentType,
-          ),
-        );
-
-    return _db.storage.from(_bucket).getPublicUrl(path);
+extension<T> on Stream<T> {
+  Stream<T> startWith(T initial) async* {
+    yield initial;
+    yield* this;
   }
 }

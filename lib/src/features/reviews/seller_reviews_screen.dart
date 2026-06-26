@@ -1,8 +1,21 @@
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+String reviewAuthorAvatarUrl(Map<String, dynamic> review) {
+  final preview = review['author_preview'];
+  if (preview is Map) {
+    final avatar =
+        (preview['avatar_url'] ?? preview['photo_url'] ?? '').toString().trim();
+    if (avatar.isNotEmpty) return avatar;
+  }
+  return (review['reviewer_avatar_url'] ?? review['avatar_url'] ?? '')
+      .toString()
+      .trim();
+}
 
 class SellerReviewsScreen extends StatefulWidget {
   final String sellerId;
@@ -72,7 +85,7 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
       appBar: AppBar(title: Text('Отзывы: ${widget.sellerName}')),
       body: StreamBuilder<bool>(
         stream: canCheckAdmin
-            ? admin.streamIsAdmin(me!.uid)
+            ? admin.streamIsAdmin(me.uid)
             : Stream<bool>.value(false),
         initialData: false,
         builder: (context, adminSnap) {
@@ -218,6 +231,7 @@ class _ReviewTile extends StatelessWidget {
     final reviewerName = reviewerNameRaw.isNotEmpty
         ? reviewerNameRaw
         : (reviewerId.isNotEmpty ? _shortUid(reviewerId) : 'Пользователь');
+    final reviewerAvatar = reviewAuthorAvatarUrl(review);
 
     final createdAt = _dateText(review['created_at']);
     final replyText = (review['reply_text'] ?? '').toString().trim();
@@ -231,6 +245,13 @@ class _ReviewTile extends StatelessWidget {
           children: [
             Row(
               children: [
+                RemoteAvatar(
+                  imageUrl: reviewerAvatar,
+                  fallbackText: reviewerName,
+                  radius: 18,
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     reviewerName,
@@ -399,7 +420,14 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
                       if (me == null) return;
 
                       final text = _ctrl.text.trim();
-                      if (text.isEmpty) return;
+                      if (text.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Текст отзыва не должен быть пустым'),
+                          ),
+                        );
+                        return;
+                      }
 
                       setState(() => _saving = true);
                       try {

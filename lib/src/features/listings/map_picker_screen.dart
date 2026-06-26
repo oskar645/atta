@@ -29,7 +29,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
       if (perm == LocationPermission.denied) {
         perm = await Geolocator.requestPermission();
       }
-      if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Нет доступа к геолокации')),
@@ -81,7 +82,8 @@ class _MapPickerScreenState extends State<MapPickerScreen> {
                 point: _picked,
                 width: 44,
                 height: 44,
-                child: const Icon(Icons.location_pin, size: 44, color: Colors.red),
+                child:
+                    const Icon(Icons.location_pin, size: 44, color: Colors.red),
               ),
             ],
           ),

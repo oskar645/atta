@@ -1,144 +1,706 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
+import 'dart:io';
+
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/services/api/support_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/network_resilience.dart';
+import 'package:atta/src/utils/media_url.dart';
+import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 class SupportService {
-  final SupabaseClient _db = Supabase.instance.client;
+  SupportService({
+    SupportApi? api,
+    Duration messagePollInterval = const Duration(seconds: 4),
+    Duration adminPollInterval = const Duration(seconds: 6),
+  })  : _api = api ?? SupportApi(_apiClient),
+        _messagePollInterval = messagePollInterval;
+
   final Uuid _uuid = const Uuid();
+  final SupportApi _api;
+  final Duration _messagePollInterval;
+  final Map<String, List<Map<String, dynamic>>> _messageCache =
+      <String, List<Map<String, dynamic>>>{};
+  final Map<String, StreamController<List<Map<String, dynamic>>>>
+      _messageControllers =
+      <String, StreamController<List<Map<String, dynamic>>>>{};
+  final Map<String, Timer> _messagePollers = <String, Timer>{};
+  final Map<String, bool> _ticketUsesAdminEndpoint = <String, bool>{};
+  final Set<String> _missingTicketIds = <String>{};
+  List<Map<String, dynamic>> _adminTicketsCache =
+      const <Map<String, dynamic>>[];
+  StreamController<List<Map<String, dynamic>>>? _adminTicketsController;
+  Timer? _adminTicketsPoller;
+  bool _adminSessionActive = false;
+  Future<List<Map<String, dynamic>>>? _adminTicketsInFlight;
+  DateTime? _lastAdminTicketsRefreshAt;
 
-  static const String _autoReplyText =
-      'Здравствуйте! Мы получили ваше обращение и уже передали его модераторам. '
-      'Обычно ответ приходит в ближайшее время. Если понадобятся уточнения, '
-      'мы напишем вам здесь.';
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  static const Duration _adminTicketsCacheTtl = Duration(seconds: 20);
 
-  /// Получить или создать тикет пользователя
-  Future<String?> getOrCreateMyTicketId({required String uid}) async {
-    final row = await _db
-        .from('support_tickets')
-        .select('id')
-        .eq('id', uid)
-        .maybeSingle();
-
-    return row == null ? null : uid;
+  void activateAdminSession({required bool isAdmin}) {
+    _adminSessionActive = isAdmin;
+    if (!isAdmin) {
+      _resetAdminState();
+    }
   }
 
-  /// Создание тикета + первое сообщение
+  void resetSession() {
+    for (final poller in _messagePollers.values) {
+      poller.cancel();
+    }
+    _messagePollers.clear();
+    _ticketUsesAdminEndpoint.clear();
+    _messageCache.clear();
+    _missingTicketIds.clear();
+    _adminTicketsPoller?.cancel();
+    _adminTicketsPoller = null;
+    _resetAdminState();
+    _adminSessionActive = false;
+  }
+
+  List<Map<String, dynamic>> peekMessages(String ticketId) {
+    return List<Map<String, dynamic>>.from(
+      _messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+    );
+  }
+
+  List<Map<String, dynamic>> _extractItems(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <Map<String, dynamic>>[];
+    return raw.whereType<Map>().map(_normalizeMessageMap).toList();
+  }
+
+  void _debugSource(String message) {
+    if (!kDebugMode ||
+        message == 'Support source: Timeweb' ||
+        message ==
+            'Support source: Timeweb admin unauthorized, resetting state') {
+      return;
+    }
+    debugPrint(message);
+  }
+
+  Future<String?> getOrCreateMyTicketId({required String uid}) async {
+    _debugSource('Support source: Timeweb');
+    final response = await _api.listMyTickets();
+    final items = _extractItems(response);
+    if (items.isEmpty) return null;
+    return (items.first['id'] ?? '').toString();
+  }
+
   Future<String> createTicketAndSendFirstMessage({
     required String uid,
     required String name,
     required String text,
+    File? imageFile,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-
-    /// создаём или обновляем тикет
-    await _db.from('support_tickets').upsert({
-      'id': uid,
-      'uid': uid,
-      'user_id': uid,
-      'name': name,
-
-      /// ✅ ВАЖНО — поле subject обязательно в базе
-      'subject': 'Обращение в поддержку',
-
-      'status': 'open',
-      'created_at': now,
-      'updated_at': now,
-      'last_message': text,
-      'unread_for_admin': true,
-    }, onConflict: 'id');
-
-    /// первое сообщение
-    await _db.from('support_messages').insert({
-      'id': _uuid.v4(),
-      'ticket_id': uid,
-      'sender': 'user',
-      'text': text,
-      'created_at': now,
-    });
-
-    await _db.from('support_messages').insert({
-      'id': _uuid.v4(),
-      'ticket_id': uid,
-      'sender': 'admin',
-      'text': _autoReplyText,
-      'created_at': now,
-    });
-
-    return uid;
+    _debugSource('Support source: Timeweb');
+    final optimisticImageUrl =
+        imageFile == null ? '' : 'file://${imageFile.path}';
+    final uploadedImageUrl = await _uploadImageIfNeeded(imageFile);
+    final response = await _api.createTicket(
+      name: name,
+      text: text,
+      imageUrl: uploadedImageUrl.isEmpty ? null : uploadedImageUrl,
+    );
+    final rawTicket = response['ticket'];
+    final ticketId =
+        (rawTicket is Map ? rawTicket['id'] : null)?.toString() ?? '';
+    if (ticketId.isNotEmpty) {
+      final items = _extractItems(response);
+      final seeded = items.isNotEmpty
+          ? items
+          : <Map<String, dynamic>>[
+              _buildOptimisticMessage(
+                ticketId: ticketId,
+                text: text,
+                sender: 'user',
+                imageUrl: optimisticImageUrl,
+              ),
+            ];
+      _publishMessages(ticketId, seeded);
+    }
+    return ticketId;
   }
 
-  /// Отправка сообщения пользователем
   Future<void> sendMessage({
     required String ticketId,
     required String text,
+    File? imageFile,
+    String? existingMessageId,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-
-    await _db.from('support_messages').insert({
-      'id': _uuid.v4(),
-      'ticket_id': ticketId,
-      'sender': 'user',
-      'text': text,
-      'created_at': now,
-    });
-
-    await _db.from('support_tickets').update({
-      'updated_at': now,
-      'last_message': text,
-      'unread_for_admin': true,
-    }).eq('id', ticketId);
+    _debugSource('Support source: Timeweb');
+    final localImageUrl = imageFile == null ? '' : 'file://${imageFile.path}';
+    final localMessageId = (existingMessageId ?? '').trim();
+    final optimistic = _buildOptimisticMessage(
+      ticketId: ticketId,
+      text: text,
+      sender: 'user',
+      imageUrl: localImageUrl,
+      localImagePath: imageFile?.path,
+      messageId: localMessageId.isEmpty ? null : localMessageId,
+    );
+    final currentMessages =
+        _messageCache[ticketId] ?? const <Map<String, dynamic>>[];
+    _publishMessages(
+      ticketId,
+      localMessageId.isEmpty
+          ? _mergeMessages(
+              currentMessages,
+              <Map<String, dynamic>>[optimistic],
+            )
+          : currentMessages
+              .map((item) => (item['id'] ?? '').toString() == localMessageId
+                  ? optimistic
+                  : item)
+              .toList(),
+    );
+    try {
+      final uploadedImageUrl = await _uploadImageIfNeeded(
+        imageFile,
+        ticketId: ticketId,
+      );
+      final response = await _api.sendMessage(
+        ticketId: ticketId,
+        text: text,
+        imageUrl: uploadedImageUrl.isEmpty ? null : uploadedImageUrl,
+      );
+      final item = response['item'];
+      if (item is Map) {
+        _publishMessages(
+          ticketId,
+          _mergeMessages(
+            _messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+            <Map<String, dynamic>>[
+              _normalizeMessageMap(item),
+            ],
+            removedIds: <String>{optimistic['id'].toString(), localMessageId},
+          ),
+        );
+      }
+    } catch (error) {
+      _markMessageFailed(
+        ticketId,
+        optimistic['id'].toString(),
+        _messageErrorText(error),
+      );
+      rethrow;
+    }
   }
 
-  /// Стрим сообщений тикета
   Stream<List<Map<String, dynamic>>> streamMessages(String ticketId) {
-    final stream = _db
-        .from('support_messages')
-        .stream(primaryKey: ['id'])
-        .eq('ticket_id', ticketId)
-        .order('created_at', ascending: false);
-
-    return stream.map(
-      (rows) => rows.map((r) => Map<String, dynamic>.from(r)).toList(),
-    );
+    return _streamMessages(ticketId, useAdminEndpoint: false);
   }
 
-  /// Стрим тикетов для админа
+  Stream<List<Map<String, dynamic>>> streamAdminMessages(String ticketId) {
+    return _streamMessages(ticketId, useAdminEndpoint: true);
+  }
+
+  Stream<List<Map<String, dynamic>>> _streamMessages(
+    String ticketId, {
+    required bool useAdminEndpoint,
+  }) {
+    _debugSource('Support source: Timeweb');
+    final normalizedTicketId = ticketId.trim();
+    if (normalizedTicketId.isEmpty ||
+        _missingTicketIds.contains(normalizedTicketId)) {
+      return Stream<List<Map<String, dynamic>>>.value(
+        List<Map<String, dynamic>>.from(
+          _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+        ),
+      );
+    }
+    _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
+    final controller = _messageControllerFor(ticketId);
+    final cached = _messageCache[ticketId];
+    _ensureMessagePolling(ticketId);
+    if (cached != null) {
+      return controller.stream
+          .startWith(List<Map<String, dynamic>>.from(cached));
+    }
+    return Stream<List<Map<String, dynamic>>>.fromFuture(
+      useAdminEndpoint
+          ? refreshAdminMessages(ticketId)
+          : refreshMessages(ticketId),
+    ).asyncExpand((items) {
+      return controller.stream.startWith(items);
+    });
+  }
+
   Stream<List<Map<String, dynamic>>> streamTicketsForAdmin() {
-    final stream = _db
-        .from('support_tickets')
-        .stream(primaryKey: ['id'])
-        .order('updated_at', ascending: false);
-
-    return stream.map(
-      (rows) => rows.map((r) => Map<String, dynamic>.from(r)).toList(),
-    );
+    if (!_adminSessionActive) {
+      _resetAdminState();
+      return Stream<List<Map<String, dynamic>>>.value(
+        const <Map<String, dynamic>>[],
+      );
+    }
+    final controller = _adminTicketsControllerFor();
+    if (_adminTicketsCache.isEmpty || _isAdminTicketsRefreshStale()) {
+      unawaited(refreshAdminTickets(force: _adminTicketsCache.isEmpty));
+    }
+    return Stream<List<Map<String, dynamic>>>.multi((streamController) {
+      streamController.add(List<Map<String, dynamic>>.from(_adminTicketsCache));
+      final sub = controller.stream.listen(
+        streamController.add,
+        onError: streamController.addError,
+      );
+      streamController.onCancel = () async {
+        await sub.cancel();
+      };
+    });
   }
 
-  /// Ответ администратора
   Future<void> adminReply({
     required String ticketId,
     required String text,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-
-    await _db.from('support_messages').insert({
-      'id': _uuid.v4(),
-      'ticket_id': ticketId,
-      'sender': 'admin',
-      'text': text,
-      'created_at': now,
-    });
-
-    await _db.from('support_tickets').update({
-      'updated_at': now,
-      'last_message': text,
-      'unread_for_admin': false,
-    }).eq('id', ticketId);
+    _debugSource('Support source: Timeweb');
+    final optimistic = _buildOptimisticMessage(
+      ticketId: ticketId,
+      text: text,
+      sender: 'admin',
+    );
+    _publishMessages(
+      ticketId,
+      _mergeMessages(_messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+          <Map<String, dynamic>>[optimistic]),
+    );
+    try {
+      final response =
+          await _api.adminSendMessage(ticketId: ticketId, text: text);
+      final item = response['item'];
+      if (item is Map) {
+        _publishMessages(
+          ticketId,
+          _mergeMessages(
+            _messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+            <Map<String, dynamic>>[_normalizeMessageMap(item)],
+            removedIds: <String>{optimistic['id'].toString()},
+          ),
+        );
+      }
+    } catch (error) {
+      _markMessageFailed(
+        ticketId,
+        optimistic['id'].toString(),
+        _messageErrorText(error),
+      );
+      rethrow;
+    }
   }
 
-  /// Админ прочитал
+  Future<void> retryMessage({
+    required String ticketId,
+    required String messageId,
+  }) async {
+    final current = _messageCache[ticketId] ?? const <Map<String, dynamic>>[];
+    final target = current.cast<Map<String, dynamic>>().firstWhere(
+          (item) => (item['id'] ?? '').toString() == messageId,
+          orElse: () => <String, dynamic>{},
+        );
+    final text = (target['text'] ?? '').toString().trim();
+    final localImagePath = (target['local_image_path'] ?? '').toString().trim();
+    final hasImage = (target['image_url'] ?? '').toString().trim().isNotEmpty ||
+        localImagePath.isNotEmpty;
+    if (text.isEmpty && !hasImage) return;
+    final sender = (target['sender'] ?? 'user').toString();
+    _publishMessages(
+      ticketId,
+      current
+          .map((item) => (item['id'] ?? '').toString() == messageId
+              ? <String, dynamic>{
+                  ...item,
+                  'local_status': 'pending',
+                  'error_text': null,
+                }
+              : item)
+          .toList(),
+    );
+    if (sender == 'admin') {
+      await adminReply(ticketId: ticketId, text: text);
+      return;
+    }
+    await sendMessage(
+      ticketId: ticketId,
+      text: text,
+      imageFile: localImagePath.isEmpty ? null : File(localImagePath),
+      existingMessageId: messageId,
+    );
+  }
+
   Future<void> markReadByAdmin(String ticketId) async {
-    await _db.from('support_tickets').update({
-      'unread_for_admin': false,
-    }).eq('id', ticketId);
+    _debugSource('Support source: Timeweb');
+  }
+
+  Future<List<Map<String, dynamic>>> refreshMessages(String ticketId) async {
+    return _refreshMessages(ticketId, useAdminEndpoint: false);
+  }
+
+  Future<List<Map<String, dynamic>>> refreshAdminMessages(
+    String ticketId,
+  ) async {
+    return _refreshMessages(ticketId, useAdminEndpoint: true);
+  }
+
+  Future<List<Map<String, dynamic>>> _refreshMessages(
+    String ticketId, {
+    required bool useAdminEndpoint,
+  }) async {
+    final normalizedTicketId = ticketId.trim();
+    if (normalizedTicketId.isEmpty) return const <Map<String, dynamic>>[];
+    if (_missingTicketIds.contains(normalizedTicketId)) {
+      return List<Map<String, dynamic>>.from(
+        _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+      );
+    }
+    try {
+      final response = useAdminEndpoint
+          ? await _api.adminTicket(normalizedTicketId)
+          : await _api.getTicket(normalizedTicketId);
+      final items = _extractItems(response);
+      _missingTicketIds.remove(normalizedTicketId);
+      _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
+      _publishMessages(
+        normalizedTicketId,
+        _mergeMessages(
+          _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+          items,
+        ),
+      );
+      return List<Map<String, dynamic>>.from(
+        _messageCache[normalizedTicketId] ?? items,
+      );
+    } catch (error) {
+      if (error is ApiException && error.isNotFound) {
+        _debugSource(
+          'Support source: ticket $normalizedTicketId not found, stopping polling',
+        );
+        _missingTicketIds.add(normalizedTicketId);
+        _stopMessagePolling(normalizedTicketId);
+        return List<Map<String, dynamic>>.from(
+          _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+        );
+      }
+      rethrow;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> refreshAdminTickets({
+    bool force = false,
+  }) async {
+    if (!await _canUseAdminEndpoints()) {
+      _resetAdminState();
+      return const <Map<String, dynamic>>[];
+    }
+    if (!force &&
+        !_isAdminTicketsRefreshStale() &&
+        _adminTicketsCache.isNotEmpty) {
+      return List<Map<String, dynamic>>.from(_adminTicketsCache);
+    }
+    final existing = _adminTicketsInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = () async {
+      final response = await _api.adminList();
+      final items = _extractItems(response);
+      _adminTicketsCache = List<Map<String, dynamic>>.from(items);
+      _lastAdminTicketsRefreshAt = DateTime.now();
+      _adminTicketsControllerFor().add(List<Map<String, dynamic>>.from(items));
+      return items;
+    }();
+    _adminTicketsInFlight = future;
+    try {
+      return await future;
+    } catch (error) {
+      if (error is ApiException && error.isUnauthorized) {
+        _debugSource(
+            'Support source: Timeweb admin unauthorized, resetting state');
+        _resetAdminState();
+        return const <Map<String, dynamic>>[];
+      }
+      rethrow;
+    } finally {
+      if (identical(_adminTicketsInFlight, future)) {
+        _adminTicketsInFlight = null;
+      }
+    }
+  }
+
+  StreamController<List<Map<String, dynamic>>> _messageControllerFor(
+    String ticketId,
+  ) {
+    return _messageControllers.putIfAbsent(
+      ticketId,
+      () => StreamController<List<Map<String, dynamic>>>.broadcast(),
+    );
+  }
+
+  StreamController<List<Map<String, dynamic>>> _adminTicketsControllerFor() {
+    return _adminTicketsController ??=
+        StreamController<List<Map<String, dynamic>>>.broadcast();
+  }
+
+  void _ensureMessagePolling(String ticketId) {
+    final normalizedTicketId = ticketId.trim();
+    if (normalizedTicketId.isEmpty ||
+        _missingTicketIds.contains(normalizedTicketId) ||
+        _messagePollers.containsKey(normalizedTicketId)) {
+      return;
+    }
+    _messagePollers[normalizedTicketId] = Timer.periodic(
+      _messagePollInterval,
+      (_) async {
+        try {
+          await _refreshMessages(
+            normalizedTicketId,
+            useAdminEndpoint:
+                _ticketUsesAdminEndpoint[normalizedTicketId] == true,
+          );
+        } catch (_) {}
+      },
+    );
+  }
+
+  void _stopMessagePolling(String ticketId) {
+    _messagePollers.remove(ticketId)?.cancel();
+  }
+
+  Future<bool> _canUseAdminEndpoints() async {
+    if (!_adminSessionActive) return false;
+    final accessToken = await _tokenStorage.readAccessToken();
+    if (accessToken == null || accessToken.trim().isEmpty) {
+      return false;
+    }
+    final currentUser = await _tokenStorage.readCurrentUser();
+    return currentUser?.isAdmin == true;
+  }
+
+  void _resetAdminState() {
+    _adminTicketsPoller?.cancel();
+    _adminTicketsPoller = null;
+    _adminTicketsCache = const <Map<String, dynamic>>[];
+    _adminTicketsInFlight = null;
+    _lastAdminTicketsRefreshAt = null;
+    _adminTicketsController?.add(const <Map<String, dynamic>>[]);
+  }
+
+  bool _isAdminTicketsRefreshStale() {
+    final lastRefreshAt = _lastAdminTicketsRefreshAt;
+    if (lastRefreshAt == null) return true;
+    return DateTime.now().difference(lastRefreshAt) >= _adminTicketsCacheTtl;
+  }
+
+  void _publishMessages(String ticketId, List<Map<String, dynamic>> items) {
+    final normalized = items
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    _messageCache[ticketId] = normalized;
+    _messageControllerFor(ticketId)
+        .add(List<Map<String, dynamic>>.from(normalized));
+  }
+
+  void _markMessageFailed(
+    String ticketId,
+    String messageId, [
+    String? errorText,
+  ]) {
+    final current = _messageCache[ticketId] ?? const <Map<String, dynamic>>[];
+    _publishMessages(
+      ticketId,
+      current
+          .map((item) => (item['id'] ?? '').toString() == messageId
+              ? <String, dynamic>{
+                  ...item,
+                  'local_status': 'failed',
+                  'error_text': (errorText ?? '').trim().isNotEmpty
+                      ? errorText!.trim()
+                      : kNetworkVpnHintMessage,
+                }
+              : item)
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> _buildOptimisticMessage({
+    required String ticketId,
+    required String text,
+    required String sender,
+    String imageUrl = '',
+    String? localImagePath,
+    String? messageId,
+  }) {
+    return <String, dynamic>{
+      'id': (messageId ?? '').trim().isNotEmpty
+          ? messageId!.trim()
+          : 'local-${_uuid.v4()}',
+      'ticket_id': ticketId,
+      'sender': sender,
+      'text': text,
+      'image_url': imageUrl,
+      if ((localImagePath ?? '').trim().isNotEmpty)
+        'local_image_path': localImagePath,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'is_local_only': true,
+      'local_status': 'pending',
+    };
+  }
+
+  Map<String, dynamic> _normalizeMessageMap(Map<dynamic, dynamic> raw) {
+    final map = raw.map((key, value) => MapEntry(key.toString(), value));
+    final normalizedText = _pickMessageText(map);
+    final normalizedImageUrl = _pickImageUrl(map);
+    return <String, dynamic>{
+      ...map,
+      'text': normalizedText,
+      'body': normalizedText,
+      'message': normalizedText,
+      'content': normalizedText,
+      'caption': normalizedText,
+      'image_url': normalizedImageUrl,
+      'created_at': _pickCreatedAt(map),
+      'sender': (map['sender'] ?? '').toString().trim().toLowerCase(),
+    };
+  }
+
+  String _pickMessageText(Map<String, dynamic> map) {
+    final candidates = <dynamic>[
+      map['text'],
+      map['body'],
+      map['message'],
+      map['content'],
+      map['caption'],
+    ];
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  String _pickImageUrl(Map<String, dynamic> map) {
+    final candidates = <dynamic>[
+      map['image_url'],
+      map['imageUrl'],
+      map['photo_url'],
+      map['photoUrl'],
+    ];
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  String _pickCreatedAt(Map<String, dynamic> map) {
+    final candidates = <dynamic>[
+      map['created_at'],
+      map['createdAt'],
+      map['updated_at'],
+      map['updatedAt'],
+    ];
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return DateTime.now().toUtc().toIso8601String();
+  }
+
+  Future<String> _uploadImageIfNeeded(
+    File? imageFile, {
+    String? ticketId,
+  }) async {
+    if (imageFile == null) return '';
+    final bytes = await imageFile.readAsBytes();
+    final fileName = imageFile.uri.pathSegments.isEmpty
+        ? 'support-image.jpg'
+        : imageFile.uri.pathSegments.last;
+    final response = await _api.uploadImage(
+      bytes: Uint8List.fromList(bytes),
+      fileName: fileName,
+      contentType: _guessContentType(fileName),
+      ticketId: ticketId,
+    );
+    if (kDebugMode) {
+      final rawUrl = (response['url'] ?? '').toString().trim();
+      final resolution = resolveMediaUrl(
+        rawUrl,
+        categoryHint: 'support',
+      );
+      debugPrint(
+        'Support upload response imageUrl=$rawUrl resolved=${resolution.resolvedUrl} category=support provider=${resolution.provider}',
+      );
+    }
+    return (response['url'] ?? '').toString().trim();
+  }
+
+  String _guessContentType(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    return 'image/jpeg';
+  }
+
+  String _messageErrorText(Object error) {
+    if (error is ApiException) {
+      if (error.statusCode == 413 || error.code == 'payload_too_large') {
+        return 'Файл слишком большой. Выберите другое фото.';
+      }
+      if (error.isTimeout || error.isNetworkError) {
+        return kNetworkVpnHintMessage;
+      }
+      final message = error.message.trim();
+      if (message.isNotEmpty) {
+        return message;
+      }
+    }
+    return kNetworkVpnHintMessage;
+  }
+
+  List<Map<String, dynamic>> _mergeMessages(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> incoming, {
+    Set<String> removedIds = const <String>{},
+  }) {
+    final byId = <String, Map<String, dynamic>>{};
+    for (final item in current) {
+      final id = (item['id'] ?? '').toString();
+      if (id.isEmpty || removedIds.contains(id)) continue;
+      byId[id] = Map<String, dynamic>.from(item);
+    }
+    for (final item in incoming) {
+      final normalized = Map<String, dynamic>.from(item);
+      final id = (normalized['id'] ?? '').toString();
+      if (id.isEmpty || removedIds.contains(id)) continue;
+      byId[id] = normalized;
+    }
+
+    final merged = byId.values.toList()
+      ..sort((a, b) {
+        final left = DateTime.tryParse((a['created_at'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        final right = DateTime.tryParse((b['created_at'] ?? '').toString()) ??
+            DateTime.fromMillisecondsSinceEpoch(0);
+        return right.compareTo(left);
+      });
+    return merged;
+  }
+}
+
+extension<T> on Stream<T> {
+  Stream<T> startWith(T initial) async* {
+    yield initial;
+    yield* this;
   }
 }

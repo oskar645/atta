@@ -87,7 +87,9 @@ class CarSpecs {
       condition: (m['condition'] ?? '').toString(),
       color: (m['color'] ?? '').toString(),
       isCleared: m['isCleared'] is bool ? m['isCleared'] : null,
-      owners: (m['owners'] is num) ? (m['owners'] as num).toInt() : int.tryParse('${m['owners']}'),
+      owners: (m['owners'] is num)
+          ? (m['owners'] as num).toInt()
+          : int.tryParse('${m['owners']}'),
       vin: m['vin']?.toString(),
       note: m['note']?.toString(),
     );

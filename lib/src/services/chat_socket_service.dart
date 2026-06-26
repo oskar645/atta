@@ -1,0 +1,286 @@
+import 'dart:async';
+
+import 'package:atta/src/services/api/api_config.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:flutter/foundation.dart';
+import 'package:socket_io_client/socket_io_client.dart' as io;
+
+class ChatSocketEvent {
+  ChatSocketEvent(this.name, this.payload);
+
+  final String name;
+  final Map<String, dynamic> payload;
+}
+
+class PresenceSnapshot {
+  PresenceSnapshot({
+    required this.userId,
+    required this.isOnline,
+    this.lastSeen,
+  });
+
+  final String userId;
+  final bool isOnline;
+  final DateTime? lastSeen;
+
+  factory PresenceSnapshot.fromMap(Map<String, dynamic> map) {
+    return PresenceSnapshot(
+      userId: (map['userId'] ?? map['user_id'] ?? '').toString(),
+      isOnline: map['isOnline'] == true || map['is_online'] == true,
+      lastSeen: DateTime.tryParse(
+        (map['lastSeen'] ?? map['last_seen'] ?? '').toString(),
+      ),
+    );
+  }
+}
+
+class ChatSocketService {
+  ChatSocketService({TokenStorage? tokenStorage})
+      : _tokenStorage = tokenStorage ?? TokenStorage();
+
+  final TokenStorage _tokenStorage;
+  final _events = StreamController<ChatSocketEvent>.broadcast();
+  final _presence = StreamController<PresenceSnapshot>.broadcast();
+  final _connected = StreamController<bool>.broadcast();
+  final Set<String> _joinedChats = <String>{};
+
+  io.Socket? _socket;
+  Timer? _pingTimer;
+  Timer? _reconnectTimer;
+  bool _connecting = false;
+  bool _disconnectRequested = false;
+  final bool _disposed = false;
+  bool _lastConnectionValue = false;
+  DateTime? _lastConnectAttemptAt;
+  DateTime? _lastFailureLoggedAt;
+  Duration _reconnectDelay = const Duration(seconds: 2);
+
+  static const Duration _connectRetryCooldown = Duration(seconds: 5);
+  static const Duration _maxReconnectDelay = Duration(seconds: 20);
+
+  Stream<ChatSocketEvent> get events => _events.stream;
+  Stream<PresenceSnapshot> get presenceUpdates => _presence.stream;
+  Stream<bool> get connectionChanges => _connected.stream;
+  bool get isConnected => _socket?.connected == true;
+
+  void _debugLog(String message) {
+    if (!ApiConfig.useTimewebBackend || !kDebugMode) return;
+    debugPrint(message);
+  }
+
+  Future<void> connect() async {
+    if (!ApiConfig.useTimewebBackend ||
+        _disposed ||
+        isConnected ||
+        _connecting) {
+      return;
+    }
+    final lastAttemptAt = _lastConnectAttemptAt;
+    if (lastAttemptAt != null &&
+        DateTime.now().difference(lastAttemptAt) < _connectRetryCooldown) {
+      return;
+    }
+    _connecting = true;
+    _disconnectRequested = false;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _lastConnectAttemptAt = DateTime.now();
+    try {
+      final token = await _tokenStorage.readAccessToken();
+      if (token == null || token.trim().isEmpty) return;
+
+      final existingSocket = _socket;
+      if (existingSocket != null) {
+        if (existingSocket.connected) {
+          _emitConnection(true);
+          return;
+        }
+        existingSocket.connect();
+        return;
+      }
+
+      final socket = io.io(
+        ApiConfig.baseUrl,
+        io.OptionBuilder()
+            .setTransports(['websocket'])
+            .disableAutoConnect()
+            .disableReconnection()
+            .setAuth({'token': token.trim()})
+            .build(),
+      );
+
+      socket.onConnect((_) {
+        _socket = socket;
+        _reconnectDelay = const Duration(seconds: 2);
+        _emitConnection(true);
+        for (final chatId in _joinedChats) {
+          socket.emit('chat.join', {'chatId': chatId});
+        }
+        _startPing();
+      });
+      socket.onDisconnect((_) {
+        _stopPing();
+        _emitConnection(false);
+        if (_disconnectRequested || _disposed) {
+          _disposeSocket(socket);
+          return;
+        }
+        _scheduleReconnect();
+      });
+      socket.onConnectError((error) {
+        _stopPing();
+        _emitConnection(false);
+        _logFailedConnection(error);
+        if (!_disconnectRequested && !_disposed) {
+          _scheduleReconnect();
+        }
+      });
+      socket.onError((error) {
+        _logFailedConnection(error);
+      });
+
+      for (final eventName in const [
+        'message.new',
+        'message.sent',
+        'message.delivered',
+        'message.read',
+        'notification.new',
+        'chat.updated',
+        'unread.changed',
+        'presence.changed',
+        'user.presence.changed',
+      ]) {
+        socket.on(eventName, (payload) {
+          final map = payload is Map
+              ? Map<String, dynamic>.from(payload)
+              : <String, dynamic>{};
+          _events.add(ChatSocketEvent(eventName, map));
+          if (eventName == 'presence.changed' ||
+              eventName == 'user.presence.changed') {
+            _presence.add(PresenceSnapshot.fromMap(map));
+          }
+        });
+      }
+
+      socket.connect();
+      _socket = socket;
+    } finally {
+      _connecting = false;
+    }
+  }
+
+  Future<void> disconnect() async {
+    _disconnectRequested = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _stopPing();
+    final socket = _socket;
+    _socket = null;
+    _emitConnection(false);
+    socket?.disconnect();
+    _disposeSocket(socket);
+    _connecting = false;
+  }
+
+  Future<void> resetSession() async {
+    _joinedChats.clear();
+    await disconnect();
+  }
+
+  Future<void> reconnect() async {
+    if (_disposed) return;
+    if (isConnected || _connecting) return;
+    _socket?.disconnect();
+    _disposeSocket(_socket);
+    _socket = null;
+    await connect();
+  }
+
+  Future<void> joinChat(String chatId) async {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    _joinedChats.add(id);
+    await connect();
+    _socket?.emit('chat.join', {'chatId': id});
+  }
+
+  void leaveChat(String chatId) {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    _joinedChats.remove(id);
+    _socket?.emit('chat.leave', {'chatId': id});
+  }
+
+  Future<void> setPresence(bool isOnline) async {
+    await connect();
+    _socket?.emit('presence.set', {'isOnline': isOnline});
+  }
+
+  Future<void> ping() async {
+    await connect();
+    _socket?.emit('presence.ping');
+  }
+
+  void sendDelivered(String messageId) {
+    final id = messageId.trim();
+    if (id.isEmpty) return;
+    _socket?.emit('message.delivered', {'messageId': id});
+  }
+
+  void sendRead(String messageId) {
+    final id = messageId.trim();
+    if (id.isEmpty) return;
+    _socket?.emit('message.read', {'messageId': id});
+  }
+
+  void _startPing() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      _socket?.emit('presence.ping');
+    });
+  }
+
+  void _stopPing() {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+  }
+
+  void _logFailedConnection(Object? error) {
+    final now = DateTime.now();
+    final lastFailureAt = _lastFailureLoggedAt;
+    if (lastFailureAt != null &&
+        now.difference(lastFailureAt) < _connectRetryCooldown) {
+      return;
+    }
+    _lastFailureLoggedAt = now;
+    _debugLog('Socket connect_error: ${error.toString()}');
+  }
+
+  void _emitConnection(bool value) {
+    if (_lastConnectionValue == value) return;
+    _lastConnectionValue = value;
+    _connected.add(value);
+  }
+
+  void _scheduleReconnect() {
+    if (_reconnectTimer != null || _disconnectRequested || _disposed) {
+      return;
+    }
+    final delay = _reconnectDelay;
+    _reconnectDelay = Duration(
+      seconds: (_reconnectDelay.inSeconds * 2)
+          .clamp(2, _maxReconnectDelay.inSeconds),
+    );
+    _reconnectTimer = Timer(delay, () async {
+      _reconnectTimer = null;
+      if (_disconnectRequested || _disposed || isConnected || _connecting) {
+        return;
+      }
+      await connect();
+    });
+  }
+
+  void _disposeSocket(io.Socket? socket) {
+    socket?.dispose();
+  }
+}

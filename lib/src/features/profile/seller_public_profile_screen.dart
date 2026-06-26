@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
@@ -11,6 +10,9 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/widgets/listing_promotion_badges.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -21,6 +23,10 @@ class SellerPublicProfileScreen extends StatefulWidget {
   final String initialSellerName;
   final String initialSellerAvatar;
   final String initialSellerPhone;
+  final String initialStatusLabel;
+  final bool showAdminFields;
+  final bool initialIsAdmin;
+  final String titleText;
 
   const SellerPublicProfileScreen({
     super.key,
@@ -28,6 +34,10 @@ class SellerPublicProfileScreen extends StatefulWidget {
     this.initialSellerName = '',
     this.initialSellerAvatar = '',
     this.initialSellerPhone = '',
+    this.initialStatusLabel = '',
+    this.showAdminFields = false,
+    this.initialIsAdmin = false,
+    this.titleText = 'Профиль продавца',
   });
 
   @override
@@ -163,7 +173,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Профиль продавца'),
+        title: Text(widget.titleText),
         centerTitle: false,
         bottom: TabBar(
           controller: _tab,
@@ -189,6 +199,12 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
           final sellerName = profile.pickNameFromRow(userRow);
           final photoUrl = profile.pickAvatarFromRow(userRow);
           final phone = (userRow['phone'] ?? '').toString().trim();
+          final statusText = widget.initialStatusLabel.trim().isNotEmpty
+              ? widget.initialStatusLabel.trim()
+              : (userRow['status'] ?? '').toString().trim();
+          final isAdminUser = widget.initialIsAdmin ||
+              userRow['is_admin'] == true ||
+              userRow['isAdmin'] == true;
 
           final canCall = phone.isNotEmpty && !isMe;
           final canWrite = myUid.isNotEmpty && !isMe;
@@ -212,35 +228,13 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                       stream: presence.streamIsOnline(widget.sellerId),
                       builder: (context, onlineSnap) {
                         final isOnline = onlineSnap.data == true;
-                        return Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            _Avatar(
-                              photoUrl: photoUrl,
-                              fallbackText: sellerName,
-                            ),
-                            Positioned(
-                              right: -1,
-                              bottom: -1,
-                              child: Container(
-                                width: 14,
-                                height: 14,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: isOnline
-                                      ? Colors.green
-                                      : Theme.of(context)
-                                          .colorScheme
-                                          .outlineVariant,
-                                  border: Border.all(
-                                    color: Theme.of(context)
-                                        .scaffoldBackgroundColor,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
+                        return PresenceBadge(
+                          isOnline: isOnline,
+                          dotSize: 14,
+                          child: _Avatar(
+                            photoUrl: photoUrl,
+                            fallbackText: sellerName,
+                          ),
                         );
                       },
                     ),
@@ -269,7 +263,8 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     : admin.streamIsAdmin(myUid),
                                 initialData: false,
                                 builder: (context, adminSnap) {
-                                  final canCopyId = isMe || adminSnap.data == true;
+                                  final canCopyId =
+                                      isMe || adminSnap.data == true;
                                   if (!canCopyId) {
                                     return const SizedBox.shrink();
                                   }
@@ -277,7 +272,8 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                   return _CopyIdChip(
                                     label: 'ID',
                                     value: _shortUserId(widget.sellerId),
-                                    onTap: () => _copyUserId(context, widget.sellerId),
+                                    onTap: () =>
+                                        _copyUserId(context, widget.sellerId),
                                   );
                                 },
                               ),
@@ -319,6 +315,34 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                               );
                             },
                           ),
+                          if (widget.showAdminFields) ...[
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                if (statusText.isNotEmpty)
+                                  _AdminInfoChip(
+                                    icon: Icons.verified_user_outlined,
+                                    label: statusText,
+                                  ),
+                                _AdminInfoChip(
+                                  icon: Icons.phone_outlined,
+                                  label: phone.isEmpty
+                                      ? 'Телефон не указан'
+                                      : phone,
+                                ),
+                                _AdminInfoChip(
+                                  icon: isAdminUser
+                                      ? Icons.admin_panel_settings_outlined
+                                      : Icons.person_outline,
+                                  label: isAdminUser
+                                      ? 'Администратор'
+                                      : 'Пользователь',
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -360,7 +384,8 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               )
                             : Icon(
                                 isFollowing
@@ -472,6 +497,39 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _AdminInfoChip extends StatelessWidget {
+  const _AdminInfoChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: scheme.outline),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -708,26 +766,16 @@ class _ListingCard extends StatelessWidget {
     final statusText = _statusLabel(listing.status);
     final statusColor = _statusColor(listing.status);
     final archiveNote = isArchive ? _archiveNote(listing) : null;
-    final image = photo.isEmpty
-        ? Container(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: const Center(child: Icon(Icons.image_outlined)),
-          )
-        : CachedNetworkImage(
-            imageUrl: photo,
-            fit: BoxFit.cover,
-            width: double.infinity,
-            placeholder: (_, __) => Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              alignment: Alignment.center,
-              child: const CircularProgressIndicator(strokeWidth: 2),
-            ),
-            errorWidget: (_, __, ___) => Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              alignment: Alignment.center,
-              child: const Icon(Icons.broken_image_outlined),
-            ),
-          );
+    final hasVipPromotion = listing.hasVipPromotion;
+    final hasBumpPromotion = listing.hasBumpPromotion;
+    final image = MediaPreviewBox(
+      imageUrl: photo,
+      categoryHint: 'listings',
+      borderRadius: 0,
+      placeholderLabel: 'Загрузка фото...',
+      emptyLabel: 'Фото недоступно',
+      errorLabel: 'Фото недоступно',
+    );
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
@@ -737,16 +785,20 @@ class _ListingCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           color: Theme.of(context).colorScheme.surface,
           border: Border.all(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
+            color: hasVipPromotion
+                ? vipBorderColor(context)
+                : Theme.of(context).dividerColor.withValues(alpha: 0.18),
+            width: hasVipPromotion ? 1.25 : 1,
           ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(14)),
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(14)),
+              child: AspectRatio(
+                aspectRatio: 4 / 3,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -778,6 +830,10 @@ class _ListingCard extends StatelessWidget {
                       )
                     else
                       image,
+                    ListingPromotionBadges(
+                      showVip: hasVipPromotion,
+                      showBump: hasBumpPromotion,
+                    ),
                     if (isArchive)
                       Positioned.fill(
                         child: DecoratedBox(

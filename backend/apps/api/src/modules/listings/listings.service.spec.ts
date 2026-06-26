@@ -1,0 +1,933 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ListingStatus,
+  PromotionStatus,
+  PromotionType,
+  UserStatus,
+} from '@prisma/client';
+
+import { ListingsService } from './listings.service';
+
+const ownerUser = {
+  userId: 'owner-1',
+  sessionId: 'session-1',
+  role: 'user' as const,
+};
+
+const strangerUser = {
+  userId: 'user-2',
+  sessionId: 'session-2',
+  role: 'user' as const,
+};
+
+function createService(overrides?: {
+  findOwnerById?: () => Promise<unknown>;
+  create?: (args: Record<string, unknown>) => Promise<unknown>;
+  findUnique?: () => Promise<unknown>;
+  update?: (args: Record<string, unknown>) => Promise<unknown>;
+  findMany?: (args?: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const prisma = {
+    user: {
+      findUnique:
+        overrides?.findOwnerById ??
+        (async () => ({
+          id: ownerUser.userId,
+          email: 'owner@example.com',
+          phone: '79281234567',
+          displayName: 'Owner',
+          name: 'Owner',
+          status: 'ACTIVE',
+        })),
+    },
+    listing: {
+      create:
+        overrides?.create ??
+        (async () => ({
+          id: 'listing-1',
+          ownerId: ownerUser.userId,
+          ownerEmail: 'owner@example.com',
+          ownerName: 'Owner',
+          title: 'Listing',
+          description: '',
+          category: 'misc',
+          subcategory: '',
+          price: BigInt(0),
+          phone: '79281234567',
+          phoneHidden: false,
+          city: '',
+          address: '',
+          locationJson: {},
+          delivery: {},
+          car: null,
+          status: ListingStatus.PENDING,
+          rejectionReason: '',
+          moderationNote: null,
+          moderatedBy: null,
+          moderatedAt: null,
+          publishedAt: null,
+          archivedAt: null,
+          deletedAt: null,
+          viewCount: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          owner: {
+            id: ownerUser.userId,
+            email: 'owner@example.com',
+            phone: '79281234567',
+            phoneVerified: true,
+            displayName: 'Owner',
+            name: 'Owner',
+            avatarUrl: null,
+            photoUrl: null,
+            status: 'ACTIVE',
+            blockedAt: null,
+            blockReason: null,
+            lastLoginAt: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            deletedAt: null,
+            adminProfile: null,
+          },
+          photos: [],
+          promotions: [],
+        })),
+      findUnique: overrides?.findUnique ?? (async () => null),
+      findMany: overrides?.findMany ?? (async () => []),
+      update:
+        overrides?.update ??
+        (async (args: Record<string, unknown>) => ({
+          id: 'listing-1',
+          ownerId: 'owner-1',
+          title: 'Listing',
+          description: '',
+          category: 'misc',
+          subcategory: '',
+          price: BigInt(0),
+          phone: '',
+          phoneHidden: false,
+          city: '',
+          address: '',
+          locationJson: {},
+          delivery: {},
+          car: null,
+          status: ListingStatus.ARCHIVED,
+          rejectionReason: '',
+          moderationNote: null,
+          moderatedBy: null,
+          moderatedAt: null,
+          publishedAt: null,
+          archivedAt: new Date(),
+          deletedAt: null,
+          viewCount: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          owner: null,
+          photos: [],
+          promotions: [],
+          ...args,
+        })),
+    },
+    $transaction: async <T>(handler: () => Promise<T>) => handler(),
+  };
+
+  return new ListingsService(
+    prisma as never,
+    {} as never,
+    {} as never,
+  );
+}
+
+test('owner cannot change listing status via generic update endpoint', async () => {
+  const service = createService({
+    findUnique: async () => ({
+      id: 'listing-1',
+      ownerId: ownerUser.userId,
+      status: ListingStatus.APPROVED,
+    }),
+  });
+
+  await assert.rejects(
+    service.update('listing-1', ownerUser, { status: 'sold' }),
+    ForbiddenException,
+  );
+});
+
+test('mark sold works through explicit archive endpoint', async () => {
+  let updateArgs: Record<string, unknown> | undefined;
+  const service = createService({
+    findUnique: async () => ({
+      id: 'listing-1',
+      ownerId: ownerUser.userId,
+      status: ListingStatus.APPROVED,
+    }),
+    update: async (args) => {
+      updateArgs = args;
+      return {
+        id: 'listing-1',
+        ownerId: ownerUser.userId,
+        title: 'Listing',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.SOLD,
+        rejectionReason: 'Продано владельцем.',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: null,
+        archivedAt: new Date(),
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        owner: null,
+        photos: [],
+        promotions: [],
+      };
+    },
+  });
+
+  const response = await service.archive('listing-1', ownerUser, {
+    status: 'sold',
+    note: 'Продано владельцем.',
+  });
+
+  assert.equal(response.status_after_archive, 'sold');
+  assert.equal(
+    (updateArgs?.data as Record<string, unknown>).status,
+    ListingStatus.SOLD,
+  );
+});
+
+test('archive without sale works through explicit archive endpoint', async () => {
+  let updateArgs: Record<string, unknown> | undefined;
+  const service = createService({
+    findUnique: async () => ({
+      id: 'listing-1',
+      ownerId: ownerUser.userId,
+      status: ListingStatus.APPROVED,
+    }),
+    update: async (args) => {
+      updateArgs = args;
+      return {
+        id: 'listing-1',
+        ownerId: ownerUser.userId,
+        title: 'Listing',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.ARCHIVED,
+        rejectionReason: 'Снято владельцем с публикации.',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: null,
+        archivedAt: new Date(),
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        owner: null,
+        photos: [],
+        promotions: [],
+      };
+    },
+  });
+
+  const response = await service.archive('listing-1', ownerUser, {
+    status: 'archived',
+  });
+
+  assert.equal(response.status_after_archive, 'archived');
+  assert.equal(
+    (updateArgs?.data as Record<string, unknown>).status,
+    ListingStatus.ARCHIVED,
+  );
+});
+
+test('non-owner cannot archive listing through explicit endpoint', async () => {
+  const service = createService({
+    findUnique: async () => ({
+      id: 'listing-1',
+      ownerId: ownerUser.userId,
+      status: ListingStatus.APPROVED,
+    }),
+  });
+
+  await assert.rejects(
+    service.archive('listing-1', strangerUser, { status: 'sold' }),
+    ForbiddenException,
+  );
+});
+
+test('create uses owner phone when dto phone is empty', async () => {
+  let createArgs: Record<string, unknown> | undefined;
+  const service = createService({
+    create: async (args) => {
+      createArgs = args;
+      return {
+        id: 'listing-1',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'Listing',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '79281234567',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.PENDING,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: null,
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        owner: {
+          id: ownerUser.userId,
+          email: 'owner@example.com',
+          phone: '79281234567',
+          phoneVerified: true,
+          displayName: 'Owner',
+          name: 'Owner',
+          avatarUrl: null,
+          photoUrl: null,
+          status: 'ACTIVE',
+          blockedAt: null,
+          blockReason: null,
+          lastLoginAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          deletedAt: null,
+          adminProfile: null,
+        },
+        photos: [],
+        promotions: [],
+      };
+    },
+  });
+
+  const response = await service.create(ownerUser, {
+    title: 'Listing',
+    description: 'Desc',
+    category: 'misc',
+    subcategory: '',
+    price: 1000,
+    phone: '',
+    phone_hidden: false,
+    city: 'Grozny',
+  });
+
+  assert.equal((createArgs?.data as Record<string, unknown>).phone, '79281234567');
+  assert.equal(response.listing.phone, '79281234567');
+});
+
+test('public feed is sorted by publishedAt desc, then createdAt desc, then id desc', async () => {
+  const service = createService({
+    findMany: async () => [
+      {
+        id: 'listing-a',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'A',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: new Date('2026-06-19T10:00:05.000Z'),
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 999,
+        createdAt: new Date('2026-06-19T09:00:00.000Z'),
+        updatedAt: new Date('2026-06-19T12:00:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [],
+      },
+      {
+        id: 'listing-c',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'C',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: new Date('2026-06-19T10:00:10.000Z'),
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date('2026-06-19T08:00:00.000Z'),
+        updatedAt: new Date('2026-06-19T08:30:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [],
+      },
+      {
+        id: 'listing-b',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'B',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: null,
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date('2026-06-19T10:00:10.000Z'),
+        updatedAt: new Date('2026-06-19T12:00:30.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [],
+      },
+    ],
+  });
+
+  const response = await service.findAll();
+
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    ['listing-c', 'listing-a', 'listing-b'],
+  );
+});
+
+test('public feed filters out blocked and deleted owners at query level', async () => {
+  let findManyArgs: Record<string, unknown> | undefined;
+  const service = createService({
+    findMany: async (args?: Record<string, unknown>) => {
+      findManyArgs = args;
+      return [];
+    },
+  });
+
+  await service.findAll();
+
+  assert.deepEqual(findManyArgs?.where, {
+    deletedAt: null,
+    status: ListingStatus.APPROVED,
+    owner: {
+      deletedAt: null,
+      status: UserStatus.ACTIVE,
+    },
+  });
+});
+
+test('public listing with blocked owner is hidden from strangers', async () => {
+  const service = createService({
+    findUnique: async () => ({
+      id: 'listing-1',
+      ownerId: ownerUser.userId,
+      status: ListingStatus.APPROVED,
+      deletedAt: null,
+      archivedAt: null,
+      owner: {
+        id: ownerUser.userId,
+        status: UserStatus.BLOCKED,
+        deletedAt: null,
+      },
+      photos: [],
+      promotions: [],
+    }),
+  });
+
+  await assert.rejects(
+    service.findOne('listing-1', strangerUser),
+    NotFoundException,
+  );
+});
+
+test('public feed fallback keeps later createdAt and larger id first when publishedAt matches', async () => {
+  const sharedPublishedAt = new Date('2026-06-19T10:00:10.000Z');
+  const sharedCreatedAt = new Date('2026-06-19T09:00:00.000Z');
+  const service = createService({
+    findMany: async () => [
+      {
+        id: 'listing-a',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'A',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: sharedPublishedAt,
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: sharedCreatedAt,
+        updatedAt: new Date('2026-06-19T12:00:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [],
+      },
+      {
+        id: 'listing-b',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'B',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: sharedPublishedAt,
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: sharedCreatedAt,
+        updatedAt: new Date('2026-06-19T08:00:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [],
+      },
+    ],
+  });
+
+  const response = await service.findAll();
+
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    ['listing-b', 'listing-a'],
+  );
+});
+
+test('public feed does not crash when listing promotions are missing', async () => {
+  const service = createService({
+    findMany: async () => [
+      {
+        id: 'listing-a',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'A',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: new Date('2026-06-19T10:00:10.000Z'),
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date('2026-06-19T09:00:00.000Z'),
+        updatedAt: new Date('2026-06-19T12:00:00.000Z'),
+        owner: null,
+        photos: [],
+      },
+      {
+        id: 'listing-b',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'B',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: null,
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date('2026-06-19T08:00:00.000Z'),
+        updatedAt: new Date('2026-06-19T08:30:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: null,
+      },
+    ],
+  });
+
+  const response = await service.findAll();
+
+  assert.equal(response.items.length, 2);
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    ['listing-a', 'listing-b'],
+  );
+});
+
+test('active bump sorts listing above normal without crashing', async () => {
+  const service = createService({
+    findMany: async () => [
+      {
+        id: 'listing-normal',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'Normal',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: new Date('2026-06-19T10:00:10.000Z'),
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date('2026-06-19T09:00:00.000Z'),
+        updatedAt: new Date('2026-06-19T12:00:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [],
+      },
+      {
+        id: 'listing-bump',
+        ownerId: ownerUser.userId,
+        ownerEmail: 'owner@example.com',
+        ownerName: 'Owner',
+        title: 'Boosted',
+        description: '',
+        category: 'misc',
+        subcategory: '',
+        price: BigInt(0),
+        phone: '',
+        phoneHidden: false,
+        city: '',
+        address: '',
+        locationJson: {},
+        delivery: {},
+        car: null,
+        status: ListingStatus.APPROVED,
+        rejectionReason: '',
+        moderationNote: null,
+        moderatedBy: null,
+        moderatedAt: null,
+        publishedAt: new Date('2026-06-19T09:00:10.000Z'),
+        archivedAt: null,
+        deletedAt: null,
+        viewCount: 0,
+        createdAt: new Date('2026-06-19T08:00:00.000Z'),
+        updatedAt: new Date('2026-06-19T08:30:00.000Z'),
+        owner: null,
+        photos: [],
+        promotions: [
+          {
+            id: 'promotion-1',
+            listingId: 'listing-bump',
+            userId: ownerUser.userId,
+            type: PromotionType.BUMP,
+            costBonus: 25,
+            startsAt: new Date('2026-06-19T10:00:00.000Z'),
+            endsAt: new Date('2099-06-19T10:00:00.000Z'),
+            status: PromotionStatus.ACTIVE,
+            impressionsCount: 0,
+            clicksCount: 0,
+            createdAt: new Date('2026-06-19T11:00:00.000Z'),
+            updatedAt: new Date('2026-06-19T11:00:00.000Z'),
+          },
+          {
+            id: 'promotion-vip',
+            listingId: 'listing-bump',
+            userId: ownerUser.userId,
+            type: PromotionType.VIP,
+            costBonus: 60,
+            startsAt: new Date('2026-06-19T10:00:00.000Z'),
+            endsAt: new Date('2099-06-19T10:00:00.000Z'),
+            status: PromotionStatus.ACTIVE,
+            impressionsCount: 0,
+            clicksCount: 0,
+            createdAt: new Date('2026-06-19T10:30:00.000Z'),
+            updatedAt: new Date('2026-06-19T10:30:00.000Z'),
+          },
+        ],
+      },
+    ],
+  });
+
+  const response = await service.findAll();
+
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    ['listing-bump', 'listing-normal'],
+  );
+});
+
+test('listing photo upload uses selected storage provider flow', async () => {
+  const storageCalls: Array<Record<string, unknown>> = [];
+  const service = new ListingsService(
+    {
+      listing: {
+        findUnique: async () => ({
+          id: 'listing-1',
+          ownerId: ownerUser.userId,
+          photos: [],
+        }),
+        findUniqueOrThrow: async () => ({
+          id: 'listing-1',
+          ownerId: ownerUser.userId,
+          title: 'Listing',
+          description: '',
+          category: 'misc',
+          subcategory: '',
+          price: BigInt(0),
+          phone: '',
+          phoneHidden: false,
+          city: '',
+          address: '',
+          locationJson: {},
+          delivery: {},
+          car: null,
+          status: ListingStatus.APPROVED,
+          rejectionReason: '',
+          moderationNote: null,
+          moderatedBy: null,
+          moderatedAt: null,
+          publishedAt: null,
+          archivedAt: null,
+          deletedAt: null,
+          viewCount: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          owner: null,
+          photos: [],
+          promotions: [],
+        }),
+      },
+      listingPhoto: {
+        create: async () => ({
+          id: 'photo-1',
+          publicUrl:
+            'https://s3.twcstorage.ru/atta-media-prod/listings/listing-1/photo.jpg',
+          sortOrder: 0,
+        }),
+      },
+    } as never,
+    {
+      saveUploadedFile: async (payload: Record<string, unknown>) => {
+        storageCalls.push(payload);
+        return {
+          bucket: 'atta-media-prod',
+          key: 'listings/listing-1/photo.jpg',
+          mimeType: 'image/jpeg',
+          provider: 's3',
+          sizeBytes: 128,
+          url: 'https://s3.twcstorage.ru/atta-media-prod/listings/listing-1/photo.jpg',
+        };
+      },
+    } as never,
+    {} as never,
+  );
+
+  const response = await service.uploadPhoto(
+    ownerUser,
+    'listing-1',
+    {
+      buffer: Buffer.from('photo'),
+      mimetype: 'image/jpeg',
+      originalname: 'photo.jpg',
+    } as never,
+  );
+
+  assert.equal(storageCalls.length, 1);
+  assert.equal(storageCalls[0].category, 'listings');
+  assert.deepEqual(storageCalls[0].context, {
+    listingId: 'listing-1',
+    userId: ownerUser.userId,
+  });
+  assert.match(response.photo.url, /listings\/listing-1\/photo\.jpg/);
+});
+
+test('listing serialization normalizes duplicated bucket prefix in S3 photo url', async () => {
+  const service = new ListingsService(
+    {
+      listing: {
+        findUnique: async () => ({
+          id: 'listing-1',
+          ownerId: ownerUser.userId,
+          ownerEmail: null,
+          ownerName: 'ATTA User',
+          title: 'Listing',
+          description: '',
+          category: 'misc',
+          subcategory: '',
+          price: BigInt(0),
+          phone: '',
+          phoneHidden: false,
+          city: '',
+          address: '',
+          latitude: null,
+          longitude: null,
+          locationJson: {},
+          delivery: {},
+          car: null,
+          dealType: null,
+          realEstateType: null,
+          clothesType: null,
+          status: ListingStatus.APPROVED,
+          rejectionReason: '',
+          moderationNote: null,
+          moderatedBy: null,
+          moderatedAt: null,
+          publishedAt: new Date(),
+          archivedAt: null,
+          deletedAt: null,
+          viewCount: 0,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          owner: null,
+          promotions: [],
+          photos: [
+            {
+              id: 'photo-1',
+              listingId: 'listing-1',
+              storageBucket: 'atta-media-prod',
+              storageKey:
+                'atta-media-prod/listing-photos/1782423161346-photo.jpg',
+              publicUrl:
+                'https://s3.twcstorage.ru/atta-media-prod/atta-media-prod/listing-photos/1782423161346-photo.jpg',
+              sortOrder: 0,
+              sizeBytes: 128,
+              mimeType: 'image/jpeg',
+              createdAt: new Date(),
+            },
+          ],
+        }),
+      },
+    } as never,
+    {} as never,
+    {
+      enrichListing: (listing: unknown) => listing,
+    } as never,
+  );
+
+  const response = await service.findOne('listing-1', ownerUser);
+
+  assert.equal(
+    response.listing.photo_urls[0],
+    '/media/object?category=listings&key=atta-media-prod%2Flisting-photos%2F1782423161346-photo.jpg',
+  );
+  assert.equal(
+    response.listing.photo_items[0].url,
+    '/media/object?category=listings&key=atta-media-prod%2Flisting-photos%2F1782423161346-photo.jpg',
+  );
+});

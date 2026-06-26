@@ -37,7 +37,8 @@ class YandexSuggestService {
         return const <YandexAddressSuggestion>[];
       }
 
-      final data = json.decode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      final data =
+          json.decode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
       final results = (data['results'] as List?) ?? const <dynamic>[];
       final out = <YandexAddressSuggestion>[];
       final seen = <String>{};
@@ -187,14 +188,16 @@ class YandexSuggestService {
       return subtitle;
     }
 
-    if (formattedAddress.isNotEmpty && formattedAddress.toLowerCase() != title.toLowerCase()) {
+    if (formattedAddress.isNotEmpty &&
+        formattedAddress.toLowerCase() != title.toLowerCase()) {
       return formattedAddress;
     }
 
     return '';
   }
 
-  String _pickComponent(List<_AddressComponent> components, List<String> kinds) {
+  String _pickComponent(
+      List<_AddressComponent> components, List<String> kinds) {
     for (final kind in kinds) {
       for (final component in components) {
         if (component.kind == kind) return component.name;

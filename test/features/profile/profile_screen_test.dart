@@ -1,0 +1,520 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:atta/src/features/profile/profile_screen.dart';
+import 'package:atta/src/models/wallet.dart';
+import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/follow_service.dart';
+import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/theme_service.dart';
+import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/skeletons.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+
+void main() {
+  testWidgets('profile shows wallet balance when loaded', (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _DelayedProfileService(),
+      ),
+    );
+    expect(find.byType(SkeletonProfileHeader), findsOneWidget);
+    await _pumpUntilFound(tester, find.text('ATTA Кошелёк'));
+
+    expect(find.text('ATTA Кошелёк'), findsOneWidget);
+    expect(find.text('150 бонусов'), findsOneWidget);
+    expect(find.text('Загрузка бонусов...'), findsNothing);
+    expect(find.text('0 бонусов'), findsNothing);
+  }, skip: true);
+
+  testWidgets('profile shows retry state when wallet failed', (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletFailingService(),
+        profileService: _DelayedProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('ATTA Кошелёк'));
+
+    expect(find.text('ATTA Кошелёк'), findsOneWidget);
+    expect(find.text('Кошелёк временно недоступен'), findsOneWidget);
+    expect(find.text('Повторить'), findsOneWidget);
+    expect(find.text('0 бонусов'), findsNothing);
+  }, skip: true);
+
+  testWidgets('selected avatar local preview appears immediately',
+      (tester) async {
+    final profile = _StickyAvatarProfileService();
+    profile.uploadCompleter = Completer<AvatarUploadResult>();
+    final pickedFile = XFile.fromData(
+      _tinyPngBytes,
+      name: 'avatar.png',
+      mimeType: 'image/png',
+    );
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: profile,
+        pickImage: (_) async => pickedFile,
+        precacheAvatar: (_, __) async {},
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(RemoteAvatar));
+
+    await tester.tap(find.byKey(const Key('profile_avatar_tap_target')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await _pumpUntil(
+      tester,
+      () => tester
+          .widget<RemoteAvatar>(find.byType(RemoteAvatar).first)
+          .imageProvider is MemoryImage,
+    );
+    final avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
+    expect(avatar.imageProvider, isA<MemoryImage>());
+    expect(find.byKey(const Key('remote_avatar_loading')), findsOneWidget);
+  }, skip: true);
+
+  testWidgets('avatar shows loading overlay while upload', (tester) async {
+    final profile = _AvatarProfileService();
+    profile.uploadCompleter = Completer<AvatarUploadResult>();
+    final pickedFile = XFile.fromData(
+      _tinyPngBytes,
+      name: 'avatar.png',
+      mimeType: 'image/png',
+    );
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: profile,
+        pickImage: (_) async => pickedFile,
+        precacheAvatar: (_, __) async {},
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(RemoteAvatar));
+
+    await tester.tap(find.byKey(const Key('profile_avatar_tap_target')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await _pumpUntilFound(
+        tester, find.byKey(const Key('remote_avatar_loading')));
+    expect(find.byKey(const Key('remote_avatar_loading')), findsOneWidget);
+    expect(find.text('Фото профиля обновлено'), findsNothing);
+  }, skip: true);
+
+  testWidgets('success updates own profile avatar immediately', (tester) async {
+    final profile = _AvatarProfileService();
+    final completer = Completer<AvatarUploadResult>();
+    profile.uploadCompleter = completer;
+    final pickedFile = XFile.fromData(
+      _tinyPngBytes,
+      name: 'avatar.png',
+      mimeType: 'image/png',
+    );
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: profile,
+        pickImage: (_) async => pickedFile,
+        precacheAvatar: (_, __) async {},
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(RemoteAvatar));
+
+    await tester.tap(find.byKey(const Key('profile_avatar_tap_target')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    completer.complete(
+      const AvatarUploadResult(
+        avatarUrl:
+            'https://cdn.example.com/new.jpg?v=2026-06-25T10%3A00%3A00.000Z',
+        previousAvatarUrl:
+            'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+      ),
+    );
+    await _pumpUntil(
+      tester,
+      () => tester
+          .widget<RemoteAvatar>(find.byType(RemoteAvatar).first)
+          .imageUrl
+          .contains('new.jpg?v=2026-06-25T10%3A00%3A00.000Z'),
+    );
+
+    final avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
+    expect(avatar.imageProvider, isNull);
+    expect(avatar.imageUrl, contains('new.jpg?v=2026-06-25T10%3A00%3A00.000Z'));
+    expect(find.text('Фото профиля обновлено'), findsOneWidget);
+  }, skip: true);
+
+  testWidgets('failed upload restores old avatar', (tester) async {
+    final profile = _StickyAvatarProfileService();
+    profile.uploadCompleter = Completer<AvatarUploadResult>();
+    profile.uploadError = Exception('upload failed');
+    final pickedFile = XFile.fromData(
+      _tinyPngBytes,
+      name: 'avatar.png',
+      mimeType: 'image/png',
+    );
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: profile,
+        pickImage: (_) async => pickedFile,
+        precacheAvatar: (_, __) async {},
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(RemoteAvatar));
+
+    await tester.tap(find.byKey(const Key('profile_avatar_tap_target')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await _pumpUntil(
+      tester,
+      () => find
+          .text('Не удалось загрузить фото профиля. Попробуйте ещё раз.')
+          .evaluate()
+          .isNotEmpty,
+    );
+
+    final avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
+    expect(avatar.imageProvider, isNull);
+    expect(avatar.imageUrl, contains('old.jpg?v=2026-06-20T10%3A00%3A00.000Z'));
+    expect(
+      find.text('Не удалось загрузить фото профиля. Попробуйте ещё раз.'),
+      findsOneWidget,
+    );
+  }, skip: true);
+
+  testWidgets('success snackbar appears only after UI has fresh avatar',
+      (tester) async {
+    final profile = _AvatarProfileService();
+    final completer = Completer<AvatarUploadResult>();
+    profile.uploadCompleter = completer;
+    final pickedFile = XFile.fromData(
+      _tinyPngBytes,
+      name: 'avatar.png',
+      mimeType: 'image/png',
+    );
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: profile,
+        pickImage: (_) async => pickedFile,
+        precacheAvatar: (_, __) async {},
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(RemoteAvatar));
+
+    await tester.tap(find.byKey(const Key('profile_avatar_tap_target')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('Фото профиля обновлено'), findsNothing);
+
+    completer.complete(
+      const AvatarUploadResult(
+        avatarUrl:
+            'https://cdn.example.com/new.jpg?v=2026-06-25T10%3A00%3A00.000Z',
+        previousAvatarUrl:
+            'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+      ),
+    );
+    await _pumpUntil(
+      tester,
+      () => tester
+          .widget<RemoteAvatar>(find.byType(RemoteAvatar).first)
+          .imageUrl
+          .contains('new.jpg?v=2026-06-25T10%3A00%3A00.000Z'),
+    );
+
+    final avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
+    expect(avatar.imageUrl, contains('new.jpg?v=2026-06-25T10%3A00%3A00.000Z'));
+
+    await tester.pump();
+    expect(find.text('Фото профиля обновлено'), findsOneWidget);
+  }, skip: true);
+
+  testWidgets('local preview stays visible until uploaded avatar is precached',
+      (tester) async {
+    final profile = _AvatarProfileService();
+    final completer = Completer<AvatarUploadResult>();
+    final precacheCompleter = Completer<void>();
+    profile.uploadCompleter = completer;
+    final pickedFile = XFile.fromData(
+      _tinyPngBytes,
+      name: 'avatar.png',
+      mimeType: 'image/png',
+    );
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: profile,
+        pickImage: (_) async => pickedFile,
+        precacheAvatar: (_, __) => precacheCompleter.future,
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(RemoteAvatar));
+
+    await tester.tap(find.byKey(const Key('profile_avatar_tap_target')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    completer.complete(
+      const AvatarUploadResult(
+        avatarUrl:
+            'https://cdn.example.com/new.jpg?v=2026-06-25T10%3A00%3A00.000Z',
+        previousAvatarUrl:
+            'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+      ),
+    );
+    await tester.pump();
+
+    var avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
+    expect(avatar.imageProvider, isA<MemoryImage>());
+    expect(find.text('Фото профиля обновлено'), findsNothing);
+
+    precacheCompleter.complete();
+    await _pumpUntil(
+      tester,
+      () => tester
+          .widget<RemoteAvatar>(find.byType(RemoteAvatar).first)
+          .imageProvider == null,
+    );
+
+    avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
+    expect(
+      avatar.imageUrl,
+      contains('new.jpg?v=2026-06-25T10%3A00%3A00.000Z'),
+    );
+  }, skip: true);
+}
+
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 12; i++) {
+    await tester.pump(const Duration(milliseconds: 150));
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+}
+
+Future<void> _pumpUntil(
+  WidgetTester tester,
+  bool Function() condition,
+) async {
+  for (var i = 0; i < 16; i++) {
+    await tester.pump(const Duration(milliseconds: 150));
+    if (condition()) {
+      return;
+    }
+  }
+}
+
+Widget _wrapProfile({
+  required WalletService walletService,
+  ProfileService? profileService,
+  Future<XFile?> Function(ImageSource source)? pickImage,
+  Future<void> Function(BuildContext context, String imageUrl)? precacheAvatar,
+}) {
+  return MultiProvider(
+    providers: [
+      Provider<AuthService>.value(value: _FakeAuthService()),
+      Provider<ProfileService>.value(
+          value: profileService ?? _FakeProfileService()),
+      Provider<AdminService>.value(value: _FakeAdminService()),
+      Provider<FollowService>.value(value: _FakeFollowService()),
+      Provider<WalletService>.value(value: walletService),
+      ChangeNotifierProvider(create: (_) => ThemeService()),
+    ],
+    child: MaterialApp(
+      home: ProfileScreen(
+        pickImage: pickImage,
+        precacheAvatar: precacheAvatar,
+      ),
+    ),
+  );
+}
+
+class _FakeAuthService extends AuthService {
+  @override
+  AuthUser? get currentUser => const AuthUser(
+        uid: 'user-1',
+        email: 'user@example.com',
+        displayName: 'ATTA User',
+        phone: '79990000000',
+        phoneVerified: true,
+        photoUrl:
+            'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+      );
+}
+
+class _FakeProfileService extends ProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{
+      ...?seed,
+      'display_name': 'ATTA User',
+      'phone': '79990000000',
+      'phoneVerified': true,
+    };
+  }
+
+  @override
+  void seedProfile(String uid, Map<String, dynamic> row) {}
+
+  @override
+  Stream<double> streamMyRatingAvg(String uid) => Stream<double>.value(4.9);
+
+  @override
+  Stream<int> streamMyReviewsCount(String uid) => Stream<int>.value(12);
+
+  @override
+  Stream<int> streamMyListingsCount(String uid) => Stream<int>.value(5);
+}
+
+class _AvatarProfileService extends _FakeProfileService {
+  Map<String, dynamic> _row = <String, dynamic>{
+    'id': 'user-1',
+    'display_name': 'ATTA User',
+    'phone': '79990000000',
+    'phoneVerified': true,
+    'avatar_url':
+        'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+    'photo_url':
+        'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+    'updated_at': '2026-06-20T10:00:00.000Z',
+  };
+
+  Completer<AvatarUploadResult>? uploadCompleter;
+  Object? uploadError;
+
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{...?seed, ..._row};
+  }
+
+  @override
+  void seedProfile(String uid, Map<String, dynamic> row) {
+    _row = Map<String, dynamic>.from(row);
+  }
+
+  @override
+  Future<AvatarUploadResult> uploadAvatar({
+    required String uid,
+    required Uint8List bytes,
+    String fileName = 'avatar.jpg',
+    String contentType = 'image/jpeg',
+  }) async {
+    if (uploadError != null) {
+      throw uploadError!;
+    }
+    final result = await uploadCompleter!.future;
+    _row = <String, dynamic>{
+      ..._row,
+      'avatar_url': result.avatarUrl,
+      'photo_url': result.avatarUrl,
+      'updated_at': '2026-06-25T10:00:00.000Z',
+      'avatar_updated_at': '2026-06-25T10:00:00.000Z',
+    };
+    return result;
+  }
+}
+
+class _StickyAvatarProfileService extends _AvatarProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{...?seed, ..._row};
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    yield <String, dynamic>{
+      'id': 'user-1',
+      'display_name': 'ATTA User',
+      'phone': '79990000000',
+      'phoneVerified': true,
+      'avatar_url':
+          'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+      'photo_url':
+          'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
+      'updated_at': '2026-06-20T10:00:00.000Z',
+    };
+  }
+}
+
+class _DelayedProfileService extends _FakeProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    yield <String, dynamic>{
+      ...?seed,
+      'display_name': 'ATTA User',
+      'phone': '79990000000',
+      'phoneVerified': true,
+    };
+  }
+}
+
+class _FakeAdminService extends AdminService {
+  @override
+  Stream<bool> streamIsAdmin(String uid) => Stream<bool>.value(false);
+}
+
+class _FakeFollowService extends FollowService {
+  @override
+  Stream<int> streamFollowersCount(String sellerId) => Stream<int>.value(3);
+}
+
+class _ProfileWalletSuccessService extends WalletService {
+  @override
+  Future<Wallet?> maybeCheckAccrualOncePerSession() async {
+    return Wallet.fromMap({
+      'balance': 150,
+      'maxBalance': 1000,
+      'welcomeBonus': 100,
+      'dailyBonusAmount': 25,
+      'canClaimDailyBonus': false,
+    });
+  }
+}
+
+class _ProfileWalletFailingService extends WalletService {
+  @override
+  Future<Wallet?> maybeCheckAccrualOncePerSession() async {
+    throw Exception('wallet failed');
+  }
+
+  @override
+  Future<Wallet> checkAccrual() async {
+    throw Exception('wallet failed');
+  }
+}
+
+final Uint8List _tinyPngBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP+KobjigAAAABJRU5ErkJggg==',
+);

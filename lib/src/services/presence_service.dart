@@ -1,58 +1,139 @@
-import 'dart:io';
+import 'dart:async';
 
-import 'package:atta/src/services/network_resilience.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 class PresenceService {
-  final SupabaseClient _db = Supabase.instance.client;
-  bool _didLogNetworkIssue = false;
+  PresenceService({
+    ChatSocketService? socketService,
+    ApiClient? apiClient,
+  })  : _socketService = socketService,
+        _apiClient = apiClient ?? ApiClient(tokenStorage: _tokenStorage);
+
+  final ChatSocketService? _socketService;
+  final ApiClient _apiClient;
+  static final TokenStorage _tokenStorage = TokenStorage();
+
+  StreamSubscription<PresenceSnapshot>? _presenceSub;
+  final Map<String, bool> _presenceMap = {};
+  final Map<String, StreamController<bool>> _controllers = {};
+  final Map<String, DateTime> _lastFetchAt = {};
+  final Map<String, Future<void>> _presenceFetchInFlight = {};
+
+  static const Duration _fallbackPresenceTtl = Duration(minutes: 1);
+
+  StreamController<bool> _controllerFor(String uid) {
+    return _controllers.putIfAbsent(
+      uid,
+      () => StreamController<bool>.broadcast(
+        onListen: () {
+          _controllers[uid]?.add(_presenceMap[uid] ?? false);
+          unawaited(_loadTimewebPresence(uid));
+        },
+      ),
+    );
+  }
+
+  void _debugSource(String message) {
+    if (!kDebugMode ||
+        message == 'Presence source: Timeweb' ||
+        message.startsWith('Socket event:')) {
+      return;
+    }
+    debugPrint(message);
+  }
+
+  void _ensureSocketSubscription() {
+    if (_presenceSub != null) return;
+    _presenceSub = _socketService?.presenceUpdates.listen((snapshot) {
+      final userId = snapshot.userId.trim();
+      if (userId.isEmpty) return;
+      _debugSource('Presence source: Timeweb');
+      _debugSource('Socket event: presence.changed');
+      _presenceMap[userId] = snapshot.isOnline;
+      _lastFetchAt[userId] = DateTime.now();
+      _controllers[userId]?.add(snapshot.isOnline);
+    });
+  }
 
   Future<void> setOnline({
     required String uid,
     required bool isOnline,
   }) async {
-    await _upsertPresence(uid: uid, isOnline: isOnline);
+    _debugSource('Presence source: Timeweb');
+    _ensureSocketSubscription();
+    await _socketService?.connect();
+    await _socketService?.setPresence(isOnline);
+    _presenceMap[uid] = isOnline;
+    _controllerFor(uid).add(isOnline);
   }
 
   Future<void> heartbeat(String uid) async {
-    await _upsertPresence(uid: uid, isOnline: true);
+    _debugSource('Presence source: Timeweb');
+    _ensureSocketSubscription();
+    await _socketService?.connect();
+    await _socketService?.ping();
   }
 
-  Future<void> _upsertPresence({
-    required String uid,
-    required bool isOnline,
-  }) async {
-    if (uid.trim().isEmpty) return;
+  Future<void> resetSession() async {
+    await _presenceSub?.cancel();
+    _presenceSub = null;
+    _presenceMap.clear();
+    _lastFetchAt.clear();
+    _presenceFetchInFlight.clear();
+    for (final controller in _controllers.values) {
+      controller.add(false);
+    }
+    await _socketService?.resetSession();
+  }
 
-    final now = DateTime.now().toUtc().toIso8601String();
+  Future<void> _loadTimewebPresence(String uid) async {
+    final id = uid.trim();
+    if (id.isEmpty) return;
+    final lastFetchAt = _lastFetchAt[id];
+    if (lastFetchAt != null &&
+        DateTime.now().difference(lastFetchAt) < _fallbackPresenceTtl) {
+      _controllers[id]?.add(_presenceMap[id] ?? false);
+      return;
+    }
+    final existing = _presenceFetchInFlight[id];
+    if (existing != null) return existing;
 
+    final future = _loadTimewebPresenceInternal(id);
+    _presenceFetchInFlight[id] = future;
     try {
-      await NetworkResilience.run(
-        () => _db.from('user_presence').upsert({
-          'user_id': uid,
-          'is_online': isOnline,
-          'last_seen': now,
-          'updated_at': now,
-        }, onConflict: 'user_id'),
-        timeout: const Duration(seconds: 6),
-        retries: 1,
-      );
-      _didLogNetworkIssue = false;
-    } on SocketException catch (e) {
-      _logNetworkIssueOnce(e);
-    } on http.ClientException catch (e) {
-      _logNetworkIssueOnce(e);
-    } catch (e) {
-      debugPrint('Presence upsert failed: $e');
+      await future;
+    } finally {
+      if (identical(_presenceFetchInFlight[id], future)) {
+        _presenceFetchInFlight.remove(id);
+      }
     }
   }
 
-  void _logNetworkIssueOnce(Object error) {
-    if (!kDebugMode || _didLogNetworkIssue) return;
-    _didLogNetworkIssue = true;
-    debugPrint('Presence temporarily unavailable: $error');
+  Future<void> _loadTimewebPresenceInternal(String uid) async {
+    _ensureSocketSubscription();
+    try {
+      _debugSource('Presence source: Timeweb');
+      await _socketService?.connect();
+      final response =
+          await _apiClient.get('/presence/$uid', authorized: true) as Map;
+      final snapshot = PresenceSnapshot.fromMap(
+        Map<String, dynamic>.from(response),
+      );
+      _presenceMap[uid] = snapshot.isOnline;
+      _lastFetchAt[uid] = DateTime.now();
+      _controllers[uid]?.add(snapshot.isOnline);
+    } catch (_) {
+      _controllers[uid]?.add(_presenceMap[uid] ?? false);
+    }
+  }
+
+  bool? peekIsOnline(String uid) {
+    final normalized = uid.trim();
+    if (normalized.isEmpty) return null;
+    return _presenceMap[normalized];
   }
 
   Stream<bool> streamIsOnline(
@@ -60,26 +141,7 @@ class PresenceService {
     Duration staleAfter = const Duration(minutes: 2),
   }) {
     if (uid.trim().isEmpty) return Stream<bool>.value(false);
-
-    return _db
-        .from('user_presence')
-        .stream(primaryKey: ['user_id'])
-        .eq('user_id', uid)
-        .handleError((e) {
-      _logNetworkIssueOnce(e);
-    })
-        .map((rows) {
-      if (rows.isEmpty) return false;
-      final row = rows.first;
-      final isOnline = row['is_online'] == true;
-      if (!isOnline) return false;
-
-      final raw = (row['last_seen'] ?? '').toString();
-      final lastSeen = DateTime.tryParse(raw)?.toUtc();
-      if (lastSeen == null) return isOnline;
-
-      final cutoff = DateTime.now().toUtc().subtract(staleAfter);
-      return lastSeen.isAfter(cutoff);
-    });
+    _ensureSocketSubscription();
+    return _controllerFor(uid).stream.distinct();
   }
 }

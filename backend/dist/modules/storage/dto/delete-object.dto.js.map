@@ -1,0 +1,1 @@
+{"version":3,"file":"delete-object.dto.js","sourceRoot":"","sources":["../../../../apps/api/src/modules/storage/dto/delete-object.dto.ts"],"names":[],"mappings":";;;;;;;;;;;;AAAA,qDAAiD;AAEjD,MAAa,eAAe;CAM3B;AAND,0CAMC;AAJC;IADC,IAAA,sBAAI,EAAC,CAAC,SAAS,EAAE,gBAAgB,EAAE,aAAa,EAAE,UAAU,CAAC,CAAC;;+CACI;AAGnE;IADC,IAAA,0BAAQ,GAAE;;4CACE"}

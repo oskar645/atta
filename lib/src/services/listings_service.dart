@@ -1,12 +1,18 @@
 // lib/src/services/listings_service.dart
+import 'dart:async';
 import 'dart:io';
 
 import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/models/listing.dart';
-import 'package:atta/src/services/network_resilience.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/api_config.dart';
+import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/services/api/listings_api.dart';
+import 'package:atta/src/services/api/media_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/image_preparation_service.dart';
+import 'package:atta/src/utils/media_url.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 
 class ListingFeedFilters {
   final String category;
@@ -20,8 +26,6 @@ class ListingFeedFilters {
   final String autoCondition;
   final int? autoMileageTo;
   final bool onlyUncrashed;
-  final int refreshShuffleSeed;
-
   const ListingFeedFilters({
     required this.category,
     required this.search,
@@ -34,57 +38,133 @@ class ListingFeedFilters {
     this.autoCondition = '',
     this.autoMileageTo,
     this.onlyUncrashed = false,
-    this.refreshShuffleSeed = 0,
   });
 }
 
-class ListingsService {
-  final SupabaseClient _client = Supabase.instance.client;
-  final _uuid = const Uuid();
+class CreateListingResult {
+  final String listingId;
+  final ListingPhotoUploadResult photoUploadResult;
+  final Listing? listing;
 
-  static const String _bucket = 'listing-photos';
+  const CreateListingResult({
+    required this.listingId,
+    this.photoUploadResult = const ListingPhotoUploadResult(),
+    this.listing,
+  });
+
+  bool get photoUploadFailed => photoUploadResult.hasFailures;
+}
+
+class ListingPhotoUploadFailure {
+  const ListingPhotoUploadFailure({
+    required this.file,
+    required this.index,
+    required this.message,
+  });
+
+  final File file;
+  final int index;
+  final String message;
+}
+
+typedef ListingPhotoUploadStatusCallback = void Function(
+  ListingPhotoUploadStatus status,
+);
+
+class ListingPhotoUploadStatus {
+  const ListingPhotoUploadStatus({
+    required this.file,
+    required this.index,
+    required this.state,
+    this.message = '',
+    this.listingId = '',
+  });
+
+  final File file;
+  final int index;
+  final String state;
+  final String message;
+  final String listingId;
+}
+
+class ListingPhotoUploadResult {
+  const ListingPhotoUploadResult({
+    this.requestedCount = 0,
+    this.uploadedCount = 0,
+    this.failures = const <ListingPhotoUploadFailure>[],
+    this.listing,
+  });
+
+  final int requestedCount;
+  final int uploadedCount;
+  final List<ListingPhotoUploadFailure> failures;
+  final Listing? listing;
+
+  int get failedCount => failures.length;
+  bool get hasFailures => failures.isNotEmpty;
+  bool get allFailed => requestedCount > 0 && uploadedCount == 0;
+}
+
+class ListingsService {
+  ListingsService({
+    ListingsApi? api,
+    MediaApi? mediaApi,
+  })  : _api = api ?? ListingsApi(_apiClient),
+        _mediaApi = mediaApi ?? MediaApi(_apiClient),
+        _imagePreparationService = ImagePreparationService();
+
+  static final TokenStorage _tokenStorage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+
+  final ListingsApi _api;
+  final MediaApi _mediaApi;
+  final ImagePreparationService _imagePreparationService;
+  final StreamController<void> _refreshController =
+      StreamController<void>.broadcast();
+  final Map<String, Listing> _listingById = <String, Listing>{};
+  final Map<String, List<Listing>> _timewebCache = <String, List<Listing>>{};
+  final Map<String, DateTime> _timewebCachedAt = <String, DateTime>{};
+  final Map<String, Future<List<Listing>>> _timewebInFlight =
+      <String, Future<List<Listing>>>{};
+  List<Listing>? _myListingsCache;
+  DateTime? _myListingsCachedAt;
+  Future<List<Listing>>? _myListingsInFlight;
+  final Map<String, List<Listing>> _ownerListingsCache =
+      <String, List<Listing>>{};
+  final Map<String, DateTime> _ownerListingsCachedAt = <String, DateTime>{};
+  final Map<String, Future<List<Listing>>> _ownerListingsInFlight =
+      <String, Future<List<Listing>>>{};
+
+  static const Duration _cacheTtl = Duration(seconds: 20);
 
   Stream<List<Listing>> streamListings({
     required String category,
     required String search,
     ListingFeedFilters? filters,
-  }) {
+  }) async* {
     final effectiveFilters = filters ??
         ListingFeedFilters(
           category: category,
           search: search,
         );
 
-    final stream = (_isAllCategory(effectiveFilters.category)
-            ? _client.from('listings').stream(primaryKey: ['id'])
-            : _client
-                .from('listings')
-                .stream(primaryKey: ['id'])
-                .eq('category', effectiveFilters.category))
-        .order('created_at', ascending: false);
-
-    return stream.map((rows) {
-      final items = rows.map((r) => Listing.fromMap(r)).toList();
-      final filtered = items.where((x) => _matchesFilters(x, effectiveFilters)).toList();
-      filtered.sort((a, b) => _compareListings(a, b, effectiveFilters));
-      return filtered;
-    });
+    _debugSource('Listings source: Timeweb');
+    yield await _fetchListings(effectiveFilters);
+    await for (final _ in _refreshController.stream) {
+      yield await _fetchListings(effectiveFilters);
+    }
   }
 
   bool matchesFeedFilters(Listing listing, ListingFeedFilters filters) {
     return _matchesFilters(listing, filters);
   }
 
-  Stream<List<Listing>> streamMyListings(String uid) {
-    final stream = _client
-        .from('listings')
-        .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false);
-
-    return stream.map((rows) {
-      final items = rows.map((r) => Listing.fromMap(r)).toList();
-      return items.where((x) => x.ownerId == uid).toList();
-    });
+  Stream<List<Listing>> streamMyListings(String uid) async* {
+    _debugSource('Listings source: Timeweb');
+    yield await _fetchMyListings();
+    await for (final _ in _refreshController.stream) {
+      yield await _fetchMyListings();
+    }
   }
 
   Stream<int> streamMyListingsCount(String uid) {
@@ -97,36 +177,42 @@ class ListingsService {
     );
   }
 
-  Stream<List<Listing>> streamListingsByOwnerAll(String ownerId) {
-    final stream = _client
-        .from('listings')
-        .stream(primaryKey: ['id'])
-        .eq('owner_id', ownerId)
-        .order('created_at', ascending: false);
-
-    return stream.map((rows) => rows.map((r) => Listing.fromMap(r)).toList());
+  Stream<List<Listing>> streamListingsByOwnerAll(String ownerId) async* {
+    _debugSource('Listings source: Timeweb');
+    yield await _fetchListingsByOwner(ownerId);
+    await for (final _ in _refreshController.stream) {
+      yield await _fetchListingsByOwner(ownerId);
+    }
   }
 
   Stream<List<Listing>> streamSimilarListings(
     Listing base, {
     int limit = 10,
-  }) {
-    final stream = _client
-        .from('listings')
-        .stream(primaryKey: ['id'])
-        .eq('status', 'approved')
-        .order('created_at', ascending: false);
+  }) async* {
+    _debugSource('Listings source: Timeweb');
+    yield await getSimilarListings(base, limit: limit);
+    await for (final _ in _refreshController.stream) {
+      yield await getSimilarListings(base, limit: limit);
+    }
+  }
 
-    return stream.map((rows) {
-      final items = rows
-          .map((r) => Listing.fromMap(r))
-          .where((x) => x.id != base.id)
-          .where((x) => x.category == base.category)
-          .toList();
-
-      items.sort((a, b) => _compareSimilarListings(a, b, base));
-      return items.take(limit).toList();
-    });
+  Future<List<Listing>> getSimilarListings(
+    Listing base, {
+    int limit = 10,
+  }) async {
+    _debugSource('Listings source: Timeweb');
+    final items = await _fetchListings(
+      ListingFeedFilters(
+        category: base.category,
+        search: '',
+      ),
+    );
+    final filtered = items
+        .where((x) => x.id != base.id)
+        .where((x) => x.category == base.category)
+        .toList();
+    filtered.sort((a, b) => _compareSimilarListings(a, b, base));
+    return filtered.take(limit).toList(growable: false);
   }
 
   Stream<List<Listing>> streamMyListingsByStatuses(
@@ -138,21 +224,73 @@ class ListingsService {
     );
   }
 
-  Future<Listing?> getLatestApprovedListingByOwner(String ownerId) async {
-    final row = await _client
-        .from('listings')
-        .select('*')
-        .eq('owner_id', ownerId)
-        .eq('status', 'approved')
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
+  Future<List<Listing>> getListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) async {
+    final effectiveFilters = filters ??
+        ListingFeedFilters(
+          category: category,
+          search: search,
+        );
 
-    if (row == null) return null;
-    return Listing.fromMap(row);
+    _debugSource('Listings source: Timeweb');
+    return _fetchListings(effectiveFilters);
   }
 
-  Future<void> createListing({
+  List<Listing> peekListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) {
+    final effectiveFilters = filters ??
+        ListingFeedFilters(
+          category: category,
+          search: search,
+        );
+    final key = [
+      effectiveFilters.category,
+      effectiveFilters.search,
+      effectiveFilters.subcategory,
+      effectiveFilters.location,
+      effectiveFilters.preferLocationFirst,
+      effectiveFilters.radiusKm,
+      effectiveFilters.autoBrand,
+      effectiveFilters.autoModel,
+      effectiveFilters.autoCondition,
+      effectiveFilters.autoMileageTo,
+      effectiveFilters.onlyUncrashed,
+    ].join('|');
+    return List<Listing>.from(_timewebCache[key] ?? const <Listing>[]);
+  }
+
+  Future<List<Listing>> getMyListingsByStatuses(
+    String uid, {
+    required Set<String> statuses,
+  }) async {
+    _debugSource('Listings source: Timeweb');
+    final items = await _fetchMyListings();
+    return items.where((item) => statuses.contains(item.status)).toList();
+  }
+
+  List<Listing> peekMyListingsByStatuses({
+    required Set<String> statuses,
+  }) {
+    final items = List<Listing>.from(_myListingsCache ?? const <Listing>[]);
+    return items.where((item) => statuses.contains(item.status)).toList();
+  }
+
+  Future<Listing?> getLatestApprovedListingByOwner(String ownerId) async {
+    _debugSource('Listings source: Timeweb');
+    final items = await _fetchListingsByOwner(ownerId);
+    final approved = items.where((item) => item.status == 'approved').toList();
+    if (approved.isEmpty) return null;
+    approved.sort(_compareFeedListings);
+    return approved.first;
+  }
+
+  Future<CreateListingResult> createListing({
     required String ownerId,
     required String ownerEmail,
     required String ownerName,
@@ -170,62 +308,15 @@ class ListingsService {
     String? dealType,
     String? realEstateType,
     String? clothesType,
+    ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
   }) async {
-    final listingId = _uuid.v4();
-
-    final urls = <String>[];
-
-    if (!kIsWeb) {
-      for (var i = 0; i < photos.length; i++) {
-        try {
-          final file = photos[i];
-          final ext = file.path.split('.').last.toLowerCase();
-
-          final safeExt =
-              (ext == 'jpg' || ext == 'jpeg' || ext == 'png' || ext == 'webp')
-                  ? ext
-                  : 'jpg';
-
-          final path = '$listingId/$i.$safeExt';
-          final bytes = await file.readAsBytes();
-
-          final contentType = switch (safeExt) {
-            'png' => 'image/png',
-            'webp' => 'image/webp',
-            _ => 'image/jpeg',
-          };
-
-          await NetworkResilience.run(
-            () => _client.storage.from(_bucket).uploadBinary(
-                  path,
-                  bytes,
-                  fileOptions: FileOptions(
-                    cacheControl: '3600',
-                    upsert: false,
-                    contentType: contentType,
-                  ),
-                ),
-            timeout: const Duration(seconds: 20),
-            retries: 1,
-          );
-
-          final publicUrl = _client.storage.from(_bucket).getPublicUrl(path);
-
-          debugPrint('PHOTO URL [$i]: $publicUrl');
-          urls.add(publicUrl);
-        } catch (e) {
-          debugPrint('Ошибка загрузки фото $i: $e');
-        }
-      }
-    } else {
-      urls.add('https://via.placeholder.com/400');
-    }
-
-    final now = DateTime.now().toUtc();
-
-    final data = <String, dynamic>{
-      'id': listingId,
-      'owner_id': ownerId,
+    _debugSource('Listings source: Timeweb');
+    _debugCreateListingStart(
+      ownerId: ownerId,
+      title: title,
+      photoCount: photos.length,
+    );
+    final created = await _api.create({
       'owner_email': ownerEmail,
       'owner_name': ownerName,
       'title': title,
@@ -236,87 +327,113 @@ class ListingsService {
       'phone': phone,
       'phone_hidden': phoneHidden,
       'city': city,
+      'address': city,
       'delivery': delivery,
-      'photo_urls': urls,
-      'car': car?.toMap(),
-      'deal_type': dealType,
-      'real_estate_type': realEstateType,
-      'clothes_type': clothesType,
-      'view_count': 0,
-      'status': 'pending',
-      'rejection_reason': null,
-      'created_at': now.toIso8601String(),
-      'updated_at': null,
-    };
-
-    await NetworkResilience.run(
-      () => _client.from('listings').insert(data),
-      timeout: const Duration(seconds: 12),
-      retries: 0,
+      'photo_urls': const <String>[],
+      if (car != null) 'car': car.toMap(),
+      if (dealType != null && dealType.trim().isNotEmpty)
+        'deal_type': dealType.trim(),
+      if (realEstateType != null && realEstateType.trim().isNotEmpty)
+        'real_estate_type': realEstateType.trim(),
+      if (clothesType != null && clothesType.trim().isNotEmpty)
+        'clothes_type': clothesType.trim(),
+    });
+    final createdListing = _extractListingFromResponse(created);
+    final listingId = createdListing?.id ?? '';
+    Listing? latestListing = createdListing;
+    var photoUploadResult = const ListingPhotoUploadResult();
+    if (listingId.isNotEmpty) {
+      if (latestListing != null) {
+        _upsertListingInCaches(latestListing);
+        _emitRefresh(clearCaches: false);
+      }
+      photoUploadResult = await uploadListingPhotos(
+        listingId: listingId,
+        photos: photos,
+        onStatusChanged: onPhotoStatusChanged,
+      );
+      latestListing = photoUploadResult.listing ?? latestListing;
+    }
+    latestListing ??=
+        listingId.isEmpty ? null : await getListingById(listingId);
+    if (latestListing != null) {
+      _upsertListingInCaches(latestListing);
+      _emitRefresh(clearCaches: false);
+      unawaited(_refreshListingFromBackend(listingId));
+    } else {
+      _emitRefresh();
+    }
+    return CreateListingResult(
+      listingId: listingId,
+      photoUploadResult: photoUploadResult,
+      listing: latestListing,
     );
   }
 
-  Future<void> deleteListing({required Listing listing}) async {
-    await archiveListing(
-      listingId: listing.id,
-      status: 'archived',
-      note: 'Снято владельцем с публикации.',
-    );
+  Future<Listing?> deleteListing({required Listing listing}) async {
+    _debugSource('Listings source: Timeweb');
+    final response = await _api.deleteListing(listing.id);
+    final updated = _extractListingFromResponse(response) ??
+        _listingById[listing.id] ??
+        listing;
+    _upsertListingInCaches(updated);
+    _emitRefresh(clearCaches: false);
+    unawaited(_refreshListingFromBackend(listing.id));
+    return updated;
   }
 
-  Future<void> archiveListing({
+  void applyExternalListingUpdate(Listing listing) {
+    _upsertListingInCaches(listing);
+    _emitRefresh(clearCaches: false);
+  }
+
+  Future<Listing?> archiveListing({
     required String listingId,
     required String status,
     String? note,
   }) async {
-    final normalizedStatus = status.trim().isEmpty ? 'archived' : status.trim();
-    final normalizedNote = (note ?? '').trim();
-    await NetworkResilience.run(
-      () => _client.from('listings').update({
-        'status': normalizedStatus,
-        'rejection_reason': normalizedNote.isEmpty ? null : normalizedNote,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', listingId),
-      timeout: const Duration(seconds: 12),
-      retries: 0,
+    _debugSource('Listings source: Timeweb');
+    final response = await _api.archive(
+      listingId,
+      status: status.trim().isEmpty ? 'archived' : status.trim(),
+      note: note,
     );
+    final updated = _extractListingFromResponse(response);
+    if (updated != null) {
+      _upsertListingInCaches(updated);
+      _emitRefresh(clearCaches: false);
+    } else {
+      _emitRefresh();
+    }
+    unawaited(_refreshListingFromBackend(listingId));
+    return updated;
   }
 
   Future<void> incrementView(String listingId) async {
-    try {
-      await NetworkResilience.run(
-        () => _client.rpc('increment_listing_view', params: {'p_listing_id': listingId}),
-        timeout: const Duration(seconds: 8),
-        retries: 1,
-      );
-      return;
-    } catch (_) {
-      final row = await _client
-          .from('listings')
-          .select('view_count')
-          .eq('id', listingId)
-          .maybeSingle();
-
-      var current = 0;
-      if (row != null && row['view_count'] is num) {
-        current = (row['view_count'] as num).toInt();
-      }
-
-      await _client.from('listings').update({'view_count': current + 1}).eq('id', listingId);
-    }
+    _debugSource('Listings source: Timeweb');
+    final currentUser = await _tokenStorage.readCurrentUser();
+    await _api.incrementView(
+      listingId,
+      viewerUserId: currentUser?.uid,
+    );
+    _emitRefresh();
   }
 
   Future<Listing?> getListingById(String id) async {
-    final row = await NetworkResilience.run(
-      () => _client.from('listings').select('*').eq('id', id).maybeSingle(),
-      timeout: const Duration(seconds: 12),
-      retries: 1,
-    );
-    if (row == null) return null;
-    return Listing.fromMap(row);
+    _debugSource('Listings source: Timeweb');
+    final cached = _listingById[id];
+    if (cached != null) {
+      return cached;
+    }
+    final response = await _api.getById(id);
+    final listing = _extractListingFromResponse(response);
+    if (listing != null) {
+      _upsertListingInCaches(listing);
+    }
+    return listing;
   }
 
-  Future<void> updateListing({
+  Future<Listing?> updateListing({
     required String listingId,
     required String title,
     required String description,
@@ -327,38 +444,197 @@ class ListingsService {
     required Map<String, bool> delivery,
     CarSpecs? car,
   }) async {
-    final now = DateTime.now().toUtc().toIso8601String();
-
-    final data = <String, dynamic>{
-      'title': title,
-      'description': description,
-      'price': price,
-      'phone': phone,
-      'phone_hidden': phoneHidden,
-      'city': city,
-      'delivery': delivery,
-      'car': car?.toMap(),
-      'status': 'pending',
-      'rejection_reason': null,
-      'updated_at': now,
-    };
-
-    await NetworkResilience.run(
-      () => _client.from('listings').update(data).eq('id', listingId),
-      timeout: const Duration(seconds: 12),
-      retries: 0,
+    _debugSource('Listings source: Timeweb');
+    final response = await _api.update(
+      listingId,
+      {
+        'title': title,
+        'description': description,
+        'price': price,
+        'phone': phone,
+        'phone_hidden': phoneHidden,
+        'city': city,
+        'address': city,
+        'delivery': delivery,
+        if (car != null) 'car': car.toMap(),
+      },
     );
+    final updated = _extractListingFromResponse(response);
+    if (updated != null) {
+      _upsertListingInCaches(updated);
+      _emitRefresh(clearCaches: false);
+      unawaited(_refreshListingFromBackend(listingId));
+    } else {
+      _emitRefresh();
+    }
+    return updated;
+  }
+
+  Future<Listing> uploadListingPhoto({
+    required String listingId,
+    required File file,
+    int? sortOrder,
+  }) async {
+    if (ApiConfig.useTimewebBackend) {
+      final prepared = await _imagePreparationService.prepareListingImage(file);
+      final response = await _mediaApi.uploadListingPhoto(
+        listingId: listingId,
+        bytes: prepared.bytes,
+        fileName: 'listing.jpg',
+        contentType: prepared.contentType,
+        sortOrder: sortOrder,
+      );
+      if (kDebugMode) {
+        final photo = response['photo'];
+        final rawImageUrl =
+            (photo is Map ? (photo['url'] ?? photo['public_url'] ?? '') : '')
+                .toString()
+                .trim();
+        final resolution = resolveMediaUrl(
+          rawImageUrl,
+          categoryHint: 'listings',
+        );
+        debugPrint(
+          'Listing upload response imageUrl=$rawImageUrl resolved=${resolution.resolvedUrl} category=listing provider=${resolution.provider}',
+        );
+      }
+      final raw = response['listing'];
+      if (raw is! Map) {
+        throw Exception('Не удалось обновить фото объявления');
+      }
+      final listing = Listing.fromMap(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      _upsertListingInCaches(listing);
+      _emitRefresh(clearCaches: false);
+      return listing;
+    }
+
+    throw UnimplementedError('Legacy listing photo upload is not handled here');
+  }
+
+  Future<ListingPhotoUploadResult> uploadListingPhotos({
+    required String listingId,
+    required List<File> photos,
+    int startIndex = 0,
+    List<int>? sortOrders,
+    ListingPhotoUploadStatusCallback? onStatusChanged,
+  }) async {
+    Listing? latestListing;
+    var uploadedCount = 0;
+    final failures = <ListingPhotoUploadFailure>[];
+
+    for (var i = 0; i < photos.length; i++) {
+      final file = photos[i];
+      final targetSortOrder = sortOrders != null && i < sortOrders.length
+          ? sortOrders[i]
+          : startIndex + i;
+      onStatusChanged?.call(
+        ListingPhotoUploadStatus(
+          file: file,
+          index: targetSortOrder,
+          state: 'uploading',
+          listingId: listingId,
+        ),
+      );
+      try {
+        latestListing = await uploadListingPhoto(
+          listingId: listingId,
+          file: file,
+          sortOrder: targetSortOrder,
+        );
+        uploadedCount += 1;
+        onStatusChanged?.call(
+          ListingPhotoUploadStatus(
+            file: file,
+            index: targetSortOrder,
+            state: 'uploaded',
+            listingId: listingId,
+          ),
+        );
+      } catch (error) {
+        final message = _friendlyPhotoUploadError(error);
+        failures.add(
+          ListingPhotoUploadFailure(
+            file: file,
+            index: targetSortOrder,
+            message: message,
+          ),
+        );
+        onStatusChanged?.call(
+          ListingPhotoUploadStatus(
+            file: file,
+            index: targetSortOrder,
+            state: 'failed',
+            message: message,
+            listingId: listingId,
+          ),
+        );
+        _logPhotoUploadError(
+          listingId: listingId,
+          index: targetSortOrder,
+          error: error,
+        );
+      }
+    }
+
+    latestListing ??=
+        listingId.isEmpty ? null : await getListingById(listingId);
+    return ListingPhotoUploadResult(
+      requestedCount: photos.length,
+      uploadedCount: uploadedCount,
+      failures: failures,
+      listing: latestListing,
+    );
+  }
+
+  String _friendlyPhotoUploadError(Object error) {
+    if (error is ApiException && error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+    final text = error.toString().toLowerCase();
+    if (text.contains('413') || text.contains('too large')) {
+      return 'Файл слишком большой. Выберите фото меньшего размера.';
+    }
+    return 'Не удалось загрузить фото. Попробуйте ещё раз.';
+  }
+
+  Future<Listing> deleteListingPhoto({
+    required String listingId,
+    required String photoId,
+  }) async {
+    if (ApiConfig.useTimewebBackend) {
+      final response = await _mediaApi.deleteListingPhoto(
+        listingId: listingId,
+        photoId: photoId,
+      );
+      final raw = response['listing'];
+      if (raw is! Map) {
+        throw Exception('Не удалось удалить фото объявления');
+      }
+      final listing = Listing.fromMap(
+        raw.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      _upsertListingInCaches(listing);
+      _emitRefresh(clearCaches: false);
+      return listing;
+    }
+
+    throw UnimplementedError('Legacy listing photo delete is not handled here');
   }
 
   bool _matchesFilters(Listing listing, ListingFeedFilters filters) {
     if (listing.status != 'approved') return false;
 
-    if (!_isAllCategory(filters.category) && listing.category != filters.category) {
+    if (!_isAllCategory(filters.category) &&
+        listing.category != filters.category) {
       return false;
     }
 
     final subcategory = filters.subcategory.trim();
-    if (subcategory.isNotEmpty && subcategory != 'Все' && listing.subcategory != subcategory) {
+    if (subcategory.isNotEmpty &&
+        subcategory != 'Все' &&
+        listing.subcategory != subcategory) {
       return false;
     }
 
@@ -403,7 +679,8 @@ class ListingsService {
       return false;
     }
 
-    if (filters.autoMileageTo != null && car.mileageKm > filters.autoMileageTo!) {
+    if (filters.autoMileageTo != null &&
+        car.mileageKm > filters.autoMileageTo!) {
       return false;
     }
 
@@ -423,84 +700,25 @@ class ListingsService {
     return _matchesLocationText(listing, locationQuery);
   }
 
-  int _compareListings(Listing a, Listing b, ListingFeedFilters filters) {
-    final diff = _scoreListing(b, filters) - _scoreListing(a, filters);
-    if (diff != 0) return diff;
-
-    final timeBucketDiff =
-        _refreshShuffleTimeBucket(b).compareTo(_refreshShuffleTimeBucket(a));
-    if (timeBucketDiff != 0) return timeBucketDiff;
-
-    return _compareRefreshShuffle(a, b, filters.refreshShuffleSeed);
-  }
-
   int _compareSimilarListings(Listing a, Listing b, Listing base) {
     final diff = _similarityScore(b, base) - _similarityScore(a, base);
     if (diff != 0) return diff;
-    return b.createdAt.compareTo(a.createdAt);
+    return _compareFeedListings(a, b);
   }
 
-  int _compareRefreshShuffle(Listing a, Listing b, int seed) {
-    final aRank = _shuffleRank(a, seed);
-    final bRank = _shuffleRank(b, seed);
-    if (aRank != bRank) return aRank.compareTo(bRank);
-    return a.id.compareTo(b.id);
-  }
-
-  int _shuffleRank(Listing listing, int seed) {
-    return Object.hash(listing.id, _refreshShuffleTimeBucket(listing), seed);
-  }
-
-  int _refreshShuffleTimeBucket(Listing listing) {
-    const bucketMs = 5000;
-    return listing.createdAt.millisecondsSinceEpoch ~/ bucketMs;
-  }
-
-  int _scoreListing(Listing listing, ListingFeedFilters filters) {
-    var score = 0;
-    final search = _normalizeText(filters.search);
-    final location = _normalizeText(filters.location);
-
-    if (search.isNotEmpty) {
-      final title = _normalizeText(listing.title);
-      final description = _normalizeText(listing.description);
-      final category = _normalizeText(listing.category);
-      final subcategory = _normalizeText(listing.subcategory);
-      final city = _normalizeText(listing.cityFull);
-      final brand = _normalizeText(listing.car?.brand ?? '');
-      final model = _normalizeText(listing.car?.model ?? '');
-
-      if (title == search) score += 150;
-      if (title.startsWith(search)) score += 120;
-      if (title.contains(search)) score += 100;
-      if (brand == search || model == search) score += 90;
-      if (brand.contains(search) || model.contains(search)) score += 70;
-      if (subcategory.contains(search)) score += 55;
-      if (category.contains(search)) score += 40;
-      if (city.contains(search)) score += 35;
-      if (description.contains(search)) score += 15;
-
-      for (final token in _tokenize(filters.search)) {
-        if (title.contains(token)) score += 20;
-        if (brand.contains(token) || model.contains(token)) score += 16;
-        if (subcategory.contains(token)) score += 12;
-        if (category.contains(token)) score += 8;
-        if (city.contains(token)) score += 8;
-        if (description.contains(token)) score += 4;
-      }
+  int _compareFeedListings(Listing a, Listing b) {
+    final aPublished = a.publishedAt;
+    final bPublished = b.publishedAt;
+    if (aPublished != null || bPublished != null) {
+      if (aPublished == null) return 1;
+      if (bPublished == null) return -1;
+      final publishedDiff = bPublished.compareTo(aPublished);
+      if (publishedDiff != 0) return publishedDiff;
     }
 
-    if (filters.preferLocationFirst &&
-        location.isNotEmpty &&
-        _matchesLocationText(listing, filters.location)) {
-      score += 200;
-      if (_normalizeText(listing.cityShort) == location) {
-        score += 40;
-      }
-    }
-
-    score += listing.viewCount > 0 ? (listing.viewCount ~/ 25) : 0;
-    return score;
+    final createdDiff = b.createdAt.compareTo(a.createdAt);
+    if (createdDiff != 0) return createdDiff;
+    return b.id.compareTo(a.id);
   }
 
   int _similarityScore(Listing candidate, Listing base) {
@@ -629,5 +847,291 @@ class ListingsService {
 
   String _normalizeText(String value) {
     return value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+
+  Future<List<Listing>> _fetchListings(ListingFeedFilters filters) async {
+    final key = [
+      filters.category,
+      filters.search,
+      filters.subcategory,
+      filters.location,
+      filters.preferLocationFirst,
+      filters.radiusKm,
+      filters.autoBrand,
+      filters.autoModel,
+      filters.autoCondition,
+      filters.autoMileageTo,
+      filters.onlyUncrashed,
+    ].join('|');
+    final cached = _timewebCache[key];
+    final cachedAt = _timewebCachedAt[key];
+    if (cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _cacheTtl) {
+      return List<Listing>.from(cached);
+    }
+    final existing = _timewebInFlight[key];
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.list(
+        queryParameters: {
+          if (!_isAllCategory(filters.category)) 'category': filters.category,
+          if (filters.search.trim().isNotEmpty) 'search': filters.search.trim(),
+          if (filters.location.trim().isNotEmpty)
+            'city': filters.location.trim(),
+        },
+      );
+      final items = _extractItems(response);
+      final filtered =
+          items.where((item) => _matchesFilters(item, filters)).toList();
+      filtered.sort(_compareFeedListings);
+      _cacheListings(items);
+      _timewebCache[key] = filtered;
+      _timewebCachedAt[key] = DateTime.now();
+      return filtered;
+    }();
+    _timewebInFlight[key] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_timewebInFlight[key], future)) {
+        _timewebInFlight.remove(key);
+      }
+    }
+  }
+
+  Future<List<Listing>> _fetchMyListings() async {
+    final cached = _myListingsCache;
+    if (cached != null &&
+        _myListingsCachedAt != null &&
+        DateTime.now().difference(_myListingsCachedAt!) < _cacheTtl) {
+      return List<Listing>.from(cached);
+    }
+    final existing = _myListingsInFlight;
+    if (existing != null) return existing;
+    final currentUser = await _tokenStorage.readCurrentUser();
+    final uid = currentUser?.uid ?? '';
+    if (uid.isEmpty) return const <Listing>[];
+    final future = () async {
+      final response = await _api.list(
+        queryParameters: {
+          'ownerId': uid,
+        },
+      );
+      final items = _extractItems(response);
+      _cacheListings(items);
+      _myListingsCache = List<Listing>.from(items);
+      _myListingsCachedAt = DateTime.now();
+      return items;
+    }();
+    _myListingsInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_myListingsInFlight, future)) {
+        _myListingsInFlight = null;
+      }
+    }
+  }
+
+  Future<List<Listing>> _fetchListingsByOwner(String ownerId) async {
+    final cached = _ownerListingsCache[ownerId];
+    final cachedAt = _ownerListingsCachedAt[ownerId];
+    if (cached != null &&
+        cachedAt != null &&
+        DateTime.now().difference(cachedAt) < _cacheTtl) {
+      return List<Listing>.from(cached);
+    }
+    final existing = _ownerListingsInFlight[ownerId];
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.list(
+        queryParameters: {
+          'ownerId': ownerId,
+        },
+      );
+      final items = _extractItems(response);
+      _cacheListings(items);
+      _ownerListingsCache[ownerId] = List<Listing>.from(items);
+      _ownerListingsCachedAt[ownerId] = DateTime.now();
+      return items;
+    }();
+    _ownerListingsInFlight[ownerId] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_ownerListingsInFlight[ownerId], future)) {
+        _ownerListingsInFlight.remove(ownerId);
+      }
+    }
+  }
+
+  List<Listing> _extractItems(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <Listing>[];
+    return raw
+        .whereType<Map>()
+        .map(
+          (item) => Listing.fromMap(
+            item.map((key, value) => MapEntry(key.toString(), value)),
+          ),
+        )
+        .toList();
+  }
+
+  void _emitRefresh({bool clearCaches = true}) {
+    if (clearCaches) {
+      _clearCachedCollections();
+    }
+    if (!_refreshController.isClosed) {
+      _refreshController.add(null);
+    }
+  }
+
+  void _clearCachedCollections() {
+    _timewebCache.clear();
+    _timewebCachedAt.clear();
+    _myListingsCache = null;
+    _myListingsCachedAt = null;
+    _ownerListingsCache.clear();
+    _ownerListingsCachedAt.clear();
+  }
+
+  void _cacheListings(List<Listing> items) {
+    for (final listing in items) {
+      _listingById[listing.id] = listing;
+    }
+  }
+
+  Listing? _extractListingFromResponse(Map<String, dynamic> response) {
+    final raw = response['listing'];
+    if (raw is! Map) return null;
+    return Listing.fromMap(
+      raw.map((key, value) => MapEntry(key.toString(), value)),
+    );
+  }
+
+  void _upsertListingInCaches(Listing listing) {
+    _listingById[listing.id] = listing;
+    _replaceListingInCollectionCaches(listing);
+  }
+
+  void _replaceListingInCollectionCaches(Listing listing) {
+    if (_myListingsCache != null) {
+      _myListingsCache =
+          _replaceListingInCollection(_myListingsCache!, listing);
+      _myListingsCachedAt = DateTime.now();
+    }
+
+    final ownerCache = _ownerListingsCache[listing.ownerId];
+    if (ownerCache != null) {
+      _ownerListingsCache[listing.ownerId] =
+          _replaceListingInCollection(ownerCache, listing);
+      _ownerListingsCachedAt[listing.ownerId] = DateTime.now();
+    }
+
+    for (final entry in _timewebCache.entries.toList()) {
+      final filters = _filtersFromKey(entry.key);
+      final shouldBeVisible =
+          filters != null && _matchesFilters(listing, filters);
+      _timewebCache[entry.key] = _replaceListingInFeed(
+        entry.value,
+        listing,
+        includeListing: shouldBeVisible,
+      );
+      _timewebCachedAt[entry.key] = DateTime.now();
+    }
+  }
+
+  List<Listing> _replaceListingInCollection(
+    List<Listing> source,
+    Listing listing,
+  ) {
+    final next = source.where((item) => item.id != listing.id).toList();
+    next.add(listing);
+    next.sort(_compareFeedListings);
+    return next;
+  }
+
+  List<Listing> _replaceListingInFeed(
+    List<Listing> source,
+    Listing listing, {
+    required bool includeListing,
+  }) {
+    final next = source.where((item) => item.id != listing.id).toList();
+    if (includeListing) {
+      next.add(listing);
+      next.sort(_compareFeedListings);
+    }
+    return next;
+  }
+
+  ListingFeedFilters? _filtersFromKey(String key) {
+    final parts = key.split('|');
+    if (parts.length != 11) return null;
+    return ListingFeedFilters(
+      category: parts[0],
+      search: parts[1],
+      subcategory: parts[2],
+      location: parts[3],
+      preferLocationFirst: parts[4] == 'true',
+      radiusKm: int.tryParse(parts[5]),
+      autoBrand: parts[6],
+      autoModel: parts[7],
+      autoCondition: parts[8],
+      autoMileageTo: int.tryParse(parts[9]),
+      onlyUncrashed: parts[10] == 'true',
+    );
+  }
+
+  Future<void> _refreshListingFromBackend(String listingId) async {
+    final id = listingId.trim();
+    if (id.isEmpty) return;
+    try {
+      final response = await _api.getById(id);
+      final listing = _extractListingFromResponse(response);
+      if (listing == null) return;
+      _upsertListingInCaches(listing);
+      _emitRefresh(clearCaches: false);
+    } catch (_) {
+      // Keep immediate local state even if background sync failed.
+    }
+  }
+
+  void _debugSource(String message) {
+    debugPrint(message);
+  }
+
+  void resetSession() {
+    _listingById.clear();
+    _clearCachedCollections();
+  }
+
+  void _debugCreateListingStart({
+    required String ownerId,
+    required String title,
+    required int photoCount,
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      'Listing create start ownerId=$ownerId photoCount=$photoCount titleLen=${title.trim().length}',
+    );
+  }
+
+  void _logPhotoUploadError({
+    required String listingId,
+    required int index,
+    required Object error,
+  }) {
+    if (error is ApiException) {
+      debugPrint(
+        'Listing photo upload failed listing=$listingId index=$index '
+        'status=${error.statusCode} details=${error.details}',
+      );
+      return;
+    }
+    debugPrint(
+      'Listing photo upload failed listing=$listingId index=$index error=$error',
+    );
   }
 }

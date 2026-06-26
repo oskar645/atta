@@ -6,11 +6,24 @@ import 'package:http/http.dart' as http;
 
 const String kServerUnavailableMessage =
     'Не удалось подключиться к серверу. Проверьте интернет или попробуйте позже.';
+const String kNetworkVpnHintMessage =
+    'Проверьте интернет или VPN, затем попробуйте снова.';
 
 bool isNetworkException(Object error) {
   return error is TimeoutException ||
       error is SocketException ||
       error is http.ClientException;
+}
+
+bool shouldShowNetworkVpnHint(Object error) {
+  if (isNetworkException(error)) {
+    return true;
+  }
+  final text = error.toString().toLowerCase();
+  return text.contains('timeout') ||
+      text.contains('socketexception') ||
+      text.contains('clientexception') ||
+      text.contains('network');
 }
 
 Duration _retryDelay(int attempt) {
@@ -69,4 +82,3 @@ class NetworkResilience {
     }
   }
 }
-

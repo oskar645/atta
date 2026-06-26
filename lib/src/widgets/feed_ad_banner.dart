@@ -35,14 +35,17 @@ class FeedAdBanner extends StatelessWidget {
                   imageUrl: ad.imageUrl,
                   fit: BoxFit.cover,
                   placeholder: (_, __) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     alignment: Alignment.center,
                     child: const CircularProgressIndicator(strokeWidth: 2),
                   ),
                   errorWidget: (_, __, ___) => Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     alignment: Alignment.center,
-                    child: const Icon(Icons.image_not_supported_outlined, size: 36),
+                    child: const Icon(Icons.image_not_supported_outlined,
+                        size: 36),
                   ),
                 ),
                 DecoratedBox(
@@ -65,7 +68,8 @@ class FeedAdBanner extends StatelessWidget {
                     children: [
                       if (showBadge)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: Colors.white.withValues(alpha: 0.9),
                             borderRadius: BorderRadius.circular(999),

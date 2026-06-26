@@ -119,7 +119,8 @@ class HomeFiltersSession {
       onlyUncrashed: onlyUncrashed,
       search: search,
     );
-    await prefs.setString('$_prefix${_normalizeUid(uid)}', json.encode(state.toJson()));
+    await prefs.setString(
+        '$_prefix${_normalizeUid(uid)}', json.encode(state.toJson()));
   }
 
   Future<void> clear(String uid) async {

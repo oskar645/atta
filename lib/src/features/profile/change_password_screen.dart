@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
+
+import 'package:atta/src/services/auth_service.dart';
 
 const int _minPasswordDigits = 8;
 
@@ -28,41 +30,13 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   }
 
   Future<void> _change() async {
-    final np = _newPass.text.trim();
-    if (!_isValidPassword(np)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Новый пароль минимум 6 символов')),
-      );
-      return;
-    }
-
-    setState(() => _saving = true);
-    try {
-      final client = Supabase.instance.client;
-
-      // ✅ смена пароля в Supabase
-      await client.auth.updateUser(
-        UserAttributes(password: np),
-      );
-
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Пароль изменён')),
-      );
-    } on AuthException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Смена пароля внутри профиля временно недоступна. Используйте восстановление по номеру телефона.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -75,6 +49,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           children: [
             TextField(
               controller: _newPass,
+              enabled: false,
               obscureText: true,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -88,12 +63,16 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
               width: double.infinity,
               child: FilledButton(
                 onPressed: _saving ? null : _change,
-                child: Text(_saving ? 'Сохраняем…' : 'Сменить пароль'),
+                child: Text(
+                  _saving
+                      ? 'Сохраняем…'
+                      : 'Используйте восстановление по телефону',
+                ),
               ),
             ),
             const SizedBox(height: 10),
             Text(
-              'Если Supabase попросит повторный вход — просто выйди и войди снова.',
+              'В режиме Timeweb пароль меняется через сценарий восстановления по номеру телефона.',
               style: TextStyle(color: Theme.of(context).colorScheme.outline),
             ),
           ],

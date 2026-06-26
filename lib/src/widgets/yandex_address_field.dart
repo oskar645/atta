@@ -108,7 +108,8 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
   bool _showManualChoice() {
     final raw = _rawValue.trim();
     if (raw.length < 2) return false;
-    return !_items.any((x) => x.value.trim().toLowerCase() == raw.toLowerCase());
+    return !_items
+        .any((x) => x.value.trim().toLowerCase() == raw.toLowerCase());
   }
 
   bool get _shouldShowOverlay =>
@@ -206,7 +207,9 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                                 height: 1.2,
                               ),
                             ),

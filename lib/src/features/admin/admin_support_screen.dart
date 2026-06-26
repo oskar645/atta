@@ -1,9 +1,10 @@
-// lib/src/features/admin/admin_support_screen.dart
 import 'package:flutter/material.dart';
+import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
 
 class AdminSupportTab extends StatelessWidget {
   const AdminSupportTab({super.key});
@@ -239,6 +240,45 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
+  void _openImage(String imageUrl) {
+    final url = imageUrl.trim();
+    if (url.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PhotoViewerScreen(photoUrls: [url]),
+      ),
+    );
+  }
+
+  Widget _messageImage(String imageUrl) {
+    Widget fallback([String message = 'Фото недоступно']) {
+      return Container(
+        width: 220,
+        height: 160,
+        color: Colors.black12,
+        alignment: Alignment.center,
+        child: Text(message),
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => _openImage(imageUrl),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: MediaPreviewBox(
+            imageUrl: imageUrl,
+            categoryHint: 'support',
+            borderRadius: 0,
+            errorLabel: 'Фото недоступно',
+            placeholderLabel: 'Загрузка фото...',
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildQuickReplies() {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -288,7 +328,7 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
         children: [
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: support.streamMessages(widget.ticketId),
+              stream: support.streamAdminMessages(widget.ticketId),
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -310,6 +350,7 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                     final m = items[i];
                     final sender = (m['sender'] ?? '').toString();
                     final text = (m['text'] ?? '').toString();
+                    final imageUrl = (m['image_url'] ?? '').toString().trim();
                     final isAdmin = sender == 'admin';
                     final createdAt = _parseCreatedAt(m['created_at']);
                     final nextCreatedAt = i + 1 < items.length
@@ -343,7 +384,7 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                               : Alignment.centerLeft,
                           child: Container(
                             margin: const EdgeInsets.symmetric(vertical: 4),
-                            padding: const EdgeInsets.all(10),
+                            padding: EdgeInsets.all(imageUrl.isEmpty ? 10 : 6),
                             constraints: const BoxConstraints(maxWidth: 320),
                             decoration: BoxDecoration(
                               color: isAdmin
@@ -358,10 +399,21 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(text),
-                                ),
+                                if (imageUrl.isNotEmpty)
+                                  _messageImage(imageUrl),
+                                if (text.trim().isNotEmpty) ...[
+                                  if (imageUrl.isNotEmpty)
+                                    const SizedBox(height: 8),
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: imageUrl.isEmpty ? 0 : 6,
+                                      ),
+                                      child: Text(text),
+                                    ),
+                                  ),
+                                ],
                                 const SizedBox(height: 4),
                                 Text(
                                   _formatTime(createdAt),

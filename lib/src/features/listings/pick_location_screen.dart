@@ -187,7 +187,8 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
                     ),
                   ),
                   Expanded(
-                    child: _tab == 0 ? _buildSearch(context) : _buildMap(context),
+                    child:
+                        _tab == 0 ? _buildSearch(context) : _buildMap(context),
                   ),
                 ],
               ),

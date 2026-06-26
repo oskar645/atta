@@ -1,5 +1,5 @@
 name: atta
-description: ATTA MVP - classifieds app (Flutter + Supabase)
+description: ATTA MVP - classifieds app
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -9,9 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  # Supabase
-  supabase_flutter: ^2.5.6
 
   # State
   provider: ^6.1.2
@@ -30,6 +27,8 @@ dependencies:
   # UI / media
   image_picker: ^1.1.2
   cached_network_image: ^3.4.1
+  image: ^4.8.0
+  mime: ^2.0.0
 
   # Network
   url_launcher: ^6.3.2
@@ -37,6 +36,8 @@ dependencies:
   dio: ^5.9.1
   share_plus: ^12.0.1
   http: ^1.2.0
+  http_parser: ^4.1.2
+  socket_io_client: ^3.1.2
 
   app_badge_plus: ^1.2.9
   app_links: ^7.0.0

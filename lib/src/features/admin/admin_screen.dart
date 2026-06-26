@@ -1,8 +1,14 @@
-﻿import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import 'package:atta/src/services/api/api_config.dart';
+import 'package:atta/src/features/admin/admin_listings_screen.dart';
+import 'package:atta/src/features/admin/admin_promotions_screen.dart';
 import 'package:atta/src/features/admin/admin_reports_screen.dart';
+import 'package:atta/src/features/admin/admin_users_screen.dart';
+import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
 import 'package:atta/src/features/admin/admin_ads_tab.dart';
 import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
@@ -10,6 +16,8 @@ import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/skeletons.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -50,7 +58,7 @@ class _AdminScreenState extends State<AdminScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 6, vsync: this);
+    _tab = TabController(length: 8, vsync: this);
   }
 
   @override
@@ -110,6 +118,8 @@ class _AdminScreenState extends State<AdminScreen>
                       _tabWithAlert('Жалобы', (snap.data ?? 0) > 0),
                 ),
                 _tabWithAlert('Реклама', false),
+                _tabWithAlert('Продвижения', false),
+                _tabWithAlert('Бонусы', false),
                 _tabWithAlert('Уведомления', false),
               ],
             ),
@@ -122,6 +132,8 @@ class _AdminScreenState extends State<AdminScreen>
               AdminSupportTab(),
               AdminReportsScreen(),
               AdminAdsTab(),
+              AdminPromotionsScreen(),
+              AdminWalletAnalyticsScreen(),
               AdminNotificationsTab(),
             ],
           ),
@@ -130,6 +142,564 @@ class _AdminScreenState extends State<AdminScreen>
     );
   }
 }
+
+class _TimewebAdminDashboardTab extends StatelessWidget {
+  const _TimewebAdminDashboardTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final admin = context.read<AdminService>();
+    return FutureBuilder<Map<String, dynamic>>(
+      future: admin.dashboardStats(),
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final stats = (snap.data!['stats'] as Map?) ?? const {};
+        final cards = <MapEntry<String, Object?>>[
+          MapEntry('Пользователи', stats['users']),
+          MapEntry('Объявления', stats['listings']),
+          MapEntry('На модерации', stats['pendingModeration']),
+          MapEntry('Жалобы', stats['reportsOpen']),
+          MapEntry('Поддержка', stats['supportOpen']),
+        ];
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const Text('Источник данных: Timeweb'),
+            const SizedBox(height: 12),
+            ...cards.map(
+              (entry) => Card(
+                child: ListTile(
+                  title: Text(entry.key),
+                  trailing: Text('${entry.value ?? 0}'),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _TimewebAdminUsersTab extends StatelessWidget {
+  const _TimewebAdminUsersTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final admin = context.read<AdminService>();
+    return _AdminJsonListTab(
+      future: admin.users(),
+      emptyText: 'Пользователи пока не получены из Timeweb.',
+      titleBuilder: (item) => (item['display_name'] ??
+              item['name'] ??
+              item['email'] ??
+              'Пользователь')
+          .toString(),
+      subtitleBuilder: (item) =>
+          'Телефон: ${(item['phone'] ?? '').toString()} • admin=${item['is_admin'] == true || item['isAdmin'] == true}',
+    );
+  }
+}
+
+class _TimewebAdminListingsTab extends StatelessWidget {
+  const _TimewebAdminListingsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return const _TimewebAdminListingsModerationTab();
+  }
+}
+
+class _TimewebAdminListingsModerationTab extends StatefulWidget {
+  const _TimewebAdminListingsModerationTab();
+
+  @override
+  State<_TimewebAdminListingsModerationTab> createState() =>
+      _TimewebAdminListingsModerationTabState();
+}
+
+class _TimewebAdminListingsModerationTabState
+    extends State<_TimewebAdminListingsModerationTab> {
+  String _status = 'pending';
+  bool _busy = false;
+  Future<List<Map<String, dynamic>>>? _future;
+  List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
+  String? _errorText;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _load();
+  }
+
+  Future<List<Map<String, dynamic>>> _load() async {
+    try {
+      final response =
+          await context.read<AdminService>().listings(status: _status);
+      final rawItems = response['items'];
+      final items = rawItems is List
+          ? rawItems
+              .whereType<Map>()
+              .map((item) =>
+                  item.map((key, value) => MapEntry(key.toString(), value)))
+              .toList(growable: false)
+          : const <Map<String, dynamic>>[];
+      if (mounted) {
+        setState(() {
+          _items = items;
+          _errorText = null;
+          _loading = false;
+        });
+      }
+      return items;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _errorText = 'Не удалось загрузить объявления.\n$error';
+          _loading = false;
+        });
+      }
+      return List<Map<String, dynamic>>.from(_items);
+    }
+  }
+
+  Future<void> _refresh() async {
+    if (!mounted) return;
+    setState(() {
+      _errorText = null;
+      _loading = _items.isEmpty;
+      _future = _load();
+    });
+    await _future;
+  }
+
+  Future<void> _setStatus(String status) async {
+    if (_status == status) return;
+    setState(() {
+      _status = status;
+      _errorText = null;
+      _loading = _items.isEmpty;
+      _future = _load();
+    });
+  }
+
+  Future<void> _approve(Map<String, dynamic> item) async {
+    setState(() => _busy = true);
+    try {
+      final listingId = _id(item);
+      await context.read<AdminService>().approveListing(listingId);
+      _removeItemLocally(listingId);
+      if (!mounted) return;
+      showAppSnack(context, 'Объявление одобрено');
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, 'Ошибка одобрения: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _reject(Map<String, dynamic> item) async {
+    final reason = await _askReason(
+      title: 'Отклонить объявление',
+      hint: 'Причина отклонения',
+      confirmText: 'Отклонить',
+    );
+    if (reason == null) return;
+
+    setState(() => _busy = true);
+    try {
+      final listingId = _id(item);
+      await context.read<AdminService>().rejectListing(
+            listingId,
+            reason: reason,
+          );
+      _removeItemLocally(listingId);
+      if (!mounted) return;
+      showAppSnack(context, 'Объявление отклонено');
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, 'Ошибка отклонения: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _delete(Map<String, dynamic> item) async {
+    final reason = await _askReason(
+      title: 'Скрыть объявление',
+      hint: 'Причина удаления/скрытия',
+      confirmText: 'Скрыть',
+    );
+    if (reason == null) return;
+
+    setState(() => _busy = true);
+    try {
+      final listingId = _id(item);
+      await context.read<AdminService>().deleteListing(
+            listingId,
+            reason: reason,
+          );
+      _removeItemLocally(listingId);
+      if (!mounted) return;
+      showAppSnack(context, 'Объявление скрыто');
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, 'Ошибка удаления: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<String?> _askReason({
+    required String title,
+    required String hint,
+    required String confirmText,
+  }) async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          minLines: 2,
+          maxLines: 4,
+          decoration: InputDecoration(
+            hintText: hint,
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: Text(confirmText),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    final normalized = (result ?? '').trim();
+    if (normalized.isEmpty) return null;
+    return normalized;
+  }
+
+  String _id(Map<String, dynamic> item) => (item['id'] ?? '').toString();
+
+  void _removeItemLocally(String listingId) {
+    setState(() {
+      _items = _items
+          .where((item) => _id(item) != listingId)
+          .toList(growable: false);
+    });
+  }
+
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'pending':
+        return 'На модерации';
+      case 'approved':
+        return 'Активно';
+      case 'rejected':
+        return 'Отклонено';
+      case 'archived':
+        return 'В архиве';
+      case 'deleted':
+        return 'Скрыто';
+      case 'sold':
+        return 'Продано';
+      default:
+        return status;
+    }
+  }
+
+  String _createdAt(Map<String, dynamic> item) {
+    final raw = (item['created_at'] ?? '').toString().trim();
+    if (raw.isEmpty) return '';
+    return raw.replaceFirst('T', ' ').split('.').first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _future,
+      builder: (context, snap) {
+        final items = _items.isNotEmpty
+            ? _items
+            : (snap.data ?? const <Map<String, dynamic>>[]);
+        if (_loading && items.isEmpty) {
+          return const _ModerationLoadingView();
+        }
+        if (_errorText != null && items.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    _errorText!,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: _refresh,
+                    child: const Text('Повторить'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('На модерации'),
+                  selected: _status == 'pending',
+                  onSelected: _busy ? null : (_) => _setStatus('pending'),
+                ),
+                ChoiceChip(
+                  label: const Text('Все'),
+                  selected: _status == 'all',
+                  onSelected: _busy ? null : (_) => _setStatus('all'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (items.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 48),
+                  child: Text(
+                    _status == 'pending'
+                        ? 'Нет объявлений на модерации.'
+                        : 'Список объявлений пока пуст.',
+                  ),
+                ),
+              )
+            else
+              ...items.map(
+                (item) => Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (item['title'] ?? 'Без названия').toString(),
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${(item['price'] ?? 0).toString()} ₽ • ${(item['city'] ?? '').toString()}',
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Категория: ${(item['category'] ?? '').toString()}',
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Владелец: ${(item['owner_name'] ?? '').toString()}',
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Статус: ${_statusLabel((item['status'] ?? '').toString())}',
+                        ),
+                        const SizedBox(height: 4),
+                        Text('Создано: ${_createdAt(item)}'),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton(
+                              onPressed: _busy ||
+                                      (item['status'] ?? '').toString() ==
+                                          'approved'
+                                  ? null
+                                  : () => _approve(item),
+                              child: const Text('Одобрить'),
+                            ),
+                            FilledButton.tonal(
+                              onPressed: _busy ||
+                                      (item['status'] ?? '').toString() ==
+                                          'rejected'
+                                  ? null
+                                  : () => _reject(item),
+                              child: const Text('Отклонить'),
+                            ),
+                            OutlinedButton(
+                              onPressed: _busy ? null : () => _delete(item),
+                              child: const Text('Скрыть'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ModerationLoadingView extends StatelessWidget {
+  const _ModerationLoadingView();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: const [
+            SkeletonBox(width: 132, height: 32, radius: 999),
+            SkeletonBox(width: 72, height: 32, radius: 999),
+          ],
+        ),
+        const SizedBox(height: 12),
+        for (var i = 0; i < 4; i++)
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SkeletonLine(width: 180, height: 16),
+                SizedBox(height: 10),
+                SkeletonLine(height: 12),
+                SizedBox(height: 6),
+                SkeletonLine(width: 160, height: 12),
+                SizedBox(height: 6),
+                SkeletonLine(width: 140, height: 12),
+                SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(child: SkeletonBox(height: 36, radius: 10)),
+                    SizedBox(width: 8),
+                    Expanded(child: SkeletonBox(height: 36, radius: 10)),
+                    SizedBox(width: 8),
+                    Expanded(child: SkeletonBox(height: 36, radius: 10)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _TimewebAdminReportsTab extends StatelessWidget {
+  const _TimewebAdminReportsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final admin = context.read<AdminService>();
+    return _AdminJsonListTab(
+      future: admin.reports(),
+      emptyText: 'Жалобы пока пусты в Timeweb.',
+      titleBuilder: (item) => (item['reason'] ?? 'Жалоба').toString(),
+      subtitleBuilder: (item) =>
+          'Статус: ${(item['status'] ?? '').toString()} • listing=${(item['listing_id'] ?? '').toString()}',
+    );
+  }
+}
+
+class _TimewebAdminSupportTab extends StatelessWidget {
+  const _TimewebAdminSupportTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final admin = context.read<AdminService>();
+    return _AdminJsonListTab(
+      future: admin.support(),
+      emptyText: 'Поддержка пока пуста в Timeweb.',
+      titleBuilder: (item) => (item['subject'] ?? 'Тикет').toString(),
+      subtitleBuilder: (item) =>
+          'Статус: ${(item['status'] ?? '').toString()} • unread=${item['unread_for_admin'] == true}',
+    );
+  }
+}
+
+class _AdminJsonListTab extends StatelessWidget {
+  const _AdminJsonListTab({
+    required this.future,
+    required this.emptyText,
+    required this.titleBuilder,
+    required this.subtitleBuilder,
+  });
+
+  final Future<Map<String, dynamic>> future;
+  final String emptyText;
+  final String Function(Map<String, dynamic> item) titleBuilder;
+  final String Function(Map<String, dynamic> item) subtitleBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: future,
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final rawItems = snap.data!['items'];
+        final items = rawItems is List
+            ? rawItems
+                .whereType<Map>()
+                .map((item) =>
+                    item.map((key, value) => MapEntry(key.toString(), value)))
+                .toList()
+            : const <Map<String, dynamic>>[];
+        if (items.isEmpty) {
+          return Center(child: Text(emptyText));
+        }
+        return ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (_, index) {
+            final item = items[index];
+            return Card(
+              child: ListTile(
+                title: Text(titleBuilder(item)),
+                subtitle: Text(subtitleBuilder(item)),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 // ----------------
 // 0) ДАШБОРД
 // ----------------
@@ -140,93 +710,167 @@ class _DashboardTab extends StatelessWidget {
     String table, {
     Map<String, dynamic>? eqFilters,
   }) async {
-    final client = Supabase.instance.client;
-
-    try {
-      // максимально совместимый вариант: просто вытягиваем id и считаем длину
-      // (не идеально по скорости, но точно без ошибок компиляции)
-      var q = client.from(table).select('id');
-
-      if (eqFilters != null) {
-        for (final e in eqFilters.entries) {
-          q = q.eq(e.key, e.value);
-        }
-      }
-
-      final res = await q;
-      return (res as List).length;
-    } catch (e) {
-      debugPrint('Count error [$table]: $e');
-      return 0;
-    }
+    return 0;
   }
 
   Future<List<Map<String, dynamic>>> _daily() async {
-    final client = Supabase.instance.client;
-    try {
-      final res = await client
-          .from('admin_dashboard_daily')
-          .select('day, listings_new, tickets_new, reports_new')
-          .order('day', ascending: true);
-
-      return List<Map<String, dynamic>>.from(res as List);
-    } catch (e) {
-      debugPrint('Daily stats error: $e');
-      return <Map<String, dynamic>>[];
-    }
+    return <Map<String, dynamic>>[];
   }
 
   Future<int> _soldThisMonth() async {
-    final client = Supabase.instance.client;
-    final now = DateTime.now().toUtc();
-    final start = DateTime.utc(now.year, now.month);
-
-    try {
-      final res = await client
-          .from('listings')
-          .select('status, updated_at')
-          .eq('status', 'sold');
-
-      final rows = List<Map<String, dynamic>>.from(res as List);
-      var count = 0;
-
-      for (final row in rows) {
-        final raw = row['updated_at'];
-        final soldAt = DateTime.tryParse((raw ?? '').toString())?.toUtc();
-        if (soldAt == null || soldAt.isBefore(start)) continue;
-        count++;
-      }
-
-      return count;
-    } catch (e) {
-      debugPrint('Sold stats error: $e');
-      return 0;
-    }
+    return 0;
   }
 
   Future<int> _onlineUsers() async {
-    final client = Supabase.instance.client;
-    final cutoff = DateTime.now().toUtc().subtract(const Duration(minutes: 2));
-    try {
-      final res = await client
-          .from('user_presence')
-          .select('user_id, is_online, last_seen');
-
-      final rows = List<Map<String, dynamic>>.from(res as List);
-      return rows.where((r) {
-        if (r['is_online'] != true) return false;
-        final lastSeen = DateTime.tryParse((r['last_seen'] ?? '').toString())?.toUtc();
-        if (lastSeen == null) return false;
-        return lastSeen.isAfter(cutoff);
-      }).length;
-    } catch (e) {
-      debugPrint('Online count error: $e');
-      return 0;
-    }
+    return 0;
   }
 
   @override
   Widget build(BuildContext context) {
+    if (ApiConfig.useTimewebBackend) {
+      debugPrint('Admin dashboard source: Timeweb');
+      return FutureBuilder<Map<String, dynamic>>(
+        future: context.read<AdminService>().dashboardStats(),
+        builder: (context, snap) {
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final stats = Map<String, dynamic>.from(
+              (snap.data!['stats'] as Map?) ?? const {});
+          final dailyRoot = Map<String, dynamic>.from(
+              (snap.data!['daily'] as Map?) ?? const {});
+          final daily = ((dailyRoot['listings'] as List?) ?? const <dynamic>[])
+              .whereType<Map>()
+              .map((row) => Map<String, dynamic>.from(row))
+              .toList();
+          final listingsSeries = daily
+              .map((e) => ((e['listings_new'] as num?) ?? 0).toInt())
+              .toList();
+
+          Widget card(
+            String title,
+            String value,
+            IconData icon, {
+            VoidCallback? onTap,
+          }) {
+            return Card(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    children: [
+                      Icon(icon),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }
+
+          Widget chartCard({
+            required String title,
+            required List<int> values,
+          }) {
+            return Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (values.isEmpty)
+                      Text(
+                        'Нет данных',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                      )
+                    else
+                      MiniLineChart(
+                        values: values,
+                        height: 140,
+                      ),
+                  ],
+                ),
+              ),
+            );
+          }
+
+          int read(String key) {
+            final value = stats[key];
+            if (value is num) return value.toInt();
+            return int.tryParse((value ?? '').toString()) ?? 0;
+          }
+
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              card(
+                'Пользователей',
+                '${read('users')}',
+                Icons.people,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
+                ),
+              ),
+              card('Сейчас онлайн', '${read('onlineUsers')}', Icons.circle),
+              card(
+                'Объявлений всего',
+                '${read('listings')}',
+                Icons.list_alt,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AdminListingsScreen(),
+                  ),
+                ),
+              ),
+              card('Активных объявлений', '${read('activeListings')}',
+                  Icons.campaign),
+              card('Продано', '${read('sold')}', Icons.sell),
+              card('Продажи за 30 дней', '${read('sales30d')}',
+                  Icons.sell_outlined),
+              card(
+                  'На модерации', '${read('pendingModeration')}', Icons.shield),
+              card('Тикетов поддержки', '${read('supportTickets')}',
+                  Icons.support_agent),
+              card('Жалоб (open)', '${read('reportsOpen')}', Icons.report),
+              card('Рекламы active', '${read('activeAds')}',
+                  Icons.ad_units_outlined),
+              const SizedBox(height: 8),
+              chartCard(
+                title: 'Новые объявления за 14 дней',
+                values: listingsSeries,
+              ),
+            ],
+          );
+        },
+      );
+    }
+
     return FutureBuilder<List<dynamic>>(
       future: Future.wait([
         Future.wait([
@@ -378,12 +1022,19 @@ class _ModerationTabState extends State<_ModerationTab> {
   final Set<String> _handledIds = <String>{};
 
   Stream<List<Map<String, dynamic>>> _getPendingListings() {
-    return Supabase.instance.client
-        .from('listings')
-        .stream(primaryKey: ['id'])
-        .eq('status', 'pending')
-        .order('created_at', ascending: false)
-        .map((data) => List<Map<String, dynamic>>.from(data));
+    return Stream<int>.periodic(
+      const Duration(seconds: 6),
+      (tick) => tick,
+    ).asyncMap((_) async {
+      final response =
+          await context.read<AdminService>().listings(status: 'pending');
+      final raw = response['items'];
+      if (raw is! List) return const <Map<String, dynamic>>[];
+      return raw
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    }).startWith(const <Map<String, dynamic>>[]);
   }
 
   @override
@@ -446,15 +1097,12 @@ class _ModerationTabState extends State<_ModerationTab> {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(10),
-                        child: Container(
-                          width: 64,
-                          height: 64,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
-                          child: photos.isNotEmpty
-                              ? Image.network(photos.first, fit: BoxFit.cover)
-                              : const Icon(Icons.photo),
+                        child: MediaPreviewBox(
+                          imageUrl: photos.isNotEmpty ? photos.first : '',
+                          categoryHint: 'listings',
+                          width: 80,
+                          height: 60,
+                          borderRadius: 10,
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -521,7 +1169,8 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   static const List<_ModerationRejectReason> _rejectReasons = [
     _ModerationRejectReason(
       label: 'Мат / оскорбления',
-      rejectionReason: 'Нецензурная лексика или оскорбления в тексте объявления.',
+      rejectionReason:
+          'Нецензурная лексика или оскорбления в тексте объявления.',
       notificationBody:
           'Ваше объявление отклонено: в тексте обнаружены мат или оскорбления.',
     ),
@@ -578,10 +1227,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   Future<void> _approve() async {
     setState(() => _busy = true);
     try {
-      await Supabase.instance.client.from('listings').update({
-        'status': 'approved',
-        'rejection_reason': null,
-      }).eq('id', widget.listingId);
+      await context.read<AdminService>().approveListing(widget.listingId);
 
       try {
         await context
@@ -606,10 +1252,11 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
 
     setState(() => _busy = true);
     try {
-      await Supabase.instance.client.from('listings').update({
-        'status': 'rejected',
-        'rejection_reason': selected.rejectionReason,
-      }).eq('id', widget.listingId);
+      await context.read<AdminService>().rejectListing(
+            widget.listingId,
+            reason: selected.rejectionReason,
+            moderationNote: selected.rejectionReason,
+          );
 
       String? notifyError;
       final ownerId = (widget.listingData['owner_id'] ?? '').toString();
@@ -691,21 +1338,21 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
       final body = selected.comment == null
           ? selected.reason.message
           : '${selected.reason.message}\n\nКомментарий модератора: ${selected.comment}';
-      await Supabase.instance.client.from('listings').update({
-        'status': 'deleted',
-        'rejection_reason': body,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', widget.listingId);
+      await context.read<AdminService>().deleteListing(
+            widget.listingId,
+            reason: body,
+            moderationNote: body,
+          );
 
       String? notifyError;
       final ownerId = (widget.listingData['owner_id'] ?? '').toString();
       if (ownerId.trim().isNotEmpty) {
         try {
           await notifications.sendPersonal(
-                userId: ownerId,
-                title: '🚫 Объявление удалено',
-                body: body,
-              );
+            userId: ownerId,
+            title: '🚫 Объявление удалено',
+            body: body,
+          );
         } catch (e) {
           notifyError = e.toString();
         }
@@ -829,7 +1476,13 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                 separatorBuilder: (_, __) => const SizedBox(width: 10),
                 itemBuilder: (_, i) => ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(images[i], width: 300, fit: BoxFit.cover),
+                  child: MediaPreviewBox(
+                    imageUrl: images[i],
+                    categoryHint: 'listings',
+                    width: 300,
+                    height: 225,
+                    borderRadius: 12,
+                  ),
                 ),
               ),
             )
@@ -886,6 +1539,13 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         ],
       ),
     );
+  }
+}
+
+extension<T> on Stream<T> {
+  Stream<T> startWith(T initial) async* {
+    yield initial;
+    yield* this;
   }
 }
 
@@ -1125,7 +1785,6 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
         ),
         const SizedBox(height: 16),
-
         TextField(
           controller: _titleCtrl,
           decoration: const InputDecoration(
@@ -1134,7 +1793,6 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
           ),
         ),
         const SizedBox(height: 12),
-
         TextField(
           controller: _bodyCtrl,
           minLines: 3,
@@ -1144,7 +1802,6 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
             border: OutlineInputBorder(),
           ),
         ),
-
         const SizedBox(height: 8),
         Wrap(
           spacing: 8,
@@ -1160,11 +1817,9 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
             );
           }).toList(),
         ),
-
         const SizedBox(height: 20),
         const Divider(),
         const SizedBox(height: 12),
-
         const Text(
           'ЛИЧНОЕ уведомление (по user_id)',
           style: TextStyle(fontWeight: FontWeight.w700),
@@ -1175,7 +1830,6 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
           style: TextStyle(color: Theme.of(context).colorScheme.outline),
         ),
         const SizedBox(height: 8),
-
         TextField(
           controller: _userIdCtrl,
           decoration: const InputDecoration(
@@ -1185,24 +1839,20 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
           ),
         ),
         const SizedBox(height: 8),
-
         FilledButton(
           onPressed: _sendingPersonal ? null : _sendPersonal,
           child: Text(
             _sendingPersonal ? 'Отправляем…' : 'Отправить ЛИЧНОЕ уведомление',
           ),
         ),
-
         const SizedBox(height: 24),
         const Divider(),
         const SizedBox(height: 12),
-
         const Text(
           'ОБЩЕЕ уведомление (для всех)',
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
-
         SafeArea(
           top: false,
           minimum: const EdgeInsets.only(bottom: 12),
@@ -1217,5 +1867,3 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
     );
   }
 }
-
-

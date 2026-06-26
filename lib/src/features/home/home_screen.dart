@@ -13,6 +13,7 @@ import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/models/feed_ad.dart';
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/models/showcase_item.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/feed_ads_service.dart';
@@ -22,9 +23,15 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
+import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/features/showcase/showcase_all_screen.dart';
+import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
 
 class HomeTabController {
   VoidCallback? _scrollToTop;
@@ -59,8 +66,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String _subcategory = 'Все';
   String _search = '';
   final _searchCtrl = TextEditingController();
-  final GlobalKey<_HomeFeedViewState> _feedKey = GlobalKey<_HomeFeedViewState>();
-  int _refreshShuffleSeed = 0;
+  final GlobalKey<_HomeFeedViewState> _feedKey =
+      GlobalKey<_HomeFeedViewState>();
+  late Future<List<ShowcaseItem>> _showcaseFuture;
 
   // Avito-like location filter.
   String _location = ''; // "Москва", "Чеченская Республика" и т.п.
@@ -75,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _showcaseFuture = _loadShowcase();
     widget.controller?.attach(scrollToTop: _handleScrollToTop);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -145,11 +154,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleRefresh() async {
     final listings = context.read<ListingsService>();
     final feedAds = context.read<FeedAdsService>();
-    final nextSeed = DateTime.now().microsecondsSinceEpoch;
-
-    if (mounted) {
-      setState(() => _refreshShuffleSeed = nextSeed);
-    }
 
     await Future.wait([
       listings
@@ -168,17 +172,23 @@ class _HomeScreenState extends State<HomeScreen> {
               autoCondition: _autoCondition,
               autoMileageTo: _autoMileageTo,
               onlyUncrashed: _onlyUncrashed,
-              refreshShuffleSeed: nextSeed,
             ),
           )
           .first,
       feedAds.streamActiveAd().first,
+      _loadShowcase(),
       Future<void>.delayed(const Duration(milliseconds: 350)),
     ]);
 
     if (mounted) {
-      setState(() {});
+      setState(() {
+        _showcaseFuture = _loadShowcase();
+      });
     }
+  }
+
+  Future<List<ShowcaseItem>> _loadShowcase() {
+    return context.read<ShowcaseService>().getShowcase();
   }
 
   void _selectCategory(String c) {
@@ -252,9 +262,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       builder: (_) => const NotificationsScreen(),
                     ),
                   );
-                  await notifications.markAllSeen(user.uid);
-                  if (!mounted) return;
-                  setState(() {});
                 },
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
@@ -316,6 +323,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
                   child: TextField(
                     controller: _searchCtrl,
+                    onTapOutside: (_) => FocusScope.of(context).unfocus(),
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.search),
                       suffixIcon: IconButton(
@@ -375,19 +383,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         autoCondition: _autoCondition,
                         autoMileageTo: _autoMileageTo,
                         onlyUncrashed: _onlyUncrashed,
-                        refreshShuffleSeed: _refreshShuffleSeed,
                       ),
                     ),
                     builder: (context, snap) {
                       if (!snap.hasData) {
-                        return ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: const [
-                            SizedBox(
-                              height: 320,
-                              child: Center(child: CircularProgressIndicator()),
-                            ),
-                          ],
+                        return const SkeletonListingGrid(
+                          physics: AlwaysScrollableScrollPhysics(),
                         );
                       }
 
@@ -409,15 +410,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       return StreamBuilder<FeedAd?>(
                         stream: feedAds.streamActiveAd(),
                         builder: (context, adSnap) {
-                          return _HomeFeedView(
-                            key: _feedKey,
-                            items: items,
-                            ad: adSnap.data,
-                            favIds: favIds,
-                            history: history,
-                            reviews: reviews,
-                            favs: favs,
-                            userId: user.uid,
+                          return FutureBuilder<List<ShowcaseItem>>(
+                            future: _showcaseFuture,
+                            builder: (context, showcaseSnap) {
+                              return _HomeFeedView(
+                                key: _feedKey,
+                                items: items,
+                                ad: adSnap.data,
+                                showcaseItems:
+                                    showcaseSnap.data ?? const <ShowcaseItem>[],
+                                favIds: favIds,
+                                history: history,
+                                reviews: reviews,
+                                favs: favs,
+                                userId: user.uid,
+                              );
+                            },
                           );
                         },
                       );
@@ -436,6 +444,7 @@ class _HomeScreenState extends State<HomeScreen> {
 class _HomeFeedView extends StatefulWidget {
   final List<Listing> items;
   final FeedAd? ad;
+  final List<ShowcaseItem> showcaseItems;
   final Set<String> favIds;
   final ListingHistoryService history;
   final ReviewsService reviews;
@@ -446,6 +455,7 @@ class _HomeFeedView extends StatefulWidget {
     super.key,
     required this.items,
     required this.ad,
+    required this.showcaseItems,
     required this.favIds,
     required this.history,
     required this.reviews,
@@ -552,6 +562,19 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
+  Future<void> _openShowcaseItem(ShowcaseItem item) async {
+    try {
+      await context.read<ShowcaseService>().recordClick(item.promotionId);
+    } catch (_) {}
+
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ShowcasePreviewScreen(item: item),
+      ),
+    );
+  }
+
   Widget _buildCard(BuildContext context, Listing item) {
     return ListingCard(
       listing: item,
@@ -587,6 +610,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     final firstChunk = visibleAd ? widget.items.take(2).toList() : widget.items;
     final restChunk =
         visibleAd ? widget.items.skip(2).toList() : const <Listing>[];
+    final showcaseItems = widget.showcaseItems;
 
     return CustomScrollView(
       controller: _scrollController,
@@ -595,6 +619,20 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         parent: BouncingScrollPhysics(),
       ),
       slivers: [
+        if (showcaseItems.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _ShowcaseSection(
+              items: showcaseItems,
+              onOpenAll: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ShowcaseAllScreen(),
+                  ),
+                );
+              },
+              onOpenItem: _openShowcaseItem,
+            ),
+          ),
         SliverPadding(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
           sliver: SliverGrid(
@@ -628,6 +666,221 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
             ),
           ),
       ],
+    );
+  }
+}
+
+class _ShowcaseSection extends StatefulWidget {
+  const _ShowcaseSection({
+    required this.items,
+    required this.onOpenAll,
+    required this.onOpenItem,
+  });
+
+  final List<ShowcaseItem> items;
+  final VoidCallback onOpenAll;
+  final Future<void> Function(ShowcaseItem item) onOpenItem;
+
+  @override
+  State<_ShowcaseSection> createState() => _ShowcaseSectionState();
+}
+
+class _ShowcaseSectionState extends State<_ShowcaseSection> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _recordVisibleCards());
+  }
+
+  @override
+  void didUpdateWidget(covariant _ShowcaseSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.items != widget.items) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _recordVisibleCards());
+    }
+  }
+
+  Future<void> _recordVisibleCards() async {
+    final showcaseService = context.read<ShowcaseService>();
+    for (final item in widget.items.take(6)) {
+      try {
+        await showcaseService.recordImpression(item.promotionId);
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Витрина ATTA',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                ),
+              ),
+              TextButton(
+                onPressed: widget.onOpenAll,
+                child: const Text('Смотреть все'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 108,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: widget.items.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final item = widget.items[index];
+                return _ShowcaseCard(
+                  item: item,
+                  onTap: () => widget.onOpenItem(item),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShowcaseCard extends StatelessWidget {
+  const _ShowcaseCard({
+    required this.item,
+    required this.onTap,
+  });
+
+  final ShowcaseItem item;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = item.firstPhotoUrl?.trim() ?? '';
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 136,
+      child: Material(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        elevation: 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: scheme.outlineVariant,
+              ),
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: MediaPreviewBox(
+                    imageUrl: photo,
+                    categoryHint: 'listings',
+                    borderRadius: 0,
+                  ),
+                ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.06),
+                        Colors.black.withValues(alpha: 0.00),
+                        Colors.black.withValues(alpha: 0.62),
+                      ],
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 10,
+                  top: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      'Витрина',
+                      style: TextStyle(
+                        color: scheme.primary,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 10,
+                  right: 10,
+                  bottom: 8,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        item.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          height: 1.1,
+                          shadows: [
+                            Shadow(
+                              blurRadius: 10,
+                              color: Color(0x66000000),
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${formatPrice(item.price)} ₽',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          shadows: [
+                            Shadow(
+                              blurRadius: 10,
+                              color: Color(0x66000000),
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -826,9 +1079,8 @@ class _FilteredListingsScreen extends StatelessWidget {
               final isSaved = items.any((item) => item.queryKey == queryKey);
 
               return IconButton(
-                tooltip: isSaved
-                    ? 'Убрать из избранных поисков'
-                    : 'Сохранить поиск',
+                tooltip:
+                    isSaved ? 'Убрать из избранных поисков' : 'Сохранить поиск',
                 onPressed: !canSaveSearch
                     ? null
                     : () async {
@@ -886,7 +1138,11 @@ class _FilteredListingsScreen extends StatelessWidget {
               child: Text(
                 _summaryText,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).textTheme.bodySmall?.color?.withValues(alpha: 0.75),
+                      color: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.color
+                          ?.withValues(alpha: 0.75),
                     ),
               ),
             ),
@@ -905,7 +1161,9 @@ class _FilteredListingsScreen extends StatelessWidget {
                   ),
                   builder: (context, snap) {
                     if (!snap.hasData) {
-                      return const Center(child: CircularProgressIndicator());
+                      return const SkeletonListingGrid(
+                        physics: AlwaysScrollableScrollPhysics(),
+                      );
                     }
 
                     final items = snap.data!;
@@ -919,6 +1177,7 @@ class _FilteredListingsScreen extends StatelessWidget {
                         return _HomeFeedView(
                           items: items,
                           ad: adSnap.data,
+                          showcaseItems: const <ShowcaseItem>[],
                           favIds: favIds,
                           history: history,
                           reviews: reviews,
@@ -1288,6 +1547,7 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: _locCtrl,
+            onTapOutside: (_) => FocusScope.of(context).unfocus(),
             decoration: const InputDecoration(
               prefixIcon: Icon(Icons.search),
               hintText: 'Например: Москва',
@@ -1313,7 +1573,8 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             title: const Text('Радиус'),
-            subtitle: Text(_radiusKm == null ? 'Не ограничивать' : '$_radiusKm км'),
+            subtitle:
+                Text(_radiusKm == null ? 'Не ограничивать' : '$_radiusKm км'),
             trailing: const Icon(Icons.chevron_right),
             enabled: locationText.isNotEmpty,
             onTap: locationText.isEmpty

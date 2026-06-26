@@ -1,157 +1,154 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:atta/src/services/network_resilience.dart';
+import 'package:atta/src/services/api/admin_api.dart';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/auth_api.dart';
+import 'package:atta/src/services/api/chats_api.dart';
+import 'package:atta/src/services/api/listings_api.dart';
+import 'package:atta/src/services/api/notifications_api.dart';
+import 'package:atta/src/services/api/users_api.dart';
+import 'package:atta/src/services/auth/auth_models.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/backend_auth_service.dart';
 
-/// Адаптер под проект:
-/// Supabase auth: user.id
-/// Проект: uid
-class AuthUser {
-  final String uid;
-  final String? email;
-
-  /// Может быть в metadata, но UI мы будем брать из таблицы users
-  final String? displayName;
-
-  /// Может быть в metadata (avatar_url / photo_url / picture)
-  final String? photoUrl;
-
-  const AuthUser({
-    required this.uid,
-    this.email,
-    this.displayName,
-    this.photoUrl,
-  });
-}
+export 'package:atta/src/services/auth/auth_models.dart';
 
 class AuthService {
-  final SupabaseClient _db = Supabase.instance.client;
-
-  Stream<AuthState> get onAuthStateChange => _db.auth.onAuthStateChange;
-
-  AuthUser? get currentUser {
-    final u = _db.auth.currentUser;
-    if (u == null) return null;
-
-    final meta = u.userMetadata;
-
-    String? pick(dynamic v) {
-      if (v == null) return null;
-      final s = v.toString().trim();
-      return s.isEmpty ? null : s;
-    }
-
-    final displayName = pick(
-      meta?['display_name'] ??
-          meta?['displayName'] ??
-          meta?['name'] ??
-          meta?['full_name'] ??
-          meta?['username'],
-    );
-
-    final photoUrl = pick(
-      meta?['avatar_url'] ??
-          meta?['photo_url'] ??
-          meta?['photoUrl'] ??
-          meta?['picture'],
-    );
-
-    return AuthUser(
-      uid: u.id,
-      email: u.email,
-      displayName: displayName,
-      photoUrl: photoUrl,
+  AuthService()
+      : _backend = BackendAuthService(
+          authApi: AuthApi(_apiClient),
+          usersApi: UsersApi(_apiClient),
+          tokenStorage: _storage,
+        ),
+        listingsApi = ListingsApi(_apiClient),
+        chatsApi = ChatsApi(_apiClient),
+        notificationsApi = NotificationsApi(_apiClient),
+        adminApi = AdminApi(_apiClient) {
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: _backend.refreshSession,
+      onSessionExpired: _backend.expireSession,
     );
   }
+
+  static final TokenStorage _storage = TokenStorage();
+  static final ApiClient _apiClient = ApiClient(tokenStorage: _storage);
+  final BackendAuthService _backend;
+
+  final ListingsApi listingsApi;
+  final ChatsApi chatsApi;
+  final NotificationsApi notificationsApi;
+  final AdminApi adminApi;
+
+  bool get useTimewebBackend => true;
+  Stream<AuthSessionEvent> get onAuthStateChange => _backend.onAuthStateChange;
+  AuthUser? get currentUser => _backend.currentUser;
+  bool get isAuthenticated => _backend.isSignedIn;
+
+  Future<void> ensureInitialized() => _backend.ensureInitialized();
 
   Future<AuthUser> signIn({
     required String email,
     required String password,
-  }) async {
-    final res = await NetworkResilience.run(
-      () => _db.auth.signInWithPassword(
-        email: email.trim(),
-        password: password,
-      ),
-      timeout: const Duration(seconds: 12),
-      retries: 1,
-    );
-
-    final u = res.user;
-    if (u == null) {
-      throw Exception(
-        'Не удалось войти. Пользователь не получен.',
-      );
-    }
-    return currentUser ?? AuthUser(uid: u.id, email: u.email);
-  }
+  }) =>
+      _backend.signIn(email: email, password: password);
 
   Future<AuthUser> signUp({
     required String email,
     required String password,
     String? displayName,
     String? phone,
-  }) async {
-    final res = await NetworkResilience.run(
-      () => _db.auth.signUp(
-        email: email.trim(),
+  }) =>
+      _backend.signUp(
+        email: email,
         password: password,
-        data: {
-          if (displayName != null && displayName.trim().isNotEmpty)
-            'display_name': displayName.trim(),
-          if (displayName != null && displayName.trim().isNotEmpty)
-            'name': displayName.trim(),
-          if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
-        },
-      ),
-      timeout: const Duration(seconds: 12),
-      retries: 0,
-    );
-
-    final u = res.user;
-    if (u == null) {
-      throw Exception(
-        'Не удалось зарегистрироваться. Пользователь не получен.',
+        displayName: displayName,
+        phone: phone,
       );
-    }
-    return AuthUser(uid: u.id, email: u.email);
-  }
 
-  Future<void> signOut() async {
-    await NetworkResilience.run(
-      () => _db.auth.signOut(),
-      timeout: const Duration(seconds: 8),
-      retries: 0,
-    );
-  }
+  Future<void> signOut() => _backend.signOut();
 
-  /// Обновить metadata в Auth (не таблицу users!)
+  Future<void> deleteAccount() => _backend.deleteAccount();
+
   Future<void> updateAuthMetadata({
     String? displayName,
     String? photoUrl,
-  }) async {
-    final data = <String, dynamic>{};
+  }) =>
+      _backend.updateProfile(
+        displayName: displayName,
+        photoUrl: photoUrl,
+      );
 
-    if (displayName != null && displayName.trim().isNotEmpty) {
-      data['display_name'] = displayName.trim();
-      data['name'] = displayName.trim();
-    }
-    if (photoUrl != null && photoUrl.trim().isNotEmpty) {
-      data['avatar_url'] = photoUrl.trim();
-    }
-
-    if (data.isEmpty) return;
-
-    await NetworkResilience.run(
-      () => _db.auth.updateUser(UserAttributes(data: data)),
-      timeout: const Duration(seconds: 12),
-      retries: 0,
-    );
-  }
-
-  /// ВАЖНО: алиас под твой UI-код (ProfileScreen вызывает updateProfile)
   Future<void> updateProfile({
     String? displayName,
     String? photoUrl,
-  }) async {
-    await updateAuthMetadata(displayName: displayName, photoUrl: photoUrl);
+  }) =>
+      updateAuthMetadata(displayName: displayName, photoUrl: photoUrl);
+
+  Future<void> signInWithPhone({
+    required String phone,
+    required String password,
+    String verificationCheckId = '',
+  }) =>
+      _backend.signInWithPhone(
+        phone: phone,
+        password: password,
+        verificationCheckId: verificationCheckId,
+      );
+
+  Future<void> signUpWithVerifiedPhone({
+    required String phone,
+    required String password,
+    required String displayName,
+    required bool acceptedLegal,
+    required String verificationCheckId,
+  }) =>
+      _backend.signUpWithVerifiedPhone(
+        phone: phone,
+        password: password,
+        displayName: displayName,
+        verificationCheckId: verificationCheckId,
+      );
+
+  Future<void> resetPasswordWithVerifiedPhone({
+    required String phone,
+    required String newPassword,
+    required String verificationCheckId,
+  }) =>
+      _backend.resetPasswordWithVerifiedPhone(
+        phone: phone,
+        newPassword: newPassword,
+        verificationCheckId: verificationCheckId,
+      );
+
+  Future<bool> isPhoneRegistered({
+    required String phone,
+  }) =>
+      _backend.isPhoneRegistered(phone: phone);
+
+  Future<PhoneVerificationStartResult> startPhoneVerification({
+    required String phone,
+    required String purpose,
+  }) =>
+      _backend.startPhoneVerification(
+        phone: phone,
+        purpose: purpose,
+      );
+
+  Future<PhoneVerificationCheckResult> checkPhoneVerification({
+    required String phone,
+    required String verificationId,
+    required String purpose,
+  }) =>
+      _backend.checkPhoneVerification(
+        phone: phone,
+        verificationId: verificationId,
+        purpose: purpose,
+      );
+
+  Future<void> linkEmailToCurrentUser({
+    required String email,
+  }) =>
+      _backend.linkEmailToCurrentUser(email: email);
+
+  String userMessageForError(Object error, {bool isSignIn = false}) {
+    return _backend.userMessageForError(error, isSignIn: isSignIn);
   }
 }

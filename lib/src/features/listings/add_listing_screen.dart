@@ -1,4 +1,4 @@
-﻿// lib/src/features/listings/add_listing_screen.dart
+// lib/src/features/listings/add_listing_screen.dart
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -10,6 +10,8 @@ import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/utils/price_formatter.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
@@ -22,6 +24,39 @@ class AddListingScreen extends StatefulWidget {
 
   @override
   State<AddListingScreen> createState() => _AddListingScreenState();
+}
+
+enum _ListingDraftPhotoState { pending, uploading, uploaded, failed }
+
+class _ListingDraftPhotoItem {
+  const _ListingDraftPhotoItem({
+    required this.localId,
+    required this.file,
+    required this.sourceIndex,
+    this.state = _ListingDraftPhotoState.pending,
+    this.errorText,
+  });
+
+  final String localId;
+  final File file;
+  final int sourceIndex;
+  final _ListingDraftPhotoState state;
+  final String? errorText;
+
+  _ListingDraftPhotoItem copyWith({
+    _ListingDraftPhotoState? state,
+    String? errorText,
+    bool clearErrorText = false,
+    int? sourceIndex,
+  }) {
+    return _ListingDraftPhotoItem(
+      localId: localId,
+      file: file,
+      sourceIndex: sourceIndex ?? this.sourceIndex,
+      state: state ?? this.state,
+      errorText: clearErrorText ? null : (errorText ?? this.errorText),
+    );
+  }
 }
 
 class _AddListingScreenState extends State<AddListingScreen> {
@@ -42,8 +77,10 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   String _category = 'Авто';
   String _subcategory = 'Легковые автомобили'; // ✅ ДОБАВИЛИ подкатегорию
-  final _photos = <File>[];
+  final _photoItems = <_ListingDraftPhotoItem>[];
   bool _saving = false;
+  String _draftListingId = '';
+  int _nextPhotoLocalId = 0;
 
   final _picker = ImagePicker();
   bool _phoneHidden = true;
@@ -95,6 +132,22 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool get _isElectronics => _category == 'Электроника';
   bool get _isRealEstate => _category == 'Недвижимость';
   bool get _isClothes => _category == 'Одежда';
+  bool get _isUploadingPhotos => _photoItems.any(
+        (item) => item.state == _ListingDraftPhotoState.uploading,
+      );
+  bool get _hasFailedPhotos => _photoItems.any(
+        (item) => item.state == _ListingDraftPhotoState.failed,
+      );
+  bool get _canEditPhotoSelection => _draftListingId.isEmpty && !_saving;
+  String get _submitLabel {
+    if (_saving || _isUploadingPhotos) {
+      return 'Загружаем фото...';
+    }
+    if (_hasFailedPhotos) {
+      return 'Сначала загрузите все фото';
+    }
+    return 'Опубликовать';
+  }
 
   // ✅ справочники авто
   static const _bodyTypes = <String>[
@@ -223,7 +276,12 @@ class _AddListingScreenState extends State<AddListingScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _prefillPhoneFromProfile());
+    final phone = context.read<AuthService>().currentUser?.phone?.trim() ?? '';
+    if (phone.isNotEmpty) {
+      _phone.text = phone;
+    }
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _prefillPhoneFromProfile());
   }
 
   Future<void> _prefillPhoneFromProfile() async {
@@ -239,6 +297,22 @@ class _AddListingScreenState extends State<AddListingScreen> {
       _phone.text = phone;
       setState(() {});
     } catch (_) {}
+  }
+
+  String _friendlyError(Object error) {
+    if (error is ApiException) {
+      if (error.statusCode == 413) {
+        return 'Файл слишком большой. Выберите фото меньшего размера.';
+      }
+      if (error.message.trim().isNotEmpty) {
+        return error.message.trim();
+      }
+    }
+    final text = error.toString().toLowerCase();
+    if (text.contains('413') || text.contains('too large')) {
+      return 'Файл слишком большой. Выберите фото меньшего размера.';
+    }
+    return 'Не удалось создать объявление. Попробуйте ещё раз.';
   }
 
   @override
@@ -262,7 +336,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   // ================== ФОТО ==================
   void _openPhotoMenu() {
-    if (_photos.length >= 6) return;
+    if (!_canEditPhotoSelection || _photoItems.length >= 10) return;
 
     showModalBottomSheet(
       context: context,
@@ -294,7 +368,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
   }
 
   Future<void> _pickPhotosFromGalleryMulti() async {
-    final remain = 6 - _photos.length;
+    if (!_canEditPhotoSelection) return;
+    final remain = 10 - _photoItems.length;
     if (remain <= 0) return;
 
     final xs = await _picker.pickMultiImage(imageQuality: 80);
@@ -302,22 +377,127 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
     setState(() {
       for (final x in xs.take(remain)) {
-        _photos.add(File(x.path));
+        _photoItems.add(_newPhotoItem(File(x.path)));
       }
     });
 
     if (xs.length > remain && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Можно максимум 6 фото. Добавлено: $remain')),
+        SnackBar(content: Text('Можно максимум 10 фото. Добавлено: $remain')),
       );
     }
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
+    if (!_canEditPhotoSelection) return;
     final x = await _picker.pickImage(source: source, imageQuality: 80);
     if (x == null) return;
-    if (_photos.length >= 6) return;
-    setState(() => _photos.add(File(x.path)));
+    if (_photoItems.length >= 10) return;
+    setState(() => _photoItems.add(_newPhotoItem(File(x.path))));
+  }
+
+  _ListingDraftPhotoItem _newPhotoItem(File file) {
+    return _ListingDraftPhotoItem(
+      localId: 'photo_${_nextPhotoLocalId++}',
+      file: file,
+      sourceIndex: _photoItems.length,
+    );
+  }
+
+  void _removePhotoAt(int index) {
+    if (!_canEditPhotoSelection) return;
+    setState(() {
+      _photoItems.removeAt(index);
+      for (var i = 0; i < _photoItems.length; i++) {
+        _photoItems[i] = _photoItems[i].copyWith(sourceIndex: i);
+      }
+    });
+  }
+
+  void _setPhotoStateByFile(
+    File file,
+    _ListingDraftPhotoState state, {
+    String? errorText,
+    bool clearErrorText = false,
+  }) {
+    final path = file.path;
+    final index = _photoItems.indexWhere((item) => item.file.path == path);
+    if (index == -1) return;
+    _photoItems[index] = _photoItems[index].copyWith(
+      state: state,
+      errorText: errorText,
+      clearErrorText: clearErrorText,
+    );
+  }
+
+  void _handlePhotoUploadStatus(ListingPhotoUploadStatus status) {
+    if (!mounted) return;
+    setState(() {
+      switch (status.state) {
+        case 'uploading':
+          _setPhotoStateByFile(
+            status.file,
+            _ListingDraftPhotoState.uploading,
+            clearErrorText: true,
+          );
+          break;
+        case 'uploaded':
+          _setPhotoStateByFile(
+            status.file,
+            _ListingDraftPhotoState.uploaded,
+            clearErrorText: true,
+          );
+          break;
+        case 'failed':
+          _setPhotoStateByFile(
+            status.file,
+            _ListingDraftPhotoState.failed,
+            errorText: status.message,
+          );
+          break;
+      }
+    });
+  }
+
+  void _markPhotosQueued(Iterable<_ListingDraftPhotoItem> items) {
+    for (final item in items) {
+      _setPhotoStateByFile(
+        item.file,
+        _ListingDraftPhotoState.uploading,
+        clearErrorText: true,
+      );
+    }
+  }
+
+  String _photoStatusLabel(_ListingDraftPhotoItem item) {
+    switch (item.state) {
+      case _ListingDraftPhotoState.pending:
+        return 'Ожидает';
+      case _ListingDraftPhotoState.uploading:
+        return 'Загрузка...';
+      case _ListingDraftPhotoState.uploaded:
+        return 'Загружено';
+      case _ListingDraftPhotoState.failed:
+        return item.errorText?.trim().isNotEmpty == true
+            ? item.errorText!.trim()
+            : 'Ошибка загрузки';
+    }
+  }
+
+  Color _photoStatusColor(
+    BuildContext context,
+    _ListingDraftPhotoItem item,
+  ) {
+    switch (item.state) {
+      case _ListingDraftPhotoState.pending:
+        return Theme.of(context).colorScheme.onSurfaceVariant;
+      case _ListingDraftPhotoState.uploading:
+        return Theme.of(context).colorScheme.primary;
+      case _ListingDraftPhotoState.uploaded:
+        return Colors.green.shade700;
+      case _ListingDraftPhotoState.failed:
+        return Theme.of(context).colorScheme.error;
+    }
   }
 
   // ================== КАРТА -> АДРЕС ==================
@@ -485,7 +665,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
     }
 
     String? nextText;
-    if (current.trim().isEmpty || (previous.isNotEmpty && current.trim() == previous)) {
+    if (current.trim().isEmpty ||
+        (previous.isNotEmpty && current.trim() == previous)) {
       nextText = nextSuggestion;
     } else if (previous.isNotEmpty && current.startsWith(previous)) {
       nextText = '$nextSuggestion${current.substring(previous.length)}';
@@ -630,29 +811,29 @@ class _AddListingScreenState extends State<AddListingScreen> {
               setM(() => gen = (v == kAutoSkipGenerationLabel) ? null : v);
             }
 
-	            return SizedBox(
-	              height: MediaQuery.of(ctx).size.height * 0.86,
-	              child: Column(
-	                children: [
-	                  Padding(
-	                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
-	                    child: Row(
-	                      children: [
-	                        IconButton(
-	                          onPressed: step == 0
-	                              ? null
-	                              : () => setM(() {
-	                                  step -= 1;
-	                                  q = '';
-	                                }),
-	                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
-	                          iconSize: 18,
-	                          tooltip: 'Назад',
-	                        ),
-	                        Expanded(
-	                          child: Text(
-	                            title(),
-	                            style: const TextStyle(fontWeight: FontWeight.w800),
+            return SizedBox(
+              height: MediaQuery.of(ctx).size.height * 0.86,
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed: step == 0
+                              ? null
+                              : () => setM(() {
+                                    step -= 1;
+                                    q = '';
+                                  }),
+                          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                          iconSize: 18,
+                          tooltip: 'Назад',
+                        ),
+                        Expanded(
+                          child: Text(
+                            title(),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
                         TextButton(
@@ -693,9 +874,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
                             onPressed: (brand == null)
                                 ? null
                                 : () => setM(() {
-                                    step = 1;
-                                    q = '';
-                                  }),
+                                      step = 1;
+                                      q = '';
+                                    }),
                             child: Text(model == null ? 'Модель' : 'Модель ✓'),
                           ),
                         ),
@@ -705,9 +886,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
                             onPressed: (brand == null || model == null)
                                 ? null
                                 : () => setM(() {
-                                    step = 2;
-                                    q = '';
-                                  }),
+                                      step = 2;
+                                      q = '';
+                                    }),
                             child: const Text('Поколение'),
                           ),
                         ),
@@ -967,7 +1148,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     final city = _city.text.trim();
     final desc = _desc.text.trim();
     final phone = _phone.text.trim();
-    final price = int.tryParse(_price.text.trim()) ?? 0;
+    final price = parseFormattedPrice(_price.text);
 
     if (_isPassengerCar && (_autoBrand == null || _autoModel == null)) {
       ScaffoldMessenger.of(
@@ -990,10 +1171,26 @@ class _AddListingScreenState extends State<AddListingScreen> {
       return;
     }
 
-    if (_photos.isEmpty) {
+    if (_photoItems.isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Добавьте минимум 1 фото')));
+      return;
+    }
+
+    if (_isUploadingPhotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Дождитесь завершения загрузки фото')),
+      );
+      return;
+    }
+
+    if (_hasFailedPhotos && _draftListingId.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Сначала повторите загрузку фото с ошибкой'),
+        ),
+      );
       return;
     }
 
@@ -1028,9 +1225,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
       final autoBrand = ((_autoBrand ?? '').trim().isNotEmpty)
           ? _autoBrand!.trim()
           : _subcategory.trim();
-      final autoModel = ((_autoModel ?? '').trim().isNotEmpty)
-          ? _autoModel!.trim()
-          : title;
+      final autoModel =
+          ((_autoModel ?? '').trim().isNotEmpty) ? _autoModel!.trim() : title;
 
       car = CarSpecs(
         brand: autoBrand,
@@ -1063,12 +1259,54 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
     final ownerName =
         (auth.currentUser!.displayName?.trim().isNotEmpty ?? false)
-        ? auth.currentUser!.displayName!.trim()
-        : (auth.currentUser!.email ?? 'Пользователь');
+            ? auth.currentUser!.displayName!.trim()
+            : (auth.currentUser!.email ?? 'Пользователь');
 
-    setState(() => _saving = true);
+    final isRetry = _draftListingId.isNotEmpty;
+    final retryItems = _photoItems
+        .where((item) => item.state == _ListingDraftPhotoState.failed)
+        .toList(growable: false);
+    setState(() {
+      _saving = true;
+      if (isRetry) {
+        _markPhotosQueued(retryItems);
+      }
+    });
     try {
-      await svc.createListing(
+      if (isRetry) {
+        final retried = await svc.uploadListingPhotos(
+          listingId: _draftListingId,
+          photos: retryItems.map((item) => item.file).toList(growable: false),
+          sortOrders: retryItems
+              .map((item) => item.sourceIndex)
+              .toList(growable: false),
+          onStatusChanged: _handlePhotoUploadStatus,
+        );
+
+        if (!mounted) return;
+        if (!retried.hasFailures) {
+          Navigator.of(context).pop();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Объявление отправлено на модерацию'),
+            ),
+          );
+          return;
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              retried.allFailed
+                  ? 'Не удалось загрузить фото. Повторите попытку.'
+                  : 'Часть фото не загрузилась. Повторите только отмеченные фото.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final result = await svc.createListing(
         ownerId: auth.currentUser!.uid,
         ownerEmail: auth.currentUser!.email ?? '',
         ownerName: ownerName,
@@ -1081,7 +1319,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
         phoneHidden: _phoneHidden,
         city: city,
         delivery: _delivery,
-        photos: _photos,
+        photos: _photoItems.map((item) => item.file).toList(growable: false),
+        onPhotoStatusChanged: _handlePhotoUploadStatus,
 
         // авто
         car: car,
@@ -1093,15 +1332,29 @@ class _AddListingScreenState extends State<AddListingScreen> {
       );
 
       if (!mounted) return;
-      Navigator.of(context).pop();
+      _draftListingId = result.listingId;
+      final upload = result.photoUploadResult;
+      if (!upload.hasFailures) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Объявление отправлено на модерацию')),
+        );
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Объявление отправлено на модерацию')),
+        SnackBar(
+          content: Text(
+            upload.allFailed
+                ? 'Объявление создано, но фото не загрузились. Повторите загрузку.'
+                : 'Объявление создано, но ${upload.failedCount} фото не загрузились. Повторите отмеченные фото.',
+          ),
+        ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Ошибка: $e')));
+      ).showSnackBar(SnackBar(content: Text(_friendlyError(e))));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1154,9 +1407,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
   }) {
     return DropdownButtonFormField<String>(
       initialValue: value,
-      items: items
-          .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-          .toList(),
+      items:
+          items.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
       onChanged: onChanged,
       decoration: InputDecoration(labelText: label),
     );
@@ -1184,8 +1436,10 @@ class _AddListingScreenState extends State<AddListingScreen> {
             bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
           ),
           child: FilledButton(
-            onPressed: _saving ? null : _save,
-            child: Text(_saving ? 'Сохраняем...' : 'Опубликовать'),
+            onPressed: (_saving || _isUploadingPhotos || _hasFailedPhotos)
+                ? null
+                : _save,
+            child: Text(_submitLabel),
           ),
         ),
       ),
@@ -1197,16 +1451,16 @@ class _AddListingScreenState extends State<AddListingScreen> {
             items: categories
                 .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                 .toList(),
-              onChanged: (v) {
-                setState(() {
-                  _category = v ?? _category;
-                  // Сбросить подкатегорию при смене категории
-                  final subs = kSubcategories[_category] ?? [];
-                  _subcategory = subs.isNotEmpty ? subs.first : '';
-                  _resetSmartFields();
-                  _rebuildTitleFromSelections();
-                });
-              },
+            onChanged: (v) {
+              setState(() {
+                _category = v ?? _category;
+                // Сбросить подкатегорию при смене категории
+                final subs = kSubcategories[_category] ?? [];
+                _subcategory = subs.isNotEmpty ? subs.first : '';
+                _resetSmartFields();
+                _rebuildTitleFromSelections();
+              });
+            },
             decoration: const InputDecoration(labelText: 'Категория'),
           ),
 
@@ -1307,6 +1561,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
           TextField(
             controller: _price,
             keyboardType: TextInputType.number,
+            inputFormatters: [PriceThousandsInputFormatter()],
             decoration: const InputDecoration(labelText: 'Цена (₽)'),
           ),
 
@@ -1350,7 +1605,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 10),
-
             TextField(
               controller: _carYear,
               keyboardType: TextInputType.number,
@@ -1359,14 +1613,12 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
             TextField(
               controller: _carMileage,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Пробег (км)'),
             ),
             const SizedBox(height: 12),
-
             _drop(
               label: 'Кузов',
               value: _carBody,
@@ -1374,7 +1626,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               onChanged: (v) => setState(() => _carBody = v ?? _carBody),
             ),
             const SizedBox(height: 12),
-
             _drop(
               label: 'Топливо',
               value: _carFuel,
@@ -1382,7 +1633,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               onChanged: (v) => setState(() => _carFuel = v ?? _carFuel),
             ),
             const SizedBox(height: 12),
-
             _selectTile(
               title: 'Объём двигателя',
               value: _carEngine.text.trim().isEmpty
@@ -1397,11 +1647,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
             _selectTile(
               title: 'Мощность',
-              value:
-                  _carPower.text.trim().isEmpty ? '' : '${_carPower.text.trim()} л.с.',
+              value: _carPower.text.trim().isEmpty
+                  ? ''
+                  : '${_carPower.text.trim()} л.с.',
               onTap: () => _openValuePickerSheet(
                 title: 'Мощность',
                 items: _itemsWithCurrentValue(_powerValues, _carPower.text),
@@ -1411,7 +1661,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
             _drop(
               label: 'Коробка передач',
               value: _carTransmission,
@@ -1420,7 +1669,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   setState(() => _carTransmission = v ?? _carTransmission),
             ),
             const SizedBox(height: 12),
-
             _drop(
               label: 'Привод',
               value: _carDrive,
@@ -1428,7 +1676,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               onChanged: (v) => setState(() => _carDrive = v ?? _carDrive),
             ),
             const SizedBox(height: 12),
-
             _drop(
               label: 'Состояние',
               value: _carCondition,
@@ -1437,7 +1684,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   setState(() => _carCondition = v ?? _carCondition),
             ),
             const SizedBox(height: 12),
-
             _drop(
               label: 'Цвет',
               value: _carColor,
@@ -1445,7 +1691,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               onChanged: (v) => setState(() => _carColor = v ?? _carColor),
             ),
             const SizedBox(height: 12),
-
             DropdownButtonFormField<String>(
               initialValue: _carCleared == null
                   ? 'Не указано'
@@ -1473,9 +1718,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
                 labelText: 'Растаможен (необязательно)',
               ),
             ),
-
             const SizedBox(height: 12),
-
             TextField(
               controller: _carOwners,
               keyboardType: TextInputType.number,
@@ -1484,7 +1727,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
             TextField(
               controller: _carVin,
               decoration: const InputDecoration(
@@ -1492,7 +1734,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ),
             ),
             const SizedBox(height: 12),
-
             TextField(
               controller: _carNote,
               maxLines: 3,
@@ -1509,14 +1750,17 @@ class _AddListingScreenState extends State<AddListingScreen> {
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
               labelText: 'Телефон (для звонка)',
-              helperText: 'Номер из профиля подставляется автоматически, его можно изменить для этого объявления',
+              helperText:
+                  'Номер из профиля подставляется автоматически, его можно изменить для этого объявления',
             ),
           ),
 
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(
-              _phoneHidden ? 'Номер скрыт в объявлении' : 'Номер показан в объявлении',
+              _phoneHidden
+                  ? 'Номер скрыт в объявлении'
+                  : 'Номер показан в объявлении',
             ),
             subtitle: Text(
               _phoneHidden
@@ -1582,14 +1826,20 @@ class _AddListingScreenState extends State<AddListingScreen> {
           Row(
             children: [
               FilledButton.icon(
-                onPressed: _photos.length >= 6 ? null : _openPhotoMenu,
+                onPressed: (!_canEditPhotoSelection || _photoItems.length >= 10)
+                    ? null
+                    : _openPhotoMenu,
                 icon: const Icon(Icons.add_a_photo_outlined),
-                label: Text('Фото (${_photos.length}/6)'),
+                label: Text('Фото (${_photoItems.length}/10)'),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  'Добавь минимум 1 фото — так лучше продаётся.',
+                  _draftListingId.isEmpty
+                      ? 'Добавьте минимум 1 фото — так лучше продаётся.'
+                      : (_hasFailedPhotos
+                          ? 'Есть ошибки загрузки. Повторите только отмеченные фото.'
+                          : 'Фото привязаны к черновику объявления.'),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.outline,
                   ),
@@ -1598,44 +1848,100 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ],
           ),
 
+          if (_hasFailedPhotos) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: _saving || _isUploadingPhotos ? null : _save,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Повторить загрузку фото'),
+            ),
+          ],
+
           const SizedBox(height: 12),
 
-          if (_photos.isNotEmpty)
+          if (_photoItems.isNotEmpty)
             SizedBox(
-              height: 110,
+              height: 138,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                itemCount: _photos.length,
+                itemCount: _photoItems.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (_, i) => Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: kIsWeb
-                          ? Container(
-                              width: 110,
-                              height: 110,
-                              color: Colors.black12,
-                              alignment: Alignment.center,
-                              child: const Icon(Icons.photo, size: 28),
-                            )
-                          : Image.file(
-                              _photos[i],
-                              width: 110,
-                              height: 110,
-                              fit: BoxFit.cover,
-                            ),
+                itemBuilder: (_, i) {
+                  final item = _photoItems[i];
+                  final statusColor = _photoStatusColor(context, item);
+                  return SizedBox(
+                    width: 110,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: kIsWeb
+                                    ? Container(
+                                        width: 110,
+                                        height: 110,
+                                        color: Colors.black12,
+                                        alignment: Alignment.center,
+                                        child:
+                                            const Icon(Icons.photo, size: 28),
+                                      )
+                                    : Image.file(
+                                        item.file,
+                                        width: 110,
+                                        height: 110,
+                                        fit: BoxFit.cover,
+                                      ),
+                              ),
+                              if (item.state ==
+                                  _ListingDraftPhotoState.uploading)
+                                Positioned.fill(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.28),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    ),
+                                  ),
+                                ),
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                child: IconButton(
+                                  icon: const Icon(Icons.close),
+                                  onPressed: () => _removePhotoAt(i),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _photoStatusLabel(item),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: statusColor,
+                            fontWeight:
+                                item.state == _ListingDraftPhotoState.failed
+                                    ? FontWeight.w600
+                                    : FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
-                    Positioned(
-                      right: 0,
-                      top: 0,
-                      child: IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => setState(() => _photos.removeAt(i)),
-                      ),
-                    ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
 

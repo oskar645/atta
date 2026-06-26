@@ -40,7 +40,9 @@ class Review {
       reviewerId: (row['reviewer_id'] ?? '').toString(),
       reviewerName: (row['reviewer_name'] ?? '').toString(),
       listingId: (row['listing_id'] ?? '').toString(),
-      rating: (row['rating'] is num) ? (row['rating'] as num).toInt() : (int.tryParse('${row['rating']}') ?? 0),
+      rating: (row['rating'] is num)
+          ? (row['rating'] as num).toInt()
+          : (int.tryParse('${row['rating']}') ?? 0),
       text: (row['text'] ?? '').toString(),
       createdAt: _parseDt(row['created_at']),
       replyText: row['reply_text']?.toString(),

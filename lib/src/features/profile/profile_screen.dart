@@ -1,20 +1,136 @@
-import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:io';
+
 import 'package:atta/src/features/admin/admin_screen.dart';
-import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
 import 'package:atta/src/features/profile/settings_screen.dart';
+import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
+import 'package:atta/src/features/wallet/wallet_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/theme_service.dart';
+import 'package:atta/src/utils/media_url.dart';
+import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/skeletons.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-class ProfileScreen extends StatelessWidget {
-  const ProfileScreen({super.key});
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({
+    super.key,
+    this.pickImage,
+    this.precacheAvatar,
+  });
+
+  final Future<XFile?> Function(ImageSource source)? pickImage;
+  final Future<void> Function(BuildContext context, String imageUrl)?
+      precacheAvatar;
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  Uint8List? _avatarPreviewBytes;
+  bool _isAvatarUploading = false;
+  String? _avatarOverrideUrl;
+  String? _profileStreamUid;
+  Stream<Map<String, dynamic>>? _profileStream;
+
+  Future<void> _precacheAvatar(BuildContext context, String imageUrl) async {
+    final customPrecache = widget.precacheAvatar;
+    if (customPrecache != null) {
+      await customPrecache(context, imageUrl);
+      return;
+    }
+    await precacheImage(
+      CachedNetworkImageProvider(imageUrl),
+      context,
+    );
+  }
+
+  String _currentAvatarUrl(
+    ProfileService profile,
+    AuthUser user,
+    Map<String, dynamic> data,
+  ) {
+    final override = _avatarOverrideUrl?.trim() ?? '';
+    if (override.isNotEmpty) {
+      return override;
+    }
+    final cachedAvatar = profile.pickAvatarFromRow(data).trim();
+    if (cachedAvatar.isNotEmpty) {
+      return cachedAvatar;
+    }
+    return user.photoUrl?.trim() ?? '';
+  }
+
+  String _avatarUploadError(Object error) {
+    if (error is ApiException) {
+      if (error.statusCode == 413) {
+        return 'Фото слишком большое. Выберите изображение меньшего размера.';
+      }
+      if (error.message.trim().isNotEmpty) {
+        return error.message.trim();
+      }
+    }
+    if (error.toString().contains('backend_empty_avatar_url')) {
+      return 'Не удалось обновить фото профиля. Попробуйте ещё раз.';
+    }
+    final text = error.toString().toLowerCase();
+    if (text.contains('413') || text.contains('too large')) {
+      return 'Фото слишком большое. Выберите изображение меньшего размера.';
+    }
+    return 'Не удалось загрузить фото профиля. Попробуйте ещё раз.';
+  }
+
+  Map<String, dynamic> _profileSeed(AuthUser user) {
+    return <String, dynamic>{
+      if ((user.displayName?.trim().isNotEmpty ?? false))
+        'display_name': user.displayName!.trim(),
+      if ((user.email?.trim().isNotEmpty ?? false)) 'email': user.email!.trim(),
+      if ((user.phone?.trim().isNotEmpty ?? false)) 'phone': user.phone!.trim(),
+      'phoneVerified': user.phoneVerified,
+      'phone_verified': user.phoneVerified,
+      if ((_avatarOverrideUrl?.trim().isNotEmpty ?? false))
+        'avatar_url': _avatarOverrideUrl!.trim()
+      else if ((user.photoUrl?.trim().isNotEmpty ?? false))
+        'avatar_url': user.photoUrl!.trim(),
+    };
+  }
+
+  Stream<Map<String, dynamic>> _ensureProfileStream(
+    ProfileService profile,
+    AuthUser user,
+  ) {
+    if (_profileStream == null || _profileStreamUid != user.uid) {
+      _profileStreamUid = user.uid;
+      _profileStream = profile.streamProfile(
+        user.uid,
+        seed: _profileSeed(user),
+      );
+    }
+    return _profileStream!;
+  }
+
+  String _formatPhone(String value) {
+    final digits = value.replaceAll(RegExp(r'\D'), '');
+    String normalized = digits;
+    if (normalized.length == 11 &&
+        (normalized.startsWith('7') || normalized.startsWith('8'))) {
+      normalized = normalized.substring(1);
+    }
+    if (normalized.length != 10) return value;
+    return '+7 ${normalized.substring(0, 3)} ${normalized.substring(3, 6)}-'
+        '${normalized.substring(6, 8)}-${normalized.substring(8)}';
+  }
 
   String _shortUserId(String uid) {
     final text = uid.trim();
@@ -42,19 +158,22 @@ class ProfileScreen extends StatelessWidget {
     required String name,
   }) async {
     final profileLink = 'https://atta.app/profile/$uid';
-    final message = 'Смотри мой профиль в ATTA:\n$profileLink';
+    final message =
+        'Присоединяйся к ATTA. Удобно покупать и продавать рядом.\nПрофиль $name: $profileLink';
 
     try {
       await SharePlus.instance.share(
         ShareParams(
           text: message,
-          subject: 'Профиль $name в ATTA',
+          subject: 'Приглашение в ATTA',
         ),
       );
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ошибка: $e')),
+        const SnackBar(
+          content: Text('Не удалось открыть меню отправки. Попробуйте ещё раз.'),
+        ),
       );
     }
   }
@@ -142,29 +261,84 @@ class ProfileScreen extends StatelessWidget {
     final profile = context.read<ProfileService>();
 
     Future<void> doPick(ImageSource src) async {
-      final x = await picker.pickImage(source: src, imageQuality: 85);
+      final x = await (widget.pickImage?.call(src) ??
+          picker.pickImage(source: src, imageQuality: 85));
       if (x == null) return;
+      final previousAvatarUrl = _currentAvatarUrl(
+        profile,
+        context.read<AuthService>().currentUser!,
+        profile.getCachedProfile(uid),
+      );
 
       try {
         final Uint8List bytes = await x.readAsBytes();
-
-// contentType можно определять по mime, но достаточно jpg
-        await profile.uploadAvatar(
-            uid: uid, bytes: bytes, contentType: 'image/jpeg');
-
-        if (context.mounted) {
+        final fileName = x.name.trim().isNotEmpty
+            ? x.name.trim()
+            : File(x.path).uri.pathSegments.last;
+        if (mounted) {
+          setState(() {
+            _avatarPreviewBytes = bytes;
+            _isAvatarUploading = true;
+          });
+        }
+        final result = await profile.uploadAvatar(
+          uid: uid,
+          bytes: bytes,
+          fileName: fileName,
+          contentType: 'image/jpeg',
+        );
+        final uploadedAvatarUrl = result.avatarUrl.trim();
+        final avatarResolution = resolveMediaUrl(
+          uploadedAvatarUrl,
+          categoryHint: 'avatars',
+        );
+        if (kDebugMode) {
+          debugPrint(
+            'Avatar flow uploadResponse.avatarUrl=$uploadedAvatarUrl originalAvatarUrl=${avatarResolution.originalUrl} resolvedAvatarUrl=${avatarResolution.resolvedUrl}',
+          );
+        }
+        if (uploadedAvatarUrl.isEmpty || avatarResolution.resolvedUrl.trim().isEmpty) {
+          throw Exception('backend_empty_avatar_url');
+        }
+        await _precacheAvatar(context, avatarResolution.resolvedUrl.trim());
+        if (!mounted) return;
+        setState(() {
+          _avatarOverrideUrl = uploadedAvatarUrl;
+          _avatarPreviewBytes = null;
+          _isAvatarUploading = false;
+        });
+        await WidgetsBinding.instance.endOfFrame;
+        if (context.mounted &&
+            !_isAvatarUploading &&
+            _avatarPreviewBytes == null &&
+            result.avatarUrl.trim().isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Фото профиля обновлено')));
         }
       } catch (e) {
+        if (mounted) {
+          setState(() {
+            _avatarOverrideUrl =
+                _avatarOverrideUrl?.trim().isNotEmpty == true
+                    ? _avatarOverrideUrl
+                    : (previousAvatarUrl.isEmpty ? null : previousAvatarUrl);
+            _avatarPreviewBytes = null;
+            _isAvatarUploading = false;
+          });
+        }
         if (context.mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(SnackBar(content: Text('Ошибка аватара: $e')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_avatarUploadError(e))),
+          );
         }
       }
     }
 
     if (!context.mounted) return;
+    if (widget.pickImage != null) {
+      await doPick(ImageSource.gallery);
+      return;
+    }
 
     await showModalBottomSheet(
       context: context,
@@ -234,18 +408,42 @@ class ProfileScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Профиль'), centerTitle: false),
       body: StreamBuilder<Map<String, dynamic>>(
-        stream: profile.streamProfile(
-          user.uid,
-          seed: <String, dynamic>{
+        initialData: (() {
+          final cached = profile.getCachedProfile(user.uid);
+          if (cached.isEmpty &&
+              !(_avatarOverrideUrl?.trim().isNotEmpty ?? false)) {
+            return null;
+          }
+          final merged = <String, dynamic>{
             if ((user.displayName?.trim().isNotEmpty ?? false))
               'display_name': user.displayName!.trim(),
             if ((user.email?.trim().isNotEmpty ?? false))
               'email': user.email!.trim(),
-            if ((user.photoUrl?.trim().isNotEmpty ?? false))
+            if ((user.phone?.trim().isNotEmpty ?? false))
+              'phone': user.phone!.trim(),
+            'phoneVerified': user.phoneVerified,
+            'phone_verified': user.phoneVerified,
+            if ((_avatarOverrideUrl?.trim().isNotEmpty ?? false))
+              'avatar_url': _avatarOverrideUrl!.trim()
+            else if ((user.photoUrl?.trim().isNotEmpty ?? false))
               'avatar_url': user.photoUrl!.trim(),
-          },
-        ),
+            ...cached,
+          };
+          return merged.isEmpty ? null : merged;
+        })(),
+        stream: _ensureProfileStream(profile, user),
         builder: (context, snap) {
+          if (!snap.hasData) {
+            return ListView(
+              children: const [
+                SkeletonProfileHeader(),
+                Padding(
+                  padding: EdgeInsets.all(16),
+                  child: SkeletonWalletCard(),
+                ),
+              ],
+            );
+          }
           final data = snap.data ?? const <String, dynamic>{};
           if (data.isNotEmpty) {
             profile.seedProfile(user.uid, data);
@@ -260,11 +458,11 @@ class ProfileScreen extends StatelessWidget {
           final name =
               profile.pickNameFromRow(data, fallback: authFallbackName);
           final phone = (data['phone'] ?? '').toString().trim();
+          final phoneDisplay = phone.isEmpty ? '' : _formatPhone(phone);
+          final phoneVerified =
+              data['phoneVerified'] == true || data['phone_verified'] == true;
 
-          final avatar = profile.pickAvatarFromRow(data).isNotEmpty
-              ? profile.pickAvatarFromRow(data)
-              : (user.photoUrl?.trim() ??
-                  ''); // ✅ сразу показываем auth fallback
+          final avatar = _currentAvatarUrl(profile, user, data);
 
           return ListView(
             children: [
@@ -277,8 +475,16 @@ class ProfileScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     GestureDetector(
-                      onTap: () => _pickAndUploadAvatar(context, user.uid),
-                      child: _Avatar(photoUrl: avatar, fallbackText: name),
+                      key: const Key('profile_avatar_tap_target'),
+                      onTap: _isAvatarUploading
+                          ? null
+                          : () => _pickAndUploadAvatar(context, user.uid),
+                      child: _Avatar(
+                        photoUrl: avatar,
+                        fallbackText: name,
+                        previewBytes: _avatarPreviewBytes,
+                        isLoading: _isAvatarUploading,
+                      ),
                     ),
                     const SizedBox(width: 14),
                     Expanded(
@@ -319,13 +525,25 @@ class ProfileScreen extends StatelessWidget {
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 2),
                               child: Text(
-                                phone.isEmpty ? 'Добавить телефон' : phone,
+                                phoneDisplay.isEmpty
+                                    ? 'Добавить телефон'
+                                    : phoneDisplay,
                                 style: TextStyle(
                                     color:
                                         Theme.of(context).colorScheme.outline),
                               ),
                             ),
                           ),
+                          const SizedBox(height: 4),
+                          if (phone.isNotEmpty)
+                            Text(
+                              phoneVerified
+                                  ? 'Номер подтвержден'
+                                  : 'Номер не подтвержден',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
+                            ),
                           const SizedBox(height: 8),
                           _CopyIdChip(
                             label: 'ID',
@@ -369,6 +587,8 @@ class ProfileScreen extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   children: [
+                    const _ProfileWalletTile(),
+                    const SizedBox(height: 10),
                     ListTile(
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),
@@ -511,14 +731,18 @@ class ProfileScreen extends StatelessWidget {
 class _Avatar extends StatelessWidget {
   final String? photoUrl;
   final String fallbackText;
+  final Uint8List? previewBytes;
+  final bool isLoading;
 
-  const _Avatar({this.photoUrl, required this.fallbackText});
+  const _Avatar({
+    this.photoUrl,
+    required this.fallbackText,
+    this.previewBytes,
+    this.isLoading = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final t = fallbackText.trim();
-    final letter = t.isEmpty ? 'U' : t[0].toUpperCase();
-
     return Container(
       width: 78,
       height: 78,
@@ -526,31 +750,12 @@ class _Avatar extends StatelessWidget {
         shape: BoxShape.circle,
         color: Theme.of(context).colorScheme.surface,
       ),
-      child: ClipOval(
-        child: (photoUrl == null || photoUrl!.isEmpty)
-            ? Center(
-                child: Text(letter,
-                    style: const TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.w800)),
-              )
-            : CachedNetworkImage(
-                imageUrl: photoUrl!,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  alignment: Alignment.center,
-                  child: const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-                errorWidget: (_, __, ___) => Center(
-                  child: Text(letter,
-                      style: const TextStyle(
-                          fontSize: 28, fontWeight: FontWeight.w800)),
-                ),
-              ),
+      child: RemoteAvatar(
+        imageUrl: previewBytes == null ? (photoUrl ?? '') : '',
+        fallbackText: fallbackText,
+        radius: 39,
+        imageProvider: previewBytes == null ? null : MemoryImage(previewBytes!),
+        isLoading: isLoading,
       ),
     );
   }
@@ -768,6 +973,107 @@ class _CompactStatsRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ProfileWalletTile extends StatefulWidget {
+  const _ProfileWalletTile();
+
+  @override
+  State<_ProfileWalletTile> createState() => _ProfileWalletTileState();
+}
+
+class _ProfileWalletTileState extends State<_ProfileWalletTile> {
+  Future<dynamic>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = context.read<WalletService>().maybeCheckAccrualOncePerSession();
+  }
+
+  void _retry() {
+    final walletService = context.read<WalletService>();
+    setState(() {
+      _future = walletService.checkAccrual();
+    });
+  }
+
+  String _walletErrorText(Object error) {
+    if (error is ApiException && error.message.trim().isNotEmpty) {
+      return 'Кошелёк временно недоступен';
+    }
+    return 'Кошелёк временно недоступен';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final walletService = context.read<WalletService>();
+    return FutureBuilder<dynamic>(
+      future: _future,
+      builder: (context, snapshot) {
+        final wallet = snapshot.data ?? walletService.cachedWallet;
+        final loading = snapshot.connectionState != ConnectionState.done &&
+            wallet == null &&
+            !snapshot.hasError;
+        final hasError = snapshot.hasError && wallet == null;
+        if (loading) {
+          return const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: SkeletonWalletCard(),
+          );
+        }
+        return Column(
+          children: [
+            ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              tileColor: theme.colorScheme.surfaceContainerHighest,
+              leading: const Icon(Icons.account_balance_wallet_outlined),
+              title: const Text('ATTA Кошелёк'),
+              subtitle: Text(
+                loading
+                    ? 'Загрузка бонусов...'
+                    : hasError
+                        ? _walletErrorText(snapshot.error!)
+                        : 'Бонусы для продвижения',
+              ),
+              trailing: loading
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.2),
+                    )
+                  : wallet != null
+                      ? Text(
+                          '${wallet.balance} бонусов',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+              onTap: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const WalletScreen(),
+                  ),
+                );
+              },
+            ),
+            if (hasError) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _retry,
+                  child: const Text('Повторить'),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
