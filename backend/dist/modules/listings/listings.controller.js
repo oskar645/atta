@@ -17,16 +17,22 @@ const common_1 = require("@nestjs/common");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const optional_jwt_auth_guard_1 = require("../auth/optional-jwt-auth.guard");
+const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_listing_dto_1 = require("./dto/create-listing.dto");
 const archive_listing_dto_1 = require("./dto/archive-listing.dto");
 const increment_listing_view_dto_1 = require("./dto/increment-listing-view.dto");
 const update_listing_dto_1 = require("./dto/update-listing.dto");
 const listings_service_1 = require("./listings.service");
 let ListingsController = class ListingsController {
-    constructor(listingsService) {
+    constructor(listingsService, rateLimitService) {
         this.listingsService = listingsService;
+        this.rateLimitService = rateLimitService;
     }
-    create(authUser, dto) {
+    create(request, authUser, dto) {
+        this.rateLimitService.consumeOrThrow(`listing:create:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`, {
+            limit: 20,
+            windowMs: 60 * 60 * 1000,
+        });
         return this.listingsService.create(authUser, dto);
     }
     findAll(search, category, city, minPrice, maxPrice, ownerId, status) {
@@ -66,10 +72,11 @@ exports.ListingsController = ListingsController;
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)(),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Body)()),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, create_listing_dto_1.CreateListingDto]),
+    __metadata("design:paramtypes", [Object, Object, create_listing_dto_1.CreateListingDto]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "create", null);
 __decorate([
@@ -149,6 +156,7 @@ __decorate([
 ], ListingsController.prototype, "remove", null);
 exports.ListingsController = ListingsController = __decorate([
     (0, common_1.Controller)('listings'),
-    __metadata("design:paramtypes", [listings_service_1.ListingsService])
+    __metadata("design:paramtypes", [listings_service_1.ListingsService,
+        rate_limit_service_1.RateLimitService])
 ], ListingsController);
 //# sourceMappingURL=listings.controller.js.map

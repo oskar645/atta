@@ -6,12 +6,16 @@ export class ResetPasswordPhoneDto {
 
   @IsOptional()
   @IsString()
-  @MinLength(8)
+  @MinLength(8, {
+    message: 'Пароль должен быть не короче 8 символов',
+  })
   newPassword?: string;
 
   @IsOptional()
   @IsString()
-  @MinLength(8)
+  @MinLength(8, {
+    message: 'Пароль должен быть не короче 8 символов',
+  })
   new_password?: string;
 
   @IsOptional()

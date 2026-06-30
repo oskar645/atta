@@ -5,6 +5,7 @@ import 'package:atta/src/services/api/auth_api.dart';
 import 'package:atta/src/services/api/users_api.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart';
 
 class PhoneVerificationStartResult {
@@ -76,7 +77,14 @@ class BackendAuthService {
       await me();
     } on ApiException catch (error) {
       if (error.isUnauthorized) {
-        await _tryRefreshSession();
+        final refreshed = await _tryRefreshSession();
+        if (!refreshed) {
+          throw const ApiException(
+            'Войдите снова',
+            statusCode: 401,
+            code: 'session_expired',
+          );
+        }
         return;
       }
       if (error.isServerUnavailable ||
@@ -125,9 +133,11 @@ class BackendAuthService {
       if (!error.isNotFound) rethrow;
       response = await _usersApi.me();
     }
+    final rawUser = (response['user'] ?? response) as Map;
     final user = _mergeUser(
       _currentUser,
-      _parseUser((response['user'] ?? response) as Map),
+      _parseUser(rawUser),
+      preferServerAdmin: _hasExplicitAdminFlag(rawUser, response),
     );
     _currentUser = user;
 
@@ -309,6 +319,8 @@ class BackendAuthService {
           return 'Введите номер телефона';
         case 'PASSWORD_REQUIRED':
           return 'Введите пароль';
+        case 'PASSWORD_TOO_SHORT':
+          return 'Пароль должен быть не короче 8 символов';
         case 'INVALID_PHONE_OR_PASSWORD':
           return 'Неверный номер телефона или пароль';
         case 'USER_NOT_FOUND':
@@ -347,6 +359,10 @@ class BackendAuthService {
       if (raw.contains('expired')) {
         return 'Подтверждение номера истекло. Запросите новое.';
       }
+      if (raw.contains('at least 8 characters') ||
+          raw.contains('не короче 8 символов')) {
+        return 'Пароль должен быть не короче 8 символов';
+      }
       if (raw.contains('invalid password') ||
           raw.contains('wrong password') ||
           raw.contains('invalid credentials') ||
@@ -360,8 +376,8 @@ class BackendAuthService {
     return 'Попробуйте позже';
   }
 
-  Future<void> _tryRefreshSession() async {
-    await refreshSession();
+  Future<bool> _tryRefreshSession() async {
+    return refreshSession();
   }
 
   Future<bool> refreshSession() async {
@@ -373,6 +389,18 @@ class BackendAuthService {
     try {
       final response = await _authApi.refresh(refreshToken: refreshToken);
       await _consumeAuthPayload(response);
+      try {
+        await me();
+      } on ApiException catch (error) {
+        if (error.isUnauthorized) {
+          await _clearSession();
+          return false;
+        }
+        if (error.isNetworkError || error.isTimeout || error.isServerUnavailable) {
+          return true;
+        }
+        rethrow;
+      }
       return true;
     } on ApiException catch (_) {
       await _clearSession();
@@ -387,9 +415,11 @@ class BackendAuthService {
   Future<AuthUser> _consumeAuthPayload(Map<String, dynamic> response) async {
     final auth =
         Map<String, dynamic>.from((response['auth'] ?? const {}) as Map);
+    final rawUser = (response['user'] ?? response) as Map;
     final user = _mergeUser(
       _currentUser,
-      _parseUser((response['user'] ?? response) as Map),
+      _parseUser(rawUser),
+      preferServerAdmin: _hasExplicitAdminFlag(rawUser, response),
     );
     final accessToken = (auth['access_token'] ??
             response['access_token'] ??
@@ -436,10 +466,12 @@ class BackendAuthService {
           raw['phone_verified'] == true ||
           raw['isPhoneVerified'] == true,
       photoUrl: _cacheBustedAvatarUrl(
-        pick(raw['avatar_url']) ??
-            pick(raw['avatarUrl']) ??
-            pick(raw['photo_url']) ??
-            pick(raw['photoUrl']),
+        _normalizeAvatarUrl(
+          pick(raw['avatar_url']) ??
+              pick(raw['avatarUrl']) ??
+              pick(raw['photo_url']) ??
+              pick(raw['photoUrl']),
+        ),
         pick(raw['avatar_updated_at']) ??
             pick(raw['updated_at']) ??
             pick(raw['updatedAt']),
@@ -448,6 +480,12 @@ class BackendAuthService {
           raw['is_admin'] == true ||
           raw['role'] == 'admin',
     );
+  }
+
+  String? _normalizeAvatarUrl(String? url) {
+    final trimmed = url?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    return resolvePublicMediaUrl(trimmed, categoryHint: 'avatars').trim();
   }
 
   Future<void> _replaceCurrentUser(AuthUser user) async {
@@ -467,8 +505,15 @@ class BackendAuthService {
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.userUpdated));
   }
 
-  AuthUser _mergeUser(AuthUser? previous, AuthUser next) {
+  AuthUser _mergeUser(
+    AuthUser? previous,
+    AuthUser next, {
+    bool preferServerAdmin = false,
+  }) {
     if (previous == null) return next;
+    final sameUser = previous.uid.isEmpty ||
+        next.uid.isEmpty ||
+        previous.uid == next.uid;
     return AuthUser(
       uid: next.uid.isNotEmpty ? next.uid : previous.uid,
       email: _pickPreferred(next.email, previous.email),
@@ -476,8 +521,24 @@ class BackendAuthService {
       phone: _pickPreferred(next.phone, previous.phone),
       phoneVerified: next.phoneVerified || previous.phoneVerified,
       photoUrl: _pickPreferred(next.photoUrl, previous.photoUrl),
-      isAdmin: next.isAdmin || previous.isAdmin,
+      isAdmin: preferServerAdmin
+          ? next.isAdmin
+          : sameUser
+              ? (next.isAdmin || previous.isAdmin)
+              : next.isAdmin,
     );
+  }
+
+  bool _hasExplicitAdminFlag(
+    Map<dynamic, dynamic> rawUser,
+    Map<String, dynamic> response,
+  ) {
+    return rawUser.containsKey('isAdmin') ||
+        rawUser.containsKey('is_admin') ||
+        rawUser.containsKey('role') ||
+        response.containsKey('isAdmin') ||
+        response.containsKey('is_admin') ||
+        response.containsKey('role');
   }
 
   String? _pickPreferred(String? primary, String? fallback) {

@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 
@@ -14,6 +15,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
@@ -22,14 +24,25 @@ import { ListingsService } from './listings.service';
 
 @Controller('listings')
 export class ListingsController {
-  constructor(private readonly listingsService: ListingsService) {}
+  constructor(
+    private readonly listingsService: ListingsService,
+    private readonly rateLimitService: RateLimitService,
+  ) {}
 
   @UseGuards(JwtAuthGuard)
   @Post()
   create(
+    @Req() request: any,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() dto: CreateListingDto,
   ) {
+    this.rateLimitService.consumeOrThrow(
+      `listing:create:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`,
+      {
+        limit: 20,
+        windowMs: 60 * 60 * 1000,
+      },
+    );
     return this.listingsService.create(authUser, dto);
   }
 

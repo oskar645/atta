@@ -144,7 +144,7 @@ class _FakePromotionsService extends PromotionsService {
         type: 'bump',
         title: 'Поднятие',
         description: 'Объявление поднимется в ленте.',
-        costBonus: 25,
+        costBonus: 35,
         durationHours: 24,
       ),
       PromotionPlan(

@@ -11,6 +11,7 @@ import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/skeletons.dart';
@@ -172,6 +173,7 @@ class _InboxScreenState extends State<InboxScreen> {
                         );
                         final titleName = otherName.isEmpty ? '...' : otherName;
                         final avatar = profiles.pickAvatarFromRow(fallbackRow);
+                        final listingPhoto = c.listingPhotoUrl.trim();
 
                         return StreamBuilder<bool>(
                           stream: presence.streamIsOnline(otherId),
@@ -184,11 +186,20 @@ class _InboxScreenState extends State<InboxScreen> {
                                   horizontal: 8, vertical: 6),
                               leading: PresenceBadge(
                                 isOnline: isOnline,
-                                child: RemoteAvatar(
-                                  imageUrl: avatar,
-                                  fallbackText:
-                                      titleName == '...' ? 'U' : titleName,
-                                  radius: 24,
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: SizedBox(
+                                    width: 48,
+                                    height: 48,
+                                    child: MediaPreviewBox(
+                                      imageUrl: listingPhoto,
+                                      categoryHint: 'listings',
+                                      borderRadius: 0,
+                                      emptyLabel: '',
+                                      errorLabel: '',
+                                      placeholderLabel: '',
+                                    ),
+                                  ),
                                 ),
                               ),
                               onTap: () async {

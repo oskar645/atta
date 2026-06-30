@@ -64,7 +64,7 @@ let MediaController = MediaController_1 = class MediaController {
             : typeof rawSortOrder === 'number'
                 ? rawSortOrder
                 : undefined;
-        return this.listingsService.uploadPhoto(authUser, listingId, this.requireImage(file, 5 * 1024 * 1024), Number.isFinite(parsedSortOrder) ? parsedSortOrder : undefined);
+        return this.listingsService.uploadPhoto(authUser, listingId, this.requireImage(file, 8 * 1024 * 1024), Number.isFinite(parsedSortOrder) ? parsedSortOrder : undefined);
     }
     deleteListingPhoto(authUser, listingId, photoId) {
         return this.listingsService.deletePhoto(authUser, listingId, photoId);
@@ -150,9 +150,11 @@ let MediaController = MediaController_1 = class MediaController {
             'image/jpeg',
             'image/png',
             'image/webp',
+            'image/heic',
+            'image/heif',
         ]);
         if (!allowed.has(mime)) {
-            throw new common_1.BadRequestException('Поддерживаются JPG, PNG и WEBP');
+            throw new common_1.BadRequestException('Поддерживаются JPG, PNG, WEBP и HEIC/HEIF');
         }
         const detectedMime = this.detectImageMime(file.buffer);
         if (!detectedMime || detectedMime !== mime) {
@@ -197,6 +199,19 @@ let MediaController = MediaController_1 = class MediaController {
             buffer[10] === 0x42 &&
             buffer[11] === 0x50) {
             return 'image/webp';
+        }
+        if (buffer.length >= 12 &&
+            buffer[4] === 0x66 &&
+            buffer[5] === 0x74 &&
+            buffer[6] === 0x79 &&
+            buffer[7] === 0x70) {
+            const brand = Buffer.from(buffer.subarray(8, 12)).toString('ascii').toLowerCase();
+            if (brand.includes('heic') || brand.includes('heix')) {
+                return 'image/heic';
+            }
+            if (brand.includes('heif') || brand.includes('hevx')) {
+                return 'image/heif';
+            }
         }
         return null;
     }

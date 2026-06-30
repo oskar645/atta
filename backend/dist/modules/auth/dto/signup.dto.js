@@ -36,7 +36,9 @@ __decorate([
 ], SignupDto.prototype, "display_name", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(8),
+    (0, class_validator_1.MinLength)(8, {
+        message: 'Пароль должен быть не короче 8 символов',
+    }),
     __metadata("design:type", String)
 ], SignupDto.prototype, "password", void 0);
 //# sourceMappingURL=signup.dto.js.map

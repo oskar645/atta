@@ -474,13 +474,15 @@ class ListingsService {
     required String listingId,
     required File file,
     int? sortOrder,
+    PreparedImage? preparedImage,
   }) async {
     if (ApiConfig.useTimewebBackend) {
-      final prepared = await _imagePreparationService.prepareListingImage(file);
+      final prepared =
+          preparedImage ?? await _imagePreparationService.prepareListingImage(file);
       final response = await _mediaApi.uploadListingPhoto(
         listingId: listingId,
         bytes: prepared.bytes,
-        fileName: 'listing.jpg',
+        fileName: prepared.fileName,
         contentType: prepared.contentType,
         sortOrder: sortOrder,
       );
@@ -533,15 +535,27 @@ class ListingsService {
         ListingPhotoUploadStatus(
           file: file,
           index: targetSortOrder,
-          state: 'uploading',
+          state: 'preparing',
+          message: 'Сжимаем фото...',
           listingId: listingId,
         ),
       );
       try {
+        final prepared = await _imagePreparationService.prepareListingImage(file);
+        onStatusChanged?.call(
+          ListingPhotoUploadStatus(
+            file: file,
+            index: targetSortOrder,
+            state: 'uploading',
+            message: 'Загружаем...',
+            listingId: listingId,
+          ),
+        );
         latestListing = await uploadListingPhoto(
           listingId: listingId,
           file: file,
           sortOrder: targetSortOrder,
+          preparedImage: prepared,
         );
         uploadedCount += 1;
         onStatusChanged?.call(
@@ -549,6 +563,7 @@ class ListingsService {
             file: file,
             index: targetSortOrder,
             state: 'uploaded',
+            message: 'Загружено',
             listingId: listingId,
           ),
         );
@@ -594,7 +609,7 @@ class ListingsService {
     }
     final text = error.toString().toLowerCase();
     if (text.contains('413') || text.contains('too large')) {
-      return 'Файл слишком большой. Выберите фото меньшего размера.';
+      return 'Фото слишком большое. Попробуйте другое фото.';
     }
     return 'Не удалось загрузить фото. Попробуйте ещё раз.';
   }

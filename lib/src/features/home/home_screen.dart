@@ -154,6 +154,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleRefresh() async {
     final listings = context.read<ListingsService>();
     final feedAds = context.read<FeedAdsService>();
+    final showcaseFuture = _loadShowcase();
 
     await Future.wait([
       listings
@@ -173,22 +174,22 @@ class _HomeScreenState extends State<HomeScreen> {
               autoMileageTo: _autoMileageTo,
               onlyUncrashed: _onlyUncrashed,
             ),
-          )
+      )
           .first,
       feedAds.streamActiveAd().first,
-      _loadShowcase(),
+      showcaseFuture,
       Future<void>.delayed(const Duration(milliseconds: 350)),
     ]);
 
     if (mounted) {
       setState(() {
-        _showcaseFuture = _loadShowcase();
+        _showcaseFuture = showcaseFuture;
       });
     }
   }
 
   Future<List<ShowcaseItem>> _loadShowcase() {
-    return context.read<ShowcaseService>().getShowcase();
+    return context.read<ShowcaseService>().getHomeShowcase();
   }
 
   void _selectCategory(String c) {
@@ -393,20 +394,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       }
 
                       final items = snap.data!;
-                      if (items.isEmpty) {
-                        return ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          children: const [
-                            SizedBox(
-                              height: 320,
-                              child: Center(
-                                child: Text('Пока нет объявлений'),
-                              ),
-                            ),
-                          ],
-                        );
-                      }
-
                       return StreamBuilder<FeedAd?>(
                         stream: feedAds.streamActiveAd(),
                         builder: (context, adSnap) {
@@ -419,6 +406,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ad: adSnap.data,
                                 showcaseItems:
                                     showcaseSnap.data ?? const <ShowcaseItem>[],
+                                showcaseLoading: showcaseSnap.connectionState ==
+                                    ConnectionState.waiting,
                                 favIds: favIds,
                                 history: history,
                                 reviews: reviews,
@@ -445,6 +434,7 @@ class _HomeFeedView extends StatefulWidget {
   final List<Listing> items;
   final FeedAd? ad;
   final List<ShowcaseItem> showcaseItems;
+  final bool showcaseLoading;
   final Set<String> favIds;
   final ListingHistoryService history;
   final ReviewsService reviews;
@@ -456,6 +446,7 @@ class _HomeFeedView extends StatefulWidget {
     required this.items,
     required this.ad,
     required this.showcaseItems,
+    required this.showcaseLoading,
     required this.favIds,
     required this.history,
     required this.reviews,
@@ -606,6 +597,43 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.items.isEmpty) {
+      final showcaseItems = widget.showcaseItems;
+      return CustomScrollView(
+        controller: _scrollController,
+        clipBehavior: Clip.hardEdge,
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+      slivers: [
+          if (widget.showcaseLoading)
+            const SliverToBoxAdapter(
+              child: _ShowcaseSectionSkeleton(),
+            )
+          else if (showcaseItems.isNotEmpty)
+            SliverToBoxAdapter(
+              child: _ShowcaseSection(
+                items: showcaseItems,
+                onOpenAll: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const ShowcaseAllScreen(),
+                    ),
+                  );
+                },
+                onOpenItem: _openShowcaseItem,
+              ),
+            ),
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: Text('Пока нет объявлений'),
+            ),
+          ),
+        ],
+      );
+    }
+
     final visibleAd = widget.ad != null && widget.ad!.isVisibleNow;
     final firstChunk = visibleAd ? widget.items.take(2).toList() : widget.items;
     final restChunk =
@@ -619,7 +647,11 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         parent: BouncingScrollPhysics(),
       ),
       slivers: [
-        if (showcaseItems.isNotEmpty)
+        if (widget.showcaseLoading)
+          const SliverToBoxAdapter(
+            child: _ShowcaseSectionSkeleton(),
+          )
+        else if (showcaseItems.isNotEmpty)
           SliverToBoxAdapter(
             child: _ShowcaseSection(
               items: showcaseItems,
@@ -683,6 +715,37 @@ class _ShowcaseSection extends StatefulWidget {
 
   @override
   State<_ShowcaseSection> createState() => _ShowcaseSectionState();
+}
+
+class _ShowcaseSectionSkeleton extends StatelessWidget {
+  const _ShowcaseSectionSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SkeletonBox(height: 28, width: 160, radius: 8),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 108,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: 3,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, __) => const SizedBox(
+                width: 164,
+                child: SkeletonBox(radius: 16),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _ShowcaseSectionState extends State<_ShowcaseSection> {
@@ -804,28 +867,6 @@ class _ShowcaseCard extends StatelessWidget {
                         Colors.black.withValues(alpha: 0.00),
                         Colors.black.withValues(alpha: 0.62),
                       ],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 10,
-                  top: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.92),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      'Витрина',
-                      style: TextStyle(
-                        color: scheme.primary,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w800,
-                      ),
                     ),
                   ),
                 ),
@@ -1178,6 +1219,7 @@ class _FilteredListingsScreen extends StatelessWidget {
                           items: items,
                           ad: adSnap.data,
                           showcaseItems: const <ShowcaseItem>[],
+                          showcaseLoading: false,
                           favIds: favIds,
                           history: history,
                           reviews: reviews,

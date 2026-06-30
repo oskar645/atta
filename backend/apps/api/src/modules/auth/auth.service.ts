@@ -295,7 +295,10 @@ export class AuthService {
     const newPassword = (payload.newPassword ?? payload.new_password ?? '').trim();
 
     if (newPassword.length < 8) {
-      throw new BadRequestException('New password must be at least 8 characters long');
+      throw this.createBadRequestError(
+        'PASSWORD_TOO_SHORT',
+        'Пароль должен быть не короче 8 символов',
+      );
     }
 
     await this.assertConfirmedPhoneVerification({
@@ -316,7 +319,7 @@ export class AuthService {
     });
 
     if (!user || user.deletedAt || user.status === UserStatus.DELETED) {
-      throw new NotFoundException('User with this phone was not found');
+      throw this.createUserNotFoundError();
     }
 
     await this.prisma.user.update({

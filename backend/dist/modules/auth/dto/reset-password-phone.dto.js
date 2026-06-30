@@ -21,13 +21,17 @@ __decorate([
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(8),
+    (0, class_validator_1.MinLength)(8, {
+        message: 'Пароль должен быть не короче 8 символов',
+    }),
     __metadata("design:type", String)
 ], ResetPasswordPhoneDto.prototype, "newPassword", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(8),
+    (0, class_validator_1.MinLength)(8, {
+        message: 'Пароль должен быть не короче 8 символов',
+    }),
     __metadata("design:type", String)
 ], ResetPasswordPhoneDto.prototype, "new_password", void 0);
 __decorate([

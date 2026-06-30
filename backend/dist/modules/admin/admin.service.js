@@ -90,6 +90,7 @@ let AdminService = class AdminService {
             this.prisma.listing.count({
                 where: {
                     deletedAt: null,
+                    archivedAt: null,
                     status: client_1.ListingStatus.PENDING,
                 },
             }),
@@ -245,8 +246,11 @@ let AdminService = class AdminService {
     }
     async listListings(status) {
         const normalizedStatus = (status ?? '').trim().toLowerCase();
+        const isPending = normalizedStatus === 'pending' || normalizedStatus.length === 0;
         const items = await this.prisma.listing.findMany({
             where: {
+                deletedAt: null,
+                ...(isPending ? { archivedAt: null } : {}),
                 ...(normalizedStatus == 'all' || normalizedStatus.length === 0
                     ? {}
                     : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),

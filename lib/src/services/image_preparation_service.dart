@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:flutter/foundation.dart';
@@ -25,7 +24,8 @@ class PreparedImage {
 
 class ImagePreparationService {
   static const int chatMaxBytes = 2 * 1024 * 1024;
-  static const int listingMaxBytes = 5 * 1024 * 1024;
+  static const int listingTargetBytes = 2500 * 1024;
+  static const int listingHardMaxBytes = 8 * 1024 * 1024;
   static const int avatarMaxBytes = 2 * 1024 * 1024;
   static const Set<String> _supportedMimeTypes = <String>{
     'image/jpeg',
@@ -46,6 +46,7 @@ class ImagePreparationService {
   Future<PreparedImage> prepareChatImage(File file) {
     return _prepareImageFile(
       file,
+      targetBytes: chatMaxBytes,
       maxBytes: chatMaxBytes,
       maxDimension: 1600,
       minQuality: 75,
@@ -59,12 +60,13 @@ class ImagePreparationService {
   Future<PreparedImage> prepareListingImage(File file) {
     return _prepareImageFile(
       file,
-      maxBytes: listingMaxBytes,
-      maxDimension: 2560,
-      minQuality: 80,
-      maxQuality: 88,
+      targetBytes: listingTargetBytes,
+      maxBytes: listingHardMaxBytes,
+      maxDimension: 1920,
+      minQuality: 75,
+      maxQuality: 85,
       squareCrop: false,
-      tooLargeMessage: 'Файл слишком большой. Выберите фото меньшего размера.',
+      tooLargeMessage: 'Фото слишком большое. Попробуйте другое фото.',
       debugLabel: 'listing',
     );
   }
@@ -72,6 +74,7 @@ class ImagePreparationService {
   Future<PreparedImage> prepareAvatar(File file) {
     return _prepareImageFile(
       file,
+      targetBytes: avatarMaxBytes,
       maxBytes: avatarMaxBytes,
       maxDimension: 1200,
       minQuality: 78,
@@ -89,6 +92,7 @@ class ImagePreparationService {
     return _prepareImageBytes(
       bytes,
       fileName: fileName,
+      targetBytes: avatarMaxBytes,
       maxBytes: avatarMaxBytes,
       maxDimension: 1200,
       minQuality: 78,
@@ -101,6 +105,7 @@ class ImagePreparationService {
 
   Future<PreparedImage> _prepareImageFile(
     File file, {
+    required int targetBytes,
     required int maxBytes,
     required int maxDimension,
     required int minQuality,
@@ -113,6 +118,7 @@ class ImagePreparationService {
     return _prepareImageBytes(
       originalBytes,
       fileName: file.path.split(Platform.pathSeparator).last,
+      targetBytes: targetBytes,
       maxBytes: maxBytes,
       maxDimension: maxDimension,
       minQuality: minQuality,
@@ -126,6 +132,7 @@ class ImagePreparationService {
   Future<PreparedImage> _prepareImageBytes(
     Uint8List originalBytes, {
     required String fileName,
+    required int targetBytes,
     required int maxBytes,
     required int maxDimension,
     required int minQuality,
@@ -153,13 +160,25 @@ class ImagePreparationService {
       decoded = null;
     }
     if (decoded == null) {
-      if (extension == 'heic' || extension == 'heif') {
-        throw const ApiException(
-          'Формат HEIC пока не поддерживается на этом устройстве. Пересохраните фото как JPEG или PNG и попробуйте ещё раз.',
+      if ((extension == 'heic' || extension == 'heif') &&
+          _looksLikeHeicOrHeif(originalBytes)) {
+        if (originalBytes.length > maxBytes) {
+          throw ApiException(
+            tooLargeMessage,
+            statusCode: 413,
+            code: 'payload_too_large',
+          );
+        }
+        return PreparedImage(
+          bytes: originalBytes,
+          fileName: _renameFile(fileName, extension),
+          contentType: extension == 'heif' ? 'image/heif' : 'image/heic',
+          originalBytes: originalBytes.length,
+          compressedBytes: originalBytes.length,
         );
       }
       throw const ApiException(
-        'Не удалось обработать изображение. Выберите настоящее фото в JPEG, PNG или WEBP.',
+        'Не удалось обработать фото. Попробуйте выбрать другое фото.',
       );
     }
 
@@ -170,9 +189,9 @@ class ImagePreparationService {
       img.encodeJpg(working, quality: maxQuality),
     );
 
-    if (bestBytes.length > maxBytes) {
+    if (bestBytes.length > targetBytes) {
       for (var quality = maxQuality - 4;
-          quality >= minQuality && bestBytes.length > maxBytes;
+          quality >= minQuality && bestBytes.length > targetBytes;
           quality -= 4) {
         bestBytes =
             Uint8List.fromList(img.encodeJpg(working, quality: quality));
@@ -180,7 +199,7 @@ class ImagePreparationService {
     }
 
     var resizeDimension = maxDimension;
-    while (bestBytes.length > maxBytes && resizeDimension > 960) {
+    while (bestBytes.length > targetBytes && resizeDimension > 1280) {
       resizeDimension = math.max(960, resizeDimension - 240);
       working = _resizeIfNeeded(
         squareCrop ? _squareCrop(decoded) : decoded,
@@ -247,5 +266,28 @@ class ImagePreparationService {
       if (brand.contains('heif') || brand.contains('hevx')) return 'heif';
     }
     return '';
+  }
+
+  bool _looksLikeHeicOrHeif(Uint8List bytes) {
+    if (bytes.length < 12) {
+      return false;
+    }
+    if (bytes[4] != 0x66 ||
+        bytes[5] != 0x74 ||
+        bytes[6] != 0x79 ||
+        bytes[7] != 0x70) {
+      return false;
+    }
+    final brand = String.fromCharCodes(bytes.sublist(8, 12)).toLowerCase();
+    return brand.contains('heic') ||
+        brand.contains('heix') ||
+        brand.contains('heif') ||
+        brand.contains('hevx');
+  }
+
+  String _renameFile(String fileName, String extension) {
+    final dot = fileName.lastIndexOf('.');
+    final base = dot == -1 ? fileName : fileName.substring(0, dot);
+    return '$base.$extension';
   }
 }

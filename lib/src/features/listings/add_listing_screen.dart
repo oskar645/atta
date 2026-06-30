@@ -26,7 +26,7 @@ class AddListingScreen extends StatefulWidget {
   State<AddListingScreen> createState() => _AddListingScreenState();
 }
 
-enum _ListingDraftPhotoState { pending, uploading, uploaded, failed }
+enum _ListingDraftPhotoState { pending, preparing, uploading, uploaded, failed }
 
 class _ListingDraftPhotoItem {
   const _ListingDraftPhotoItem({
@@ -34,19 +34,19 @@ class _ListingDraftPhotoItem {
     required this.file,
     required this.sourceIndex,
     this.state = _ListingDraftPhotoState.pending,
-    this.errorText,
+    this.statusText,
   });
 
   final String localId;
   final File file;
   final int sourceIndex;
   final _ListingDraftPhotoState state;
-  final String? errorText;
+  final String? statusText;
 
   _ListingDraftPhotoItem copyWith({
     _ListingDraftPhotoState? state,
-    String? errorText,
-    bool clearErrorText = false,
+    String? statusText,
+    bool clearStatusText = false,
     int? sourceIndex,
   }) {
     return _ListingDraftPhotoItem(
@@ -54,7 +54,7 @@ class _ListingDraftPhotoItem {
       file: file,
       sourceIndex: sourceIndex ?? this.sourceIndex,
       state: state ?? this.state,
-      errorText: clearErrorText ? null : (errorText ?? this.errorText),
+      statusText: clearStatusText ? null : (statusText ?? this.statusText),
     );
   }
 }
@@ -133,7 +133,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool get _isRealEstate => _category == 'Недвижимость';
   bool get _isClothes => _category == 'Одежда';
   bool get _isUploadingPhotos => _photoItems.any(
-        (item) => item.state == _ListingDraftPhotoState.uploading,
+        (item) =>
+            item.state == _ListingDraftPhotoState.preparing ||
+            item.state == _ListingDraftPhotoState.uploading,
       );
   bool get _hasFailedPhotos => _photoItems.any(
         (item) => item.state == _ListingDraftPhotoState.failed,
@@ -302,7 +304,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
   String _friendlyError(Object error) {
     if (error is ApiException) {
       if (error.statusCode == 413) {
-        return 'Файл слишком большой. Выберите фото меньшего размера.';
+        return 'Фото слишком большое. Попробуйте другое фото.';
       }
       if (error.message.trim().isNotEmpty) {
         return error.message.trim();
@@ -310,7 +312,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     }
     final text = error.toString().toLowerCase();
     if (text.contains('413') || text.contains('too large')) {
-      return 'Файл слишком большой. Выберите фото меньшего размера.';
+      return 'Фото слишком большое. Попробуйте другое фото.';
     }
     return 'Не удалось создать объявление. Попробуйте ещё раз.';
   }
@@ -372,7 +374,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
     final remain = 10 - _photoItems.length;
     if (remain <= 0) return;
 
-    final xs = await _picker.pickMultiImage(imageQuality: 80);
+    final xs = await _picker.pickMultiImage(
+      imageQuality: 85,
+      maxWidth: 1920,
+      maxHeight: 1920,
+    );
     if (xs.isEmpty) return;
 
     setState(() {
@@ -390,7 +396,12 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   Future<void> _pickPhoto(ImageSource source) async {
     if (!_canEditPhotoSelection) return;
-    final x = await _picker.pickImage(source: source, imageQuality: 80);
+    final x = await _picker.pickImage(
+      source: source,
+      imageQuality: 85,
+      maxWidth: 1920,
+      maxHeight: 1920,
+    );
     if (x == null) return;
     if (_photoItems.length >= 10) return;
     setState(() => _photoItems.add(_newPhotoItem(File(x.path))));
@@ -417,16 +428,16 @@ class _AddListingScreenState extends State<AddListingScreen> {
   void _setPhotoStateByFile(
     File file,
     _ListingDraftPhotoState state, {
-    String? errorText,
-    bool clearErrorText = false,
+    String? statusText,
+    bool clearStatusText = false,
   }) {
     final path = file.path;
     final index = _photoItems.indexWhere((item) => item.file.path == path);
     if (index == -1) return;
     _photoItems[index] = _photoItems[index].copyWith(
       state: state,
-      errorText: errorText,
-      clearErrorText: clearErrorText,
+      statusText: statusText,
+      clearStatusText: clearStatusText,
     );
   }
 
@@ -434,25 +445,35 @@ class _AddListingScreenState extends State<AddListingScreen> {
     if (!mounted) return;
     setState(() {
       switch (status.state) {
+        case 'preparing':
+          _setPhotoStateByFile(
+            status.file,
+            _ListingDraftPhotoState.preparing,
+            statusText: status.message,
+            clearStatusText: status.message.trim().isEmpty,
+          );
+          break;
         case 'uploading':
           _setPhotoStateByFile(
             status.file,
             _ListingDraftPhotoState.uploading,
-            clearErrorText: true,
+            statusText: status.message,
+            clearStatusText: status.message.trim().isEmpty,
           );
           break;
         case 'uploaded':
           _setPhotoStateByFile(
             status.file,
             _ListingDraftPhotoState.uploaded,
-            clearErrorText: true,
+            statusText: status.message,
+            clearStatusText: status.message.trim().isEmpty,
           );
           break;
         case 'failed':
           _setPhotoStateByFile(
             status.file,
             _ListingDraftPhotoState.failed,
-            errorText: status.message,
+            statusText: status.message,
           );
           break;
       }
@@ -463,8 +484,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
     for (final item in items) {
       _setPhotoStateByFile(
         item.file,
-        _ListingDraftPhotoState.uploading,
-        clearErrorText: true,
+        _ListingDraftPhotoState.preparing,
+        statusText: 'Подготовка...',
       );
     }
   }
@@ -473,13 +494,21 @@ class _AddListingScreenState extends State<AddListingScreen> {
     switch (item.state) {
       case _ListingDraftPhotoState.pending:
         return 'Ожидает';
+      case _ListingDraftPhotoState.preparing:
+        return item.statusText?.trim().isNotEmpty == true
+            ? item.statusText!.trim()
+            : 'Подготовка...';
       case _ListingDraftPhotoState.uploading:
-        return 'Загрузка...';
+        return item.statusText?.trim().isNotEmpty == true
+            ? item.statusText!.trim()
+            : 'Загружаем...';
       case _ListingDraftPhotoState.uploaded:
-        return 'Загружено';
+        return item.statusText?.trim().isNotEmpty == true
+            ? item.statusText!.trim()
+            : 'Загружено';
       case _ListingDraftPhotoState.failed:
-        return item.errorText?.trim().isNotEmpty == true
-            ? item.errorText!.trim()
+        return item.statusText?.trim().isNotEmpty == true
+            ? item.statusText!.trim()
             : 'Ошибка загрузки';
     }
   }
@@ -491,6 +520,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     switch (item.state) {
       case _ListingDraftPhotoState.pending:
         return Theme.of(context).colorScheme.onSurfaceVariant;
+      case _ListingDraftPhotoState.preparing:
       case _ListingDraftPhotoState.uploading:
         return Theme.of(context).colorScheme.primary;
       case _ListingDraftPhotoState.uploaded:
@@ -1198,13 +1228,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
     CarSpecs? car;
     if (_isAuto) {
       if (!_validInt(_carYear.text) ||
-          !_validInt(_carMileage.text) ||
-          !_validDouble(_carEngine.text) ||
-          !_validInt(_carPower.text)) {
+          !_validInt(_carMileage.text)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Заполните авто: год, пробег, объём (л) и мощность (л.с.)',
+              'Заполните авто: год и пробег',
             ),
           ),
         );
@@ -1213,8 +1241,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
       final year = int.parse(_carYear.text.trim());
       final mileage = int.parse(_carMileage.text.trim());
-      final engine = double.parse(_carEngine.text.trim().replaceAll(',', '.'));
-      final power = int.parse(_carPower.text.trim());
+      final engine = _carEngine.text.trim().isEmpty
+          ? null
+          : double.tryParse(_carEngine.text.trim().replaceAll(',', '.'));
+      final power =
+          _carPower.text.trim().isEmpty ? null : int.tryParse(_carPower.text.trim());
 
       final owners = _carOwners.text.trim().isEmpty
           ? null
@@ -1896,7 +1927,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
                                       ),
                               ),
                               if (item.state ==
-                                  _ListingDraftPhotoState.uploading)
+                                      _ListingDraftPhotoState.preparing ||
+                                  item.state ==
+                                      _ListingDraftPhotoState.uploading)
                                 Positioned.fill(
                                   child: Container(
                                     decoration: BoxDecoration(

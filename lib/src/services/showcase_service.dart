@@ -12,6 +12,8 @@ class ShowcaseService {
 
   final ShowcaseApi _api;
   final Set<String> _impressionsSentThisSession = <String>{};
+  int _homeRotationOffset = 0;
+  int _homeLoadCount = 0;
 
   Future<List<ShowcaseItem>> getShowcase() async {
     if (!ApiConfig.useTimewebBackend) return const <ShowcaseItem>[];
@@ -26,6 +28,30 @@ class ShowcaseService {
           ),
         )
         .toList();
+  }
+
+  Future<List<ShowcaseItem>> getHomeShowcase() async {
+    final items = await getShowcase();
+    if (items.length <= 1) {
+      _homeLoadCount += 1;
+      return items;
+    }
+
+    if (_homeLoadCount > 0) {
+      _homeRotationOffset = (_homeRotationOffset + 3) % items.length;
+    } else {
+      _homeRotationOffset = _homeRotationOffset % items.length;
+    }
+    _homeLoadCount += 1;
+
+    if (_homeRotationOffset == 0) {
+      return items;
+    }
+
+    return <ShowcaseItem>[
+      ...items.skip(_homeRotationOffset),
+      ...items.take(_homeRotationOffset),
+    ];
   }
 
   Future<void> recordImpression(String promotionId) async {

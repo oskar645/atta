@@ -73,6 +73,7 @@ class _WalletScreenState extends State<WalletScreen> {
           }
 
           final bundle = snapshot.data!;
+          final previewTransactions = _walletPreviewItems(bundle.transactions);
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -137,9 +138,29 @@ class _WalletScreenState extends State<WalletScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                'История операций',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'История операций',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  if (bundle.transactions.isNotEmpty)
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => _WalletTransactionsAllScreen(
+                              transactions: bundle.transactions,
+                            ),
+                          ),
+                        );
+                      },
+                      child: const Text('Смотреть все'),
+                    ),
+                ],
               ),
               const SizedBox(height: 12),
               if (bundle.transactions.isEmpty)
@@ -148,7 +169,7 @@ class _WalletScreenState extends State<WalletScreen> {
                   child: Text('Операций пока нет'),
                 )
               else
-                ...bundle.transactions.map(
+                ...previewTransactions.map(
                   (transaction) => Card(
                     margin: const EdgeInsets.only(bottom: 10),
                     child: ListTile(
@@ -201,6 +222,15 @@ class _WalletBundle {
   final List<WalletTransaction> transactions;
 }
 
+const int _walletPreviewLimit = 1;
+
+List<WalletTransaction> _walletPreviewItems(List<WalletTransaction> items) {
+  if (items.length <= _walletPreviewLimit) {
+    return items;
+  }
+  return items.take(_walletPreviewLimit).toList(growable: false);
+}
+
 String _transactionTitle(WalletTransaction transaction) {
   switch (transaction.reason) {
     case 'welcome_bonus':
@@ -230,4 +260,52 @@ String _formatDateTime(DateTime value) {
   final hh = local.hour.toString().padLeft(2, '0');
   final min = local.minute.toString().padLeft(2, '0');
   return '$dd.$mm.$yyyy, $hh:$min';
+}
+
+class _WalletTransactionsAllScreen extends StatelessWidget {
+  const _WalletTransactionsAllScreen({
+    required this.transactions,
+  });
+
+  final List<WalletTransaction> transactions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Все операции'),
+        centerTitle: false,
+      ),
+      body: transactions.isEmpty
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('Операций пока нет'),
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: transactions.length,
+              itemBuilder: (context, index) {
+                final transaction = transactions[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  child: ListTile(
+                    title: Text(_transactionTitle(transaction)),
+                    subtitle: Text(_formatDateTime(transaction.createdAt)),
+                    trailing: Text(
+                      '${transaction.type == 'spend' ? '-' : '+'}${transaction.amount}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: transaction.type == 'spend'
+                            ? Colors.red
+                            : Colors.green,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+    );
+  }
 }

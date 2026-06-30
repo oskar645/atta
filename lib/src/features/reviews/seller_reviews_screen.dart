@@ -1,6 +1,8 @@
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -364,6 +366,27 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
     super.dispose();
   }
 
+  String _reviewErrorText(Object error) {
+    if (error is ApiException) {
+      if (error.code == 'REVIEW_ALREADY_EXISTS') {
+        return 'Можно оставить только один отзыв';
+      }
+      final raw = error.message.toLowerCase();
+      if (raw.contains('review already exists')) {
+        return 'Вы уже оставили отзыв этому пользователю';
+      }
+      if (error.message.trim().isNotEmpty) {
+        return error.message.trim();
+      }
+    }
+
+    final raw = error.toString().toLowerCase();
+    if (raw.contains('review already exists')) {
+      return 'Вы уже оставили отзыв этому пользователю';
+    }
+    return 'Не удалось отправить отзыв. Попробуйте ещё раз.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final me = context.read<AuthService>().currentUser;
@@ -416,15 +439,16 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
               onPressed: _saving
                   ? null
                   : () async {
+                      if (_saving) return;
                       final me = context.read<AuthService>().currentUser;
                       if (me == null) return;
 
                       final text = _ctrl.text.trim();
                       if (text.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Текст отзыва не должен быть пустым'),
-                          ),
+                        showAppSnack(
+                          context,
+                          'Текст отзыва не должен быть пустым',
+                          isError: true,
                         );
                         return;
                       }
@@ -442,14 +466,16 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
 
                         if (!context.mounted) return;
                         Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text('Отзыв отправлен успешно')),
+                        showAppSnack(
+                          context,
+                          'Отзыв отправлен успешно',
                         );
                       } catch (e) {
                         if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Ошибка: $e')),
+                        showAppSnack(
+                          context,
+                          _reviewErrorText(e),
+                          isError: true,
                         );
                       } finally {
                         if (mounted) setState(() => _saving = false);

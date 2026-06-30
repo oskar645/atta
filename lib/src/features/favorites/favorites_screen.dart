@@ -208,10 +208,6 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                               fit: BoxFit.cover,
                                             ),
                                     ),
-                                    ListingPromotionBadges(
-                                      showVip: listing.hasVipPromotion,
-                                      showBump: listing.hasBumpPromotion,
-                                    ),
                                   ],
                                 ),
                               ),
@@ -221,8 +217,25 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            subtitle: Text(
-                                '${formatPrice(listing.price)} ₽ • ${listing.category}'),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '${formatPrice(listing.price)} ₽ • ${listing.category}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                if (listing.hasVipPromotion ||
+                                    listing.hasBumpPromotion) ...[
+                                  const SizedBox(height: 4),
+                                  _FavoritePromotionBadges(
+                                    showVip: listing.hasVipPromotion,
+                                    showBump: listing.hasBumpPromotion,
+                                  ),
+                                ],
+                              ],
+                            ),
                             trailing: IconButton(
                               tooltip: 'Убрать из избранного',
                               icon:
@@ -769,7 +782,9 @@ class _TimewebFavoriteListingsTabState
 
   Future<void> _refresh() async {
     final next = _loadListings();
-    setState(() => _listingsFuture = next);
+    setState(() {
+      _listingsFuture = next;
+    });
     try {
       await Future.wait([
         widget.favs.refreshFavoriteIds(widget.userId),
@@ -877,10 +892,6 @@ class _TimewebFavoriteListingsTabState
                                       fit: BoxFit.cover,
                                     ),
                             ),
-                            ListingPromotionBadges(
-                              showVip: listing.hasVipPromotion,
-                              showBump: listing.hasBumpPromotion,
-                            ),
                           ],
                         ),
                       ),
@@ -890,7 +901,25 @@ class _TimewebFavoriteListingsTabState
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: Text('${formatPrice(listing.price)} ₽ • ${listing.category}'),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${formatPrice(listing.price)} ₽ • ${listing.category}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (listing.hasVipPromotion ||
+                            listing.hasBumpPromotion) ...[
+                          const SizedBox(height: 4),
+                          _FavoritePromotionBadges(
+                            showVip: listing.hasVipPromotion,
+                            showBump: listing.hasBumpPromotion,
+                          ),
+                        ],
+                      ],
+                    ),
                     trailing: IconButton(
                       tooltip: 'Убрать из избранного',
                       icon: const Icon(Icons.favorite, color: Colors.red),
@@ -956,7 +985,9 @@ class _TimewebSavedSearchesTabState extends State<_TimewebSavedSearchesTab>
 
   Future<void> _refresh() async {
     final next = _load();
-    setState(() => _future = next);
+    setState(() {
+      _future = next;
+    });
     try {
       await widget.savedSearches.refreshSavedSearches(widget.userId);
       await next;
@@ -1196,7 +1227,9 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
 
   Future<void> _refresh() async {
     final next = _load();
-    setState(() => _future = next);
+    setState(() {
+      _future = next;
+    });
     try {
       await next;
     } catch (_) {}
@@ -1375,7 +1408,9 @@ class _TimewebFollowedListingsTabState
 
   Future<void> _refresh() async {
     final next = _load();
-    setState(() => _future = next);
+    setState(() {
+      _future = next;
+    });
     try {
       await widget.follows.refreshFollowedSellers(widget.userId);
       await next;
@@ -1575,6 +1610,72 @@ class _FavoritesGridSkeleton extends StatelessWidget {
       itemCount: 4,
       shrinkWrap: false,
       physics: AlwaysScrollableScrollPhysics(),
+    );
+  }
+}
+
+class _FavoritePromotionBadges extends StatelessWidget {
+  const _FavoritePromotionBadges({
+    required this.showVip,
+    required this.showBump,
+  });
+
+  final bool showVip;
+  final bool showBump;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        if (showVip)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: vipAccentColor(context),
+            ),
+            child: const Text(
+              'VIP',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        if (showBump)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: const Color(0xFFEAF3FF),
+              border: Border.all(
+                color: const Color(0xFF2E6FD8).withValues(alpha: 0.24),
+              ),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.arrow_upward_rounded,
+                  size: 11,
+                  color: Color(0xFF2E6FD8),
+                ),
+                SizedBox(width: 3),
+                Text(
+                  'Поднятие',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF2E6FD8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }

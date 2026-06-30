@@ -1,6 +1,6 @@
 # Chat Media Upload Nginx Limit
 
-Если на сервере в логах появляется `client intended to send too large body`, для Timeweb/Nginx нужен больший лимит:
+Если на сервере в логах появляется `client intended to send too large body`, для Timeweb/Nginx нужен больший лимит. Для фото объявлений после клиентского сжатия держите лимит не ниже `10M`, чтобы не резать обычные фотографии раньше backend.
 
 ```nginx
 client_max_body_size 20M;

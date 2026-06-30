@@ -1,16 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
-
-import 'package:atta/src/services/auth_service.dart';
-
-const int _minPasswordDigits = 8;
-
-bool _isValidPassword(String value) {
-  final trimmed = value.trim();
-  return trimmed.length >= _minPasswordDigits &&
-      RegExp(r'^\d+$').hasMatch(trimmed);
-}
 
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
@@ -22,6 +11,7 @@ class ChangePasswordScreen extends StatefulWidget {
 class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final _newPass = TextEditingController();
   bool _saving = false;
+  bool _obscurePassword = true;
 
   @override
   void dispose() {
@@ -50,11 +40,26 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             TextField(
               controller: _newPass,
               enabled: false,
-              obscureText: true,
+              obscureText: _obscurePassword,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                labelText: 'Новый пароль (мин. 6)',
+              decoration: InputDecoration(
+                labelText: 'Новый пароль',
+                helperText: 'Минимум 8 символов',
+                suffixIcon: IconButton(
+                  tooltip:
+                      _obscurePassword ? 'Показать пароль' : 'Скрыть пароль',
+                  onPressed: () {
+                    setState(() {
+                      _obscurePassword = !_obscurePassword;
+                    });
+                  },
+                  icon: Icon(
+                    _obscurePassword
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                  ),
+                ),
               ),
               onSubmitted: (_) => _saving ? null : _change(),
             ),

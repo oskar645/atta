@@ -635,78 +635,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    StreamBuilder<bool>(
-                      stream: admin.streamIsAdmin(user.uid),
-                      initialData: false,
-                      builder: (context, adminSnap) {
-                        if (adminSnap.data != true) {
-                          return const SizedBox.shrink();
-                        }
+                    if (user.isAdmin) ...[
+                      StreamBuilder<bool>(
+                        stream: admin.streamNeedsAttention(),
+                        initialData: false,
+                        builder: (context, attSnap) {
+                          final hasAlert = attSnap.data == true;
 
-                        return Column(
-                          children: [
-                            StreamBuilder<bool>(
-                              stream: admin.streamNeedsAttention(),
-                              initialData: false,
-                              builder: (context, attSnap) {
-                                final hasAlert = attSnap.data == true;
-
-                                return ListTile(
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14)),
-                                  tileColor: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHighest,
-                                  leading: Stack(
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      const Icon(
-                                          Icons.admin_panel_settings_outlined),
-                                      if (hasAlert)
-                                        const Positioned(
-                                          right: -2,
-                                          top: -2,
-                                          child: Icon(Icons.brightness_1,
-                                              size: 10, color: Colors.red),
-                                        ),
-                                    ],
+                          return ListTile(
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                            tileColor: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            leading: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                const Icon(Icons.admin_panel_settings_outlined),
+                                if (hasAlert)
+                                  const Positioned(
+                                    right: -2,
+                                    top: -2,
+                                    child: Icon(Icons.brightness_1,
+                                        size: 10, color: Colors.red),
                                   ),
-                                  title: Row(
-                                    children: [
-                                      const Expanded(
-                                        child: Text(
-                                          'Админ-панель',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      if (hasAlert) ...[
-                                        const SizedBox(width: 6),
-                                        const Icon(Icons.brightness_1,
-                                            size: 8, color: Colors.red),
-                                      ],
-                                    ],
-                                  ),
-                                  subtitle: Text(
-                                    hasAlert
-                                        ? 'Есть новые задачи: проверьте разделы'
-                                        : 'Управление приложением',
-                                  ),
-                                  trailing: const Icon(Icons.chevron_right),
-                                  onTap: () {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                          builder: (_) => const AdminScreen()),
-                                    );
-                                  },
-                                );
-                              },
+                              ],
                             ),
-                            const SizedBox(height: 10),
-                          ],
-                        );
-                      },
-                    ),
+                            title: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Админ-панель',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (hasAlert) ...[
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.brightness_1,
+                                      size: 8, color: Colors.red),
+                                ],
+                              ],
+                            ),
+                            subtitle: Text(
+                              hasAlert
+                                  ? 'Есть новые задачи: проверьте разделы'
+                                  : 'Управление приложением',
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const AdminScreen()),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     ListTile(
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),

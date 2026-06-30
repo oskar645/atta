@@ -118,6 +118,7 @@ class AdminTicketScreen extends StatefulWidget {
 
 class _AdminTicketScreenState extends State<AdminTicketScreen> {
   final TextEditingController _text = TextEditingController();
+  Stream<List<Map<String, dynamic>>>? _messagesStream;
   bool _sending = false;
   static const List<String> _ruMonthsGenitive = <String>[
     'января',
@@ -174,6 +175,9 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
   @override
   void initState() {
     super.initState();
+    _messagesStream = context.read<SupportService>().streamAdminMessages(
+          widget.ticketId,
+        );
 
     // Помечаем как прочитанный админом при открытии
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -251,16 +255,6 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
   }
 
   Widget _messageImage(String imageUrl) {
-    Widget fallback([String message = 'Фото недоступно']) {
-      return Container(
-        width: 220,
-        height: 160,
-        color: Colors.black12,
-        alignment: Alignment.center,
-        child: Text(message),
-      );
-    }
-
     return GestureDetector(
       onTap: () => _openImage(imageUrl),
       child: ClipRRect(
@@ -301,8 +295,6 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final support = context.read<SupportService>();
-
     return Scaffold(
       appBar: AppBar(
         title: InkWell(
@@ -328,7 +320,7 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
         children: [
           Expanded(
             child: StreamBuilder<List<Map<String, dynamic>>>(
-              stream: support.streamAdminMessages(widget.ticketId),
+              stream: _messagesStream,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());

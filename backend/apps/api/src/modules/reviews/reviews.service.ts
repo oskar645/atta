@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -18,6 +18,13 @@ export class ReviewsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  private duplicateReviewError() {
+    return new ConflictException({
+      code: 'REVIEW_ALREADY_EXISTS',
+      message: 'Можно оставить только один отзыв',
+    });
+  }
 
   private serializeReview(review: {
     id: string;
@@ -164,13 +171,12 @@ export class ReviewsService {
       where: {
         sellerId,
         reviewerId: authUser.userId,
-        listingId,
         deletedAt: null,
       },
       select: { id: true },
     });
     if (existing) {
-      throw new ConflictException('Review already exists for this seller');
+      throw this.duplicateReviewError();
     }
 
     const reviewer = await this.prisma.user.findUnique({
@@ -184,20 +190,31 @@ export class ReviewsService {
       },
     });
 
-    const review = await this.prisma.review.create({
-      data: {
-        sellerId,
-        reviewerId: authUser.userId,
-        reviewerName: params.reviewerName?.trim() || null,
-        listingId,
-        rating,
-        comment: text,
-      },
-      include: {
-        reviewer: true,
-        seller: true,
-      },
-    });
+    let review;
+    try {
+      review = await this.prisma.review.create({
+        data: {
+          sellerId,
+          reviewerId: authUser.userId,
+          reviewerName: params.reviewerName?.trim() || null,
+          listingId,
+          rating,
+          comment: text,
+        },
+        include: {
+          reviewer: true,
+          seller: true,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw this.duplicateReviewError();
+      }
+      throw error;
+    }
 
     await this.notificationsService.createSystemNotification({
       userId: sellerId,

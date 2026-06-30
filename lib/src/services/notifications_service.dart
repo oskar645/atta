@@ -10,11 +10,9 @@ class NotificationsService {
   NotificationsService({
     InAppNotificationsApi? api,
     Duration pollInterval = const Duration(seconds: 8),
-  })  : _api = api ?? InAppNotificationsApi(_apiClient),
-        _pollInterval = pollInterval;
+  }) : _api = api ?? InAppNotificationsApi(_apiClient);
 
   final InAppNotificationsApi _api;
-  final Duration _pollInterval;
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
   static final Map<String, DateTime> _lastSeenGlobalAt = <String, DateTime>{};
@@ -76,6 +74,22 @@ class NotificationsService {
         throw error;
       },
     );
+  }
+
+  Future<void> refreshActiveSession({bool force = false}) async {
+    final userId = _activeUserId;
+    if (userId == null || userId.isEmpty) return;
+    await _refreshUserNotifications(userId, force: force).catchError((error) {
+      if (_isUnauthorized(error)) {
+        _debugSource(
+          'Notifications source: Timeweb unauthorized, resetting state',
+        );
+        resetSession();
+        return;
+      }
+      throw error;
+    });
+    _refreshSignals.add(userId);
   }
 
   List<Map<String, dynamic>> peekGlobal() {
@@ -356,7 +370,6 @@ class NotificationsService {
         filter,
   }) {
     return Stream<List<Map<String, dynamic>>>.multi((controller) {
-      Timer? timer;
       var closed = false;
       final sessionVersion = _sessionVersion;
       StreamSubscription<String>? refreshSub;
@@ -397,7 +410,6 @@ class NotificationsService {
             }
             resetSession();
             closed = true;
-            timer?.cancel();
             return;
           }
           if (!closed && sessionVersion == _sessionVersion) {
@@ -413,10 +425,8 @@ class NotificationsService {
           emitCached();
         }
       });
-      timer = Timer.periodic(_pollInterval, (_) => emit());
       controller.onCancel = () {
         closed = true;
-        timer?.cancel();
         refreshSub?.cancel();
       };
     }).asBroadcastStream();

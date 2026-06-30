@@ -87,7 +87,8 @@ void main() {
     await _deleteFiles(files);
   });
 
-  test('heic image returns russian error instead of silent loss', () async {
+  test('broken heic image returns russian error instead of silent loss',
+      () async {
     final mediaApi = _FakeMediaApi();
     final service = ListingsService(
       api: _FakeListingsApi(),
@@ -107,10 +108,36 @@ void main() {
     expect(result.failedCount, 1);
     expect(
       result.failures.single.message,
-      'Формат HEIC пока не поддерживается на этом устройстве. Пересохраните фото как JPEG или PNG и попробуйте ещё раз.',
+      'Не удалось обработать фото. Попробуйте выбрать другое фото.',
     );
     expect(mediaApi.uploadCalls, 0);
     await file.delete();
+  });
+
+  test('upload status reports preparing then uploading then uploaded',
+      () async {
+    final mediaApi = _FakeMediaApi();
+    final service = ListingsService(
+      api: _FakeListingsApi(),
+      mediaApi: mediaApi,
+    );
+    final files = await _createPhotos(1);
+    final states = <String>[];
+    final messages = <String>[];
+
+    final result = await service.uploadListingPhotos(
+      listingId: 'listing-1',
+      photos: files,
+      onStatusChanged: (status) {
+        states.add(status.state);
+        messages.add(status.message);
+      },
+    );
+
+    expect(result.failedCount, 0);
+    expect(states, <String>['preparing', 'uploading', 'uploaded']);
+    expect(messages, <String>['Сжимаем фото...', 'Загружаем...', 'Загружено']);
+    await _deleteFiles(files);
   });
 
   test('newest listing appears first by publishedAt and createdAt', () async {

@@ -43,9 +43,58 @@ void main() {
         findsOneWidget);
     expect(find.text('Повторить'), findsOneWidget);
   });
+
+  testWidgets('wallet screen shows preview and opens full history',
+      (tester) async {
+    final walletService = _FakeWalletService.withTransactions(9);
+
+    await tester.pumpWidget(
+      Provider<WalletService>.value(
+        value: walletService,
+        child: const MaterialApp(home: WalletScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Смотреть все'), findsOneWidget);
+    expect(find.text('Начислено 1 бонусов за вход'), findsOneWidget);
+    expect(find.text('Начислено 2 бонусов за вход'), findsNothing);
+    expect(find.text('Начислено 8 бонусов за вход'), findsNothing);
+    expect(find.text('Начислено 9 бонусов за вход'), findsNothing);
+
+    await tester.tap(find.text('Смотреть все'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Все операции'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Начислено 9 бонусов за вход'),
+      300,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Начислено 9 бонусов за вход'), findsOneWidget);
+  });
 }
 
 class _FakeWalletService extends WalletService {
+  _FakeWalletService() : _transactions = _singleTransaction();
+
+  _FakeWalletService.withTransactions(int count)
+      : _transactions = List<WalletTransaction>.generate(
+          count,
+          (index) => WalletTransaction.fromMap({
+            'id': 'tx-${index + 1}',
+            'user_id': 'user-1',
+            'wallet_id': 'wallet-1',
+            'type': 'accrual',
+            'amount': index + 1,
+            'reason': 'daily_login_bonus',
+            'created_at':
+                '2026-06-${(19 - index).clamp(10, 19)}T10:00:00.000Z',
+          }),
+        );
+
+  final List<WalletTransaction> _transactions;
+
   @override
   Future<Wallet> checkAccrual() async {
     await Future<void>.delayed(const Duration(milliseconds: 120));
@@ -62,18 +111,22 @@ class _FakeWalletService extends WalletService {
 
   @override
   Future<List<WalletTransaction>> getTransactions() async {
-    return [
-      WalletTransaction.fromMap({
-        'id': 'tx-1',
-        'user_id': 'user-1',
-        'wallet_id': 'wallet-1',
-        'type': 'accrual',
-        'amount': 25,
-        'reason': 'daily_login_bonus',
-        'created_at': '2026-06-19T10:00:00.000Z',
-      }),
-    ];
+    return _transactions;
   }
+}
+
+List<WalletTransaction> _singleTransaction() {
+  return [
+    WalletTransaction.fromMap({
+      'id': 'tx-1',
+      'user_id': 'user-1',
+      'wallet_id': 'wallet-1',
+      'type': 'accrual',
+      'amount': 25,
+      'reason': 'daily_login_bonus',
+      'created_at': '2026-06-19T10:00:00.000Z',
+    }),
+  ];
 }
 
 class _FailingWalletService extends WalletService {

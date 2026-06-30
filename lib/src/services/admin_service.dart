@@ -53,7 +53,9 @@ class AdminService {
 
   Stream<bool> streamIsAdmin(String uid) {
     if (!_sessionActive) return Stream<bool>.value(false);
-    return Stream<bool>.fromFuture(isAdminOnce(uid)).asBroadcastStream();
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) return Stream<bool>.value(false);
+    return Stream<bool>.fromFuture(isAdminOnce(normalizedUid));
   }
 
   Future<bool> isAdminOnce(String uid) async {
@@ -185,6 +187,11 @@ class AdminService {
   Future<Map<String, dynamic>> dashboardStats({bool forceRefresh = false}) =>
       _cached('dashboardStats', _api.dashboardStats,
           forceRefresh: forceRefresh);
+  Future<int> pendingModerationCount({bool forceRefresh = false}) async {
+    final stats = await dashboardStats(forceRefresh: forceRefresh);
+    final raw = stats['pendingModeration'] ?? stats['pending_moderation'] ?? 0;
+    return (raw as num?)?.toInt() ?? int.tryParse('$raw') ?? 0;
+  }
   Future<Map<String, dynamic>> users({bool forceRefresh = false}) =>
       _cached('users', _api.users, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> userById(
@@ -544,9 +551,13 @@ class AdminService {
       return nextUser;
     } on ApiException catch (error) {
       if (error.isUnauthorized) {
-        _lastAdminResolvedUser = null;
+        _lastAdminResolvedUser = cachedUser;
         _lastAdminResolvedAt = now;
-        return null;
+        throw const ApiException(
+          'Войдите снова',
+          statusCode: 401,
+          code: 'session_expired',
+        );
       }
       _lastAdminResolvedUser = cachedUser;
       _lastAdminResolvedAt = now;

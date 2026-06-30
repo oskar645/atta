@@ -6,8 +6,8 @@ class CarSpecs {
   final int mileageKm; // пробег
   final String bodyType; // кузов
   final String fuel; // топливо
-  final double engineVolume; // объем, л
-  final int powerHp; // л.с.
+  final double? engineVolume; // объем, л
+  final int? powerHp; // л.с.
   final String transmission; // коробка
   final String drive; // привод
   final String condition; // состояние
@@ -26,8 +26,8 @@ class CarSpecs {
     required this.mileageKm,
     required this.bodyType,
     required this.fuel,
-    required this.engineVolume,
-    required this.powerHp,
+    this.engineVolume,
+    this.powerHp,
     required this.transmission,
     required this.drive,
     required this.condition,
@@ -46,8 +46,8 @@ class CarSpecs {
         'mileageKm': mileageKm,
         'bodyType': bodyType,
         'fuel': fuel,
-        'engineVolume': engineVolume,
-        'powerHp': powerHp,
+        if (engineVolume != null) 'engineVolume': engineVolume,
+        if (powerHp != null) 'powerHp': powerHp,
         'transmission': transmission,
         'drive': drive,
         'condition': condition,
@@ -62,22 +62,24 @@ class CarSpecs {
     if (raw is! Map) return null;
     final m = Map<String, dynamic>.from(raw);
 
-    double parseDouble(dynamic v) {
+    double? parseDouble(dynamic v) {
+      if (v == null) return null;
       if (v is num) return v.toDouble();
-      return double.tryParse(v?.toString() ?? '') ?? 0.0;
+      return double.tryParse(v.toString());
     }
 
-    int parseInt(dynamic v) {
+    int? parseInt(dynamic v) {
+      if (v == null) return null;
       if (v is num) return v.toInt();
-      return int.tryParse(v?.toString() ?? '') ?? 0;
+      return int.tryParse(v.toString());
     }
 
     return CarSpecs(
       brand: (m['brand'] ?? '').toString(),
       model: (m['model'] ?? '').toString(),
       generation: (m['generation'] ?? '').toString(),
-      year: parseInt(m['year']),
-      mileageKm: parseInt(m['mileageKm']),
+      year: parseInt(m['year']) ?? 0,
+      mileageKm: parseInt(m['mileageKm']) ?? 0,
       bodyType: (m['bodyType'] ?? '').toString(),
       fuel: (m['fuel'] ?? '').toString(),
       engineVolume: parseDouble(m['engineVolume']),

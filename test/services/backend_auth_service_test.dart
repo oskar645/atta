@@ -179,6 +179,24 @@ void main() {
     );
   });
 
+  test('signIn normalizes relative avatar_url to backend media url', () async {
+    final service = BackendAuthService(
+      authApi: _RelativeAvatarAuthApi(),
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    final user = await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+
+    expect(
+      user.photoUrl,
+      'http://5.42.125.179/media/object?category=avatars&key=avatars%2Fuser-1%2Fphoto.jpg&v=2026-06-20T10%3A00%3A00.000Z',
+    );
+  });
+
   test('refreshSession clears session when refresh fails', () async {
     final authApi = _FakeAuthApi()
       ..refreshError = const ApiException(
@@ -201,6 +219,73 @@ void main() {
     expect(refreshed, isFalse);
     expect(service.currentUser, isNull);
   });
+
+  test('refreshSession revalidates admin profile via /auth/me', () async {
+    final authApi = _FakeAuthApi()
+      ..meResponse = <String, dynamic>{
+        'user': <String, dynamic>{
+          'id': 'user-1',
+          'email': 'user@example.com',
+          'role': 'admin',
+        },
+        'isAdmin': true,
+      };
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+
+    final refreshed = await service.refreshSession();
+
+    expect(refreshed, isTrue);
+    expect(authApi.meCalls, greaterThanOrEqualTo(1));
+    expect(service.currentUser?.isAdmin, isTrue);
+  });
+
+  test('ensureInitialized asks to sign in again when refresh fails', () async {
+    final authApi = _FakeAuthApi()
+      ..meError = const ApiException(
+        'expired',
+        statusCode: 401,
+      )
+      ..refreshError = const ApiException(
+        'expired',
+        statusCode: 401,
+      );
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'expired-access',
+      refreshToken: 'expired-refresh',
+      currentUser: const AuthUser(
+        uid: 'user-1',
+        phone: '79288888645',
+        isAdmin: true,
+      ),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+    );
+
+    await expectLater(
+      service.ensureInitialized(),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          'Войдите снова',
+        ),
+      ),
+    );
+    expect(service.currentUser, isNull);
+  });
 }
 
 class _FakeAuthApi extends AuthApi {
@@ -214,6 +299,9 @@ class _FakeAuthApi extends AuthApi {
   bool logoutCalled = false;
   String? lastLoginPhoneVerificationCheckId;
   Object? refreshError;
+  Object? meError;
+  Map<String, dynamic>? meResponse;
+  int meCalls = 0;
 
   @override
   Future<Map<String, dynamic>> login({
@@ -237,7 +325,12 @@ class _FakeAuthApi extends AuthApi {
 
   @override
   Future<Map<String, dynamic>> me() async {
-    return <String, dynamic>{
+    meCalls += 1;
+    if (meError != null) {
+      throw meError!;
+    }
+    return meResponse ??
+        <String, dynamic>{
       'user': <String, dynamic>{
         'id': 'user-1',
       },
@@ -314,4 +407,27 @@ class _FakeUsersApi extends UsersApi {
             tokenStorage: TokenStorage(),
           ),
         );
+}
+
+class _RelativeAvatarAuthApi extends _FakeAuthApi {
+  @override
+  Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+  }) async {
+    return <String, dynamic>{
+      'auth': <String, dynamic>{
+        'access_token': 'access-token',
+        'refresh_token': 'refresh-token',
+      },
+      'user': <String, dynamic>{
+        'id': 'user-1',
+        'email': email,
+        'display_name': 'ATTA User',
+        'avatar_url':
+            '/media/object?category=avatars&key=avatars%2Fuser-1%2Fphoto.jpg',
+        'updated_at': '2026-06-20T10:00:00.000Z',
+      },
+    };
+  }
 }

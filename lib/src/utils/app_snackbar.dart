@@ -6,7 +6,7 @@ void showAppSnack(
   BuildContext context,
   String message, {
   bool isError = false,
-  Duration minRepeatGap = const Duration(milliseconds: 1200),
+  Duration minRepeatGap = const Duration(milliseconds: 2500),
 }) {
   final text = message.trim();
   if (text.isEmpty) return;

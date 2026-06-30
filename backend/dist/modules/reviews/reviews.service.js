@@ -20,6 +20,12 @@ let ReviewsService = class ReviewsService {
         this.prisma = prisma;
         this.notificationsService = notificationsService;
     }
+    duplicateReviewError() {
+        return new common_1.ConflictException({
+            code: 'REVIEW_ALREADY_EXISTS',
+            message: 'Можно оставить только один отзыв',
+        });
+    }
     serializeReview(review) {
         const authorName = review.reviewerName?.trim() ||
             review.reviewer?.displayName?.trim() ||
@@ -113,13 +119,12 @@ let ReviewsService = class ReviewsService {
             where: {
                 sellerId,
                 reviewerId: authUser.userId,
-                listingId,
                 deletedAt: null,
             },
             select: { id: true },
         });
         if (existing) {
-            throw new common_1.ConflictException('Review already exists for this seller');
+            throw this.duplicateReviewError();
         }
         const reviewer = await this.prisma.user.findUnique({
             where: { id: authUser.userId },
@@ -131,20 +136,30 @@ let ReviewsService = class ReviewsService {
                 photoUrl: true,
             },
         });
-        const review = await this.prisma.review.create({
-            data: {
-                sellerId,
-                reviewerId: authUser.userId,
-                reviewerName: params.reviewerName?.trim() || null,
-                listingId,
-                rating,
-                comment: text,
-            },
-            include: {
-                reviewer: true,
-                seller: true,
-            },
-        });
+        let review;
+        try {
+            review = await this.prisma.review.create({
+                data: {
+                    sellerId,
+                    reviewerId: authUser.userId,
+                    reviewerName: params.reviewerName?.trim() || null,
+                    listingId,
+                    rating,
+                    comment: text,
+                },
+                include: {
+                    reviewer: true,
+                    seller: true,
+                },
+            });
+        }
+        catch (error) {
+            if (error instanceof client_1.Prisma.PrismaClientKnownRequestError &&
+                error.code === 'P2002') {
+                throw this.duplicateReviewError();
+            }
+            throw error;
+        }
         await this.notificationsService.createSystemNotification({
             userId: sellerId,
             title: 'Новый отзыв',

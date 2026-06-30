@@ -91,24 +91,35 @@ class MediaPreviewBox extends StatelessWidget {
       width: double.infinity,
       height: double.infinity,
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(iconData, size: 28, color: outline),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12,
-              color: outline,
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxHeight <= 60 || constraints.maxWidth <= 72;
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                iconData,
+                size: compact ? 20 : 28,
+                color: outline,
+              ),
+              SizedBox(height: compact ? 4 : 8),
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: compact ? 1 : 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: compact ? 10 : 12,
+                    height: 1.1,
+                    color: outline,
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

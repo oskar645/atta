@@ -259,6 +259,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       final auth = context.read<AuthService>();
       final uid = auth.currentUser?.uid;
       if (uid != null && uid.isNotEmpty) {
+        context.read<NotificationsService>().refreshActiveSession();
         context.read<ChatService>().handleAppResumed(uid);
       }
     } else if (state == AppLifecycleState.paused ||

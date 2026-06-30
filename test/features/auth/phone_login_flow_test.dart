@@ -125,6 +125,53 @@ void main() {
   );
 
   testWidgets(
+    'login-phone button stays disabled until password has 8 chars',
+    (tester) async {
+      final auth = _FakeAuthService(
+        registeredPhones: <String>{'79281234567'},
+      );
+
+      await tester.pumpWidget(
+        Provider<AuthService>.value(
+          value: auth,
+          child: const MaterialApp(home: LoginScreen()),
+        ),
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Номер телефона').first,
+        '928 123 45 67',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Продолжить'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Пароль'),
+        'secret7',
+      );
+      await tester.pump();
+
+      var button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Войти'),
+      );
+      expect(button.onPressed, isNull);
+      expect(find.text('Пароль должен быть не короче 8 символов'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Пароль'),
+        'secret78',
+      );
+      await tester.pump();
+
+      button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Войти'),
+      );
+      expect(button.onPressed, isNotNull);
+    },
+  );
+
+  testWidgets(
     'login-phone 400 shows russian error',
     (tester) async {
       final auth = _FakeAuthService(

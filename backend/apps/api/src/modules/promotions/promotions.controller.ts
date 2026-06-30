@@ -4,18 +4,23 @@ import {
   Get,
   Param,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { CreatePromotionDto } from './dto/create-promotion.dto';
 import { PromotionsService } from './promotions.service';
 
 @Controller()
 export class PromotionsController {
-  constructor(private readonly promotionsService: PromotionsService) {}
+  constructor(
+    private readonly promotionsService: PromotionsService,
+    private readonly rateLimitService: RateLimitService,
+  ) {}
 
   @Get('promotions/plans')
   getPlans() {
@@ -45,19 +50,35 @@ export class PromotionsController {
   @UseGuards(JwtAuthGuard)
   @Post('listings/:id/promotions')
   promoteListing(
+    @Req() request: any,
     @Param('id') listingId: string,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() dto: CreatePromotionDto,
   ) {
+    this.rateLimitService.consumeOrThrow(
+      `promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`,
+      {
+        limit: 20,
+        windowMs: 60 * 60 * 1000,
+      },
+    );
     return this.promotionsService.promoteListing(listingId, authUser, dto.type);
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('listings/:id/promote/showcase')
   promoteShowcase(
+    @Req() request: any,
     @Param('id') listingId: string,
     @CurrentUser() authUser: AuthenticatedUser,
   ) {
+    this.rateLimitService.consumeOrThrow(
+      `promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`,
+      {
+        limit: 20,
+        windowMs: 60 * 60 * 1000,
+      },
+    );
     return this.promotionsService.promoteListing(
       listingId,
       authUser,

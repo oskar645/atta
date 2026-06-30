@@ -20,7 +20,9 @@ __decorate([
 ], SignupPhoneDto.prototype, "phone", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
-    (0, class_validator_1.MinLength)(8),
+    (0, class_validator_1.MinLength)(8, {
+        message: 'Пароль должен быть не короче 8 символов',
+    }),
     __metadata("design:type", String)
 ], SignupPhoneDto.prototype, "password", void 0);
 __decorate([

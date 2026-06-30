@@ -404,8 +404,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       MapEntry('Пробег', '${car.mileageKm} км'),
       MapEntry('Кузов', car.bodyType),
       MapEntry('Топливо', car.fuel),
-      MapEntry('Двигатель', '${car.engineVolume.toStringAsFixed(1)} л'),
-      MapEntry('Мощность', '${car.powerHp} л.с.'),
+      if (car.engineVolume != null)
+        MapEntry('Двигатель', '${car.engineVolume!.toStringAsFixed(1)} л'),
+      if (car.powerHp != null) MapEntry('Мощность', '${car.powerHp} л.с.'),
       MapEntry('Коробка', car.transmission),
       MapEntry('Привод', car.drive),
       MapEntry('Состояние', car.condition),

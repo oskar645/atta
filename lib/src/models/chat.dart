@@ -78,6 +78,48 @@ class Chat {
     return null;
   }
 
+  static String _pickListingPhotoUrl(Map<String, dynamic> listingPreview) {
+    final direct = [
+      listingPreview['photo_url'],
+      listingPreview['photoUrl'],
+      listingPreview['main_photo'],
+      listingPreview['mainPhoto'],
+    ];
+    for (final candidate in direct) {
+      final text = (candidate ?? '').toString().trim();
+      if (text.isNotEmpty) {
+        return text;
+      }
+    }
+
+    final photoUrls = listingPreview['photo_urls'] ?? listingPreview['photoUrls'];
+    if (photoUrls is List) {
+      for (final candidate in photoUrls) {
+        final text = (candidate ?? '').toString().trim();
+        if (text.isNotEmpty) {
+          return text;
+        }
+      }
+    }
+
+    final photoItems =
+        listingPreview['photo_items'] ?? listingPreview['photoItems'];
+    if (photoItems is List) {
+      for (final item in photoItems) {
+        if (item is! Map) continue;
+        final map = Map<String, dynamic>.from(item);
+        final text = (map['url'] ?? map['public_url'] ?? map['publicUrl'] ?? '')
+            .toString()
+            .trim();
+        if (text.isNotEmpty) {
+          return text;
+        }
+      }
+    }
+
+    return '';
+  }
+
   factory Chat.fromMap(Map<String, dynamic> row) {
     final listingPreview = row['listingPreview'] is Map
         ? Map<String, dynamic>.from(row['listingPreview'] as Map)
@@ -107,9 +149,7 @@ class Chat {
               listingPreview['title'] ??
               '')
           .toString(),
-      listingPhotoUrl:
-          (listingPreview['photo_url'] ?? listingPreview['photoUrl'] ?? '')
-              .toString(),
+      listingPhotoUrl: _pickListingPhotoUrl(listingPreview),
       buyerId: (row['buyer_id'] ?? row['buyerId'] ?? '').toString(),
       sellerId: (row['seller_id'] ?? row['sellerId'] ?? '').toString(),
       buyerName: (buyerPreview['display_name'] ??

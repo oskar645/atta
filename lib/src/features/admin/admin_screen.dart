@@ -12,6 +12,7 @@ import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
 import 'package:atta/src/features/admin/admin_ads_tab.dart';
 import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
@@ -83,6 +84,25 @@ class _AdminScreenState extends State<AdminScreen>
         if (adminSnap.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (adminSnap.hasError) {
+          final error = adminSnap.error;
+          final message =
+              error is ApiException && error.message.trim().isNotEmpty
+                  ? error.message.trim()
+                  : 'Не удалось проверить права администратора';
+          return Scaffold(
+            appBar: AppBar(title: const Text('Админ-Панель')),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  message,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
           );
         }
         if (adminSnap.data != true) {
@@ -236,17 +256,17 @@ class _TimewebAdminListingsModerationTabState
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
+    final admin = context.read<AdminService>();
     try {
-      final response =
-          await context.read<AdminService>().listings(status: _status);
-      final rawItems = response['items'];
-      final items = rawItems is List
-          ? rawItems
-              .whereType<Map>()
-              .map((item) =>
-                  item.map((key, value) => MapEntry(key.toString(), value)))
-              .toList(growable: false)
-          : const <Map<String, dynamic>>[];
+      var items = await _fetchListings(admin, forceRefresh: true);
+      if (_status == 'pending' && items.isEmpty) {
+        final pendingCount =
+            await admin.pendingModerationCount(forceRefresh: true);
+        if (pendingCount > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 700));
+          items = await _fetchListings(admin, forceRefresh: true);
+        }
+      }
       if (mounted) {
         setState(() {
           _items = items;
@@ -258,7 +278,7 @@ class _TimewebAdminListingsModerationTabState
     } catch (error) {
       if (mounted) {
         setState(() {
-          _errorText = 'Не удалось загрузить объявления.\n$error';
+          _errorText = _friendlyAdminError(error);
           _loading = false;
         });
       }
@@ -266,11 +286,40 @@ class _TimewebAdminListingsModerationTabState
     }
   }
 
+  Future<List<Map<String, dynamic>>> _fetchListings(
+    AdminService admin, {
+    required bool forceRefresh,
+  }) async {
+    final response = await admin.listings(
+      status: _status,
+      forceRefresh: forceRefresh,
+    );
+    final rawItems = response['items'];
+    return rawItems is List
+        ? rawItems
+            .whereType<Map>()
+            .map(
+              (item) => item.map((key, value) => MapEntry(key.toString(), value)),
+            )
+            .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+  }
+
+  String _friendlyAdminError(Object error) {
+    if ('$error'.contains('admin_forbidden')) {
+      return 'Нет доступа к модерации. Войдите снова.';
+    }
+    if ('$error'.contains('401')) {
+      return 'Сессия истекла. Войдите снова.';
+    }
+    return 'Не удалось загрузить объявления. Повторите попытку.';
+  }
+
   Future<void> _refresh() async {
     if (!mounted) return;
     setState(() {
       _errorText = null;
-      _loading = _items.isEmpty;
+      _loading = true;
       _future = _load();
     });
     await _future;
@@ -281,7 +330,8 @@ class _TimewebAdminListingsModerationTabState
     setState(() {
       _status = status;
       _errorText = null;
-      _loading = _items.isEmpty;
+      _items = const <Map<String, dynamic>>[];
+      _loading = true;
       _future = _load();
     });
   }
@@ -292,6 +342,7 @@ class _TimewebAdminListingsModerationTabState
       final listingId = _id(item);
       await context.read<AdminService>().approveListing(listingId);
       _removeItemLocally(listingId);
+      unawaited(context.read<AdminService>().dashboardStats(forceRefresh: true));
       if (!mounted) return;
       showAppSnack(context, 'Объявление одобрено');
     } catch (e) {
@@ -318,6 +369,7 @@ class _TimewebAdminListingsModerationTabState
             reason: reason,
           );
       _removeItemLocally(listingId);
+      unawaited(context.read<AdminService>().dashboardStats(forceRefresh: true));
       if (!mounted) return;
       showAppSnack(context, 'Объявление отклонено');
     } catch (e) {
@@ -344,6 +396,7 @@ class _TimewebAdminListingsModerationTabState
             reason: reason,
           );
       _removeItemLocally(listingId);
+      unawaited(context.read<AdminService>().dashboardStats(forceRefresh: true));
       if (!mounted) return;
       showAppSnack(context, 'Объявление скрыто');
     } catch (e) {

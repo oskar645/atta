@@ -47,6 +47,7 @@ class _SupportScreenState extends State<SupportScreen> {
   bool _sending = false;
   bool _loadingTicket = true;
   String? _loadError;
+  Stream<List<Map<String, dynamic>>>? _messagesStream;
 
   @override
   void initState() {
@@ -70,6 +71,8 @@ class _SupportScreenState extends State<SupportScreen> {
       if (!mounted) return;
       setState(() {
         _ticketId = existing;
+        _messagesStream =
+            existing == null ? null : support.streamMessages(existing);
         _loadingTicket = false;
         _loadError = null;
       });
@@ -146,6 +149,7 @@ class _SupportScreenState extends State<SupportScreen> {
         if (!mounted) return;
         setState(() {
           _ticketId = createdTicketId;
+          _messagesStream = support.streamMessages(createdTicketId);
           _draftMessages.clear();
         });
         return;
@@ -217,6 +221,7 @@ class _SupportScreenState extends State<SupportScreen> {
       if (!mounted) return;
       setState(() {
         _ticketId = createdTicketId;
+        _messagesStream = support.streamMessages(createdTicketId);
         _draftMessages.clear();
       });
     } catch (error) {
@@ -474,8 +479,9 @@ class _SupportScreenState extends State<SupportScreen> {
       messagesBody = _buildMessageList(_draftMessages);
     } else {
       final cachedItems = support.peekMessages(_ticketId!);
+      _messagesStream ??= support.streamMessages(_ticketId!);
       messagesBody = StreamBuilder<List<Map<String, dynamic>>>(
-        stream: support.streamMessages(_ticketId!),
+        stream: _messagesStream,
         initialData: cachedItems.isEmpty ? null : cachedItems,
         builder: (context, snap) {
           if (snap.hasError && (snap.data == null || snap.data!.isEmpty)) {

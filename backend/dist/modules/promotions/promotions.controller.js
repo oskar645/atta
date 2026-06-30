@@ -16,11 +16,13 @@ exports.PromotionsController = void 0;
 const common_1 = require("@nestjs/common");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
+const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_promotion_dto_1 = require("./dto/create-promotion.dto");
 const promotions_service_1 = require("./promotions.service");
 let PromotionsController = class PromotionsController {
-    constructor(promotionsService) {
+    constructor(promotionsService, rateLimitService) {
         this.promotionsService = promotionsService;
+        this.rateLimitService = rateLimitService;
     }
     getPlans() {
         return this.promotionsService.getPlans();
@@ -37,10 +39,18 @@ let PromotionsController = class PromotionsController {
     registerClick(promotionId) {
         return this.promotionsService.registerClick(promotionId);
     }
-    promoteListing(listingId, authUser, dto) {
+    promoteListing(request, listingId, authUser, dto) {
+        this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
+            limit: 20,
+            windowMs: 60 * 60 * 1000,
+        });
         return this.promotionsService.promoteListing(listingId, authUser, dto.type);
     }
-    promoteShowcase(listingId, authUser) {
+    promoteShowcase(request, listingId, authUser) {
+        this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
+            limit: 20,
+            windowMs: 60 * 60 * 1000,
+        });
         return this.promotionsService.promoteListing(listingId, authUser, 'showcase');
     }
     getListingPromotions(listingId, authUser) {
@@ -83,20 +93,22 @@ __decorate([
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('listings/:id/promotions'),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, current_user_decorator_1.CurrentUser)()),
-    __param(2, (0, common_1.Body)()),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, current_user_decorator_1.CurrentUser)()),
+    __param(3, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, create_promotion_dto_1.CreatePromotionDto]),
+    __metadata("design:paramtypes", [Object, String, Object, create_promotion_dto_1.CreatePromotionDto]),
     __metadata("design:returntype", void 0)
 ], PromotionsController.prototype, "promoteListing", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('listings/:id/promote/showcase'),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", void 0)
 ], PromotionsController.prototype, "promoteShowcase", null);
 __decorate([
@@ -110,6 +122,7 @@ __decorate([
 ], PromotionsController.prototype, "getListingPromotions", null);
 exports.PromotionsController = PromotionsController = __decorate([
     (0, common_1.Controller)(),
-    __metadata("design:paramtypes", [promotions_service_1.PromotionsService])
+    __metadata("design:paramtypes", [promotions_service_1.PromotionsService,
+        rate_limit_service_1.RateLimitService])
 ], PromotionsController);
 //# sourceMappingURL=promotions.controller.js.map

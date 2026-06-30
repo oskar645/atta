@@ -236,8 +236,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
       _carYear.text = '${c.year}';
       _carMileage.text = '${c.mileageKm}';
-      _carEngine.text = c.engineVolume.toStringAsFixed(1);
-      _carPower.text = '${c.powerHp}';
+      _carEngine.text =
+          c.engineVolume == null ? '' : c.engineVolume!.toStringAsFixed(1);
+      _carPower.text = c.powerHp?.toString() ?? '';
       _carOwners.text = c.owners?.toString() ?? '';
       _carVin.text = c.vin ?? '';
       _carNote.text = c.note ?? '';
@@ -693,21 +694,21 @@ class _EditListingScreenState extends State<EditListingScreen> {
       }
 
       if (!_validInt(_carYear.text) ||
-          !_validInt(_carMileage.text) ||
-          !_validDouble(_carEngine.text) ||
-          !_validInt(_carPower.text)) {
+          !_validInt(_carMileage.text)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text(
-                  'Заполните авто: год, пробег, объём (л) и мощность (л.с.)')),
+              content: Text('Заполните авто: год и пробег')),
         );
         return;
       }
 
       final year = int.parse(_carYear.text.trim());
       final mileage = int.parse(_carMileage.text.trim());
-      final engine = double.parse(_carEngine.text.trim().replaceAll(',', '.'));
-      final power = int.parse(_carPower.text.trim());
+      final engine = _carEngine.text.trim().isEmpty
+          ? null
+          : double.tryParse(_carEngine.text.trim().replaceAll(',', '.'));
+      final power =
+          _carPower.text.trim().isEmpty ? null : int.tryParse(_carPower.text.trim());
 
       final owners = _carOwners.text.trim().isEmpty
           ? null

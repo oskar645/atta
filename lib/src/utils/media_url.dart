@@ -1,6 +1,8 @@
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:flutter/foundation.dart';
 
+final Set<String> _loggedMediaFlows = <String>{};
+
 class MediaUrlResolution {
   const MediaUrlResolution({
     required this.originalUrl,
@@ -36,18 +38,50 @@ MediaUrlResolution resolveMediaUrl(
   String? categoryHint,
 }) {
   final trimmed = rawUrl.trim();
-  if (trimmed.isEmpty || trimmed.startsWith('file://')) {
+  if (trimmed.isEmpty) {
     return MediaUrlResolution(
       originalUrl: trimmed,
       resolvedUrl: trimmed,
-      provider: trimmed.startsWith('file://') ? 'local-file' : 'empty',
+      provider: 'empty',
       category: categoryHint?.trim().isNotEmpty == true
           ? categoryHint!.trim()
           : 'unknown',
     );
   }
 
-  if (trimmed.startsWith('/media/') || trimmed.startsWith('/uploads/')) {
+  if (trimmed.startsWith('file:///media/') ||
+      trimmed.startsWith('file:///uploads/') ||
+      trimmed.startsWith('file:///api/')) {
+    final relativePath = trimmed.replaceFirst('file://', '');
+    final resolved = '${ApiConfig.baseUrl}$relativePath';
+    _debugMediaFlow(
+      originalUrl: trimmed,
+      resolvedUrl: resolved,
+      provider: relativePath.startsWith('/uploads/') ? 'local' : 'proxy',
+      category: categoryHint,
+    );
+    return MediaUrlResolution(
+      originalUrl: trimmed,
+      resolvedUrl: resolved,
+      provider: relativePath.startsWith('/uploads/') ? 'local' : 'proxy',
+      category: _resolvedCategory(relativePath, categoryHint),
+    );
+  }
+
+  if (trimmed.startsWith('file://')) {
+    return MediaUrlResolution(
+      originalUrl: trimmed,
+      resolvedUrl: trimmed,
+      provider: 'local-file',
+      category: categoryHint?.trim().isNotEmpty == true
+          ? categoryHint!.trim()
+          : 'unknown',
+    );
+  }
+
+  if (trimmed.startsWith('/media/') ||
+      trimmed.startsWith('/uploads/') ||
+      trimmed.startsWith('/api/')) {
     final resolved = '${ApiConfig.baseUrl}$trimmed';
     _debugMediaFlow(
       originalUrl: trimmed,
@@ -256,6 +290,12 @@ void _debugMediaFlow({
   String? category,
 }) {
   if (!kDebugMode) return;
+  final key = '${category ?? 'unknown'}|$provider|$originalUrl|$resolvedUrl';
+  if (_loggedMediaFlows.contains(key)) return;
+  if (_loggedMediaFlows.length >= 200) {
+    _loggedMediaFlows.clear();
+  }
+  _loggedMediaFlows.add(key);
   debugPrint(
     'Media resolve category=${category ?? 'unknown'} provider=$provider original=$originalUrl resolved=$resolvedUrl',
   );

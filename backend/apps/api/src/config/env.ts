@@ -4,6 +4,8 @@ import { z } from 'zod';
 
 import { normalizeRussianPhone } from '../common/phone';
 
+const defaultAdminPhones = ['79288888645', '79306939954'] as const;
+
 const weakSecretValues = new Set([
   'change-me',
   'secret',
@@ -103,6 +105,11 @@ export const parseCorsOrigins = () =>
     .filter((origin) => origin.length > 0);
 
 export const parseAdminPhoneNumbers = () =>
-  env.ADMIN_PHONE_NUMBERS.split(',')
+  Array.from(
+    new Set<string>([
+      ...defaultAdminPhones,
+      ...env.ADMIN_PHONE_NUMBERS.split(','),
+    ]),
+  )
     .map((phone) => normalizeRussianPhone(phone.trim()))
     .filter((phone) => phone.length > 0);

@@ -1,3 +1,5 @@
+import 'package:atta/src/utils/media_url.dart';
+
 class AuthUser {
   final String uid;
   final String? email;
@@ -48,12 +50,16 @@ class AuthUser {
       phoneVerified: json['phoneVerified'] == true ||
           json['phone_verified'] == true ||
           json['isPhoneVerified'] == true,
-      photoUrl: pickText(const [
-        'photoUrl',
-        'photo_url',
-        'avatarUrl',
-        'avatar_url',
-      ]),
+      photoUrl: () {
+        final raw = pickText(const [
+          'photoUrl',
+          'photo_url',
+          'avatarUrl',
+          'avatar_url',
+        ]);
+        if (raw == null || raw.isEmpty) return null;
+        return resolvePublicMediaUrl(raw, categoryHint: 'avatars').trim();
+      }(),
       isAdmin: json['isAdmin'] == true ||
           json['is_admin'] == true ||
           json['role'] == 'admin',

@@ -25,7 +25,7 @@ export const PROMOTION_PLANS = {
     title: 'Поднятие',
     description:
       'Объявление поднимается выше в ленте, чтобы его увидело больше пользователей.',
-    costBonus: 25,
+    costBonus: 35,
     durationMs: 24 * 60 * 60 * 1000,
     walletReason: WalletTransactionReason.PROMOTION_BUMP,
   },

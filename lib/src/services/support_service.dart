@@ -13,19 +13,24 @@ import 'package:uuid/uuid.dart';
 class SupportService {
   SupportService({
     SupportApi? api,
-    Duration messagePollInterval = const Duration(seconds: 4),
-    Duration adminPollInterval = const Duration(seconds: 6),
+    Duration messagePollInterval = const Duration(seconds: 45),
+    Duration adminPollInterval = const Duration(seconds: 45),
   })  : _api = api ?? SupportApi(_apiClient),
-        _messagePollInterval = messagePollInterval;
+        _messagePollInterval = messagePollInterval,
+        _adminPollInterval = adminPollInterval;
 
   final Uuid _uuid = const Uuid();
   final SupportApi _api;
   final Duration _messagePollInterval;
+  final Duration _adminPollInterval;
   final Map<String, List<Map<String, dynamic>>> _messageCache =
       <String, List<Map<String, dynamic>>>{};
   final Map<String, StreamController<List<Map<String, dynamic>>>>
       _messageControllers =
       <String, StreamController<List<Map<String, dynamic>>>>{};
+  final Map<String, Stream<List<Map<String, dynamic>>>> _messageStreams =
+      <String, Stream<List<Map<String, dynamic>>>>{};
+  final Map<String, int> _messageListenerCounts = <String, int>{};
   final Map<String, Timer> _messagePollers = <String, Timer>{};
   final Map<String, bool> _ticketUsesAdminEndpoint = <String, bool>{};
   final Set<String> _missingTicketIds = <String>{};
@@ -53,6 +58,8 @@ class SupportService {
       poller.cancel();
     }
     _messagePollers.clear();
+    _messageStreams.clear();
+    _messageListenerCounts.clear();
     _ticketUsesAdminEndpoint.clear();
     _messageCache.clear();
     _missingTicketIds.clear();
@@ -215,20 +222,66 @@ class SupportService {
       );
     }
     _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
-    final controller = _messageControllerFor(ticketId);
-    final cached = _messageCache[ticketId];
-    _ensureMessagePolling(ticketId);
-    if (cached != null) {
-      return controller.stream
-          .startWith(List<Map<String, dynamic>>.from(cached));
-    }
-    return Stream<List<Map<String, dynamic>>>.fromFuture(
-      useAdminEndpoint
-          ? refreshAdminMessages(ticketId)
-          : refreshMessages(ticketId),
-    ).asyncExpand((items) {
-      return controller.stream.startWith(items);
-    });
+    final streamKey =
+        '${useAdminEndpoint ? 'admin' : 'user'}:$normalizedTicketId';
+    return _messageStreams.putIfAbsent(
+      streamKey,
+      () => Stream<List<Map<String, dynamic>>>.multi((streamController) {
+        final controller = _messageControllerFor(normalizedTicketId);
+        StreamSubscription<List<Map<String, dynamic>>>? sub;
+        var disposed = false;
+
+        void pushCached() {
+          final cached = _messageCache[normalizedTicketId];
+          if (cached != null && !disposed) {
+            streamController.add(List<Map<String, dynamic>>.from(cached));
+          }
+        }
+
+        Future<void> refreshInitial() async {
+          try {
+            final items = useAdminEndpoint
+                ? await refreshAdminMessages(normalizedTicketId)
+                : await refreshMessages(normalizedTicketId);
+            if (!disposed) {
+              streamController.add(List<Map<String, dynamic>>.from(items));
+            }
+          } catch (error) {
+            if (!disposed) {
+              streamController.addError(error);
+            }
+          }
+        }
+
+        _messageListenerCounts[streamKey] =
+            (_messageListenerCounts[streamKey] ?? 0) + 1;
+        _ensureMessagePolling(streamKey, normalizedTicketId);
+        pushCached();
+        if (!_messageCache.containsKey(normalizedTicketId)) {
+          unawaited(refreshInitial());
+        }
+        sub = controller.stream.listen(
+          (items) {
+            if (!disposed) {
+              streamController.add(List<Map<String, dynamic>>.from(items));
+            }
+          },
+          onError: streamController.addError,
+        );
+
+        streamController.onCancel = () async {
+          disposed = true;
+          await sub?.cancel();
+          final remaining = (_messageListenerCounts[streamKey] ?? 1) - 1;
+          if (remaining <= 0) {
+            _messageListenerCounts.remove(streamKey);
+            _stopMessagePolling(streamKey);
+          } else {
+            _messageListenerCounts[streamKey] = remaining;
+          }
+        };
+      }).asBroadcastStream(),
+    );
   }
 
   Stream<List<Map<String, dynamic>>> streamTicketsForAdmin() {
@@ -380,7 +433,12 @@ class SupportService {
           'Support source: ticket $normalizedTicketId not found, stopping polling',
         );
         _missingTicketIds.add(normalizedTicketId);
-        _stopMessagePolling(normalizedTicketId);
+        final keysToStop = _messagePollers.keys
+            .where((key) => key.endsWith(':$normalizedTicketId'))
+            .toList(growable: false);
+        for (final key in keysToStop) {
+          _stopMessagePolling(key);
+        }
         return List<Map<String, dynamic>>.from(
           _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
         );
@@ -446,15 +504,19 @@ class SupportService {
         StreamController<List<Map<String, dynamic>>>.broadcast();
   }
 
-  void _ensureMessagePolling(String ticketId) {
+  void _ensureMessagePolling(String streamKey, String ticketId) {
     final normalizedTicketId = ticketId.trim();
     if (normalizedTicketId.isEmpty ||
         _missingTicketIds.contains(normalizedTicketId) ||
-        _messagePollers.containsKey(normalizedTicketId)) {
+        _messagePollers.containsKey(streamKey) ||
+        (_messageListenerCounts[streamKey] ?? 0) <= 0) {
       return;
     }
-    _messagePollers[normalizedTicketId] = Timer.periodic(
-      _messagePollInterval,
+    final pollInterval = _ticketUsesAdminEndpoint[normalizedTicketId] == true
+        ? _adminPollInterval
+        : _messagePollInterval;
+    _messagePollers[streamKey] = Timer.periodic(
+      pollInterval,
       (_) async {
         try {
           await _refreshMessages(
@@ -467,8 +529,8 @@ class SupportService {
     );
   }
 
-  void _stopMessagePolling(String ticketId) {
-    _messagePollers.remove(ticketId)?.cancel();
+  void _stopMessagePolling(String streamKey) {
+    _messagePollers.remove(streamKey)?.cancel();
   }
 
   Future<bool> _canUseAdminEndpoints() async {
@@ -695,12 +757,5 @@ class SupportService {
         return right.compareTo(left);
       });
     return merged;
-  }
-}
-
-extension<T> on Stream<T> {
-  Stream<T> startWith(T initial) async* {
-    yield initial;
-    yield* this;
   }
 }

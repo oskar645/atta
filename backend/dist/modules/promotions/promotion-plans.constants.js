@@ -21,7 +21,7 @@ exports.PROMOTION_PLANS = {
         type: client_1.PromotionType.BUMP,
         title: 'Поднятие',
         description: 'Объявление поднимается выше в ленте, чтобы его увидело больше пользователей.',
-        costBonus: 25,
+        costBonus: 35,
         durationMs: 24 * 60 * 60 * 1000,
         walletReason: client_1.WalletTransactionReason.PROMOTION_BUMP,
     },

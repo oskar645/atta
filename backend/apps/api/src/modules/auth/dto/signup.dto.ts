@@ -18,6 +18,8 @@ export class SignupDto {
   display_name?: string;
 
   @IsString()
-  @MinLength(8)
+  @MinLength(8, {
+    message: 'Пароль должен быть не короче 8 символов',
+  })
   password!: string;
 }
