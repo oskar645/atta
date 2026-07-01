@@ -245,7 +245,6 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       message,
     });
     this.server.to(`chat:${chatId}`).emit('message.new', {
-      chat: recipientChat,
       message,
     });
     this.server.to(`user:${message['senderId']}`).emit('message.sent', {
@@ -257,10 +256,8 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
         notification,
       });
     }
-    this.emitChatUpdated(senderChat);
-    this.server.to(`user:${recipientId}`).emit('chat.updated', {
-      chat: recipientChat,
-    });
+    this.emitChatUpdatedToUser((message['senderId'] ?? '').toString(), senderChat);
+    this.emitChatUpdatedToUser(recipientId, recipientChat);
     this.emitUnreadChanged(recipientId, recipientChat);
   }
 
@@ -275,10 +272,31 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
+  emitChatUpdatedToUser(userId: string, chat: Record<string, unknown>) {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) return;
+    this.server.to(`user:${normalizedUserId}`).emit('chat.updated', {
+      chat,
+    });
+  }
+
   emitUnreadChanged(userId: string, chat: Record<string, unknown>) {
     this.server.to(`user:${userId}`).emit('unread.changed', {
       chatId: chat['id'],
       unreadCount: chat['unreadCount'],
+    });
+  }
+
+  emitNotificationNew(notification: Record<string, unknown>, userId?: string) {
+    const normalizedUserId = (userId ?? '').trim();
+    if (normalizedUserId.length > 0) {
+      this.server.to(`user:${normalizedUserId}`).emit('notification.new', {
+        notification,
+      });
+      return;
+    }
+    this.server.emit('notification.new', {
+      notification,
     });
   }
 

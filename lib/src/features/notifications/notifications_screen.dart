@@ -24,6 +24,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   Stream<List<Map<String, dynamic>>>? _globalStream;
   Stream<List<Map<String, dynamic>>>? _personalStream;
   Future<void>? _preloadFuture;
+  Future<void>? _markSeenFuture;
 
   @override
   void initState() {
@@ -38,6 +39,9 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       _globalStream ??= notifications.streamGlobal();
       _personalStream ??= notifications.streamPersonal(me.uid);
       _preloadFuture ??= notifications.preload(me.uid);
+      _markSeenFuture ??= _preloadFuture!.then((_) {
+        return notifications.markAllSeen(me.uid);
+      });
     });
   }
 

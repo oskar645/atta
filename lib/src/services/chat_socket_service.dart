@@ -120,17 +120,25 @@ class ChatSocketService {
       });
       socket.onDisconnect((_) {
         _stopPing();
+        if (identical(_socket, socket)) {
+          _socket = null;
+        }
         _emitConnection(false);
         if (_disconnectRequested || _disposed) {
           _disposeSocket(socket);
           return;
         }
+        _disposeSocket(socket);
         _scheduleReconnect();
       });
       socket.onConnectError((error) {
         _stopPing();
+        if (identical(_socket, socket)) {
+          _socket = null;
+        }
         _emitConnection(false);
         _logFailedConnection(error);
+        _disposeSocket(socket);
         if (!_disconnectRequested && !_disposed) {
           _scheduleReconnect();
         }
@@ -201,42 +209,42 @@ class ChatSocketService {
     if (id.isEmpty) return;
     _joinedChats.add(id);
     await connect();
-    _socket?.emit('chat.join', {'chatId': id});
+    _safeEmit('chat.join', {'chatId': id});
   }
 
   void leaveChat(String chatId) {
     final id = chatId.trim();
     if (id.isEmpty) return;
     _joinedChats.remove(id);
-    _socket?.emit('chat.leave', {'chatId': id});
+    _safeEmit('chat.leave', {'chatId': id});
   }
 
   Future<void> setPresence(bool isOnline) async {
     await connect();
-    _socket?.emit('presence.set', {'isOnline': isOnline});
+    _safeEmit('presence.set', {'isOnline': isOnline});
   }
 
   Future<void> ping() async {
     await connect();
-    _socket?.emit('presence.ping');
+    _safeEmit('presence.ping');
   }
 
   void sendDelivered(String messageId) {
     final id = messageId.trim();
     if (id.isEmpty) return;
-    _socket?.emit('message.delivered', {'messageId': id});
+    _safeEmit('message.delivered', {'messageId': id});
   }
 
   void sendRead(String messageId) {
     final id = messageId.trim();
     if (id.isEmpty) return;
-    _socket?.emit('message.read', {'messageId': id});
+    _safeEmit('message.read', {'messageId': id});
   }
 
   void _startPing() {
     _pingTimer?.cancel();
     _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
-      _socket?.emit('presence.ping');
+      _safeEmit('presence.ping');
     });
   }
 
@@ -278,6 +286,30 @@ class ChatSocketService {
       }
       await connect();
     });
+  }
+
+  void _safeEmit(String event, [Map<String, dynamic>? payload]) {
+    final socket = _socket;
+    if (socket == null || !socket.connected) {
+      return;
+    }
+    try {
+      if (payload == null) {
+        socket.emit(event);
+      } else {
+        socket.emit(event, payload);
+      }
+    } catch (error) {
+      if (identical(_socket, socket)) {
+        _socket = null;
+      }
+      _emitConnection(false);
+      _logFailedConnection(error);
+      _disposeSocket(socket);
+      if (!_disconnectRequested && !_disposed) {
+        _scheduleReconnect();
+      }
+    }
   }
 
   void _disposeSocket(io.Socket? socket) {

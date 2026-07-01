@@ -79,7 +79,6 @@ export class ChatsController {
       result.recipientChat,
       result.message,
       result.recipientId,
-      result.notification,
     );
     return result;
   }
@@ -155,8 +154,13 @@ export class MessagesController {
       result.chatId,
       result.participantIds,
     );
-    this.chatsGateway.emitChatUpdated(result.senderChat);
-    this.chatsGateway.emitChatUpdated(result.recipientChat);
+    this.chatsGateway.emitChatUpdatedToUser(authUser.userId, result.senderChat);
+    this.chatsGateway.emitChatUpdatedToUser(
+      result.recipientChat['buyerId'] == authUser.userId
+        ? result.recipientChat['sellerId'].toString()
+        : result.recipientChat['buyerId'].toString(),
+      result.recipientChat,
+    );
     result.unreadUpdates.forEach((item) => {
       this.chatsGateway.emitUnreadChanged(item.userId, {
         id: item.chatId,

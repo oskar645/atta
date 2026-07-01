@@ -76,6 +76,11 @@ const walletTransactionTypeFromInput = (
   }
 };
 
+const protectedAdminPhones = new Set<string>([
+  '79288888645',
+  '79306939954',
+]);
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -91,9 +96,16 @@ export class AdminService {
     const days14 = new Date(now.getTime() - 14 * 86400000);
     const onlineCutoff = new Date(now.getTime() - 2 * 60000);
 
-    const [users, onlineUsers, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily] =
+    const [users, onlineUsers, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] =
       await Promise.all([
-        this.prisma.user.count(),
+        this.prisma.user.count({
+          where: {
+            deletedAt: null,
+            status: {
+              not: UserStatus.DELETED,
+            },
+          },
+        }),
         this.prisma.userPresence.count({
           where: {
             isOnline: true,
@@ -161,6 +173,18 @@ export class AdminService {
             createdAt: true,
           },
         }),
+        this.prisma.walletTransaction.aggregate({
+          _sum: {
+            amount: true,
+          },
+          where: {
+            createdAt: {
+              gte: days30,
+              lte: now,
+            },
+            type: WalletTransactionType.SPEND,
+          },
+        }),
       ]);
 
     const dailyMap = new Map<string, number>();
@@ -193,6 +217,7 @@ export class AdminService {
         reportsOpen,
         activeAds,
         newListings14d,
+        spentPoints30d: spentPoints30d._sum.amount ?? 0,
       },
       daily: {
         listings: listingsDaily,
@@ -202,6 +227,12 @@ export class AdminService {
 
   async listUsers() {
     const users = await this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        status: {
+          not: UserStatus.DELETED,
+        },
+      },
       include: {
         adminProfile: true,
       },
@@ -236,7 +267,7 @@ export class AdminService {
       return {
         source: 'timeweb',
         deleted: false,
-        message: 'Cannot delete current admin account',
+        message: 'Нельзя удалить текущий аккаунт администратора',
       };
     }
 
@@ -248,7 +279,15 @@ export class AdminService {
     });
 
     if (!user) {
-      throw new NotFoundException('User not found');
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    if (protectedAdminPhones.has((user.phone ?? '').trim())) {
+      return {
+        source: 'timeweb',
+        deleted: false,
+        message: 'Этот администратор защищён от удаления',
+      };
     }
 
     if (user.adminProfile?.isAdmin === true) {
@@ -261,7 +300,7 @@ export class AdminService {
         return {
           source: 'timeweb',
           deleted: false,
-          message: 'Cannot delete the last admin account',
+          message: 'Нельзя удалить последнего администратора',
         };
       }
     }

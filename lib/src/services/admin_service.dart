@@ -64,24 +64,37 @@ class AdminService {
     return currentUser.uid == uid && currentUser.isAdmin;
   }
 
-  Stream<int> streamPendingModerationCount() async* {
+  Stream<int> streamPendingModerationCount() {
     if (!_sessionActive) {
-      yield 0;
-      return;
+      return Stream<int>.value(0);
     }
-    final cachedPending = _pendingItemsFromCache();
-    if (cachedPending != null) {
-      yield cachedPending.length;
-    } else {
-      try {
-        final response = await listings(status: 'pending');
-        yield _extractItems(response).length;
-      } catch (error) {
-        _debugSource('Admin source: Timeweb unavailable: $error');
-        yield 0;
+    return Stream<int>.multi((controller) {
+      StreamSubscription<int>? sub;
+
+      Future<void> emitInitial() async {
+        final cachedPending = _pendingItemsFromCache();
+        if (cachedPending != null) {
+          controller.add(cachedPending.length);
+          return;
+        }
+        try {
+          final response = await listings(status: 'pending');
+          controller.add(_extractItems(response).length);
+        } catch (error) {
+          _debugSource('Admin source: Timeweb unavailable: $error');
+          controller.add(0);
+        }
       }
-    }
-    yield* _pendingCountController.stream.distinct();
+
+      emitInitial();
+      sub = _pendingCountController.stream.distinct().listen(
+            controller.add,
+            onError: controller.addError,
+          );
+      controller.onCancel = () async {
+        await sub?.cancel();
+      };
+    }).asBroadcastStream();
   }
 
   Stream<int> streamOpenReportsCount() {
@@ -192,6 +205,7 @@ class AdminService {
     final raw = stats['pendingModeration'] ?? stats['pending_moderation'] ?? 0;
     return (raw as num?)?.toInt() ?? int.tryParse('$raw') ?? 0;
   }
+
   Future<Map<String, dynamic>> users({bool forceRefresh = false}) =>
       _cached('users', _api.users, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> userById(
@@ -203,8 +217,15 @@ class AdminService {
         () => _api.userById(userId),
         forceRefresh: forceRefresh,
       );
-  Future<Map<String, dynamic>> deleteUser(String userId) =>
-      _api.deleteUser(userId);
+  Future<Map<String, dynamic>> deleteUser(String userId) async {
+    final response = await _api.deleteUser(userId);
+    if (response['deleted'] == true) {
+      _removeItemFromCache('users', userId);
+      _cache.remove('dashboardStats');
+    }
+    return response;
+  }
+
   Future<Map<String, dynamic>> listings({
     String? status,
     bool forceRefresh = false,
@@ -510,15 +531,20 @@ class AdminService {
   }) async {
     final now = DateTime.now();
     if (!forceRefresh &&
-        _lastAdminResolvedUser != null &&
         _lastAdminResolvedAt != null &&
         now.difference(_lastAdminResolvedAt!) < _defaultCacheTtl) {
       return _lastAdminResolvedUser;
     }
 
+    final cachedUser = await _tokenStorage.readCurrentUser();
+    if (!forceRefresh) {
+      _lastAdminResolvedUser = cachedUser;
+      _lastAdminResolvedAt = now;
+      return cachedUser;
+    }
+
     final accessToken = await _tokenStorage.readAccessToken();
     final refreshToken = await _tokenStorage.readRefreshToken();
-    final cachedUser = await _tokenStorage.readCurrentUser();
     if (accessToken == null ||
         accessToken.trim().isEmpty ||
         refreshToken == null ||

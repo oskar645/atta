@@ -28,6 +28,9 @@ import 'package:atta/src/services/promotions_service.dart';
 import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
 
+final RouteObserver<ModalRoute<void>> attaRouteObserver =
+    RouteObserver<ModalRoute<void>>();
+
 class AttaApp extends StatelessWidget {
   const AttaApp({super.key});
 
@@ -95,10 +98,32 @@ class AttaApp extends StatelessWidget {
             theme: base,
             darkTheme: darkBase,
             themeMode: theme.mode,
+            builder: (context, child) => AppKeyboardDismissOnTap(
+              child: child ?? const SizedBox.shrink(),
+            ),
+            navigatorObservers: [attaRouteObserver],
             home: const SessionPresenceBinder(child: AuthGate()),
           );
         },
       ),
+    );
+  }
+}
+
+class AppKeyboardDismissOnTap extends StatelessWidget {
+  const AppKeyboardDismissOnTap({
+    super.key,
+    required this.child,
+  });
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: child,
     );
   }
 }
@@ -193,17 +218,21 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     final notification = rawNotification is Map
         ? Map<String, dynamic>.from(rawNotification)
         : Map<String, dynamic>.from(event.payload);
-    context.read<NotificationsService>().ingestRealtimeNotification(
-          userId: auth.currentUser!.uid,
-          notification: notification,
-        );
-    if ((notification['type'] ?? '').toString().trim().toLowerCase() ==
-        'chat_message') {
+    final notificationType =
+        (notification['type'] ?? '').toString().trim().toLowerCase();
+    if (notificationType == 'chat_message' ||
+        notificationType == 'message' ||
+        notificationType == 'chat') {
       context.read<ChatService>().ingestMessageNotification(
             currentUserId: auth.currentUser!.uid,
             notification: notification,
           );
+      return;
     }
+    context.read<NotificationsService>().ingestRealtimeNotification(
+          userId: auth.currentUser!.uid,
+          notification: notification,
+        );
   }
 
   Future<void> _setOnline(bool online) async {
@@ -259,6 +288,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       final auth = context.read<AuthService>();
       final uid = auth.currentUser?.uid;
       if (uid != null && uid.isNotEmpty) {
+        unawaited(auth.revalidateCurrentUser().catchError((_) => null));
         context.read<NotificationsService>().refreshActiveSession();
         context.read<ChatService>().handleAppResumed(uid);
       }

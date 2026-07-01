@@ -6,6 +6,7 @@
   "license": "UNLICENSED",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only apps/api/src/main.ts",
+    "prebuild": "prisma generate",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "start:prod": "node dist/main.js",

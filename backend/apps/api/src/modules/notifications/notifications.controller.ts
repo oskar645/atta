@@ -13,6 +13,7 @@ import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ChatsGateway } from '../chats/chats.gateway';
 import { NotificationsService } from './notifications.service';
 
 @Controller('notifications')
@@ -40,6 +41,11 @@ export class NotificationsController {
     return this.notificationsService.markAllRead(authUser);
   }
 
+  @Patch('seen-all')
+  markAllSeen(@CurrentUser() authUser: AuthenticatedUser) {
+    return this.notificationsService.markAllSeen(authUser);
+  }
+
   @Delete(':id')
   deleteNotification(
     @CurrentUser() authUser: AuthenticatedUser,
@@ -59,25 +65,33 @@ export class NotificationsController {
 export class AdminNotificationsController {
   constructor(
     private readonly notificationsService: NotificationsService,
+    private readonly chatsGateway: ChatsGateway,
   ) {}
 
   @Post('send-user')
-  sendToUser(
+  async sendToUser(
     @Body()
     body: { user_id?: string; userId?: string; title?: string; body?: string; type?: string },
   ) {
-    return this.notificationsService.sendToUser({
+    const result = await this.notificationsService.sendToUser({
       userId: body.user_id ?? body.userId,
       title: body.title,
       body: body.body,
       type: body.type,
     });
+    this.chatsGateway.emitNotificationNew(
+      result.item,
+      (result.item.user_id ?? '').toString(),
+    );
+    return result;
   }
 
   @Post('send-all')
-  sendToAll(
+  async sendToAll(
     @Body() body: { title?: string; body?: string; type?: string },
   ) {
-    return this.notificationsService.sendToAll(body);
+    const result = await this.notificationsService.sendToAll(body);
+    this.chatsGateway.emitNotificationNew(result.item);
+    return result;
   }
 }

@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
-  testWidgets('sell faster screen shows all plans and updates after purchase',
+  testWidgets('sell faster screen shows updated plan prices in list and confirmation',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -34,14 +34,17 @@ void main() {
     expect(find.text('Витрина ATTA'), findsOneWidget);
     expect(find.text('Поднятие'), findsOneWidget);
     expect(find.text('VIP'), findsOneWidget);
+    expect(find.text('230 поинтов'), findsOneWidget);
+    expect(find.text('35 поинтов'), findsOneWidget);
+    expect(find.text('150 поинтов'), findsOneWidget);
     expect(find.text('Турбо'), findsNothing);
 
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Подключить').first);
     await tester.tap(find.widgetWithText(FilledButton, 'Подключить').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, 'Подключить').last);
-    await tester.pumpAndSettle();
 
-    expect(promotionsService.showcaseActive, isTrue);
+    expect(find.text('Добавить в Витрину ATTA?'), findsOneWidget);
+    expect(find.text('Стоимость: 230 поинтов'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
   });
 
@@ -100,7 +103,7 @@ void main() {
 }
 
 class _FakeWalletService extends WalletService {
-  int _balance = 100;
+  int _balance = 1000;
 
   void setBalance(int value) {
     _balance = value;
@@ -116,7 +119,7 @@ class _FakeWalletService extends WalletService {
     return Wallet.fromMap({
       'balance': _balance,
       'maxBalance': 1000,
-      'welcomeBonus': 100,
+      'welcomeBonus': 200,
       'dailyBonusAmount': 25,
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
@@ -137,7 +140,7 @@ class _FakePromotionsService extends PromotionsService {
         type: 'showcase',
         title: 'Витрина ATTA',
         description: 'Ваше объявление появится на главной.',
-        costBonus: 50,
+        costBonus: 230,
         durationHours: 24,
       ),
       PromotionPlan(
@@ -151,7 +154,7 @@ class _FakePromotionsService extends PromotionsService {
         type: 'vip',
         title: 'VIP',
         description: 'Объявление станет заметнее.',
-        costBonus: 60,
+        costBonus: 150,
         durationHours: 48,
       ),
       PromotionPlan(
@@ -175,7 +178,7 @@ class _FakePromotionsService extends PromotionsService {
                 'type': 'showcase',
                 'title': 'Витрина ATTA',
                 'status': 'active',
-                'costBonus': 50,
+                'costBonus': 230,
                 'endsAt': '2026-06-20T10:00:00.000Z',
               }),
             ]
@@ -188,7 +191,7 @@ class _FakePromotionsService extends PromotionsService {
   Future<Map<String, dynamic>> promoteListing(
       String listingId, String type) async {
     showcaseActive = true;
-    walletService.setBalance(50);
+    walletService.setBalance(0);
     return {
       'message': 'Объявление добавлено в Витрину ATTA',
     };

@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
 import 'package:atta/src/features/listings/listing_archive_flow.dart';
@@ -380,7 +379,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       Navigator.of(context).maybePop();
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('Admin delete listing failed listing=${listing.id} error=$e');
+        debugPrint(
+            'Admin delete listing failed listing=${listing.id} error=$e');
       }
       if (!mounted) return;
       showAppSnack(

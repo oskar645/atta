@@ -13,7 +13,6 @@ exports.ChatsService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
-const notifications_service_1 = require("../notifications/notifications.service");
 const presence_service_1 = require("../presence/presence.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
@@ -37,10 +36,9 @@ const messageInclude = {
     },
 };
 let ChatsService = class ChatsService {
-    constructor(prisma, presenceService, notificationsService, storageService) {
+    constructor(prisma, presenceService, storageService) {
         this.prisma = prisma;
         this.presenceService = presenceService;
-        this.notificationsService = notificationsService;
         this.storageService = storageService;
     }
     async ensureChatParticipant(chatId, userId) {
@@ -113,15 +111,6 @@ let ChatsService = class ChatsService {
             },
             buyerPreview: this.participantPreview(chat.buyer, presenceMap.get(chat.buyerId)),
             sellerPreview: this.participantPreview(chat.seller, presenceMap.get(chat.sellerId)),
-        };
-    }
-    buildMessageNotificationPayload(params) {
-        return {
-            chatId: params.chatId,
-            senderId: params.senderId,
-            senderName: params.senderName.trim(),
-            senderAvatarUrl: params.senderAvatarUrl.trim(),
-            messageId: params.messageId,
         };
     }
     serializeMessage(message) {
@@ -313,27 +302,10 @@ let ChatsService = class ChatsService {
                 message,
             };
         });
-        const senderPreview = authUser.userId === chat.buyerId
-            ? result.chat.buyer
-            : result.chat.seller;
-        const notification = await this.notificationsService.createSystemNotification({
-            userId: recipientId,
-            title: `Новое сообщение от ${senderPreview.displayName || senderPreview.name || 'пользователя'}`,
-            body: text,
-            type: client_1.NotificationType.CHAT_MESSAGE,
-            payload: this.buildMessageNotificationPayload({
-                chatId,
-                messageId: result.message.id,
-                senderId: authUser.userId,
-                senderName: senderPreview.displayName || senderPreview.name || 'Новое сообщение',
-                senderAvatarUrl: senderPreview.avatarUrl || senderPreview.photoUrl || '',
-            }),
-        });
         return {
             chat: await this.serializeChat(result.chat, authUser.userId),
             recipientChat: await this.serializeChat(result.chat, recipientId),
             message: this.serializeMessage(result.message),
-            notification: this.notificationsService.serializeNotification(notification),
             recipientId,
         };
     }
@@ -516,28 +488,11 @@ let ChatsService = class ChatsService {
                 message,
             };
         });
-        const senderPreview = authUser.userId === chat.buyerId
-            ? result.chat.buyer
-            : result.chat.seller;
-        const notification = await this.notificationsService.createSystemNotification({
-            userId: recipientId,
-            title: `Новое сообщение от ${senderPreview.displayName || senderPreview.name || 'пользователя'}`,
-            body: 'Фото',
-            type: client_1.NotificationType.CHAT_MESSAGE,
-            payload: this.buildMessageNotificationPayload({
-                chatId,
-                messageId: result.message.id,
-                senderId: authUser.userId,
-                senderName: senderPreview.displayName || senderPreview.name || 'Новое сообщение',
-                senderAvatarUrl: senderPreview.avatarUrl || senderPreview.photoUrl || '',
-            }),
-        });
         return {
             source: 'timeweb',
             chat: await this.serializeChat(result.chat, authUser.userId),
             recipientChat: await this.serializeChat(result.chat, recipientId),
             message: this.serializeMessage(result.message),
-            notification: this.notificationsService.serializeNotification(notification),
             recipientId,
         };
     }
@@ -747,7 +702,6 @@ exports.ChatsService = ChatsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         presence_service_1.PresenceService,
-        notifications_service_1.NotificationsService,
         storage_service_1.StorageService])
 ], ChatsService);
 //# sourceMappingURL=chats.service.js.map

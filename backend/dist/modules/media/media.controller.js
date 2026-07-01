@@ -75,7 +75,7 @@ let MediaController = MediaController_1 = class MediaController {
             windowMs: 60 * 1000,
         });
         return this.chatsService.uploadImage(authUser, chatId, this.requireImage(file, 2 * 1024 * 1024)).then((result) => {
-            this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId, result.notification);
+            this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId);
             return result;
         });
     }

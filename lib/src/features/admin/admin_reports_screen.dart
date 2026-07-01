@@ -98,9 +98,12 @@ class AdminReportsScreen extends StatelessWidget {
 
               final createdRaw = x['created_at'];
               DateTime? createdAt;
-              if (createdRaw is DateTime) createdAt = createdRaw;
-              if (createdRaw is String)
+              if (createdRaw is DateTime) {
+                createdAt = createdRaw;
+              }
+              if (createdRaw is String) {
                 createdAt = DateTime.tryParse(createdRaw);
+              }
 
               Future<void> doDecision({
                 required String decision,

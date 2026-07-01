@@ -27,8 +27,19 @@ class _WalletScreenState extends State<WalletScreen> {
 
   Future<_WalletBundle> _load(WalletService walletService) async {
     final wallet = await walletService.checkAccrual();
-    final transactions = await walletService.getTransactions();
-    return _WalletBundle(wallet: wallet, transactions: transactions);
+    try {
+      final transactions = await walletService.getTransactions();
+      return _WalletBundle(
+        wallet: wallet,
+        transactions: transactions,
+      );
+    } catch (error) {
+      return _WalletBundle(
+        wallet: wallet,
+        transactions: const <WalletTransaction>[],
+        transactionsErrorText: _walletTransactionsErrorText(error),
+      );
+    }
   }
 
   void _reload() {
@@ -163,6 +174,30 @@ class _WalletScreenState extends State<WalletScreen> {
                 ],
               ),
               const SizedBox(height: 12),
+              if (bundle.transactionsErrorText != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(bundle.transactionsErrorText!),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: _reload,
+                        child: const Text('Повторить'),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (bundle.transactions.isEmpty)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 20),
@@ -212,14 +247,33 @@ String _walletErrorText(Object error) {
       : 'Не удалось загрузить кошелёк. Попробуйте позже.';
 }
 
+String _walletTransactionsErrorText(Object error) {
+  if (error is ApiException) {
+    if (error.isUnauthorized) {
+      return 'История операций временно недоступна: сессия истекла.';
+    }
+    if (error.isTimeout || error.isNetworkError) {
+      return 'История операций временно недоступна. Проверьте интернет или VPN.';
+    }
+    if (error.message.trim().isNotEmpty) {
+      return 'История операций временно недоступна: ${error.message.trim()}';
+    }
+  }
+  return shouldShowNetworkVpnHint(error)
+      ? 'История операций временно недоступна. Проверьте интернет или VPN.'
+      : 'История операций временно недоступна. Попробуйте позже.';
+}
+
 class _WalletBundle {
   const _WalletBundle({
     required this.wallet,
     required this.transactions,
+    this.transactionsErrorText,
   });
 
   final Wallet wallet;
   final List<WalletTransaction> transactions;
+  final String? transactionsErrorText;
 }
 
 const int _walletPreviewLimit = 1;

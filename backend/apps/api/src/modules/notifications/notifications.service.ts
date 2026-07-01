@@ -5,6 +5,8 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { ApnsService } from '../apns/apns.service';
 import { PrismaService } from '../prisma/prisma.service';
 
+const excludedInAppNotificationTypes = [NotificationType.CHAT_MESSAGE];
+
 @Injectable()
 export class NotificationsService {
   constructor(
@@ -65,22 +67,40 @@ export class NotificationsService {
     };
   }
 
+  private inAppWhereClause(authUser: AuthenticatedUser): Prisma.UserNotificationWhereInput {
+    return {
+      OR: [
+        { scope: NotificationScope.GLOBAL },
+        { scope: NotificationScope.PERSONAL, userId: authUser.userId },
+      ],
+      type: {
+        notIn: excludedInAppNotificationTypes,
+      },
+    };
+  }
+
   async listInAppNotifications(authUser: AuthenticatedUser) {
-    const items = await this.prisma.userNotification.findMany({
-      where: {
-        OR: [
-          { scope: NotificationScope.GLOBAL },
-          { scope: NotificationScope.PERSONAL, userId: authUser.userId },
-        ],
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 200,
-    });
+    const [items, user] = await Promise.all([
+      this.prisma.userNotification.findMany({
+        where: this.inAppWhereClause(authUser),
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: 200,
+      }),
+      this.prisma.user.findUnique({
+        where: {
+          id: authUser.userId,
+        },
+        select: {
+          lastNotificationsSeenAt: true,
+        },
+      }),
+    ]);
 
     return {
       source: 'timeweb',
+      global_seen_at: user?.lastNotificationsSeenAt?.toISOString() ?? null,
       items: items.map((item) => this.serialize(item)),
     };
   }
@@ -176,10 +196,7 @@ export class NotificationsService {
     const notification = await this.prisma.userNotification.findFirst({
       where: {
         id: notificationId,
-        OR: [
-          { userId: authUser.userId },
-          { scope: NotificationScope.GLOBAL },
-        ],
+        ...this.inAppWhereClause(authUser),
       },
     });
 
@@ -217,6 +234,39 @@ export class NotificationsService {
     return {
       source: 'timeweb',
       updated: result.count,
+    };
+  }
+
+  async markAllSeen(authUser: AuthenticatedUser) {
+    const seenAt = new Date();
+    const [, personalResult] = await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: {
+          id: authUser.userId,
+        },
+        data: {
+          lastNotificationsSeenAt: seenAt,
+        },
+        select: {
+          id: true,
+        },
+      }),
+      this.prisma.userNotification.updateMany({
+        where: {
+          userId: authUser.userId,
+          scope: NotificationScope.PERSONAL,
+          isRead: false,
+        },
+        data: {
+          isRead: true,
+        },
+      }),
+    ]);
+
+    return {
+      source: 'timeweb',
+      global_seen_at: seenAt.toISOString(),
+      updated_personal: personalResult.count,
     };
   }
 

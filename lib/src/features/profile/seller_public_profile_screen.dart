@@ -13,6 +13,7 @@ import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
+import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -543,28 +544,13 @@ class _Avatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = fallbackText.trim();
-    final letter = text.isEmpty ? 'U' : text[0].toUpperCase();
-
-    return Container(
-      width: 64,
-      height: 64,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      ),
-      child: ClipOval(
-        child: (photoUrl == null || photoUrl!.isEmpty)
-            ? Center(
-                child: Text(
-                  letter,
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              )
-            : Image.network(photoUrl!, fit: BoxFit.cover),
+    return RemoteAvatar(
+      imageUrl: (photoUrl ?? '').trim(),
+      fallbackText: fallbackText,
+      radius: 32,
+      textStyle: const TextStyle(
+        fontSize: 22,
+        fontWeight: FontWeight.w900,
       ),
     );
   }
@@ -762,7 +748,7 @@ class _ListingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : '';
+    final photo = listing.firstPhotoUrl ?? '';
     final statusText = _statusLabel(listing.status);
     final statusColor = _statusColor(listing.status);
     final archiveNote = isArchive ? _archiveNote(listing) : null;

@@ -11,7 +11,6 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' as latlng;
@@ -649,9 +648,6 @@ class _EditListingScreenState extends State<EditListingScreen> {
   }
 
   bool _validInt(String s) => int.tryParse(s.trim()) != null;
-  bool _validDouble(String s) =>
-      double.tryParse(s.trim().replaceAll(',', '.')) != null;
-
   Future<void> _save(Listing listing) async {
     final me = context.read<AuthService>().currentUser!;
     final listingsService = context.read<ListingsService>();
@@ -693,11 +689,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
         return;
       }
 
-      if (!_validInt(_carYear.text) ||
-          !_validInt(_carMileage.text)) {
+      if (!_validInt(_carYear.text) || !_validInt(_carMileage.text)) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Заполните авто: год и пробег')),
+          const SnackBar(content: Text('Заполните авто: год и пробег')),
         );
         return;
       }
@@ -707,8 +701,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
       final engine = _carEngine.text.trim().isEmpty
           ? null
           : double.tryParse(_carEngine.text.trim().replaceAll(',', '.'));
-      final power =
-          _carPower.text.trim().isEmpty ? null : int.tryParse(_carPower.text.trim());
+      final power = _carPower.text.trim().isEmpty
+          ? null
+          : int.tryParse(_carPower.text.trim());
 
       final owners = _carOwners.text.trim().isEmpty
           ? null

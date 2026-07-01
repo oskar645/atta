@@ -14,6 +14,7 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const apns_service_1 = require("../apns/apns.service");
 const prisma_service_1 = require("../prisma/prisma.service");
+const excludedInAppNotificationTypes = [client_1.NotificationType.CHAT_MESSAGE];
 let NotificationsService = class NotificationsService {
     constructor(apnsService, prisma) {
         this.apnsService = apnsService;
@@ -56,21 +57,38 @@ let NotificationsService = class NotificationsService {
             senderAvatarUrl: `${payload.senderAvatarUrl ?? ''}`.trim() || null,
         };
     }
+    inAppWhereClause(authUser) {
+        return {
+            OR: [
+                { scope: client_1.NotificationScope.GLOBAL },
+                { scope: client_1.NotificationScope.PERSONAL, userId: authUser.userId },
+            ],
+            type: {
+                notIn: excludedInAppNotificationTypes,
+            },
+        };
+    }
     async listInAppNotifications(authUser) {
-        const items = await this.prisma.userNotification.findMany({
-            where: {
-                OR: [
-                    { scope: client_1.NotificationScope.GLOBAL },
-                    { scope: client_1.NotificationScope.PERSONAL, userId: authUser.userId },
-                ],
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
-            take: 200,
-        });
+        const [items, user] = await Promise.all([
+            this.prisma.userNotification.findMany({
+                where: this.inAppWhereClause(authUser),
+                orderBy: {
+                    createdAt: 'desc',
+                },
+                take: 200,
+            }),
+            this.prisma.user.findUnique({
+                where: {
+                    id: authUser.userId,
+                },
+                select: {
+                    lastNotificationsSeenAt: true,
+                },
+            }),
+        ]);
         return {
             source: 'timeweb',
+            global_seen_at: user?.lastNotificationsSeenAt?.toISOString() ?? null,
             items: items.map((item) => this.serialize(item)),
         };
     }
@@ -135,10 +153,7 @@ let NotificationsService = class NotificationsService {
         const notification = await this.prisma.userNotification.findFirst({
             where: {
                 id: notificationId,
-                OR: [
-                    { userId: authUser.userId },
-                    { scope: client_1.NotificationScope.GLOBAL },
-                ],
+                ...this.inAppWhereClause(authUser),
             },
         });
         if (!notification) {
@@ -171,6 +186,37 @@ let NotificationsService = class NotificationsService {
         return {
             source: 'timeweb',
             updated: result.count,
+        };
+    }
+    async markAllSeen(authUser) {
+        const seenAt = new Date();
+        const [, personalResult] = await this.prisma.$transaction([
+            this.prisma.user.update({
+                where: {
+                    id: authUser.userId,
+                },
+                data: {
+                    lastNotificationsSeenAt: seenAt,
+                },
+                select: {
+                    id: true,
+                },
+            }),
+            this.prisma.userNotification.updateMany({
+                where: {
+                    userId: authUser.userId,
+                    scope: client_1.NotificationScope.PERSONAL,
+                    isRead: false,
+                },
+                data: {
+                    isRead: true,
+                },
+            }),
+        ]);
+        return {
+            source: 'timeweb',
+            global_seen_at: seenAt.toISOString(),
+            updated_personal: personalResult.count,
         };
     }
     async deleteNotification(authUser, notificationId) {

@@ -14,12 +14,14 @@ import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:atta/src/app.dart';
 
 class ChatScreen extends StatefulWidget {
   final String chatId;
@@ -37,7 +39,7 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with RouteAware {
   final _text = TextEditingController();
   final _picker = ImagePicker();
   final List<XFile> _selectedImages = <XFile>[];
@@ -47,6 +49,8 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<List<ChatMessage>>? _messagesSub;
   Stream<List<ChatMessage>>? _messagesStream;
   late Future<void> _chatLoadFuture;
+  late ChatService _chatService;
+  ModalRoute<dynamic>? _route;
 
   String _uid(BuildContext context) {
     final me = context.read<AuthService>().currentUser;
@@ -56,12 +60,12 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    final chatService = context.read<ChatService>();
-    _chatLoadFuture = chatService.preloadChat(
+    _chatService = context.read<ChatService>();
+    _chatLoadFuture = _chatService.preloadChat(
       widget.chatId,
       uid: _uid(context),
     );
-    _messagesStream = chatService.streamMessages(widget.chatId);
+    _messagesStream = _chatService.streamMessages(widget.chatId);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _scheduleMarkRead(immediate: true);
     });
@@ -78,15 +82,55 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    attaRouteObserver.unsubscribe(this);
+    _chatService.setForegroundChat(null);
     _markReadDebounce?.cancel();
     _messagesSub?.cancel();
     _text.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null && !identical(route, _route)) {
+      if (_route != null) {
+        attaRouteObserver.unsubscribe(this);
+      }
+      _route = route;
+      if (route is PageRoute<dynamic>) {
+        attaRouteObserver.subscribe(this, route);
+      }
+    }
+  }
+
+  @override
+  void didPush() {
+    _chatService.setForegroundChat(widget.chatId);
+  }
+
+  @override
+  void didPopNext() {
+    _chatService.setForegroundChat(widget.chatId);
+    unawaited(_scheduleMarkRead(immediate: true));
+  }
+
+  @override
+  void didPushNext() {
+    _chatService.setForegroundChat(null);
+  }
+
+  @override
+  void didPop() {
+    _chatService.setForegroundChat(null);
+  }
+
+  bool _isRouteVisible() => mounted && (_route?.isCurrent ?? true);
+
   Future<void> _scheduleMarkRead({bool immediate = false}) async {
     final uid = _uid(context);
-    if (uid.isEmpty) return;
+    if (uid.isEmpty || !_isRouteVisible()) return;
     _markReadDebounce?.cancel();
     if (immediate) {
       await context.read<ChatService>().markChatRead(
@@ -96,7 +140,7 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _markReadDebounce = Timer(const Duration(milliseconds: 450), () async {
-      if (!mounted) return;
+      if (!mounted || !_isRouteVisible()) return;
       await context.read<ChatService>().markChatRead(
             chatId: widget.chatId,
             uid: uid,
@@ -116,6 +160,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendText() async {
+    if (_sending) return;
     final t = _text.text.trim();
     if (t.isEmpty && _selectedImages.isEmpty) return;
 
@@ -138,7 +183,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
       _text.clear();
       _selectedImages.clear();
-      await chat.markChatRead(chatId: widget.chatId, uid: uid);
     } catch (e) {
       if (!mounted) return;
       final message = _friendlyChatError(e);
@@ -590,11 +634,15 @@ class _ChatScreenState extends State<ChatScreen> {
                       alignment: Alignment.center,
                       child: const Icon(Icons.image_outlined),
                     )
-                  : CachedNetworkImage(
+                  : MediaPreviewBox(
                       imageUrl: thumbUrl,
+                      categoryHint: 'listings',
                       width: 44,
                       height: 44,
-                      fit: BoxFit.cover,
+                      borderRadius: 0,
+                      emptyLabel: 'Нет фото',
+                      errorLabel: 'Фото недоступно',
+                      placeholderLabel: 'Загрузка фото...',
                     ),
             ),
             const SizedBox(width: 10),
@@ -687,6 +735,9 @@ class _ChatScreenState extends State<ChatScreen> {
             final otherName =
                 profiles.pickNameFromRow(otherRow, fallback: '').trim();
             final otherAvatar = profiles.pickAvatarFromRow(otherRow);
+            final currentUser = context.read<AuthService>().currentUser;
+            final myName = currentUser?.displayName?.trim() ?? '';
+            final myAvatar = currentUser?.photoUrl?.trim() ?? '';
 
             return Scaffold(
               appBar: AppBar(
@@ -781,6 +832,10 @@ class _ChatScreenState extends State<ChatScreen> {
                               key: ValueKey<String>(m.stableKey),
                               message: m,
                               mine: mine,
+                              myAvatarUrl: myAvatar,
+                              myFallbackText: myName,
+                              otherAvatarUrl: otherAvatar,
+                              otherFallbackText: otherName,
                               showDayDivider: showDayDivider,
                               dayDivider: showDayDivider
                                   ? _dayDivider(m.createdAt)
@@ -912,7 +967,10 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                     ),
                                   ),
-                                  onSubmitted: (_) => _sendText(),
+                                  onSubmitted: (_) {
+                                    if (_sending) return;
+                                    _sendText();
+                                  },
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -949,6 +1007,10 @@ class _ChatMessageListItem extends StatelessWidget {
     super.key,
     required this.message,
     required this.mine,
+    required this.myAvatarUrl,
+    required this.myFallbackText,
+    required this.otherAvatarUrl,
+    required this.otherFallbackText,
     required this.showDayDivider,
     required this.dayDivider,
     required this.chatSvc,
@@ -961,6 +1023,10 @@ class _ChatMessageListItem extends StatelessWidget {
 
   final ChatMessage message;
   final bool mine;
+  final String myAvatarUrl;
+  final String myFallbackText;
+  final String otherAvatarUrl;
+  final String otherFallbackText;
   final bool showDayDivider;
   final Widget? dayDivider;
   final ChatService chatSvc;
@@ -972,6 +1038,16 @@ class _ChatMessageListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final avatar = RemoteAvatar(
+      key: ValueKey<String>(
+        'avatar-${mine ? 'mine' : 'other'}-${message.stableKey}',
+      ),
+      imageUrl: mine ? myAvatarUrl : otherAvatarUrl,
+      fallbackText: mine ? myFallbackText : otherFallbackText,
+      radius: 12,
+      textStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+    );
+
     return Column(
       children: [
         if (showDayDivider && dayDivider != null) dayDivider!,
@@ -979,34 +1055,49 @@ class _ChatMessageListItem extends StatelessWidget {
           alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
           child: GestureDetector(
             onLongPress: onDeleteMessage,
-            child: Column(
-              crossAxisAlignment:
-                  mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            child: Row(
+              key: ValueKey<String>('row-${message.stableKey}'),
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                _ChatMessageBubble(
-                  key: ValueKey<String>('bubble-${message.stableKey}'),
-                  message: message,
-                  mine: mine,
-                  chatSvc: chatSvc,
-                  onOpenImage: onOpenImage,
-                  formatMessageTime: formatMessageTime,
+                if (!mine) ...[
+                  avatar,
+                  const SizedBox(width: 6),
+                ],
+                Column(
+                  crossAxisAlignment:
+                      mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                  children: [
+                    _ChatMessageBubble(
+                      key: ValueKey<String>('bubble-${message.stableKey}'),
+                      message: message,
+                      mine: mine,
+                      chatSvc: chatSvc,
+                      onOpenImage: onOpenImage,
+                      formatMessageTime: formatMessageTime,
+                    ),
+                    if (mine &&
+                        message.type == 'image' &&
+                        message.status == 'failed')
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: onRetryImage,
+                            child: const Text('Повторить'),
+                          ),
+                          TextButton(
+                            onPressed: onRemoveFailedImage,
+                            child: const Text('Удалить'),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
-                if (mine &&
-                    message.type == 'image' &&
-                    message.status == 'failed')
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton(
-                        onPressed: onRetryImage,
-                        child: const Text('Повторить'),
-                      ),
-                      TextButton(
-                        onPressed: onRemoveFailedImage,
-                        child: const Text('Удалить'),
-                      ),
-                    ],
-                  ),
+                if (mine) ...[
+                  const SizedBox(width: 6),
+                  avatar,
+                ],
               ],
             ),
           ),

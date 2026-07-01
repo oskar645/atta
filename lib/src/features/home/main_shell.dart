@@ -142,8 +142,8 @@ class _MainShellState extends State<MainShell> {
     final uid = auth.currentUser!.uid;
 
     final navTheme = NavigationBarThemeData(
-      labelTextStyle: MaterialStateProperty.resolveWith<TextStyle?>((states) {
-        final selected = states.contains(MaterialState.selected);
+      labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
+        final selected = states.contains(WidgetState.selected);
         return TextStyle(
           fontSize: 10.5,
           fontWeight: FontWeight.w400,

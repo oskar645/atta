@@ -43,14 +43,20 @@ class RemoteAvatar extends StatelessWidget {
       return CircleAvatar(
         radius: radius,
         backgroundColor: bg,
-        child: Text(
-          letter,
-          style: textStyle ??
-              TextStyle(
-                fontWeight: FontWeight.w700,
-                color: Theme.of(context).colorScheme.onSurface,
+        child: trimmedFallback.isEmpty
+            ? Icon(
+                Icons.person_rounded,
+                size: radius,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              )
+            : Text(
+                letter,
+                style: textStyle ??
+                    TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
               ),
-        ),
       );
     }
 

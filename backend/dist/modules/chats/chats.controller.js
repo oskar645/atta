@@ -47,7 +47,7 @@ let ChatsController = class ChatsController {
             windowMs: 60 * 1000,
         });
         const result = await this.chatsService.sendMessage(authUser, chatId, dto);
-        this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId, result.notification);
+        this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId);
         return result;
     }
     async markChatRead(authUser, chatId) {
@@ -150,8 +150,10 @@ let MessagesController = class MessagesController {
     async deleteMessage(authUser, messageId) {
         const result = await this.chatsService.deleteMessage(authUser, messageId);
         this.chatsGateway.emitMessageDeleted(result.messageId, result.chatId, result.participantIds);
-        this.chatsGateway.emitChatUpdated(result.senderChat);
-        this.chatsGateway.emitChatUpdated(result.recipientChat);
+        this.chatsGateway.emitChatUpdatedToUser(authUser.userId, result.senderChat);
+        this.chatsGateway.emitChatUpdatedToUser(result.recipientChat['buyerId'] == authUser.userId
+            ? result.recipientChat['sellerId'].toString()
+            : result.recipientChat['buyerId'].toString(), result.recipientChat);
         result.unreadUpdates.forEach((item) => {
             this.chatsGateway.emitUnreadChanged(item.userId, {
                 id: item.chatId,

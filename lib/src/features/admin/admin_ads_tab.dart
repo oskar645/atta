@@ -422,6 +422,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
         bytes: edited.bytes,
         contentType: edited.contentType,
       );
+      if (!mounted) return;
 
       _imageCtrl.text = url;
       setState(() {});
@@ -670,7 +671,7 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
 
     final dx = (viewport.width - fittedSize.width) / 2;
     final dy = (viewport.height - fittedSize.height) / 2;
-    _controller.value = Matrix4.identity()..translate(dx, dy);
+    _controller.value = Matrix4.identity()..translateByDouble(dx, dy, 0, 1);
     _initialMatrixApplied = true;
   }
 
@@ -723,8 +724,8 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
     final ty = next.storage[13].clamp(minY, maxY);
 
     return Matrix4.identity()
-      ..translate(tx, ty)
-      ..scale(scale);
+      ..translateByDouble(tx, ty, 0, 1)
+      ..scaleByDouble(scale, scale, 1, 1);
   }
 
   Future<void> _applyCrop() async {
@@ -755,14 +756,14 @@ class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
       );
 
       const outputWidth = 1600.0;
-      final outputHeight = outputWidth / _bannerAspectRatio;
+      const outputHeight = outputWidth / _bannerAspectRatio;
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
 
       canvas.drawImageRect(
         image,
         srcRect,
-        Rect.fromLTWH(0, 0, outputWidth, outputHeight),
+        const Rect.fromLTWH(0, 0, outputWidth, outputHeight),
         Paint(),
       );
 

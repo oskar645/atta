@@ -82,6 +82,8 @@ class AuthService {
   }) =>
       updateAuthMetadata(displayName: displayName, photoUrl: photoUrl);
 
+  Future<AuthUser?> revalidateCurrentUser() => _backend.revalidateCurrentUser();
+
   Future<void> signInWithPhone({
     required String phone,
     required String password,

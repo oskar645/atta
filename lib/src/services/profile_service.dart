@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/listings_api.dart';
@@ -520,8 +518,9 @@ class ProfileService {
   }
 
   Future<void> _evictAvatarCache(String url) async {
-    if (_avatarCacheEvictor != null) {
-      await _avatarCacheEvictor!(url);
+    final avatarCacheEvictor = _avatarCacheEvictor;
+    if (avatarCacheEvictor != null) {
+      await avatarCacheEvictor(url);
       return;
     }
     for (final candidate in _avatarCacheVariants(url)) {

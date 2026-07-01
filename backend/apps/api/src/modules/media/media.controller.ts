@@ -132,7 +132,6 @@ export class MediaController {
         result.recipientChat,
         result.message,
         result.recipientId,
-        result.notification,
       );
       return result;
     });

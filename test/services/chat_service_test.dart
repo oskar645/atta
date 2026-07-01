@@ -31,6 +31,7 @@ void main() {
     );
 
     final sub = service.streamMessages('chat-1').listen((_) {});
+    service.setForegroundChat('chat-1');
     socket.emitEvent(
       'message.new',
       <String, dynamic>{
@@ -76,6 +77,36 @@ void main() {
 
     expect(socket.deliveredIds, contains('message-2'));
     expect(socket.readIds, isNot(contains('message-2')));
+  });
+
+  test('active subscription without foreground chat does not mark read',
+      () async {
+    final socket = _FakeChatSocketService();
+    final service = ChatService(
+      socketService: socket,
+      api: _FakeChatsApi(),
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-1').listen((_) {});
+    socket.emitEvent(
+      'message.new',
+      <String, dynamic>{
+        'chat': _chatMap(unreadCount: 1),
+        'message': <String, dynamic>{
+          'id': 'message-2b',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'text': 'Сообщение под скрытым экраном',
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(socket.deliveredIds, contains('message-2b'));
+    expect(socket.readIds, isNot(contains('message-2b')));
+    await sub.cancel();
   });
 
   test('large chat image is compressed before upload', () async {
@@ -213,6 +244,26 @@ void main() {
     expect(messages.single.status, 'failed');
   });
 
+  test('markChatsDelivered ignores message refresh network failure', () async {
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: _FakeChatsApi(
+        listMessagesError: const ApiException(
+          'Проверьте интернет или VPN, затем попробуйте снова.',
+        ),
+      ),
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await expectLater(
+      service.markChatsDelivered(
+        chatIds: const ['chat-1'],
+        uid: 'user-1',
+      ),
+      completes,
+    );
+  });
+
   test('same timestamp messages keep stable outgoing order', () async {
     final socket = _FakeChatSocketService();
     final service = ChatService(
@@ -343,6 +394,40 @@ void main() {
     );
     await sub.cancel();
     await file.delete();
+  });
+
+  test('repeated text send while request is in flight creates one request',
+      () async {
+    final api = _FakeChatsApi(
+      sendMessageDelay: const Duration(milliseconds: 40),
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await Future.wait([
+      service.sendMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Один раз',
+      ),
+      service.sendMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Один раз',
+      ),
+      service.sendMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Один раз',
+      ),
+    ]);
+
+    expect(api.sendMessageCalls, 1);
+    final messages = await service.streamMessages('chat-1').first;
+    expect(messages.where((item) => item.text == 'Один раз'), hasLength(1));
   });
 
   test('sending text does not blink previous text messages', () async {
@@ -725,12 +810,17 @@ class _FakeChatSocketService extends ChatSocketService {
 class _FakeChatsApi extends ChatsApi {
   _FakeChatsApi({
     this.sendMessageError,
+    this.listMessagesError,
     this.chats = const <Map<String, dynamic>>[],
+    this.sendMessageDelay = Duration.zero,
   }) : super(ApiClient(tokenStorage: TokenStorage()));
 
   final Object? sendMessageError;
+  final Object? listMessagesError;
   final List<Map<String, dynamic>> chats;
+  final Duration sendMessageDelay;
   final List<String> getChatCalls = <String>[];
+  int sendMessageCalls = 0;
 
   @override
   Future<Map<String, dynamic>> listChats() async {
@@ -739,6 +829,9 @@ class _FakeChatsApi extends ChatsApi {
 
   @override
   Future<Map<String, dynamic>> listMessages(String chatId) async {
+    if (listMessagesError != null) {
+      throw listMessagesError!;
+    }
     return <String, dynamic>{
       'chat': _chatMap(),
       'items': <Map<String, dynamic>>[],
@@ -758,6 +851,10 @@ class _FakeChatsApi extends ChatsApi {
     required String chatId,
     required String text,
   }) async {
+    sendMessageCalls += 1;
+    if (sendMessageDelay > Duration.zero) {
+      await Future<void>.delayed(sendMessageDelay);
+    }
     if (sendMessageError != null) {
       throw sendMessageError!;
     }

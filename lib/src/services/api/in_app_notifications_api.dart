@@ -26,6 +26,14 @@ class InAppNotificationsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> markAllSeen() async {
+    final response = await _client.patch(
+      '/notifications/seen-all',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> deleteById(String notificationId) async {
     final response = await _client.delete(
       '/notifications/$notificationId',

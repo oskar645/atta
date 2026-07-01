@@ -54,6 +54,7 @@ class BackendAuthService {
       StreamController<AuthSessionEvent>.broadcast();
 
   Future<void>? _initialization;
+  Future<AuthUser>? _meInFlight;
   AuthUser? _currentUser;
 
   Stream<AuthSessionEvent> get onAuthStateChange => _events.stream;
@@ -94,10 +95,14 @@ class BackendAuthService {
           'Auth restore skipped remote profile refresh, using cached session'
           ' status=${error.statusCode} code=${error.code}',
         );
+        _events
+            .add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
         return;
       }
       rethrow;
     }
+
+    _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
   }
 
   Future<AuthUser> signIn({
@@ -126,32 +131,20 @@ class BackendAuthService {
   }
 
   Future<AuthUser> me() async {
-    late final Map<String, dynamic> response;
+    final existing = _meInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = _loadCurrentUser();
+    _meInFlight = future;
     try {
-      response = await _authApi.me();
-    } on ApiException catch (error) {
-      if (!error.isNotFound) rethrow;
-      response = await _usersApi.me();
+      return await future;
+    } finally {
+      if (identical(_meInFlight, future)) {
+        _meInFlight = null;
+      }
     }
-    final rawUser = (response['user'] ?? response) as Map;
-    final user = _mergeUser(
-      _currentUser,
-      _parseUser(rawUser),
-      preferServerAdmin: _hasExplicitAdminFlag(rawUser, response),
-    );
-    _currentUser = user;
-
-    final accessToken = await _tokenStorage.readAccessToken();
-    final refreshToken = await _tokenStorage.readRefreshToken();
-    if (accessToken != null && refreshToken != null) {
-      await _tokenStorage.saveSession(
-        accessToken: accessToken,
-        refreshToken: refreshToken,
-        currentUser: user,
-      );
-    }
-
-    return user;
   }
 
   Future<void> signOut() async {
@@ -396,7 +389,9 @@ class BackendAuthService {
           await _clearSession();
           return false;
         }
-        if (error.isNetworkError || error.isTimeout || error.isServerUnavailable) {
+        if (error.isNetworkError ||
+            error.isTimeout ||
+            error.isServerUnavailable) {
           return true;
         }
         rethrow;
@@ -410,6 +405,13 @@ class BackendAuthService {
 
   Future<void> expireSession() async {
     await _clearSession();
+  }
+
+  Future<AuthUser?> revalidateCurrentUser() async {
+    if (_currentUser == null) {
+      return null;
+    }
+    return me();
   }
 
   Future<AuthUser> _consumeAuthPayload(Map<String, dynamic> response) async {
@@ -443,6 +445,35 @@ class BackendAuthService {
 
     _currentUser = user;
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
+    return user;
+  }
+
+  Future<AuthUser> _loadCurrentUser() async {
+    late final Map<String, dynamic> response;
+    try {
+      response = await _authApi.me();
+    } on ApiException catch (error) {
+      if (!error.isNotFound) rethrow;
+      response = await _usersApi.me();
+    }
+    final rawUser = (response['user'] ?? response) as Map;
+    final user = _mergeUser(
+      _currentUser,
+      _parseUser(rawUser),
+      preferServerAdmin: _hasExplicitAdminFlag(rawUser, response),
+    );
+    _currentUser = user;
+
+    final accessToken = await _tokenStorage.readAccessToken();
+    final refreshToken = await _tokenStorage.readRefreshToken();
+    if (accessToken != null && refreshToken != null) {
+      await _tokenStorage.saveSession(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        currentUser: user,
+      );
+    }
+
     return user;
   }
 
@@ -511,9 +542,8 @@ class BackendAuthService {
     bool preferServerAdmin = false,
   }) {
     if (previous == null) return next;
-    final sameUser = previous.uid.isEmpty ||
-        next.uid.isEmpty ||
-        previous.uid == next.uid;
+    final sameUser =
+        previous.uid.isEmpty || next.uid.isEmpty || previous.uid == next.uid;
     return AuthUser(
       uid: next.uid.isNotEmpty ? next.uid : previous.uid,
       email: _pickPreferred(next.email, previous.email),

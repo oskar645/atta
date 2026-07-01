@@ -9,7 +9,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatsModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
-const notifications_module_1 = require("../notifications/notifications.module");
 const presence_module_1 = require("../presence/presence.module");
 const prisma_module_1 = require("../prisma/prisma.module");
 const storage_module_1 = require("../storage/storage.module");
@@ -25,7 +24,6 @@ exports.ChatsModule = ChatsModule = __decorate([
             presence_module_1.PresenceModule,
             prisma_module_1.PrismaModule,
             auth_module_1.AuthModule,
-            notifications_module_1.NotificationsModule,
             storage_module_1.StorageModule,
         ],
         controllers: [chats_controller_1.ChatsController, chats_controller_1.MessagesController],

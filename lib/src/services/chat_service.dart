@@ -50,9 +50,12 @@ class ChatService {
   final Map<String, Future<void>> _chatRefreshInFlight = {};
   final Map<String, Future<void>> _messagesRefreshInFlight = {};
   final Map<String, Future<void>> _markReadInFlight = {};
+  final Map<String, Future<void>> _messageSendInFlight = {};
+  final Map<String, Future<void>> _imageSendInFlight = {};
   final Map<String, DateTime> _lastMarkReadAt = {};
   DateTime? _lastAppResumeRefreshAt;
   final Set<String> _activeChatIds = <String>{};
+  String? _foregroundChatId;
   int _messageOrderSequence = 0;
 
   static const Duration _markReadCooldown = Duration(seconds: 2);
@@ -65,8 +68,11 @@ class ChatService {
     _chatRefreshInFlight.clear();
     _messagesRefreshInFlight.clear();
     _markReadInFlight.clear();
+    _messageSendInFlight.clear();
+    _imageSendInFlight.clear();
     _lastMarkReadAt.clear();
     _activeChatIds.clear();
+    _foregroundChatId = null;
     _chatsById.clear();
     _messagesByChat.clear();
     _messageOrderByKey.clear();
@@ -161,22 +167,19 @@ class ChatService {
     _emitChats();
   }
 
+  void setForegroundChat(String? chatId) {
+    final normalized = chatId?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      _foregroundChatId = null;
+      return;
+    }
+    _foregroundChatId = normalized;
+  }
+
   void _upsertMessage(ChatMessage message) {
     final items =
         _messagesByChat.putIfAbsent(message.chatId, () => <ChatMessage>[]);
-    final mergeKey = _messageMergeKey(message);
-    final index = items.indexWhere(
-      (entry) =>
-          entry.id == message.id ||
-          (entry.clientMessageId != null &&
-              entry.clientMessageId == message.clientMessageId),
-    );
-    if (index == -1) {
-      items.add(_normalizeMessage(message));
-      _messageOrderByKey.putIfAbsent(mergeKey, () => ++_messageOrderSequence);
-    } else {
-      items[index] = _mergeMessages(items[index], message);
-    }
+    _upsertMessageIntoList(items, message);
     _emitMessages(message.chatId);
   }
 
@@ -218,6 +221,21 @@ class ChatService {
 
   ChatMessage _mergeMessages(ChatMessage previous, ChatMessage incoming) {
     final normalizedIncoming = _normalizeMessage(incoming);
+    final resolvedId = () {
+      final incomingId = normalizedIncoming.id.trim();
+      final previousId = previous.id.trim();
+      if (incomingId.isEmpty) return previous.id;
+      if (previousId.startsWith('temp-') && incomingId.isNotEmpty) {
+        return normalizedIncoming.id;
+      }
+      return incomingId.isNotEmpty ? normalizedIncoming.id : previous.id;
+    }();
+    final resolvedChatId = normalizedIncoming.chatId.trim().isNotEmpty
+        ? normalizedIncoming.chatId
+        : previous.chatId;
+    final resolvedSenderId = normalizedIncoming.senderId.trim().isNotEmpty
+        ? normalizedIncoming.senderId
+        : previous.senderId;
     final resolvedText = normalizedIncoming.text.trim().isNotEmpty
         ? normalizedIncoming.text.trim()
         : previous.text;
@@ -225,6 +243,9 @@ class ChatService {
         ? normalizedIncoming.imageUrl!.trim()
         : previous.imageUrl;
     final merged = normalizedIncoming.copyWith(
+      id: resolvedId,
+      chatId: resolvedChatId,
+      senderId: resolvedSenderId,
       text: resolvedText,
       imageUrl: resolvedImage,
       type: normalizedIncoming.type == 'text' &&
@@ -312,7 +333,7 @@ class ChatService {
           _upsertMessage(message);
           if (message.senderId != (_activeUserId ?? '')) {
             _socketService?.sendDelivered(message.id);
-            if (_activeChatIds.contains(message.chatId)) {
+            if (_foregroundChatId == message.chatId) {
               _socketService?.sendRead(message.id);
             }
           }
@@ -443,19 +464,13 @@ class ChatService {
         .map((item) => ChatMessage.fromMap(Map<String, dynamic>.from(item)))
         .toList()
       ..sort(_compareMessagesNewestFirst);
-    final currentMessages = List<ChatMessage>.from(
-        _messagesByChat[chatId] ?? const <ChatMessage>[]);
-    final mergedByKey = <String, ChatMessage>{
-      for (final message in currentMessages) _messageMergeKey(message): message,
-    };
+    final mergedMessages = List<ChatMessage>.from(
+      _messagesByChat[chatId] ?? const <ChatMessage>[],
+    );
     for (final message in incoming) {
-      final mergeKey = _messageMergeKey(message);
-      final previous = mergedByKey[mergeKey];
-      mergedByKey[mergeKey] = previous == null
-          ? _normalizeMessage(message)
-          : _mergeMessages(previous, message);
+      _upsertMessageIntoList(mergedMessages, message);
     }
-    _messagesByChat[chatId] = mergedByKey.values.toList();
+    _messagesByChat[chatId] = mergedMessages;
     for (final message in _messagesByChat[chatId] ?? const <ChatMessage>[]) {
       _messageOrderByKey.putIfAbsent(
         _messageMergeKey(message),
@@ -518,6 +533,12 @@ class ChatService {
     _activeUserId ??= uid;
     await _ensureTimewebReady(uid);
     await _refreshChat(chatId);
+  }
+
+  Future<void> refreshInbox(String uid) async {
+    _activeUserId = uid;
+    await _ensureTimewebReady(uid);
+    await _refreshChats();
   }
 
   Future<void> handleAppResumed(String uid) async {
@@ -595,9 +616,18 @@ class ChatService {
     final trimmedChatId = chatId.trim();
     if (trimmedChatId.isEmpty) return;
     final unreadCount = _chatsById[trimmedChatId]?.unreadFor(uid) ?? 0;
+    final hasUnreadIncomingMessages = (_messagesByChat[trimmedChatId] ??
+            const <ChatMessage>[])
+        .any((message) => message.senderId != uid && message.readAt == null);
     final now = DateTime.now();
     final lastMarkedAt = _lastMarkReadAt[trimmedChatId];
     if (unreadCount <= 0 &&
+        !hasUnreadIncomingMessages &&
+        lastMarkedAt == null) {
+      return;
+    }
+    if (unreadCount <= 0 &&
+        !hasUnreadIncomingMessages &&
         lastMarkedAt != null &&
         now.difference(lastMarkedAt) < _markReadCooldown) {
       return;
@@ -648,23 +678,29 @@ class ChatService {
     required String chatId,
     required String uid,
   }) async {
-    _activeUserId = uid;
-    await _ensureTimewebReady(uid);
-    if (!_messagesByChat.containsKey(chatId)) {
-      await _refreshMessages(chatId);
-    }
-    final messages =
-        List<ChatMessage>.from(_messagesByChat[chatId] ?? const []);
-    for (final message in messages) {
-      if (message.senderId == uid || message.deliveredAt != null) continue;
-      try {
-        final response = await _api.markMessageDelivered(message.id);
-        final rawMessage = response['message'];
-        if (rawMessage is Map) {
-          _upsertMessage(
-              ChatMessage.fromMap(Map<String, dynamic>.from(rawMessage)));
+    try {
+      _activeUserId = uid;
+      await _ensureTimewebReady(uid);
+      if (!_messagesByChat.containsKey(chatId)) {
+        await _refreshMessages(chatId);
+      }
+      final messages =
+          List<ChatMessage>.from(_messagesByChat[chatId] ?? const []);
+      for (final message in messages) {
+        if (message.senderId == uid || message.deliveredAt != null) continue;
+        try {
+          final response = await _api.markMessageDelivered(message.id);
+          final rawMessage = response['message'];
+          if (rawMessage is Map) {
+            _upsertMessage(
+                ChatMessage.fromMap(Map<String, dynamic>.from(rawMessage)));
+          }
+        } catch (error) {
+          _debugSource('markMessageDelivered skipped for ${message.id}: $error');
         }
-      } catch (_) {}
+      }
+    } catch (error) {
+      _debugSource('markChatDelivered skipped for $chatId: $error');
     }
   }
 
@@ -674,7 +710,11 @@ class ChatService {
   }) async {
     final ids = chatIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
     for (final chatId in ids) {
-      await markChatDelivered(chatId: chatId, uid: uid);
+      try {
+        await markChatDelivered(chatId: chatId, uid: uid);
+      } catch (error) {
+        _debugSource('markChatsDelivered skipped for $chatId: $error');
+      }
     }
   }
 
@@ -686,6 +726,30 @@ class ChatService {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     _activeUserId = senderId;
+    final sendKey = 'text|${chatId.trim()}|${senderId.trim()}|$trimmed';
+    final existing = _messageSendInFlight[sendKey];
+    if (existing != null) return existing;
+
+    final future = _sendMessageInternal(
+      chatId: chatId,
+      senderId: senderId,
+      text: trimmed,
+    );
+    _messageSendInFlight[sendKey] = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_messageSendInFlight[sendKey], future)) {
+        _messageSendInFlight.remove(sendKey);
+      }
+    }
+  }
+
+  Future<void> _sendMessageInternal({
+    required String chatId,
+    required String senderId,
+    required String text,
+  }) async {
     final tempId = 'temp-${_uuid.v4()}';
     final createdAt = DateTime.now();
     _upsertMessage(
@@ -693,7 +757,7 @@ class ChatService {
         id: tempId,
         chatId: chatId,
         senderId: senderId,
-        text: trimmed,
+        text: text,
         clientMessageId: tempId,
         status: 'pending',
         createdAt: createdAt,
@@ -701,7 +765,7 @@ class ChatService {
     );
 
     try {
-      final response = await _api.sendMessage(chatId: chatId, text: trimmed);
+      final response = await _api.sendMessage(chatId: chatId, text: text);
       final rawChat = response['chat'];
       if (rawChat is Map) {
         _upsertChat(Chat.fromMap(Map<String, dynamic>.from(rawChat)));
@@ -710,7 +774,7 @@ class ChatService {
       if (rawMessage is Map) {
         final normalized = Map<String, dynamic>.from(rawMessage);
         if ((normalized['text'] ?? '').toString().trim().isEmpty) {
-          normalized['text'] = trimmed;
+          normalized['text'] = text;
         }
         normalized['clientMessageId'] = tempId;
         _upsertMessage(
@@ -724,7 +788,7 @@ class ChatService {
           id: tempId,
           chatId: chatId,
           senderId: senderId,
-          text: trimmed,
+          text: text,
           clientMessageId: tempId,
           status: 'failed',
           createdAt: createdAt,
@@ -740,6 +804,31 @@ class ChatService {
     required File file,
   }) async {
     _activeUserId = senderId;
+    final fileKey = file.path.trim();
+    final sendKey = 'image|${chatId.trim()}|${senderId.trim()}|$fileKey';
+    final existing = _imageSendInFlight[sendKey];
+    if (existing != null) return existing;
+
+    final future = _sendImageInternal(
+      chatId: chatId,
+      senderId: senderId,
+      file: file,
+    );
+    _imageSendInFlight[sendKey] = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_imageSendInFlight[sendKey], future)) {
+        _imageSendInFlight.remove(sendKey);
+      }
+    }
+  }
+
+  Future<void> _sendImageInternal({
+    required String chatId,
+    required String senderId,
+    required File file,
+  }) async {
     final tempId = 'temp-${_uuid.v4()}';
     final createdAt = DateTime.now();
     _upsertMessage(
@@ -823,7 +912,7 @@ class ChatService {
     if (chatId.isEmpty) return;
     _activeUserId = currentUserId.trim();
     if (_activeUserId == null || _activeUserId!.isEmpty) return;
-    if (_activeChatIds.contains(chatId)) {
+    if (_foregroundChatId == chatId) {
       unawaited(markChatRead(chatId: chatId, uid: _activeUserId!));
       return;
     }
@@ -936,6 +1025,112 @@ class ChatService {
     if (clientMessageId != null && clientMessageId.isNotEmpty) {
       return clientMessageId;
     }
-    return message.id;
+    final messageId = message.id.trim();
+    if (messageId.isNotEmpty) {
+      return messageId;
+    }
+    final imageUrl = (message.imageUrl ?? '').trim();
+    final normalizedImage = imageUrl.startsWith('file://')
+        ? imageUrl.replaceFirst('file://', '')
+        : imageUrl;
+    final text = message.text.trim();
+    final createdAt = message.createdAt.toUtc().toIso8601String();
+    return [
+      message.chatId.trim(),
+      message.senderId.trim(),
+      createdAt,
+      text,
+      normalizedImage,
+    ].join('|');
+  }
+
+  String _messageDedupSignature(ChatMessage message) {
+    final createdAt = message.createdAt.toUtc();
+    final normalizedCreatedAt = DateTime.utc(
+      createdAt.year,
+      createdAt.month,
+      createdAt.day,
+      createdAt.hour,
+      createdAt.minute,
+      createdAt.second,
+    ).toIso8601String();
+    final imageUrl = (message.imageUrl ?? '').trim();
+    final normalizedImage = imageUrl.startsWith('file://')
+        ? imageUrl.replaceFirst('file://', '')
+        : imageUrl;
+    return [
+      message.chatId.trim(),
+      message.senderId.trim(),
+      normalizedCreatedAt,
+      message.text.trim(),
+      normalizedImage,
+    ].join('|');
+  }
+
+  void _upsertMessageIntoList(
+    List<ChatMessage> items,
+    ChatMessage message,
+  ) {
+    final normalized = _normalizeMessage(message);
+    final index = _findExistingMessageIndex(items, normalized);
+    final mergeKey = _messageMergeKey(normalized);
+    if (index == -1) {
+      items.add(normalized);
+      _messageOrderByKey.putIfAbsent(mergeKey, () => ++_messageOrderSequence);
+      return;
+    }
+
+    final previous = items[index];
+    items[index] = _mergeMessages(previous, normalized);
+  }
+
+  int _findExistingMessageIndex(
+    List<ChatMessage> items,
+    ChatMessage message,
+  ) {
+    final messageId = message.id.trim();
+    final clientMessageId = message.clientMessageId?.trim() ?? '';
+    final dedupSignature = _messageDedupSignature(message);
+    return items.indexWhere((entry) {
+      if (messageId.isNotEmpty && entry.id == messageId) {
+        return true;
+      }
+      if (clientMessageId.isNotEmpty &&
+          (entry.clientMessageId?.trim() ?? '') == clientMessageId) {
+        return true;
+      }
+      if (_messageDedupSignature(entry) == dedupSignature) {
+        return true;
+      }
+      return _isLikelyOptimisticMatch(entry, message);
+    });
+  }
+
+  bool _isLikelyOptimisticMatch(ChatMessage existing, ChatMessage incoming) {
+    final existingClientId = existing.clientMessageId?.trim() ?? '';
+    final isLocalPending = existingClientId.isNotEmpty ||
+        existing.id.trim().startsWith('temp-') ||
+        existing.status == 'pending';
+    if (!isLocalPending) {
+      return false;
+    }
+    if (existing.chatId.trim() != incoming.chatId.trim() ||
+        existing.senderId.trim() != incoming.senderId.trim()) {
+      return false;
+    }
+
+    final ageDifference =
+        existing.createdAt.difference(incoming.createdAt).abs();
+    if (ageDifference > const Duration(seconds: 30)) {
+      return false;
+    }
+
+    if (existing.hasImage || incoming.hasImage) {
+      return existing.hasImage == incoming.hasImage &&
+          existing.text.trim() == incoming.text.trim();
+    }
+
+    return existing.text.trim().isNotEmpty &&
+        existing.text.trim() == incoming.text.trim();
   }
 }

@@ -129,6 +129,7 @@ model User {
   blockedAt      DateTime?           @map("blocked_at")
   blockReason    String?             @map("block_reason")
   lastLoginAt    DateTime?           @map("last_login_at")
+  lastNotificationsSeenAt DateTime?  @map("last_notifications_seen_at")
   createdAt      DateTime            @default(now()) @map("created_at")
   updatedAt      DateTime            @updatedAt @map("updated_at")
   deletedAt      DateTime?           @map("deleted_at")

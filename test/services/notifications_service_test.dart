@@ -75,6 +75,51 @@ void main() {
     expect(results[1].first['id'], 'personal-1');
   });
 
+  test('unread count streams support multiple listeners', () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'global-1',
+          'scope': 'global',
+          'title': 'Global',
+          'created_at': '2026-06-18T13:00:00.000Z',
+          'is_read': false,
+        },
+        <String, dynamic>{
+          'id': 'personal-1',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'title': 'Personal',
+          'created_at': '2026-06-18T13:05:00.000Z',
+          'is_read': false,
+        },
+      ],
+      globalSeenAt: '2026-06-18T12:00:00.000Z',
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+
+    final badgeStream = service.streamUnreadBadgeCount('user-1');
+    final globalStream = service.streamUnreadGlobalCount('user-1');
+    final personalStream = service.streamUnreadPersonalCount('user-1');
+
+    final results = await Future.wait([
+      badgeStream.first,
+      badgeStream.first,
+      globalStream.first,
+      globalStream.first,
+      personalStream.first,
+      personalStream.first,
+    ]);
+
+    expect(results[0], 2);
+    expect(results[1], 2);
+    expect(results[2], 1);
+    expect(results[3], 1);
+    expect(results[4], 1);
+    expect(results[5], 1);
+  });
+
   test('sendPersonal uses Timeweb endpoint', () async {
     final api =
         _FakeInAppNotificationsApi(items: const <Map<String, dynamic>>[]);
@@ -119,8 +164,30 @@ void main() {
     await service.preload('user-1');
     await service.markAllSeen('user-1');
 
-    expect(api.markAllReadCalls, 1);
+    expect(api.markAllSeenCalls, 1);
     expect(await service.streamUnreadPersonalCount('user-1').first, 0);
+    expect(await service.streamUnreadGlobalCount('user-1').first, 0);
+  });
+
+  test('global badge uses backend seen timestamp after relogin', () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'global-1',
+          'scope': 'global',
+          'title': 'Global old',
+          'created_at': '2026-06-18T10:00:00.000Z',
+          'is_read': false,
+        },
+      ],
+      globalSeenAt: '2026-06-18T12:00:00.000Z',
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+
+    await service.preload('user-1');
+
+    expect(await service.streamUnreadBadgeCount('user-1').first, 0);
     expect(await service.streamUnreadGlobalCount('user-1').first, 0);
   });
 
@@ -145,8 +212,7 @@ void main() {
     expect(service.streamPersonal('user-1').first, completion(isEmpty));
   });
 
-  test('realtime message notification appears immediately in personal stream',
-      () async {
+  test('realtime chat notification is ignored by personal stream', () async {
     final api =
         _FakeInAppNotificationsApi(items: const <Map<String, dynamic>>[]);
     final service = NotificationsService(
@@ -169,14 +235,15 @@ void main() {
       },
     );
 
-    final items = await stream.firstWhere((rows) => rows.isNotEmpty);
+    final items = await stream.first.timeout(
+      const Duration(milliseconds: 50),
+      onTimeout: () => const <Map<String, dynamic>>[],
+    );
 
-    expect(items.single['id'], 'notif-1');
-    expect(items.single['chatId'], 'chat-1');
-    expect(items.single['senderName'], 'Mansur');
+    expect(items, isEmpty);
   });
 
-  test('realtime notification affects unread badge count immediately',
+  test('realtime chat notification does not affect unread badge count',
       () async {
     final api =
         _FakeInAppNotificationsApi(items: const <Map<String, dynamic>>[]);
@@ -198,7 +265,108 @@ void main() {
       },
     );
 
-    final count = await stream.firstWhere((value) => value > 0);
+    final count = await stream.first.timeout(
+      const Duration(milliseconds: 50),
+      onTimeout: () => 0,
+    );
+    expect(count, 0);
+  });
+
+  test('chat notifications from backend list are filtered out', () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'message-1',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'type': 'chat_message',
+          'title': 'Новое сообщение',
+          'created_at': '2026-06-18T11:00:00.000Z',
+          'is_read': false,
+        },
+        <String, dynamic>{
+          'id': 'system-1',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'type': 'support',
+          'title': 'Поддержка',
+          'created_at': '2026-06-18T12:00:00.000Z',
+          'is_read': false,
+        },
+      ],
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+
+    final personal = await service.streamPersonal('user-1').first;
+    final badge = await service.streamUnreadBadgeCount('user-1').first;
+
+    expect(personal.map((item) => item['id']), ['system-1']);
+    expect(badge, 1);
+  });
+
+  test('new global notification after seen-all lights bell badge again',
+      () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'global-old',
+          'scope': 'global',
+          'type': 'generic',
+          'title': 'Старое',
+          'created_at': '2026-06-18T10:00:00.000Z',
+          'is_read': false,
+        },
+      ],
+      globalSeenAt: '2026-06-18T12:00:00.000Z',
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+
+    await service.preload('user-1');
+    expect(await service.streamUnreadBadgeCount('user-1').first, 0);
+
+    service.ingestRealtimeNotification(
+      userId: 'user-1',
+      notification: <String, dynamic>{
+        'id': 'global-new',
+        'scope': 'global',
+        'type': 'generic',
+        'title': 'Новое общее',
+        'created_at': '2026-06-18T12:45:00.000Z',
+      },
+    );
+
+    expect(await service.streamUnreadBadgeCount('user-1').first, 1);
+  });
+
+  test('polling refresh picks up new global system notification for bell',
+      () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[],
+      globalSeenAt: '2026-06-18T12:00:00.000Z',
+    );
+    final service = NotificationsService(
+      api: api,
+      pollInterval: const Duration(milliseconds: 20),
+    );
+    service.activateSession('user-1');
+
+    final stream = service.streamUnreadBadgeCount('user-1');
+    expect(await stream.first, 0);
+
+    api.items.add(
+      <String, dynamic>{
+        'id': 'global-polled',
+        'scope': 'global',
+        'type': 'generic',
+        'title': 'Новости',
+        'created_at': '2026-06-18T12:30:00.000Z',
+        'is_read': false,
+      },
+    );
+
+    final count = await stream.firstWhere((value) => value == 1);
     expect(count, 1);
   });
 
@@ -233,21 +401,76 @@ void main() {
 
     expect(api.listCalls, 1);
   });
+
+  test('repeated activateSession keeps a single polling timer', () async {
+    final api =
+        _FakeInAppNotificationsApi(items: const <Map<String, dynamic>>[]);
+    final service = NotificationsService(
+      api: api,
+      pollInterval: const Duration(milliseconds: 25),
+    );
+
+    service.activateSession('user-1');
+    service.activateSession('user-1');
+
+    expect(service.hasActivePollingTimer, isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    expect(api.listCalls, lessThanOrEqualTo(3));
+  });
+
+  test('resetSession stops notifications polling', () async {
+    final api =
+        _FakeInAppNotificationsApi(items: const <Map<String, dynamic>>[]);
+    final service = NotificationsService(
+      api: api,
+      pollInterval: const Duration(milliseconds: 20),
+    );
+
+    service.activateSession('user-1');
+    expect(service.hasActivePollingTimer, isTrue);
+
+    service.resetSession();
+    final callsBeforeWait = api.listCalls;
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(service.hasActivePollingTimer, isFalse);
+    expect(api.listCalls, callsBeforeWait);
+  });
+
+  test('forced refresh is throttled to avoid duplicate notifications GETs',
+      () async {
+    final api = _FakeInAppNotificationsApi(
+      items: const <Map<String, dynamic>>[],
+    );
+    final service = NotificationsService(api: api);
+
+    service.activateSession('user-1');
+    await Future.wait([
+      service.refreshActiveSession(force: true),
+      service.refreshActiveSession(force: true),
+    ]);
+
+    expect(api.listCalls, 1);
+  });
 }
 
 class _FakeInAppNotificationsApi extends InAppNotificationsApi {
   _FakeInAppNotificationsApi({
     required this.items,
     this.listError,
+    this.globalSeenAt,
   }) : super(ApiClient(tokenStorage: TokenStorage()));
 
   final List<Map<String, dynamic>> items;
   final Object? listError;
+  String? globalSeenAt;
   int listCalls = 0;
   String? sentUserId;
   String? sentTitle;
   String? sentBody;
   int markAllReadCalls = 0;
+  int markAllSeenCalls = 0;
 
   @override
   Future<Map<String, dynamic>> list() async {
@@ -257,6 +480,7 @@ class _FakeInAppNotificationsApi extends InAppNotificationsApi {
     }
     return <String, dynamic>{
       'items': items,
+      'global_seen_at': globalSeenAt,
     };
   }
 
@@ -282,5 +506,20 @@ class _FakeInAppNotificationsApi extends InAppNotificationsApi {
       }
     }
     return <String, dynamic>{'updated': markAllReadCalls};
+  }
+
+  @override
+  Future<Map<String, dynamic>> markAllSeen() async {
+    markAllSeenCalls++;
+    globalSeenAt = DateTime.utc(2026, 6, 18, 12, 30).toIso8601String();
+    for (final item in items) {
+      if (item['scope'] == 'personal') {
+        item['is_read'] = true;
+      }
+    }
+    return <String, dynamic>{
+      'updated_personal': markAllSeenCalls,
+      'global_seen_at': globalSeenAt,
+    };
   }
 }

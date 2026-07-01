@@ -176,12 +176,12 @@ function createService(initial?: {
   };
 }
 
-test('welcome bonus 100 is granted on first wallet bootstrap', async () => {
+test('welcome bonus 200 is granted on first wallet bootstrap', async () => {
   const { service } = createService();
 
   const wallet = await service.ensureWalletAndBonuses('user-1');
 
-  assert.equal(wallet.bonusBalance, 125);
+  assert.equal(wallet.bonusBalance, 225);
 });
 
 test('daily bonus is granted only once per day', async () => {
@@ -190,8 +190,8 @@ test('daily bonus is granted only once per day', async () => {
   const firstWallet = await service.ensureWalletAndBonuses('user-1');
   const secondWallet = await service.checkAndAccrueDailyBonus('user-1');
 
-  assert.equal(firstWallet.bonusBalance, 125);
-  assert.equal(secondWallet.bonusBalance, 125);
+  assert.equal(firstWallet.bonusBalance, 225);
+  assert.equal(secondWallet.bonusBalance, 225);
 });
 
 test('skipped day does not accrue retroactively', async () => {
@@ -275,7 +275,7 @@ test('getWallet returns wallet payload for authorized user without throwing', as
     role: 'user',
   });
 
-  assert.equal(response.balance, 125);
+  assert.equal(response.balance, 225);
   assert.equal(response.dailyBonusAmount, 25);
 });
 
@@ -288,7 +288,7 @@ test('checkAccrual returns wallet envelope without throwing', async () => {
     role: 'user',
   });
 
-  assert.equal(response.wallet.balance, 125);
+  assert.equal(response.wallet.balance, 225);
 });
 
 test('resolveSpendReason keeps promotion reason when enum value exists in database', async () => {

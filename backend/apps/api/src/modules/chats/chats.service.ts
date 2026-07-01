@@ -4,11 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ChatMessageType, NotificationType, Prisma } from '@prisma/client';
+import { ChatMessageType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
-import { NotificationsService } from '../notifications/notifications.service';
 import { PresenceService } from '../presence/presence.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -42,7 +41,6 @@ export class ChatsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly presenceService: PresenceService,
-    private readonly notificationsService: NotificationsService,
     private readonly storageService: StorageService,
   ) {}
 
@@ -153,22 +151,6 @@ export class ChatsService {
         chat.seller,
         presenceMap.get(chat.sellerId),
       ),
-    };
-  }
-
-  private buildMessageNotificationPayload(params: {
-    chatId: string;
-    messageId: string;
-    senderId: string;
-    senderName: string;
-    senderAvatarUrl: string;
-  }) {
-    return {
-      chatId: params.chatId,
-      senderId: params.senderId,
-      senderName: params.senderName.trim(),
-      senderAvatarUrl: params.senderAvatarUrl.trim(),
-      messageId: params.messageId,
     };
   }
 
@@ -388,31 +370,10 @@ export class ChatsService {
       };
     });
 
-    const senderPreview =
-      authUser.userId === chat.buyerId
-        ? result.chat.buyer
-        : result.chat.seller;
-    const notification = await this.notificationsService.createSystemNotification({
-      userId: recipientId,
-      title: `Новое сообщение от ${senderPreview.displayName || senderPreview.name || 'пользователя'}`,
-      body: text,
-      type: NotificationType.CHAT_MESSAGE,
-      payload: this.buildMessageNotificationPayload({
-        chatId,
-        messageId: result.message.id,
-        senderId: authUser.userId,
-        senderName:
-          senderPreview.displayName || senderPreview.name || 'Новое сообщение',
-        senderAvatarUrl:
-          senderPreview.avatarUrl || senderPreview.photoUrl || '',
-      }),
-    });
-
     return {
       chat: await this.serializeChat(result.chat, authUser.userId),
       recipientChat: await this.serializeChat(result.chat, recipientId),
       message: this.serializeMessage(result.message),
-      notification: this.notificationsService.serializeNotification(notification),
       recipientId,
     };
   }
@@ -622,32 +583,11 @@ export class ChatsService {
       };
     });
 
-    const senderPreview =
-      authUser.userId === chat.buyerId
-        ? result.chat.buyer
-        : result.chat.seller;
-    const notification = await this.notificationsService.createSystemNotification({
-      userId: recipientId,
-      title: `Новое сообщение от ${senderPreview.displayName || senderPreview.name || 'пользователя'}`,
-      body: 'Фото',
-      type: NotificationType.CHAT_MESSAGE,
-      payload: this.buildMessageNotificationPayload({
-        chatId,
-        messageId: result.message.id,
-        senderId: authUser.userId,
-        senderName:
-          senderPreview.displayName || senderPreview.name || 'Новое сообщение',
-        senderAvatarUrl:
-          senderPreview.avatarUrl || senderPreview.photoUrl || '',
-      }),
-    });
-
     return {
       source: 'timeweb',
       chat: await this.serializeChat(result.chat, authUser.userId),
       recipientChat: await this.serializeChat(result.chat, recipientId),
       message: this.serializeMessage(result.message),
-      notification: this.notificationsService.serializeNotification(notification),
       recipientId,
     };
   }

@@ -148,7 +148,7 @@ class _AdminScreenState extends State<AdminScreen>
             controller: _tab,
             children: const [
               _DashboardTab(),
-              _ModerationTab(),
+              _TimewebAdminListingsModerationTab(),
               AdminSupportTab(),
               AdminReportsScreen(),
               AdminAdsTab(),
@@ -160,75 +160,6 @@ class _AdminScreenState extends State<AdminScreen>
         );
       },
     );
-  }
-}
-
-class _TimewebAdminDashboardTab extends StatelessWidget {
-  const _TimewebAdminDashboardTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final admin = context.read<AdminService>();
-    return FutureBuilder<Map<String, dynamic>>(
-      future: admin.dashboardStats(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final stats = (snap.data!['stats'] as Map?) ?? const {};
-        final cards = <MapEntry<String, Object?>>[
-          MapEntry('Пользователи', stats['users']),
-          MapEntry('Объявления', stats['listings']),
-          MapEntry('На модерации', stats['pendingModeration']),
-          MapEntry('Жалобы', stats['reportsOpen']),
-          MapEntry('Поддержка', stats['supportOpen']),
-        ];
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const Text('Источник данных: Timeweb'),
-            const SizedBox(height: 12),
-            ...cards.map(
-              (entry) => Card(
-                child: ListTile(
-                  title: Text(entry.key),
-                  trailing: Text('${entry.value ?? 0}'),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _TimewebAdminUsersTab extends StatelessWidget {
-  const _TimewebAdminUsersTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final admin = context.read<AdminService>();
-    return _AdminJsonListTab(
-      future: admin.users(),
-      emptyText: 'Пользователи пока не получены из Timeweb.',
-      titleBuilder: (item) => (item['display_name'] ??
-              item['name'] ??
-              item['email'] ??
-              'Пользователь')
-          .toString(),
-      subtitleBuilder: (item) =>
-          'Телефон: ${(item['phone'] ?? '').toString()} • admin=${item['is_admin'] == true || item['isAdmin'] == true}',
-    );
-  }
-}
-
-class _TimewebAdminListingsTab extends StatelessWidget {
-  const _TimewebAdminListingsTab();
-
-  @override
-  Widget build(BuildContext context) {
-    return const _TimewebAdminListingsModerationTab();
   }
 }
 
@@ -299,7 +230,8 @@ class _TimewebAdminListingsModerationTabState
         ? rawItems
             .whereType<Map>()
             .map(
-              (item) => item.map((key, value) => MapEntry(key.toString(), value)),
+              (item) =>
+                  item.map((key, value) => MapEntry(key.toString(), value)),
             )
             .toList(growable: false)
         : const <Map<String, dynamic>>[];
@@ -330,19 +262,19 @@ class _TimewebAdminListingsModerationTabState
     setState(() {
       _status = status;
       _errorText = null;
-      _items = const <Map<String, dynamic>>[];
       _loading = true;
       _future = _load();
     });
   }
 
   Future<void> _approve(Map<String, dynamic> item) async {
+    final adminService = context.read<AdminService>();
     setState(() => _busy = true);
     try {
       final listingId = _id(item);
-      await context.read<AdminService>().approveListing(listingId);
+      await adminService.approveListing(listingId);
       _removeItemLocally(listingId);
-      unawaited(context.read<AdminService>().dashboardStats(forceRefresh: true));
+      unawaited(adminService.dashboardStats(forceRefresh: true));
       if (!mounted) return;
       showAppSnack(context, 'Объявление одобрено');
     } catch (e) {
@@ -354,22 +286,22 @@ class _TimewebAdminListingsModerationTabState
   }
 
   Future<void> _reject(Map<String, dynamic> item) async {
+    final adminService = context.read<AdminService>();
     final reason = await _askReason(
       title: 'Отклонить объявление',
       hint: 'Причина отклонения',
       confirmText: 'Отклонить',
     );
     if (reason == null) return;
-
     setState(() => _busy = true);
     try {
       final listingId = _id(item);
-      await context.read<AdminService>().rejectListing(
-            listingId,
-            reason: reason,
-          );
+      await adminService.rejectListing(
+        listingId,
+        reason: reason,
+      );
       _removeItemLocally(listingId);
-      unawaited(context.read<AdminService>().dashboardStats(forceRefresh: true));
+      unawaited(adminService.dashboardStats(forceRefresh: true));
       if (!mounted) return;
       showAppSnack(context, 'Объявление отклонено');
     } catch (e) {
@@ -381,22 +313,22 @@ class _TimewebAdminListingsModerationTabState
   }
 
   Future<void> _delete(Map<String, dynamic> item) async {
+    final adminService = context.read<AdminService>();
     final reason = await _askReason(
       title: 'Скрыть объявление',
       hint: 'Причина удаления/скрытия',
       confirmText: 'Скрыть',
     );
     if (reason == null) return;
-
     setState(() => _busy = true);
     try {
       final listingId = _id(item);
-      await context.read<AdminService>().deleteListing(
-            listingId,
-            reason: reason,
-          );
+      await adminService.deleteListing(
+        listingId,
+        reason: reason,
+      );
       _removeItemLocally(listingId);
-      unawaited(context.read<AdminService>().dashboardStats(forceRefresh: true));
+      unawaited(adminService.dashboardStats(forceRefresh: true));
       if (!mounted) return;
       showAppSnack(context, 'Объявление скрыто');
     } catch (e) {
@@ -516,20 +448,37 @@ class _TimewebAdminListingsModerationTabState
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            Row(
               children: [
-                ChoiceChip(
-                  label: const Text('На модерации'),
-                  selected: _status == 'pending',
-                  onSelected: _busy ? null : (_) => _setStatus('pending'),
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('На модерации'),
+                        selected: _status == 'pending',
+                        onSelected: _busy ? null : (_) => _setStatus('pending'),
+                      ),
+                      ChoiceChip(
+                        label: const Text('Все'),
+                        selected: _status == 'all',
+                        onSelected: _busy ? null : (_) => _setStatus('all'),
+                      ),
+                    ],
+                  ),
                 ),
-                ChoiceChip(
-                  label: const Text('Все'),
-                  selected: _status == 'all',
-                  onSelected: _busy ? null : (_) => _setStatus('all'),
-                ),
+                if (_loading && items.isNotEmpty) ...[
+                  const SizedBox(width: 12),
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      key: Key('admin_moderation_inline_spinner'),
+                      strokeWidth: 2,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 12),
@@ -546,66 +495,141 @@ class _TimewebAdminListingsModerationTabState
               )
             else
               ...items.map(
-                (item) => Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          (item['title'] ?? 'Без названия').toString(),
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${(item['price'] ?? 0).toString()} ₽ • ${(item['city'] ?? '').toString()}',
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Категория: ${(item['category'] ?? '').toString()}',
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Владелец: ${(item['owner_name'] ?? '').toString()}',
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Статус: ${_statusLabel((item['status'] ?? '').toString())}',
-                        ),
-                        const SizedBox(height: 4),
-                        Text('Создано: ${_createdAt(item)}'),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            FilledButton(
-                              onPressed: _busy ||
-                                      (item['status'] ?? '').toString() ==
-                                          'approved'
-                                  ? null
-                                  : () => _approve(item),
-                              child: const Text('Одобрить'),
+                (item) {
+                  final listingId = _id(item);
+                  final rawPhotos = item['photo_urls'] ?? item['photoUrls'] ?? [];
+                  final photos = rawPhotos is List
+                      ? rawPhotos.map((entry) => entry.toString()).toList(growable: false)
+                      : const <String>[];
+                  return Card(
+                    key: ValueKey('admin-moderation-item:$listingId'),
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () async {
+                              final handled = await Navigator.push<bool>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => AdminListingReviewScreen(
+                                    listingId: listingId,
+                                    listingData: item,
+                                  ),
+                                ),
+                              );
+                              if (handled == true && mounted) {
+                                _removeItemLocally(listingId);
+                              }
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    width: 92,
+                                    height: 72,
+                                    child: MediaPreviewBox(
+                                      imageUrl: photos.isNotEmpty ? photos.first : '',
+                                      categoryHint: 'listings',
+                                      borderRadius: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          (item['title'] ?? 'Без названия').toString(),
+                                          style: const TextStyle(fontWeight: FontWeight.w800),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          '${(item['price'] ?? 0).toString()} ₽ • ${(item['city'] ?? '').toString()}',
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Категория: ${(item['category'] ?? '').toString()}',
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Владелец: ${(item['owner_name'] ?? '').toString()}',
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Статус: ${_statusLabel((item['status'] ?? '').toString())}',
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text('Создано: ${_createdAt(item)}'),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          'Нажмите, чтобы открыть подробный просмотр',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Theme.of(context).colorScheme.outline,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                            FilledButton.tonal(
-                              onPressed: _busy ||
-                                      (item['status'] ?? '').toString() ==
-                                          'rejected'
-                                  ? null
-                                  : () => _reject(item),
-                              child: const Text('Отклонить'),
-                            ),
-                            OutlinedButton(
-                              onPressed: _busy ? null : () => _delete(item),
-                              child: const Text('Скрыть'),
-                            ),
-                          ],
-                        ),
-                      ],
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton(
+                                onPressed: () async {
+                                  final handled = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => AdminListingReviewScreen(
+                                        listingId: listingId,
+                                        listingData: item,
+                                      ),
+                                    ),
+                                  );
+                                  if (handled == true && mounted) {
+                                    _removeItemLocally(listingId);
+                                  }
+                                },
+                                child: const Text('Открыть'),
+                              ),
+                              FilledButton(
+                                onPressed: _busy ||
+                                        (item['status'] ?? '').toString() ==
+                                            'approved'
+                                    ? null
+                                    : () => _approve(item),
+                                child: const Text('Одобрить'),
+                              ),
+                              FilledButton.tonal(
+                                onPressed: _busy ||
+                                        (item['status'] ?? '').toString() ==
+                                            'rejected'
+                                    ? null
+                                    : () => _reject(item),
+                                child: const Text('Отклонить'),
+                              ),
+                              OutlinedButton(
+                                onPressed: _busy ? null : () => _delete(item),
+                                child: const Text('Скрыть'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
           ],
         );
@@ -622,10 +646,10 @@ class _ModerationLoadingView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Wrap(
+        const Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: const [
+          children: [
             SkeletonBox(width: 132, height: 32, radius: 999),
             SkeletonBox(width: 72, height: 32, radius: 999),
           ],
@@ -666,89 +690,6 @@ class _ModerationLoadingView extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _TimewebAdminReportsTab extends StatelessWidget {
-  const _TimewebAdminReportsTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final admin = context.read<AdminService>();
-    return _AdminJsonListTab(
-      future: admin.reports(),
-      emptyText: 'Жалобы пока пусты в Timeweb.',
-      titleBuilder: (item) => (item['reason'] ?? 'Жалоба').toString(),
-      subtitleBuilder: (item) =>
-          'Статус: ${(item['status'] ?? '').toString()} • listing=${(item['listing_id'] ?? '').toString()}',
-    );
-  }
-}
-
-class _TimewebAdminSupportTab extends StatelessWidget {
-  const _TimewebAdminSupportTab();
-
-  @override
-  Widget build(BuildContext context) {
-    final admin = context.read<AdminService>();
-    return _AdminJsonListTab(
-      future: admin.support(),
-      emptyText: 'Поддержка пока пуста в Timeweb.',
-      titleBuilder: (item) => (item['subject'] ?? 'Тикет').toString(),
-      subtitleBuilder: (item) =>
-          'Статус: ${(item['status'] ?? '').toString()} • unread=${item['unread_for_admin'] == true}',
-    );
-  }
-}
-
-class _AdminJsonListTab extends StatelessWidget {
-  const _AdminJsonListTab({
-    required this.future,
-    required this.emptyText,
-    required this.titleBuilder,
-    required this.subtitleBuilder,
-  });
-
-  final Future<Map<String, dynamic>> future;
-  final String emptyText;
-  final String Function(Map<String, dynamic> item) titleBuilder;
-  final String Function(Map<String, dynamic> item) subtitleBuilder;
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: future,
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        final rawItems = snap.data!['items'];
-        final items = rawItems is List
-            ? rawItems
-                .whereType<Map>()
-                .map((item) =>
-                    item.map((key, value) => MapEntry(key.toString(), value)))
-                .toList()
-            : const <Map<String, dynamic>>[];
-        if (items.isEmpty) {
-          return Center(child: Text(emptyText));
-        }
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: items.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 8),
-          itemBuilder: (_, index) {
-            final item = items[index];
-            return Card(
-              child: ListTile(
-                title: Text(titleBuilder(item)),
-                subtitle: Text(subtitleBuilder(item)),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 }
@@ -806,6 +747,7 @@ class _DashboardTab extends StatelessWidget {
             String value,
             IconData icon, {
             VoidCallback? onTap,
+            String? subtitle,
           }) {
             return Card(
               child: InkWell(
@@ -818,9 +760,24 @@ class _DashboardTab extends StatelessWidget {
                       Icon(icon),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Text(
-                          title,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              title,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            if (subtitle != null && subtitle.trim().isNotEmpty)
+                              Text(
+                                subtitle,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.outline,
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       Text(
@@ -906,6 +863,12 @@ class _DashboardTab extends StatelessWidget {
               card('Продано', '${read('sold')}', Icons.sell),
               card('Продажи за 30 дней', '${read('sales30d')}',
                   Icons.sell_outlined),
+              card(
+                'Потрачено баллов',
+                '${read('spentPoints30d')}',
+                Icons.stars_outlined,
+                subtitle: 'за последние 30 дней',
+              ),
               card(
                   'На модерации', '${read('pendingModeration')}', Icons.shield),
               card('Тикетов поддержки', '${read('supportTickets')}',
@@ -1075,12 +1038,12 @@ class _ModerationTabState extends State<_ModerationTab> {
   final Set<String> _handledIds = <String>{};
 
   Stream<List<Map<String, dynamic>>> _getPendingListings() {
+    final adminService = context.read<AdminService>();
     return Stream<int>.periodic(
       const Duration(seconds: 6),
       (tick) => tick,
     ).asyncMap((_) async {
-      final response =
-          await context.read<AdminService>().listings(status: 'pending');
+      final response = await adminService.listings(status: 'pending');
       final raw = response['items'];
       if (raw is! List) return const <Map<String, dynamic>>[];
       return raw
@@ -1128,6 +1091,7 @@ class _ModerationTabState extends State<_ModerationTab> {
                 : <String>[];
 
             return InkWell(
+              key: ValueKey('admin-moderation-item:$id'),
               onTap: () async {
                 final handled = await Navigator.push<bool>(
                   context,
@@ -1219,6 +1183,7 @@ class AdminListingReviewScreen extends StatefulWidget {
 
 class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   bool _busy = false;
+  int _photoIndex = 0;
   static const List<_ModerationRejectReason> _rejectReasons = [
     _ModerationRejectReason(
       label: 'Мат / оскорбления',
@@ -1278,14 +1243,16 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   ];
 
   Future<void> _approve() async {
+    final adminService = context.read<AdminService>();
+    final savedSearchService = context.read<SavedSearchService>();
     setState(() => _busy = true);
     try {
-      await context.read<AdminService>().approveListing(widget.listingId);
+      await adminService.approveListing(widget.listingId);
 
       try {
-        await context
-            .read<SavedSearchService>()
-            .notifyMatchesForApprovedListing(widget.listingData);
+        await savedSearchService.notifyMatchesForApprovedListing(
+          widget.listingData,
+        );
       } catch (e) {
         debugPrint('Ошибка уведомлений по сохраненным поискам: $e');
       }
@@ -1299,17 +1266,18 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   }
 
   Future<void> _reject() async {
+    final adminService = context.read<AdminService>();
     final notifications = context.read<NotificationsService>();
     final selected = await _askRejectReason();
     if (selected == null) return;
 
     setState(() => _busy = true);
     try {
-      await context.read<AdminService>().rejectListing(
-            widget.listingId,
-            reason: selected.rejectionReason,
-            moderationNote: selected.rejectionReason,
-          );
+      await adminService.rejectListing(
+        widget.listingId,
+        reason: selected.rejectionReason,
+        moderationNote: selected.rejectionReason,
+      );
 
       String? notifyError;
       final ownerId = (widget.listingData['owner_id'] ?? '').toString();
@@ -1382,6 +1350,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   }
 
   Future<void> _delete() async {
+    final adminService = context.read<AdminService>();
     final notifications = context.read<NotificationsService>();
     final selected = await _askDeleteReason();
     if (selected == null) return;
@@ -1391,11 +1360,11 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
       final body = selected.comment == null
           ? selected.reason.message
           : '${selected.reason.message}\n\nКомментарий модератора: ${selected.comment}';
-      await context.read<AdminService>().deleteListing(
-            widget.listingId,
-            reason: body,
-            moderationNote: body,
-          );
+      await adminService.deleteListing(
+        widget.listingId,
+        reason: body,
+        moderationNote: body,
+      );
 
       String? notifyError;
       final ownerId = (widget.listingData['owner_id'] ?? '').toString();
@@ -1507,13 +1476,18 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     final price = (d['price'] ?? 0).toString();
     final city = (d['city'] ?? '').toString();
     final category = (d['category'] ?? '').toString();
+    final subcategory = (d['subcategory'] ?? '').toString();
     final desc = (d['description'] ?? '').toString();
     final phone = (d['phone'] ?? '').toString();
     final ownerId = (d['owner_id'] ?? '').toString();
+    final ownerName = (d['owner_name'] ?? d['ownerName'] ?? '').toString();
+    final status = (d['status'] ?? '').toString();
+    final createdAt = (d['created_at'] ?? '').toString();
 
     final raw = d['photo_urls'] ?? [];
     final images =
         (raw is List) ? raw.map((e) => e.toString()).toList() : <String>[];
+    final extraFields = _moderationExtraFields(d);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Проверка объявления')),
@@ -1521,50 +1495,154 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         padding: const EdgeInsets.all(12),
         children: [
           if (images.isNotEmpty)
-            SizedBox(
-              height: 220,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: images.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (_, i) => ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: MediaPreviewBox(
-                    imageUrl: images[i],
-                    categoryHint: 'listings',
-                    width: 300,
-                    height: 225,
-                    borderRadius: 12,
+            Column(
+              children: [
+                SizedBox(
+                  height: 240,
+                  child: PageView.builder(
+                    itemCount: images.length,
+                    onPageChanged: (value) {
+                      if (!mounted) return;
+                      setState(() => _photoIndex = value);
+                    },
+                    itemBuilder: (_, i) => Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: MediaPreviewBox(
+                        imageUrl: images[i],
+                        categoryHint: 'listings',
+                        width: double.infinity,
+                        height: 240,
+                        borderRadius: 16,
+                      ),
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text(
+                      'Фото ${_photoIndex + 1} из ${images.length}',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.outline,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const Spacer(),
+                    ...List<Widget>.generate(
+                      images.length,
+                      (index) => Container(
+                        width: 8,
+                        height: 8,
+                        margin: const EdgeInsets.only(left: 6),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: index == _photoIndex
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context)
+                                  .colorScheme
+                                  .outlineVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             )
           else
             Container(
-              height: 160,
+              height: 180,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 color: Theme.of(context).colorScheme.surfaceContainerHighest,
               ),
-              child: const Icon(Icons.photo, size: 44),
+              child: const Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.photo, size: 44),
+                  SizedBox(height: 8),
+                  Text('Фотографии не добавлены'),
+                ],
+              ),
             ),
           const SizedBox(height: 12),
-          Text(
-            title,
-            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: 20,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _AdminInfoChip(label: 'Цена', value: '$price ₽'),
+                      _AdminInfoChip(label: 'Город', value: city),
+                      _AdminInfoChip(label: 'Категория', value: category),
+                      if (subcategory.trim().isNotEmpty)
+                        _AdminInfoChip(
+                          label: 'Подкатегория',
+                          value: subcategory,
+                        ),
+                      _AdminInfoChip(
+                        label: 'Статус',
+                        value: _moderationStatusLabel(status),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 6),
-          Text('Цена: $price • Город: $city • Категория: $category'),
           const SizedBox(height: 10),
-          Text(desc.isEmpty ? 'Описание отсутствует' : desc),
-          const SizedBox(height: 10),
-          Text('Телефон: $phone'),
-          const SizedBox(height: 8),
-          Text(
-            'owner_id: $ownerId',
-            style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          _AdminInfoSection(
+            title: 'Описание',
+            child: Text(desc.isEmpty ? 'Описание отсутствует' : desc),
           ),
+          const SizedBox(height: 10),
+          _AdminInfoSection(
+            title: 'Продавец',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (ownerName.trim().isNotEmpty)
+                  _AdminInfoRow(label: 'Имя', value: ownerName),
+                if (phone.trim().isNotEmpty)
+                  _AdminInfoRow(label: 'Телефон', value: phone),
+                if (createdAt.trim().isNotEmpty)
+                  _AdminInfoRow(label: 'Создано', value: _formatModerationDate(createdAt)),
+                if (ownerId.trim().isNotEmpty)
+                  _AdminInfoRow(label: 'owner_id', value: ownerId),
+              ],
+            ),
+          ),
+          if (extraFields.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            _AdminInfoSection(
+              title: 'Дополнительные поля',
+              child: Column(
+                children: extraFields.entries
+                    .map(
+                      (entry) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _AdminInfoRow(
+                          label: entry.key,
+                          value: entry.value,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           Row(
             children: [
@@ -1592,6 +1670,221 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         ],
       ),
     );
+  }
+}
+
+class _AdminInfoSection extends StatelessWidget {
+  const _AdminInfoSection({
+    required this.title,
+    required this.child,
+  });
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 10),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminInfoRow extends StatelessWidget {
+  const _AdminInfoRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 110,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.outline,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value.trim().isEmpty ? 'Не указано' : value,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AdminInfoChip extends StatelessWidget {
+  const _AdminInfoChip({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: DefaultTextStyle.of(context).style,
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            TextSpan(text: value.trim().isEmpty ? 'Не указано' : value),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Map<String, String> _moderationExtraFields(Map<String, dynamic> data) {
+  const excludedKeys = <String>{
+    'id',
+    'title',
+    'price',
+    'city',
+    'category',
+    'subcategory',
+    'description',
+    'phone',
+    'phone_hidden',
+    'owner_id',
+    'owner_name',
+    'ownerName',
+    'status',
+    'created_at',
+    'updated_at',
+    'photo_urls',
+    'photoUrls',
+    'photo_items',
+    'photoItems',
+  };
+
+  final fields = <String, String>{};
+  for (final entry in data.entries) {
+    if (excludedKeys.contains(entry.key)) continue;
+    final normalized = _normalizeModerationFieldValue(entry.value);
+    if (normalized == null || normalized.trim().isEmpty) continue;
+    fields[_moderationFieldLabel(entry.key)] = normalized;
+  }
+  return fields;
+}
+
+String _moderationFieldLabel(String key) {
+  const labels = <String, String>{
+    'brand': 'Марка',
+    'model': 'Модель',
+    'condition': 'Состояние',
+    'delivery': 'Доставка',
+    'address': 'Адрес',
+    'deal_type': 'Тип сделки',
+    'real_estate_type': 'Тип недвижимости',
+    'clothes_type': 'Тип одежды',
+    'auto_brand': 'Марка авто',
+    'auto_model': 'Модель авто',
+    'auto_condition': 'Состояние авто',
+    'mileage': 'Пробег',
+    'year': 'Год',
+  };
+  return labels[key] ?? key.replaceAll('_', ' ');
+}
+
+String? _normalizeModerationFieldValue(dynamic value) {
+  if (value == null) return null;
+  if (value is bool) return value ? 'Да' : 'Нет';
+  if (value is num) return value.toString();
+  if (value is String) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+  if (value is List) {
+    final items = value
+        .map(_normalizeModerationFieldValue)
+        .whereType<String>()
+        .where((item) => item.trim().isNotEmpty)
+        .toList(growable: false);
+    return items.isEmpty ? null : items.join(', ');
+  }
+  if (value is Map) {
+    final entries = value.entries
+        .map((entry) {
+          final normalized = _normalizeModerationFieldValue(entry.value);
+          if (normalized == null || normalized.trim().isEmpty) {
+            return null;
+          }
+          return '${_moderationFieldLabel(entry.key.toString())}: $normalized';
+        })
+        .whereType<String>()
+        .toList(growable: false);
+    return entries.isEmpty ? null : entries.join(' • ');
+  }
+  return value.toString();
+}
+
+String _formatModerationDate(String raw) {
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return raw;
+  final local = parsed.toLocal();
+  final dd = local.day.toString().padLeft(2, '0');
+  final mm = local.month.toString().padLeft(2, '0');
+  final yyyy = local.year.toString();
+  final hh = local.hour.toString().padLeft(2, '0');
+  final min = local.minute.toString().padLeft(2, '0');
+  return '$dd.$mm.$yyyy, $hh:$min';
+}
+
+String _moderationStatusLabel(String status) {
+  switch (status) {
+    case 'pending':
+      return 'На модерации';
+    case 'approved':
+      return 'Активно';
+    case 'rejected':
+      return 'Отклонено';
+    case 'archived':
+      return 'В архиве';
+    case 'deleted':
+      return 'Скрыто';
+    case 'sold':
+      return 'Продано';
+    default:
+      return status.trim().isEmpty ? 'Не указан' : status;
   }
 }
 

@@ -19,6 +19,8 @@ class ReviewsService {
       <String, List<Map<String, dynamic>>>{};
   final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
       <String, StreamController<List<Map<String, dynamic>>>>{};
+  final Map<String, Stream<List<Map<String, dynamic>>>> _streams =
+      <String, Stream<List<Map<String, dynamic>>>>{};
   final Map<String, Future<List<Map<String, dynamic>>>> _inFlight =
       <String, Future<List<Map<String, dynamic>>>>{};
   final Map<String, DateTime> _cachedAt = <String, DateTime>{};
@@ -83,6 +85,7 @@ class ReviewsService {
     final existing = _inFlight[id];
     if (existing != null) return existing;
     final future = () async {
+      _debugSource('Reviews source: Timeweb');
       final response = await _api.listSellerReviews(id);
       final items = _extractItems(response);
       _publish(id, items);
@@ -99,33 +102,34 @@ class ReviewsService {
   }
 
   Stream<List<Map<String, dynamic>>> streamSellerReviews(String sellerId) {
-    _debugSource('Reviews source: Timeweb');
     final id = sellerId.trim();
     if (id.isEmpty) {
       return Stream<List<Map<String, dynamic>>>.value(
         const <Map<String, dynamic>>[],
       ).asBroadcastStream();
     }
-    final controller = _controllerFor(id);
-    final cached = _cache[id];
-    final cachedAt = _cachedAt[id];
-    final initial = cached
-            ?.map((item) => Map<String, dynamic>.from(item))
-            .toList(growable: false) ??
-        const <Map<String, dynamic>>[];
-    final isFresh = cached != null &&
-        cachedAt != null &&
-        DateTime.now().difference(cachedAt) < _cacheTtl;
-    if (!isFresh) {
-      unawaited(
-        refreshSellerReviews(id).catchError((Object error, StackTrace stack) {
-          _debugSource('Reviews source: refresh failed for $id: $error');
-          return initial;
-        }),
-      );
-    }
+    return _streams.putIfAbsent(id, () {
+      final controller = _controllerFor(id);
+      final cached = _cache[id];
+      final cachedAt = _cachedAt[id];
+      final initial = cached
+              ?.map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false) ??
+          const <Map<String, dynamic>>[];
+      final isFresh = cached != null &&
+          cachedAt != null &&
+          DateTime.now().difference(cachedAt) < _cacheTtl;
+      if (!isFresh) {
+        unawaited(
+          refreshSellerReviews(id).catchError((Object error, StackTrace stack) {
+            _debugSource('Reviews source: refresh failed for $id: $error');
+            return initial;
+          }),
+        );
+      }
 
-    return controller.stream.startWith(initial).asBroadcastStream();
+      return controller.stream.startWith(initial).asBroadcastStream();
+    });
   }
 
   Stream<Map<String, dynamic>> streamSellerRating(String sellerId) {
@@ -238,6 +242,7 @@ class ReviewsService {
   void resetSession() {
     _cache.clear();
     _cachedAt.clear();
+    _streams.clear();
     _inFlight.clear();
   }
 }

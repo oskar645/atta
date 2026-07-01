@@ -16,6 +16,12 @@ class AdminUsersScreen extends StatefulWidget {
 class _AdminUsersScreenState extends State<AdminUsersScreen> {
   late Future<List<Map<String, dynamic>>> _future;
   bool _busy = false;
+  List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
+
+  static const Set<String> _protectedAdminPhones = <String>{
+    '79288888645',
+    '79306939954',
+  };
 
   @override
   void initState() {
@@ -23,18 +29,28 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     _future = _load();
   }
 
-  Future<List<Map<String, dynamic>>> _load() async {
-    final response = await context.read<AdminService>().users();
+  Future<List<Map<String, dynamic>>> _load({bool forceRefresh = false}) async {
+    final response =
+        await context.read<AdminService>().users(forceRefresh: forceRefresh);
     final raw = response['items'];
-    if (raw is! List) return const <Map<String, dynamic>>[];
-    return raw
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList(growable: false);
+    final items = raw is! List
+        ? const <Map<String, dynamic>>[]
+        : raw
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false);
+    if (mounted) {
+      setState(() {
+        _items = items;
+      });
+    } else {
+      _items = items;
+    }
+    return items;
   }
 
   Future<void> _refresh() async {
-    final next = _load();
+    final next = _load(forceRefresh: true);
     setState(() {
       _future = next;
     });
@@ -45,6 +61,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     final userId = (item['id'] ?? '').toString();
     final currentUserId = context.read<AuthService>().currentUser?.uid ?? '';
     final isSelf = userId == currentUserId;
+    final phone = _value(item, const ['phone']);
+    final isProtectedAdmin = _protectedAdminPhones.contains(phone);
+
+    if (isProtectedAdmin) {
+      showAppSnack(
+        context,
+        'Этот администратор защищён от удаления',
+        isError: true,
+      );
+      return;
+    }
 
     final confirmed = await showDialog<bool>(
           context: context,
@@ -71,24 +98,40 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         false;
 
     if (!confirmed) return;
+    if (!mounted) return;
 
+    final adminService = context.read<AdminService>();
     setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
     try {
-      final response = await context.read<AdminService>().deleteUser(userId);
-      if (!context.mounted) return;
+      final response = await adminService.deleteUser(userId);
+      if (!mounted) return;
       if (response['deleted'] == true) {
-        showAppSnack(context, 'Пользователь удалён');
-        await _refresh();
+        setState(() {
+          _items = _items
+              .where((candidate) =>
+                  (candidate['id'] ?? '').toString().trim() != userId)
+              .toList(growable: false);
+          _future = Future<List<Map<String, dynamic>>>.value(_items);
+        });
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Пользователь удалён')),
+        );
       } else {
-        showAppSnack(
-          context,
-          (response['message'] ?? 'Не удалось удалить пользователя').toString(),
-          isError: true,
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              (response['message'] ?? 'Не удалось удалить пользователя')
+                  .toString(),
+            ),
+          ),
         );
       }
     } catch (e) {
-      if (!context.mounted) return;
-      showAppSnack(context, 'Ошибка удаления пользователя: $e', isError: true);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Ошибка удаления пользователя: $e')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -107,6 +150,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
       item,
       const ['avatar_url', 'avatarUrl', 'photo_url', 'photoUrl'],
     );
+  }
+
+  bool _isProtectedAdmin(Map<String, dynamic> item) {
+    return _protectedAdminPhones.contains(_value(item, const ['phone']));
   }
 
   String _statusLabel(Map<String, dynamic> item) {
@@ -176,14 +223,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           if (snap.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snap.hasError) {
+          if (snap.hasError && _items.isEmpty) {
             return _AdminStateView(
               message: 'Не удалось загрузить пользователей.\n${snap.error}',
               onRetry: _refresh,
             );
           }
 
-          final items = snap.data ?? const <Map<String, dynamic>>[];
+          final items = _items.isNotEmpty
+              ? _items
+              : (snap.data ?? const <Map<String, dynamic>>[]);
           if (items.isEmpty) {
             return _AdminStateView(
               message: 'Пользователи пока не получены из Timeweb.',
@@ -205,6 +254,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 );
                 final isAdmin =
                     item['is_admin'] == true || item['isAdmin'] == true;
+                final isProtectedAdmin = _isProtectedAdmin(item);
                 return Card(
                   margin: const EdgeInsets.only(bottom: 10),
                   child: InkWell(
@@ -261,12 +311,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                                 'last_login_at'
                               ])}'),
                           Text('Admin: ${isAdmin ? 'да' : 'нет'}'),
+                          if (isProtectedAdmin) const Text('Защита: включена'),
                           const SizedBox(height: 10),
                           Align(
                             alignment: Alignment.centerRight,
                             child: OutlinedButton(
-                              onPressed: _busy ? null : () => _deleteUser(item),
-                              child: const Text('Удалить'),
+                              onPressed: _busy || isProtectedAdmin
+                                  ? null
+                                  : () => _deleteUser(item),
+                              child: Text(
+                                isProtectedAdmin ? 'Защищён' : 'Удалить',
+                              ),
                             ),
                           ),
                         ],

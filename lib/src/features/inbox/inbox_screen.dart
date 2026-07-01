@@ -7,13 +7,14 @@ import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/models/chat.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
-import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 
 class InboxScreen extends StatefulWidget {
@@ -25,6 +26,21 @@ class InboxScreen extends StatefulWidget {
 
 class _InboxScreenState extends State<InboxScreen> {
   bool _showUnreadOnly = false;
+
+  Future<void> _refreshInbox(ChatService chat, String uid) async {
+    try {
+      await chat.refreshInbox(uid);
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(
+        context,
+        shouldShowNetworkVpnHint(error)
+            ? kNetworkVpnHintMessage
+            : 'Не удалось обновить сообщения.',
+        isError: true,
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +55,7 @@ class _InboxScreenState extends State<InboxScreen> {
     final chat = context.read<ChatService>();
     final profiles = context.read<ProfileService>();
     final presence = context.read<PresenceService>();
+    context.watch<MainShellController>();
 
     return Scaffold(
       appBar: AppBar(
@@ -113,13 +130,16 @@ class _InboxScreenState extends State<InboxScreen> {
               ),
               const SizedBox(height: 8),
               Expanded(
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  itemCount: visibleItems.isEmpty ? 2 : visibleItems.length + 1,
-                  separatorBuilder: (_, index) => index == 0
-                      ? const SizedBox(height: 12)
-                      : const Divider(height: 1),
-                  itemBuilder: (_, i) {
+                child: RefreshIndicator(
+                  onRefresh: () => _refreshInbox(chat, uid),
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                    itemCount: visibleItems.isEmpty ? 2 : visibleItems.length + 1,
+                    separatorBuilder: (_, index) => index == 0
+                        ? const SizedBox(height: 12)
+                        : const Divider(height: 1),
+                    itemBuilder: (_, i) {
                     if (i == 0) {
                       return _SupportInboxCard(
                         onTap: () {
@@ -152,6 +172,7 @@ class _InboxScreenState extends State<InboxScreen> {
                     final unread = c.unreadFor(uid);
                     final isUnread = unread > 0;
                     final activityAt = c.lastMessageAt ?? c.createdAt;
+                    final stableKey = ValueKey('chat-item:${c.id}:${c.listingId}');
 
                     final tile = StreamBuilder<Map<String, dynamic>>(
                       stream: profiles.streamProfile(otherId),
@@ -182,6 +203,7 @@ class _InboxScreenState extends State<InboxScreen> {
                             final isOnline = presenceSnap.data == true;
 
                             return ListTile(
+                              key: stableKey,
                               contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 8, vertical: 6),
                               leading: PresenceBadge(
@@ -212,7 +234,6 @@ class _InboxScreenState extends State<InboxScreen> {
                                     ),
                                   ),
                                 );
-                                chat.markChatRead(chatId: c.id, uid: uid);
                               },
                               title: Text(
                                 titleName,
@@ -251,7 +272,7 @@ class _InboxScreenState extends State<InboxScreen> {
                     );
 
                     return Dismissible(
-                      key: ValueKey(c.id),
+                      key: ValueKey('chat-dismiss:${c.id}:${c.listingId}'),
                       direction: DismissDirection.endToStart,
                       background: Container(
                         alignment: Alignment.centerRight,
@@ -289,7 +310,8 @@ class _InboxScreenState extends State<InboxScreen> {
                       },
                       child: tile,
                     );
-                  },
+                    },
+                  ),
                 ),
               ),
             ],
@@ -307,8 +329,8 @@ class _SupportInboxCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primary = const Color(0xFF2B8CFF);
-    final secondary = const Color(0xFF1674E0);
+    const primary = Color(0xFF2B8CFF);
+    const secondary = Color(0xFF1674E0);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -320,7 +342,7 @@ class _SupportInboxCard extends StatelessWidget {
           child: Ink(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(22),
-              gradient: LinearGradient(
+              gradient: const LinearGradient(
                 colors: [
                   primary,
                   secondary,

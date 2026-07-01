@@ -9,10 +9,12 @@ import 'package:flutter/foundation.dart';
 class NotificationsService {
   NotificationsService({
     InAppNotificationsApi? api,
-    Duration pollInterval = const Duration(seconds: 8),
-  }) : _api = api ?? InAppNotificationsApi(_apiClient);
+    Duration pollInterval = const Duration(seconds: 45),
+  })  : _api = api ?? InAppNotificationsApi(_apiClient),
+        _pollInterval = pollInterval;
 
   final InAppNotificationsApi _api;
+  final Duration _pollInterval;
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
   static final Map<String, DateTime> _lastSeenGlobalAt = <String, DateTime>{};
@@ -28,12 +30,20 @@ class NotificationsService {
   final Map<String, Future<void>> _refreshByUserInFlight =
       <String, Future<void>>{};
   final Map<String, DateTime> _lastSuccessfulRefreshAt = <String, DateTime>{};
+  final Map<String, DateTime> _lastRefreshAttemptAt = <String, DateTime>{};
   String? _activeUserId;
   int _sessionVersion = 0;
+  Timer? _pollTimer;
   static const String savedSearchNotificationTitle =
       'Новое объявление по вашему поиску';
   static const Duration _cacheTtl = Duration(seconds: 30);
   static const Duration _requestTimeout = Duration(seconds: 10);
+  static const Duration _refreshThrottle = Duration(seconds: 2);
+  static const Set<String> _excludedNotificationTypes = <String>{
+    'chat_message',
+    'message',
+    'chat',
+  };
 
   void _debugSource(String message) {
     if (!kDebugMode ||
@@ -51,11 +61,19 @@ class NotificationsService {
       _clearCachedStreams();
     }
     _activeUserId = normalized;
+    _configurePolling();
   }
 
   void resetSession() {
+    final previousUserId = _activeUserId;
+    if (previousUserId != null && previousUserId.isNotEmpty) {
+      _lastSeenGlobalAt.remove(previousUserId);
+      _lastRefreshAttemptAt.remove(previousUserId);
+    }
     _activeUserId = null;
     _sessionVersion++;
+    _pollTimer?.cancel();
+    _pollTimer = null;
     _clearCachedStreams();
   }
 
@@ -97,7 +115,9 @@ class NotificationsService {
     if (userId == null) return const <Map<String, dynamic>>[];
     return _sortNewestFirst(
       _mergedRowsForUser(userId)
-          .where((row) => (row['scope'] ?? '').toString() == 'global')
+          .where((row) =>
+              (row['scope'] ?? '').toString() == 'global' &&
+              !_isExcludedNotification(row))
           .map(Map<String, dynamic>.from)
           .toList(),
     );
@@ -110,7 +130,8 @@ class NotificationsService {
       _mergedRowsForUser(normalized)
           .where((row) =>
               (row['scope'] ?? '').toString() == 'personal' &&
-              row['user_id']?.toString() == normalized)
+              row['user_id']?.toString() == normalized &&
+              !_isExcludedNotification(row))
           .map(Map<String, dynamic>.from)
           .toList(),
     );
@@ -127,6 +148,7 @@ class NotificationsService {
       normalizedUserId,
       notification,
     );
+    if (_isExcludedNotification(normalized)) return;
     final id = (normalized['id'] ?? '').toString().trim();
     if (id.isEmpty) return;
 
@@ -155,6 +177,7 @@ class NotificationsService {
     var total = 0;
 
     for (final r in rows) {
+      if (_isExcludedNotification(r)) continue;
       final scope = (r['scope'] ?? '').toString();
       if (scope == 'personal') {
         final sameUser = r['user_id']?.toString() == userId;
@@ -192,6 +215,9 @@ class NotificationsService {
   }
 
   bool _isGlobalUnread(Map<String, dynamic> row, String userId) {
+    if (_isExcludedNotification(row)) {
+      return false;
+    }
     if ((row['scope'] ?? '').toString() != 'global') {
       return false;
     }
@@ -211,6 +237,11 @@ class NotificationsService {
     return rows;
   }
 
+  bool _isExcludedNotification(Map<String, dynamic> row) {
+    final type = (row['type'] ?? '').toString().trim().toLowerCase();
+    return _excludedNotificationTypes.contains(type);
+  }
+
   Stream<List<Map<String, dynamic>>> streamGlobal() {
     if (_activeUserId == null) {
       return Stream<List<Map<String, dynamic>>>.value(
@@ -223,7 +254,9 @@ class NotificationsService {
       () => _createTimewebNotificationsStream(
         key: 'global',
         filter: (rows) => rows
-            .where((row) => (row['scope'] ?? '').toString() == 'global')
+            .where((row) =>
+                (row['scope'] ?? '').toString() == 'global' &&
+                !_isExcludedNotification(row))
             .toList(),
       ),
     );
@@ -243,7 +276,8 @@ class NotificationsService {
         filter: (rows) => rows
             .where((row) =>
                 (row['scope'] ?? '').toString() == 'personal' &&
-                row['user_id']?.toString() == userId)
+                row['user_id']?.toString() == userId &&
+                !_isExcludedNotification(row))
             .toList(),
       ),
     );
@@ -251,16 +285,20 @@ class NotificationsService {
 
   Stream<int> streamUnreadPersonalCount(String userId) {
     _debugSource('Notifications source: Timeweb');
-    return streamPersonal(userId).map(
-      (rows) => rows.where((row) => row['is_read'] != true).length,
-    );
+    return streamPersonal(userId)
+        .map(
+          (rows) => rows.where((row) => row['is_read'] != true).length,
+        )
+        .asBroadcastStream();
   }
 
   Stream<int> streamUnreadGlobalCount(String userId) {
     _debugSource('Notifications source: Timeweb');
-    return streamGlobal().map(
-      (rows) => rows.where((row) => _isGlobalUnread(row, userId)).length,
-    );
+    return streamGlobal()
+        .map(
+          (rows) => rows.where((row) => _isGlobalUnread(row, userId)).length,
+        )
+        .asBroadcastStream();
   }
 
   bool isSavedSearchNotification(Map<String, dynamic> row) {
@@ -271,12 +309,14 @@ class NotificationsService {
 
   Stream<int> streamUnreadSavedSearchCount(String userId) {
     _debugSource('Notifications source: Timeweb');
-    return streamPersonal(userId).map(
-      (rows) => rows.where((r) {
-        final unread = r['is_read'] != true;
-        return unread && isSavedSearchNotification(r);
-      }).length,
-    );
+    return streamPersonal(userId)
+        .map(
+          (rows) => rows.where((r) {
+            final unread = r['is_read'] != true;
+            return unread && isSavedSearchNotification(r);
+          }).length,
+        )
+        .asBroadcastStream();
   }
 
   Stream<int> streamUnreadBadgeCount(String userId) {
@@ -286,14 +326,28 @@ class NotificationsService {
       () => _createTimewebNotificationsStream(
         key: 'badge:$userId',
         filter: (rows) => rows,
-      ).map((rows) => _computeUnreadBadgeCount(rows, userId)),
+      )
+          .map((rows) => _computeUnreadBadgeCount(rows, userId))
+          .asBroadcastStream(),
     );
   }
 
   Future<void> markAllSeen(String userId) async {
-    _lastSeenGlobalAt[userId] = DateTime.now().toUtc();
+    final response = await _api.markAllSeen();
+    _syncGlobalSeenAt(
+      userId,
+      response['global_seen_at'] ?? response['globalSeenAt'],
+    );
+    final cachedRows = _serverRowsByUser[userId];
+    if (cachedRows != null) {
+      for (final row in cachedRows) {
+        if ((row['scope'] ?? '').toString() == 'personal' &&
+            row['user_id']?.toString() == userId) {
+          row['is_read'] = true;
+        }
+      }
+    }
     _refreshSignals.add(userId);
-    await markAllPersonalRead(userId);
   }
 
   Future<void> markPersonalReadById(String notificationId) async {
@@ -444,25 +498,62 @@ class NotificationsService {
     _realtimeRowsByUser.clear();
     _refreshByUserInFlight.clear();
     _lastSuccessfulRefreshAt.clear();
+    _lastRefreshAttemptAt.clear();
+  }
+
+  void _configurePolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    final userId = _activeUserId;
+    if (userId == null || userId.isEmpty || _pollInterval <= Duration.zero) {
+      return;
+    }
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      unawaited(refreshActiveSession(force: true));
+    });
   }
 
   Future<void> _refreshUserNotifications(
     String userId, {
     required bool force,
   }) async {
+    final now = DateTime.now();
+    final lastAttemptAt = _lastRefreshAttemptAt[userId];
+    if (force &&
+        lastAttemptAt != null &&
+        now.difference(lastAttemptAt) < _refreshThrottle) {
+      final existing = _refreshByUserInFlight[userId];
+      if (existing != null) {
+        return existing;
+      }
+      final lastRefreshAt = _lastSuccessfulRefreshAt[userId];
+      if (lastRefreshAt != null &&
+          now.difference(lastRefreshAt) < _refreshThrottle) {
+        return;
+      }
+    }
+
     final lastRefreshAt = _lastSuccessfulRefreshAt[userId];
     if (!force &&
         lastRefreshAt != null &&
-        DateTime.now().difference(lastRefreshAt) < _cacheTtl) {
+        now.difference(lastRefreshAt) < _cacheTtl) {
       return;
     }
 
     final existing = _refreshByUserInFlight[userId];
     if (existing != null) return existing;
+    _lastRefreshAttemptAt[userId] = now;
 
     final future = () async {
       final response = await _api.list().timeout(_requestTimeout);
-      _serverRowsByUser[userId] = _extractItems(response);
+      _syncGlobalSeenAt(
+        userId,
+        response['global_seen_at'] ?? response['globalSeenAt'],
+      );
+      _serverRowsByUser[userId] = _extractItems(response)
+          .where((row) => !_isExcludedNotification(row))
+          .map(Map<String, dynamic>.from)
+          .toList(growable: false);
       _lastSuccessfulRefreshAt[userId] = DateTime.now();
     }();
     _refreshByUserInFlight[userId] = future;
@@ -510,7 +601,7 @@ class NotificationsService {
       'scope': (row['scope'] ?? 'personal').toString().toLowerCase(),
       'title': title,
       'body': (row['body'] ?? '').toString(),
-      'type': (row['type'] ?? 'chat_message').toString().toLowerCase(),
+      'type': (row['type'] ?? 'generic').toString().toLowerCase(),
       'is_read': row['is_read'] == true,
       'created_at': (row['created_at'] ??
               row['createdAt'] ??
@@ -574,4 +665,27 @@ class NotificationsService {
       _refreshSignals.add(touchedUserId);
     }
   }
+
+  void _syncGlobalSeenAt(String userId, dynamic raw) {
+    final normalizedUserId = userId.trim();
+    if (normalizedUserId.isEmpty) return;
+    if (raw == null) {
+      _lastSeenGlobalAt.remove(normalizedUserId);
+      return;
+    }
+    final value = raw.toString().trim();
+    if (value.isEmpty) {
+      _lastSeenGlobalAt.remove(normalizedUserId);
+      return;
+    }
+    final parsed = DateTime.tryParse(value)?.toUtc();
+    if (parsed == null) {
+      _lastSeenGlobalAt.remove(normalizedUserId);
+      return;
+    }
+    _lastSeenGlobalAt[normalizedUserId] = parsed;
+  }
+
+  @visibleForTesting
+  bool get hasActivePollingTimer => _pollTimer != null;
 }

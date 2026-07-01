@@ -49,6 +49,32 @@ void main() {
       'https://cdn.example.com/second.jpg',
     );
   });
+
+  test('repeated streamSellerReviews reuses same stream and fetch cycle',
+      () async {
+    final api = _FakeReviewsApi(
+      initialItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'review-1',
+          'seller_id': 'seller-1',
+          'reviewer_id': 'buyer-1',
+          'reviewer_name': 'First buyer',
+          'rating': 5,
+          'comment': 'Great',
+          'created_at': '2026-06-18T10:00:00.000Z',
+        },
+      ],
+    );
+    final service = ReviewsService(api: api);
+
+    final streamA = service.streamSellerReviews('seller-1');
+    final streamB = service.streamSellerReviews('seller-1');
+
+    await service.refreshSellerReviews('seller-1');
+
+    expect(identical(streamA, streamB), isTrue);
+    expect(api.listCalls, 1);
+  });
 }
 
 class _FakeReviewsApi extends ReviewsApi {
@@ -64,9 +90,11 @@ class _FakeReviewsApi extends ReviewsApi {
         );
 
   final List<Map<String, dynamic>> _items;
+  int listCalls = 0;
 
   @override
   Future<Map<String, dynamic>> listSellerReviews(String sellerId) async {
+    listCalls += 1;
     return <String, dynamic>{
       'items': _items
           .map((item) => Map<String, dynamic>.from(item))

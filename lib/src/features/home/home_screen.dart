@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -68,7 +70,9 @@ class _HomeScreenState extends State<HomeScreen> {
   final _searchCtrl = TextEditingController();
   final GlobalKey<_HomeFeedViewState> _feedKey =
       GlobalKey<_HomeFeedViewState>();
-  late Future<List<ShowcaseItem>> _showcaseFuture;
+  List<ShowcaseItem> _showcaseItems = const <ShowcaseItem>[];
+  bool _showcaseLoading = true;
+  bool _showcaseLoadedOnce = false;
 
   // Avito-like location filter.
   String _location = ''; // "Москва", "Чеченская Республика" и т.п.
@@ -83,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _showcaseFuture = _loadShowcase();
+    unawaited(_refreshShowcase());
     widget.controller?.attach(scrollToTop: _handleScrollToTop);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -154,7 +158,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleRefresh() async {
     final listings = context.read<ListingsService>();
     final feedAds = context.read<FeedAdsService>();
-    final showcaseFuture = _loadShowcase();
+    final showcaseFuture = _refreshShowcase();
 
     await Future.wait([
       listings
@@ -180,16 +184,21 @@ class _HomeScreenState extends State<HomeScreen> {
       showcaseFuture,
       Future<void>.delayed(const Duration(milliseconds: 350)),
     ]);
-
-    if (mounted) {
-      setState(() {
-        _showcaseFuture = showcaseFuture;
-      });
-    }
   }
 
-  Future<List<ShowcaseItem>> _loadShowcase() {
-    return context.read<ShowcaseService>().getHomeShowcase();
+  Future<void> _refreshShowcase() async {
+    if (mounted) {
+      setState(() {
+        _showcaseLoading = true;
+      });
+    }
+    final items = await context.read<ShowcaseService>().getHomeShowcase();
+    if (!mounted) return;
+    setState(() {
+      _showcaseItems = items;
+      _showcaseLoading = false;
+      _showcaseLoadedOnce = true;
+    });
   }
 
   void _selectCategory(String c) {
@@ -397,24 +406,18 @@ class _HomeScreenState extends State<HomeScreen> {
                       return StreamBuilder<FeedAd?>(
                         stream: feedAds.streamActiveAd(),
                         builder: (context, adSnap) {
-                          return FutureBuilder<List<ShowcaseItem>>(
-                            future: _showcaseFuture,
-                            builder: (context, showcaseSnap) {
-                              return _HomeFeedView(
-                                key: _feedKey,
-                                items: items,
-                                ad: adSnap.data,
-                                showcaseItems:
-                                    showcaseSnap.data ?? const <ShowcaseItem>[],
-                                showcaseLoading: showcaseSnap.connectionState ==
-                                    ConnectionState.waiting,
-                                favIds: favIds,
-                                history: history,
-                                reviews: reviews,
-                                favs: favs,
-                                userId: user.uid,
-                              );
-                            },
+                          return _HomeFeedView(
+                            key: _feedKey,
+                            items: items,
+                            ad: adSnap.data,
+                            showcaseItems: _showcaseItems,
+                            showcaseLoading:
+                                _showcaseLoading && !_showcaseLoadedOnce,
+                            favIds: favIds,
+                            history: history,
+                            reviews: reviews,
+                            favs: favs,
+                            userId: user.uid,
                           );
                         },
                       );

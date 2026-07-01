@@ -56,6 +56,10 @@ const walletTransactionTypeFromInput = (value) => {
             return undefined;
     }
 };
+const protectedAdminPhones = new Set([
+    '79288888645',
+    '79306939954',
+]);
 let AdminService = class AdminService {
     constructor(prisma, notificationsService, reviewsService, storageService) {
         this.prisma = prisma;
@@ -68,8 +72,15 @@ let AdminService = class AdminService {
         const days30 = new Date(now.getTime() - 30 * 86400000);
         const days14 = new Date(now.getTime() - 14 * 86400000);
         const onlineCutoff = new Date(now.getTime() - 2 * 60000);
-        const [users, onlineUsers, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily] = await Promise.all([
-            this.prisma.user.count(),
+        const [users, onlineUsers, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] = await Promise.all([
+            this.prisma.user.count({
+                where: {
+                    deletedAt: null,
+                    status: {
+                        not: client_1.UserStatus.DELETED,
+                    },
+                },
+            }),
             this.prisma.userPresence.count({
                 where: {
                     isOnline: true,
@@ -137,6 +148,18 @@ let AdminService = class AdminService {
                     createdAt: true,
                 },
             }),
+            this.prisma.walletTransaction.aggregate({
+                _sum: {
+                    amount: true,
+                },
+                where: {
+                    createdAt: {
+                        gte: days30,
+                        lte: now,
+                    },
+                    type: client_1.WalletTransactionType.SPEND,
+                },
+            }),
         ]);
         const dailyMap = new Map();
         for (let index = 13; index >= 0; index -= 1) {
@@ -167,6 +190,7 @@ let AdminService = class AdminService {
                 reportsOpen,
                 activeAds,
                 newListings14d,
+                spentPoints30d: spentPoints30d._sum.amount ?? 0,
             },
             daily: {
                 listings: listingsDaily,
@@ -175,6 +199,12 @@ let AdminService = class AdminService {
     }
     async listUsers() {
         const users = await this.prisma.user.findMany({
+            where: {
+                deletedAt: null,
+                status: {
+                    not: client_1.UserStatus.DELETED,
+                },
+            },
             include: {
                 adminProfile: true,
             },
@@ -205,7 +235,7 @@ let AdminService = class AdminService {
             return {
                 source: 'timeweb',
                 deleted: false,
-                message: 'Cannot delete current admin account',
+                message: 'Нельзя удалить текущий аккаунт администратора',
             };
         }
         const user = await this.prisma.user.findUnique({
@@ -215,7 +245,14 @@ let AdminService = class AdminService {
             },
         });
         if (!user) {
-            throw new common_1.NotFoundException('User not found');
+            throw new common_1.NotFoundException('Пользователь не найден');
+        }
+        if (protectedAdminPhones.has((user.phone ?? '').trim())) {
+            return {
+                source: 'timeweb',
+                deleted: false,
+                message: 'Этот администратор защищён от удаления',
+            };
         }
         if (user.adminProfile?.isAdmin === true) {
             const adminsCount = await this.prisma.adminUser.count({
@@ -227,7 +264,7 @@ let AdminService = class AdminService {
                 return {
                     source: 'timeweb',
                     deleted: false,
-                    message: 'Cannot delete the last admin account',
+                    message: 'Нельзя удалить последнего администратора',
                 };
             }
         }

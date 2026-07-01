@@ -176,7 +176,7 @@ class Chat {
       lastMessageAt:
           _parseNullableDt(row['last_message_at'] ?? row['lastMessageAt']),
       createdAt: _parseDt(row['created_at'] ?? row['createdAt']),
-      updatedAt: _parseDt(row['updated_at']),
+      updatedAt: _parseDt(row['updated_at'] ?? row['updatedAt']),
       unreadCount: (unreadRaw as num?)?.toInt() ?? 0,
       unreadForBuyer: (row['unread_for_buyer'] as num?)?.toInt() ?? 0,
       unreadForSeller: (row['unread_for_seller'] as num?)?.toInt() ?? 0,

@@ -22,7 +22,7 @@ void main() {
     expect(find.byType(SkeletonWalletCard), findsOneWidget);
     await tester.pumpAndSettle();
 
-    expect(find.text('125 бонусов'), findsOneWidget);
+    expect(find.text('225 бонусов'), findsOneWidget);
     expect(find.text('Ежедневный бонус: +25 бонусов'), findsOneWidget);
     expect(find.text('Сегодняшний бонус уже начислен'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
@@ -73,6 +73,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Начислено 9 бонусов за вход'), findsOneWidget);
   });
+
+  testWidgets('wallet screen still opens when transactions failed',
+      (tester) async {
+    await tester.pumpWidget(
+      Provider<WalletService>.value(
+        value: _TransactionsFailingWalletService(),
+        child: const MaterialApp(home: WalletScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('225 бонусов'), findsOneWidget);
+    expect(
+      find.text(
+        'История операций временно недоступна. Проверьте интернет или VPN.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Операций пока нет'), findsOneWidget);
+    expect(find.text('Кошелёк недоступен'), findsNothing);
+  });
 }
 
 class _FakeWalletService extends WalletService {
@@ -99,9 +120,9 @@ class _FakeWalletService extends WalletService {
   Future<Wallet> checkAccrual() async {
     await Future<void>.delayed(const Duration(milliseconds: 120));
     return Wallet.fromMap({
-      'balance': 125,
+      'balance': 225,
       'maxBalance': 1000,
-      'welcomeBonus': 100,
+      'welcomeBonus': 200,
       'dailyBonusAmount': 25,
       'lastDailyBonusAt': '2026-06-19T10:00:00.000Z',
       'canClaimDailyBonus': false,
@@ -134,6 +155,16 @@ class _FailingWalletService extends WalletService {
   Future<Wallet> checkAccrual() async {
     throw const ApiException(
       'Не удалось загрузить кошелёк. Проверьте интернет или VPN.',
+      code: 'timeout',
+    );
+  }
+}
+
+class _TransactionsFailingWalletService extends _FakeWalletService {
+  @override
+  Future<List<WalletTransaction>> getTransactions() async {
+    throw const ApiException(
+      'История операций временно недоступна. Проверьте интернет или VPN.',
       code: 'timeout',
     );
   }

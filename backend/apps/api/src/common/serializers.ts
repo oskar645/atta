@@ -190,7 +190,24 @@ export const normalizeStoredMediaUrl = (
 };
 
 export const serializeUser = (
-  user: User & {
+  user: Pick<
+    User,
+    | 'id'
+    | 'email'
+    | 'phone'
+    | 'phoneVerified'
+    | 'displayName'
+    | 'name'
+    | 'avatarUrl'
+    | 'photoUrl'
+    | 'status'
+    | 'blockedAt'
+    | 'blockReason'
+    | 'lastLoginAt'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'deletedAt'
+  > & {
     adminProfile?: AdminUser | null;
   },
   options?: {
