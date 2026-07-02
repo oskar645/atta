@@ -36,8 +36,26 @@ String formatRuPhoneForField(String input) {
 }
 
 String formatRuPhoneForDisplay(String input) {
-  final body = formatRuPhoneForField(input);
-  return body.isEmpty ? '+7' : '+7 $body';
+  return formatRussianPhone(input);
+}
+
+String formatRussianPhone(String input) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return '';
+
+  final digits = trimmed.replaceAll(RegExp(r'\D'), '');
+  String localDigits;
+  if (digits.length == 10) {
+    localDigits = digits;
+  } else if (digits.length == 11 &&
+      (digits.startsWith('7') || digits.startsWith('8'))) {
+    localDigits = digits.substring(1);
+  } else {
+    return trimmed;
+  }
+
+  return '+7 ${localDigits.substring(0, 3)} ${localDigits.substring(3, 6)} '
+      '${localDigits.substring(6, 8)} ${localDigits.substring(8, 10)}';
 }
 
 class RuPhoneInputFormatter extends TextInputFormatter {

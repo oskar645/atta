@@ -22,13 +22,17 @@ class _WalletScreenState extends State<WalletScreen> {
   void initState() {
     super.initState();
     final walletService = context.read<WalletService>();
-    _future = _load(walletService);
+    _future = _load(walletService, forceRefresh: true);
   }
 
-  Future<_WalletBundle> _load(WalletService walletService) async {
-    final wallet = await walletService.checkAccrual();
+  Future<_WalletBundle> _load(
+    WalletService walletService, {
+    required bool forceRefresh,
+  }) async {
+    final wallet = await walletService.checkAccrual(forceRefresh: forceRefresh);
     try {
-      final transactions = await walletService.getTransactions();
+      final transactions =
+          await walletService.getTransactions(forceRefresh: forceRefresh);
       return _WalletBundle(
         wallet: wallet,
         transactions: transactions,
@@ -45,8 +49,17 @@ class _WalletScreenState extends State<WalletScreen> {
   void _reload() {
     final walletService = context.read<WalletService>();
     setState(() {
-      _future = _load(walletService);
+      _future = _load(walletService, forceRefresh: true);
     });
+  }
+
+  Future<void> _refresh() async {
+    final walletService = context.read<WalletService>();
+    final future = _load(walletService, forceRefresh: true);
+    setState(() {
+      _future = future;
+    });
+    await future;
   }
 
   @override
@@ -85,101 +98,16 @@ class _WalletScreenState extends State<WalletScreen> {
 
           final bundle = snapshot.data!;
           final previewTransactions = _walletPreviewItems(bundle.transactions);
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
-                  color: Theme.of(context).colorScheme.surface,
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Баланс',
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${bundle.wallet.balance} бонусов',
-                      style: const TextStyle(
-                        fontSize: 30,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Бонусы можно использовать для продвижения объявлений. Пока всё бесплатно — реальные платежи не подключены.',
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                        'Welcome-бонус: ${bundle.wallet.welcomeBonus} бонусов'),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Ежедневный бонус: +${bundle.wallet.dailyBonusAmount} бонусов',
-                    ),
-                    const SizedBox(height: 4),
-                    Text('Максимум: ${bundle.wallet.maxBalance} бонусов'),
-                    if (bundle.wallet.lastDailyBonusAt != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Последний бонус за вход: ${_formatDateTime(bundle.wallet.lastDailyBonusAt!)}',
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text(
-                      bundle.wallet.canClaimDailyBonus
-                          ? 'Сегодняшний бонус ещё доступен'
-                          : 'Сегодняшний бонус уже начислен',
-                    ),
-                    if (bundle.wallet.nextDailyBonusAt != null &&
-                        !bundle.wallet.canClaimDailyBonus) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Следующий бонус: ${_formatDateTime(bundle.wallet.nextDailyBonusAt!)}',
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'История операций',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                    ),
-                  ),
-                  if (bundle.transactions.isNotEmpty)
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => _WalletTransactionsAllScreen(
-                              transactions: bundle.transactions,
-                            ),
-                          ),
-                        );
-                      },
-                      child: const Text('Смотреть все'),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (bundle.transactionsErrorText != null) ...[
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(18),
+                    color: Theme.of(context).colorScheme.surface,
                     border: Border.all(
                       color: Theme.of(context).colorScheme.outlineVariant,
                     ),
@@ -187,42 +115,136 @@ class _WalletScreenState extends State<WalletScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(bundle.transactionsErrorText!),
-                      const SizedBox(height: 8),
-                      TextButton(
-                        onPressed: _reload,
-                        child: const Text('Повторить'),
+                      const Text(
+                        'Баланс',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${bundle.wallet.balance} бонусов',
+                        style: const TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text(
+                        'Бонусы можно использовать для продвижения объявлений. Пока всё бесплатно — реальные платежи не подключены.',
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Welcome-бонус: ${bundle.wallet.welcomeBonus} бонусов',
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Ежедневный бонус: +${bundle.wallet.dailyBonusAmount} бонусов',
+                      ),
+                      const SizedBox(height: 4),
+                      Text('Максимум: ${bundle.wallet.maxBalance} бонусов'),
+                      if (bundle.wallet.lastDailyBonusAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Последний бонус за вход: ${_formatDateTime(bundle.wallet.lastDailyBonusAt!)}',
+                        ),
+                      ],
+                      const SizedBox(height: 4),
+                      Text(
+                        bundle.wallet.canClaimDailyBonus
+                            ? 'Сегодняшний бонус ещё доступен'
+                            : 'Сегодняшний бонус уже начислен',
+                      ),
+                      if (bundle.wallet.nextDailyBonusAt != null &&
+                          !bundle.wallet.canClaimDailyBonus) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Следующий бонус: ${_formatDateTime(bundle.wallet.nextDailyBonusAt!)}',
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
-              ],
-              if (bundle.transactions.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: Text('Операций пока нет'),
-                )
-              else
-                ...previewTransactions.map(
-                  (transaction) => Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      title: Text(_transactionTitle(transaction)),
-                      subtitle: Text(_formatDateTime(transaction.createdAt)),
-                      trailing: Text(
-                        '${transaction.type == 'spend' ? '-' : '+'}${transaction.amount}',
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'История операций',
                         style: TextStyle(
+                          fontSize: 18,
                           fontWeight: FontWeight.w800,
-                          color: transaction.type == 'spend'
-                              ? Colors.red
-                              : Colors.green,
+                        ),
+                      ),
+                    ),
+                    if (bundle.transactions.isNotEmpty)
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => _WalletTransactionsAllScreen(
+                                transactions: bundle.transactions,
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text('Смотреть все'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (bundle.transactionsErrorText != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(bundle.transactionsErrorText!),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: _reload,
+                          child: const Text('Повторить'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (bundle.transactions.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: Text('Операций пока нет'),
+                  )
+                else
+                  ...previewTransactions.map(
+                    (transaction) => Card(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        title: Text(_transactionTitle(transaction)),
+                        subtitle: Text(_formatDateTime(transaction.createdAt)),
+                        trailing: Text(
+                          '${transaction.type == 'spend' ? '-' : '+'}${transaction.amount}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: transaction.type == 'spend'
+                                ? Colors.red
+                                : Colors.green,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -236,7 +258,7 @@ String _walletErrorText(Object error) {
       return 'Сессия истекла. Войдите снова.';
     }
     if (error.isTimeout || error.isNetworkError) {
-      return 'Не удалось загрузить кошелёк. Проверьте интернет или VPN.';
+      return 'Проверьте интернет-соединение и попробуйте снова.';
     }
     if (error.message.trim().isNotEmpty) {
       return error.message.trim();
@@ -253,14 +275,14 @@ String _walletTransactionsErrorText(Object error) {
       return 'История операций временно недоступна: сессия истекла.';
     }
     if (error.isTimeout || error.isNetworkError) {
-      return 'История операций временно недоступна. Проверьте интернет или VPN.';
+      return 'Проверьте интернет-соединение и попробуйте снова.';
     }
     if (error.message.trim().isNotEmpty) {
       return 'История операций временно недоступна: ${error.message.trim()}';
     }
   }
   return shouldShowNetworkVpnHint(error)
-      ? 'История операций временно недоступна. Проверьте интернет или VPN.'
+      ? 'Проверьте интернет-соединение и попробуйте снова.'
       : 'История операций временно недоступна. Попробуйте позже.';
 }
 
@@ -286,6 +308,12 @@ List<WalletTransaction> _walletPreviewItems(List<WalletTransaction> items) {
 }
 
 String _transactionTitle(WalletTransaction transaction) {
+  final metadata = transaction.metadata;
+  final customTitle =
+      (metadata?['description'] ?? metadata?['title'] ?? '').toString().trim();
+  if (customTitle.isNotEmpty) {
+    return customTitle;
+  }
   switch (transaction.reason) {
     case 'welcome_bonus':
       return 'Начислено ${transaction.amount} бонусов';

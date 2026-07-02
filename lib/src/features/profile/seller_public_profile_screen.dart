@@ -10,6 +10,7 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
@@ -200,6 +201,8 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
           final sellerName = profile.pickNameFromRow(userRow);
           final photoUrl = profile.pickAvatarFromRow(userRow);
           final phone = (userRow['phone'] ?? '').toString().trim();
+          final phoneDisplay =
+              phone.isEmpty ? 'Телефон не указан' : formatRussianPhone(phone);
           final statusText = widget.initialStatusLabel.trim().isNotEmpty
               ? widget.initialStatusLabel.trim()
               : (userRow['status'] ?? '').toString().trim();
@@ -329,9 +332,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                   ),
                                 _AdminInfoChip(
                                   icon: Icons.phone_outlined,
-                                  label: phone.isEmpty
-                                      ? 'Телефон не указан'
-                                      : phone,
+                                  label: phoneDisplay,
                                 ),
                                 _AdminInfoChip(
                                   icon: isAdminUser
@@ -408,7 +409,14 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                     child: FilledButton.icon(
                       onPressed: canCall
                           ? () async {
-                              final uri = Uri(scheme: 'tel', path: phone);
+                              final normalizedPhone =
+                                  normalizeRuPhoneForApi(phone);
+                              final uri = Uri(
+                                scheme: 'tel',
+                                path: normalizedPhone.isEmpty
+                                    ? phone
+                                    : '+$normalizedPhone',
+                              );
                               await launchUrl(uri);
                             }
                           : null,

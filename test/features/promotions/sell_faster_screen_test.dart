@@ -110,10 +110,10 @@ class _FakeWalletService extends WalletService {
   }
 
   @override
-  Future<Wallet> getWallet() async => _wallet();
+  Future<Wallet> getWallet({bool forceRefresh = false}) async => _wallet();
 
   @override
-  Future<Wallet> checkAccrual() async => _wallet();
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async => _wallet();
 
   Wallet _wallet() {
     return Wallet.fromMap({
@@ -200,7 +200,7 @@ class _FakePromotionsService extends PromotionsService {
 
 class _FailingWalletService extends WalletService {
   @override
-  Future<Wallet> getWallet() async {
+  Future<Wallet> getWallet({bool forceRefresh = false}) async {
     throw Exception('wallet failed');
   }
 }

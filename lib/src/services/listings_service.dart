@@ -55,6 +55,18 @@ class CreateListingResult {
   bool get photoUploadFailed => photoUploadResult.hasFailures;
 }
 
+class ListingsFeedPage {
+  const ListingsFeedPage({
+    required this.items,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<Listing> items;
+  final bool hasMore;
+  final String? nextCursor;
+}
+
 class ListingPhotoUploadFailure {
   const ListingPhotoUploadFailure({
     required this.file,
@@ -136,6 +148,8 @@ class ListingsService {
       <String, Future<List<Listing>>>{};
 
   static const Duration _cacheTtl = Duration(seconds: 20);
+
+  Stream<void> get refreshes => _refreshController.stream;
 
   Stream<List<Listing>> streamListings({
     required String category,
@@ -237,6 +251,46 @@ class ListingsService {
 
     _debugSource('Listings source: Timeweb');
     return _fetchListings(effectiveFilters);
+  }
+
+  Future<ListingsFeedPage> getListingsPage({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+    int limit = 20,
+    String? cursor,
+  }) async {
+    final effectiveFilters = filters ??
+        ListingFeedFilters(
+          category: category,
+          search: search,
+        );
+
+    _debugSource('Listings source: Timeweb');
+    final response = await _api.list(
+      queryParameters: {
+        if (!_isAllCategory(effectiveFilters.category))
+          'category': effectiveFilters.category,
+        if (effectiveFilters.search.trim().isNotEmpty)
+          'search': effectiveFilters.search.trim(),
+        if (effectiveFilters.location.trim().isNotEmpty)
+          'city': effectiveFilters.location.trim(),
+        'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      },
+    );
+    final items = _extractItems(response);
+    final filtered =
+        items.where((item) => _matchesFilters(item, effectiveFilters)).toList();
+    filtered.sort(_compareFeedListings);
+    _cacheListings(items);
+    return ListingsFeedPage(
+      items: filtered,
+      hasMore: response['hasMore'] == true || response['has_more'] == true,
+      nextCursor: (response['nextCursor'] ?? response['next_cursor'])
+          ?.toString()
+          .trim(),
+    );
   }
 
   List<Listing> peekListings({
@@ -433,6 +487,21 @@ class ListingsService {
     return listing;
   }
 
+  Future<Listing?> refreshListingById(String listingId) async {
+    final id = listingId.trim();
+    if (id.isEmpty) return null;
+    try {
+      final response = await _api.getById(id);
+      final listing = _extractListingFromResponse(response);
+      if (listing == null) return null;
+      _upsertListingInCaches(listing);
+      _emitRefresh(clearCaches: false);
+      return listing;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Listing?> updateListing({
     required String listingId,
     required String title,
@@ -477,8 +546,8 @@ class ListingsService {
     PreparedImage? preparedImage,
   }) async {
     if (ApiConfig.useTimewebBackend) {
-      final prepared =
-          preparedImage ?? await _imagePreparationService.prepareListingImage(file);
+      final prepared = preparedImage ??
+          await _imagePreparationService.prepareListingImage(file);
       final response = await _mediaApi.uploadListingPhoto(
         listingId: listingId,
         bytes: prepared.bytes,
@@ -541,7 +610,8 @@ class ListingsService {
         ),
       );
       try {
-        final prepared = await _imagePreparationService.prepareListingImage(file);
+        final prepared =
+            await _imagePreparationService.prepareListingImage(file);
         onStatusChanged?.call(
           ListingPhotoUploadStatus(
             file: file,
@@ -888,19 +958,33 @@ class ListingsService {
     final existing = _timewebInFlight[key];
     if (existing != null) return existing;
     final future = () async {
-      final response = await _api.list(
-        queryParameters: {
-          if (!_isAllCategory(filters.category)) 'category': filters.category,
-          if (filters.search.trim().isNotEmpty) 'search': filters.search.trim(),
-          if (filters.location.trim().isNotEmpty)
-            'city': filters.location.trim(),
-        },
-      );
-      final items = _extractItems(response);
-      final filtered =
-          items.where((item) => _matchesFilters(item, filters)).toList();
-      filtered.sort(_compareFeedListings);
-      _cacheListings(items);
+      final aggregated = <Listing>[];
+      final seenIds = <String>{};
+      String? nextCursor;
+      var hasMore = true;
+
+      while (hasMore) {
+        final page = await getListingsPage(
+          category: filters.category,
+          search: filters.search,
+          filters: filters,
+          limit: 50,
+          cursor: nextCursor,
+        );
+        for (final item in page.items) {
+          if (seenIds.add(item.id)) {
+            aggregated.add(item);
+          }
+        }
+        hasMore = page.hasMore;
+        nextCursor = page.nextCursor;
+        if (!hasMore || (nextCursor ?? '').isEmpty) {
+          break;
+        }
+      }
+
+      final filtered = List<Listing>.from(aggregated)
+        ..sort(_compareFeedListings);
       _timewebCache[key] = filtered;
       _timewebCachedAt[key] = DateTime.now();
       return filtered;

@@ -53,6 +53,8 @@ export class ListingsController {
     @Query('city') city?: string,
     @Query('minPrice') minPrice?: string,
     @Query('maxPrice') maxPrice?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
     @Query('ownerId') ownerId?: string,
     @Query('status') status?: string,
   ) {
@@ -62,6 +64,8 @@ export class ListingsController {
       city,
       ownerId,
       status,
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
       minPrice: minPrice == null ? undefined : Number(minPrice),
       maxPrice: maxPrice == null ? undefined : Number(maxPrice),
     });

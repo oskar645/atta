@@ -23,6 +23,51 @@ const strangerUser = {
   role: 'user' as const,
 };
 
+function createApprovedListing(
+  id: string,
+  publishedAt: string,
+  category = 'misc',
+) {
+  const published = new Date(publishedAt);
+  return {
+    id,
+    ownerId: ownerUser.userId,
+    ownerEmail: 'owner@example.com',
+    ownerName: 'Owner',
+    title: `Listing ${id}`,
+    description: '',
+    category,
+    subcategory: '',
+    price: BigInt(0),
+    phone: '',
+    phoneHidden: false,
+    city: '',
+    address: '',
+    latitude: null,
+    longitude: null,
+    locationJson: {},
+    delivery: {},
+    car: null,
+    dealType: null,
+    realEstateType: null,
+    clothesType: null,
+    status: ListingStatus.APPROVED,
+    rejectionReason: '',
+    moderationNote: null,
+    moderatedBy: null,
+    moderatedAt: null,
+    publishedAt: published,
+    archivedAt: null,
+    deletedAt: null,
+    viewCount: 0,
+    createdAt: published,
+    updatedAt: published,
+    owner: null,
+    photos: [],
+    promotions: [],
+  };
+}
+
 function createService(overrides?: {
   findOwnerById?: () => Promise<unknown>;
   create?: (args: Record<string, unknown>) => Promise<unknown>;
@@ -769,6 +814,73 @@ test('active bump sorts listing above normal without crashing', async () => {
   assert.deepEqual(
     response.items.map((item: { id: string }) => item.id),
     ['listing-bump', 'listing-normal'],
+  );
+});
+
+test('findAll returns paginated page with nextCursor and hasMore', async () => {
+  const service = createService({
+    findMany: async () => [
+      createApprovedListing('listing-3', '2026-07-03T10:00:00.000Z'),
+      createApprovedListing('listing-2', '2026-07-02T10:00:00.000Z'),
+      createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    ],
+  });
+
+  const response = await service.findAll({ limit: 2 });
+
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    ['listing-3', 'listing-2'],
+  );
+  assert.equal(response.hasMore, true);
+  assert.equal(typeof response.nextCursor, 'string');
+  assert.ok((response.nextCursor ?? '').length > 0);
+});
+
+test('findAll cursor returns next page without duplicates and keeps category filter', async () => {
+  let findManyArgs: Record<string, unknown> | undefined;
+  const listings = [
+    createApprovedListing('listing-4', '2026-07-04T10:00:00.000Z', 'auto'),
+    createApprovedListing('listing-3', '2026-07-03T10:00:00.000Z', 'auto'),
+    createApprovedListing('listing-2', '2026-07-02T10:00:00.000Z', 'auto'),
+    createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'auto'),
+  ];
+  const service = createService({
+    findMany: async (args?: Record<string, unknown>) => {
+      findManyArgs = args;
+      return listings;
+    },
+  });
+
+  const firstPage = await service.findAll({
+    category: 'auto',
+    limit: 2,
+  });
+  const secondPage = await service.findAll({
+    category: 'auto',
+    limit: 2,
+    cursor: firstPage.nextCursor ?? undefined,
+  });
+
+  assert.deepEqual(
+    firstPage.items.map((item: { id: string }) => item.id),
+    ['listing-4', 'listing-3'],
+  );
+  assert.deepEqual(
+    secondPage.items.map((item: { id: string }) => item.id),
+    ['listing-2', 'listing-1'],
+  );
+  assert.equal(secondPage.hasMore, false);
+  assert.deepEqual(
+    new Set([
+      ...firstPage.items.map((item: { id: string }) => item.id),
+      ...secondPage.items.map((item: { id: string }) => item.id),
+    ]).size,
+    4,
+  );
+  assert.equal(
+    (findManyArgs?.where as Record<string, unknown>).category,
+    'auto',
   );
 });
 

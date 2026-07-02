@@ -84,6 +84,9 @@ class AuthService {
 
   Future<AuthUser?> revalidateCurrentUser() => _backend.revalidateCurrentUser();
 
+  Future<AuthUser?> restoreSessionOnResume({bool force = false}) =>
+      _backend.restoreSessionOnResume(force: force);
+
   Future<void> signInWithPhone({
     required String phone,
     required String password,

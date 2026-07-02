@@ -64,6 +64,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const int _feedPageSize = 20;
   String _category = 'Все';
   String _subcategory = 'Все';
   String _search = '';
@@ -83,6 +84,13 @@ class _HomeScreenState extends State<HomeScreen> {
   String _autoCondition = '';
   int? _autoMileageTo;
   bool _onlyUncrashed = false;
+  List<Listing> _feedItems = const <Listing>[];
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  String? _nextCursor;
+  Object? _feedError;
+  int _feedRequestSerial = 0;
 
   @override
   void initState() {
@@ -111,10 +119,27 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  ListingFeedFilters get _currentFeedFilters => ListingFeedFilters(
+        category: _category,
+        search: _search,
+        subcategory: _subcategory,
+        location: _location,
+        preferLocationFirst: _preferLocationFirst,
+        radiusKm: _radiusKm,
+        autoBrand: _autoBrand,
+        autoModel: _autoModel,
+        autoCondition: _autoCondition,
+        autoMileageTo: _autoMileageTo,
+        onlyUncrashed: _onlyUncrashed,
+      );
+
   Future<void> _restoreFilters() async {
     final uid = context.read<AuthService>().currentUser?.uid ?? '';
     final saved = await homeFiltersSession.read(uid);
-    if (saved == null) return;
+    if (saved == null) {
+      await _reloadFeed(reset: true);
+      return;
+    }
 
     setState(() {
       _category = saved.category;
@@ -130,6 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _search = saved.search;
       _searchCtrl.text = saved.search;
     });
+    await _reloadFeed(reset: true);
   }
 
   Future<void> _persistFilters() async {
@@ -156,31 +182,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleRefresh() async {
-    final listings = context.read<ListingsService>();
-    final feedAds = context.read<FeedAdsService>();
     final showcaseFuture = _refreshShowcase();
 
     await Future.wait([
-      listings
-          .streamListings(
-            category: _category,
-            search: _search,
-            filters: ListingFeedFilters(
-              category: _category,
-              search: _search,
-              subcategory: _subcategory,
-              location: _location,
-              preferLocationFirst: _preferLocationFirst,
-              radiusKm: _radiusKm,
-              autoBrand: _autoBrand,
-              autoModel: _autoModel,
-              autoCondition: _autoCondition,
-              autoMileageTo: _autoMileageTo,
-              onlyUncrashed: _onlyUncrashed,
-            ),
-      )
-          .first,
-      feedAds.streamActiveAd().first,
+      _reloadFeed(reset: true),
       showcaseFuture,
       Future<void>.delayed(const Duration(milliseconds: 350)),
     ]);
@@ -209,6 +214,75 @@ class _HomeScreenState extends State<HomeScreen> {
       _searchCtrl.clear();
     });
     _persistFilters();
+    unawaited(_reloadFeed(reset: true));
+  }
+
+  List<Listing> _mergeUniqueListings(
+    List<Listing> current,
+    List<Listing> incoming,
+  ) {
+    final seenIds = current.map((item) => item.id).toSet();
+    final merged = List<Listing>.from(current);
+    for (final item in incoming) {
+      if (seenIds.add(item.id)) {
+        merged.add(item);
+      }
+    }
+    return merged;
+  }
+
+  Future<void> _reloadFeed({required bool reset}) async {
+    final listings = context.read<ListingsService>();
+    final requestId = ++_feedRequestSerial;
+
+    setState(() {
+      if (reset) {
+        _isInitialLoading = true;
+        _isLoadingMore = false;
+        _hasMore = true;
+        _nextCursor = null;
+        _feedError = null;
+        _feedItems = const <Listing>[];
+      } else {
+        _isLoadingMore = true;
+        _feedError = null;
+      }
+    });
+
+    try {
+      final page = await listings.getListingsPage(
+        category: _category,
+        search: _search,
+        filters: _currentFeedFilters,
+        limit: _feedPageSize,
+        cursor: reset ? null : _nextCursor,
+      );
+      if (!mounted || requestId != _feedRequestSerial) return;
+      setState(() {
+        _feedItems = reset
+            ? List<Listing>.from(page.items)
+            : _mergeUniqueListings(_feedItems, page.items);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _feedError = null;
+      });
+    } catch (error) {
+      if (!mounted || requestId != _feedRequestSerial) return;
+      setState(() {
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _feedError = error;
+      });
+    }
+  }
+
+  Future<void> _loadMoreFeed() async {
+    if (_isInitialLoading || _isLoadingMore || !_hasMore) {
+      return;
+    }
+    await _reloadFeed(reset: false);
   }
 
   Future<void> _openFilters() async {
@@ -243,7 +317,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final listings = context.read<ListingsService>();
     final favs = context.read<FavoritesService>();
     final feedAds = context.read<FeedAdsService>();
     final history = context.watch<ListingHistoryService>();
@@ -362,6 +435,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onChanged: (v) {
                       setState(() => _search = v.trim());
                       _persistFilters();
+                      unawaited(_reloadFeed(reset: true));
                     },
                   ),
                 ),
@@ -376,50 +450,47 @@ class _HomeScreenState extends State<HomeScreen> {
                 stream: favs.streamFavoriteIds(user.uid),
                 builder: (context, favSnap) {
                   final favIds = favSnap.data ?? <String>{};
+                  if (_isInitialLoading && _feedItems.isEmpty) {
+                    return const SkeletonListingGrid(
+                      physics: AlwaysScrollableScrollPhysics(),
+                    );
+                  }
 
-                  return StreamBuilder<List<Listing>>(
-                    stream: listings.streamListings(
-                      category: _category,
-                      search: _search,
-                      filters: ListingFeedFilters(
-                        category: _category,
-                        search: _search,
-                        subcategory: _subcategory,
-                        location: _location,
-                        preferLocationFirst: _preferLocationFirst,
-                        radiusKm: _radiusKm,
-                        autoBrand: _autoBrand,
-                        autoModel: _autoModel,
-                        autoCondition: _autoCondition,
-                        autoMileageTo: _autoMileageTo,
-                        onlyUncrashed: _onlyUncrashed,
-                      ),
-                    ),
-                    builder: (context, snap) {
-                      if (!snap.hasData) {
-                        return const SkeletonListingGrid(
-                          physics: AlwaysScrollableScrollPhysics(),
-                        );
-                      }
+                  if (_feedError != null && _feedItems.isEmpty) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.only(top: 120),
+                          child: Center(
+                            child: Text(
+                              'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
 
-                      final items = snap.data!;
-                      return StreamBuilder<FeedAd?>(
-                        stream: feedAds.streamActiveAd(),
-                        builder: (context, adSnap) {
-                          return _HomeFeedView(
-                            key: _feedKey,
-                            items: items,
-                            ad: adSnap.data,
-                            showcaseItems: _showcaseItems,
-                            showcaseLoading:
-                                _showcaseLoading && !_showcaseLoadedOnce,
-                            favIds: favIds,
-                            history: history,
-                            reviews: reviews,
-                            favs: favs,
-                            userId: user.uid,
-                          );
-                        },
+                  return StreamBuilder<FeedAd?>(
+                    stream: feedAds.streamActiveAd(),
+                    builder: (context, adSnap) {
+                      return _HomeFeedView(
+                        key: _feedKey,
+                        items: _feedItems,
+                        ad: adSnap.data,
+                        showcaseItems: _showcaseItems,
+                        showcaseLoading:
+                            _showcaseLoading && !_showcaseLoadedOnce,
+                        favIds: favIds,
+                        history: history,
+                        reviews: reviews,
+                        favs: favs,
+                        userId: user.uid,
+                        isLoadingMore: _isLoadingMore,
+                        hasMore: _hasMore,
+                        onLoadMore: _loadMoreFeed,
                       );
                     },
                   );
@@ -443,6 +514,9 @@ class _HomeFeedView extends StatefulWidget {
   final ReviewsService reviews;
   final FavoritesService favs;
   final String userId;
+  final bool isLoadingMore;
+  final bool hasMore;
+  final Future<void> Function() onLoadMore;
 
   const _HomeFeedView({
     super.key,
@@ -455,6 +529,9 @@ class _HomeFeedView extends StatefulWidget {
     required this.reviews,
     required this.favs,
     required this.userId,
+    required this.isLoadingMore,
+    required this.hasMore,
+    required this.onLoadMore,
   });
 
   @override
@@ -498,6 +575,10 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   }
 
   void _scheduleVisibilityCheck() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.extentAfter < 900) {
+      unawaited(widget.onLoadMore());
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
   }
 
@@ -608,7 +689,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
-      slivers: [
+        slivers: [
           if (widget.showcaseLoading)
             const SliverToBoxAdapter(
               child: _ShowcaseSectionSkeleton(),
@@ -700,6 +781,23 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
               ),
             ),
           ),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 18),
+            child: Center(
+              child: widget.isLoadingMore
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -1033,7 +1131,7 @@ class _HomeFilters {
   });
 }
 
-class _FilteredListingsScreen extends StatelessWidget {
+class _FilteredListingsScreen extends StatefulWidget {
   final String search;
   final _HomeFilters filters;
 
@@ -1041,6 +1139,26 @@ class _FilteredListingsScreen extends StatelessWidget {
     required this.search,
     required this.filters,
   });
+
+  @override
+  State<_FilteredListingsScreen> createState() =>
+      _FilteredListingsScreenState();
+}
+
+class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
+  static const int _pageSize = 20;
+  final GlobalKey<_HomeFeedViewState> _feedKey =
+      GlobalKey<_HomeFeedViewState>();
+  List<Listing> _items = const <Listing>[];
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  String? _nextCursor;
+  Object? _error;
+  int _requestSerial = 0;
+
+  String get search => widget.search;
+  _HomeFilters get filters => widget.filters;
 
   ListingFeedFilters get _feedFilters => ListingFeedFilters(
         category: filters.category,
@@ -1092,6 +1210,76 @@ class _FilteredListingsScreen extends StatelessWidget {
     }
 
     return parts.join(' • ');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_reload(reset: true));
+  }
+
+  List<Listing> _mergeUniqueListings(
+    List<Listing> current,
+    List<Listing> incoming,
+  ) {
+    final seenIds = current.map((item) => item.id).toSet();
+    final merged = List<Listing>.from(current);
+    for (final item in incoming) {
+      if (seenIds.add(item.id)) {
+        merged.add(item);
+      }
+    }
+    return merged;
+  }
+
+  Future<void> _reload({required bool reset}) async {
+    final listings = context.read<ListingsService>();
+    final requestId = ++_requestSerial;
+    setState(() {
+      if (reset) {
+        _isInitialLoading = true;
+        _isLoadingMore = false;
+        _hasMore = true;
+        _nextCursor = null;
+        _error = null;
+        _items = const <Listing>[];
+      } else {
+        _isLoadingMore = true;
+      }
+    });
+
+    try {
+      final page = await listings.getListingsPage(
+        category: filters.category,
+        search: search,
+        filters: _feedFilters,
+        limit: _pageSize,
+        cursor: reset ? null : _nextCursor,
+      );
+      if (!mounted || requestId != _requestSerial) return;
+      setState(() {
+        _items = reset
+            ? List<Listing>.from(page.items)
+            : _mergeUniqueListings(_items, page.items);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _error = null;
+      });
+    } catch (error) {
+      if (!mounted || requestId != _requestSerial) return;
+      setState(() {
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _error = error;
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_isInitialLoading || _isLoadingMore || !_hasMore) return;
+    await _reload(reset: false);
   }
 
   @override
@@ -1192,48 +1380,70 @@ class _FilteredListingsScreen extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: StreamBuilder<Set<String>>(
-              stream: favs.streamFavoriteIds(user.uid),
-              builder: (context, favSnap) {
-                final favIds = favSnap.data ?? <String>{};
+            child: RefreshIndicator(
+              onRefresh: () => _reload(reset: true),
+              child: StreamBuilder<Set<String>>(
+                stream: favs.streamFavoriteIds(user.uid),
+                builder: (context, favSnap) {
+                  final favIds = favSnap.data ?? <String>{};
 
-                return StreamBuilder<List<Listing>>(
-                  stream: listings.streamListings(
-                    category: filters.category,
-                    search: search,
-                    filters: _feedFilters,
-                  ),
-                  builder: (context, snap) {
-                    if (!snap.hasData) {
-                      return const SkeletonListingGrid(
-                        physics: AlwaysScrollableScrollPhysics(),
-                      );
-                    }
-
-                    final items = snap.data!;
-                    if (items.isEmpty) {
-                      return const Center(child: Text('Ничего не найдено'));
-                    }
-
-                    return StreamBuilder<FeedAd?>(
-                      stream: feedAds.streamActiveAd(),
-                      builder: (context, adSnap) {
-                        return _HomeFeedView(
-                          items: items,
-                          ad: adSnap.data,
-                          showcaseItems: const <ShowcaseItem>[],
-                          showcaseLoading: false,
-                          favIds: favIds,
-                          history: history,
-                          reviews: reviews,
-                          favs: favs,
-                          userId: user.uid,
-                        );
-                      },
+                  if (_isInitialLoading && _items.isEmpty) {
+                    return const SkeletonListingGrid(
+                      physics: AlwaysScrollableScrollPhysics(),
                     );
-                  },
-                );
-              },
+                  }
+
+                  if (_error != null && _items.isEmpty) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.only(top: 120),
+                          child: Center(
+                            child: Text(
+                              'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  if (_items.isEmpty) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.only(top: 120),
+                          child: Center(child: Text('Ничего не найдено')),
+                        ),
+                      ],
+                    );
+                  }
+
+                  return StreamBuilder<FeedAd?>(
+                    stream: feedAds.streamActiveAd(),
+                    builder: (context, adSnap) {
+                      return _HomeFeedView(
+                        key: _feedKey,
+                        items: _items,
+                        ad: adSnap.data,
+                        showcaseItems: const <ShowcaseItem>[],
+                        showcaseLoading: false,
+                        favIds: favIds,
+                        history: history,
+                        reviews: reviews,
+                        favs: favs,
+                        userId: user.uid,
+                        isLoadingMore: _isLoadingMore,
+                        hasMore: _hasMore,
+                        onLoadMore: _loadMore,
+                      );
+                    },
+                  );
+                },
+              ),
             ),
           ),
         ],

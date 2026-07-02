@@ -12,7 +12,10 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/utils/vehicle_specs.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' as latlng;
@@ -193,18 +196,25 @@ class _AddListingScreenState extends State<AddListingScreen> {
   ];
 
   static const _engineVolumes = <String>[
+    '0.5',
     '0.6',
     '0.7',
     '0.8',
+    '0.9',
     '1.0',
+    '1.1',
     '1.2',
     '1.3',
     '1.4',
     '1.5',
     '1.6',
+    '1.7',
     '1.8',
+    '1.9',
     '2.0',
+    '2.1',
     '2.2',
+    '2.3',
     '2.4',
     '2.5',
     '2.7',
@@ -215,23 +225,137 @@ class _AddListingScreenState extends State<AddListingScreen> {
     '4.0',
     '4.2',
     '4.4',
+    '4.5',
     '4.6',
+    '4.7',
     '5.0',
     '5.5',
+    '5.7',
     '6.0',
     '6.2',
+    '6.3',
     '6.5',
+    '6.7',
     '7.0',
     '8.0',
-    '10.0',
-    '12.0',
-    '15.0',
+    '20',
+    '25',
+    '30',
+    '49',
+    '50',
+    '65',
+    '70',
+    '80',
+    '85',
+    '90',
+    '100',
+    '110',
+    '125',
+    '150',
+    '160',
+    '172',
+    '180',
+    '190',
+    '200',
+    '230',
+    '250',
+    '300',
+    '350',
+    '400',
+    '450',
+    '500',
+    '600',
+    '650',
+    '700',
+    '750',
+    '800',
+    '850',
+    '900',
+    '1000',
+    '1100',
+    '1200',
+    '1300',
+    '1500',
+    '1800',
+    '2000',
+    '2500',
   ];
 
-  static final _powerValues = <String>[
-    for (int i = 50; i <= 200; i += 10) '$i',
-    for (int i = 225; i <= 500; i += 25) '$i',
-    for (int i = 550; i <= 1500; i += 50) '$i',
+  static const _powerValues = <String>[
+    '20',
+    '23',
+    '25',
+    '30',
+    '35',
+    '40',
+    '45',
+    '50',
+    '55',
+    '60',
+    '65',
+    '70',
+    '75',
+    '80',
+    '85',
+    '90',
+    '95',
+    '100',
+    '105',
+    '110',
+    '115',
+    '120',
+    '125',
+    '130',
+    '135',
+    '140',
+    '145',
+    '150',
+    '155',
+    '160',
+    '165',
+    '170',
+    '175',
+    '180',
+    '185',
+    '190',
+    '193',
+    '197',
+    '200',
+    '210',
+    '220',
+    '230',
+    '240',
+    '250',
+    '260',
+    '270',
+    '280',
+    '290',
+    '300',
+    '320',
+    '340',
+    '350',
+    '360',
+    '380',
+    '400',
+    '420',
+    '450',
+    '480',
+    '500',
+    '550',
+    '600',
+    '650',
+    '700',
+    '750',
+    '800',
+    '850',
+    '900',
+    '950',
+    '1000',
+    '1100',
+    '1200',
+    '1300',
+    '1500',
+    '2000',
   ];
 
   static const _colors = <String>[
@@ -280,7 +404,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     super.initState();
     final phone = context.read<AuthService>().currentUser?.phone?.trim() ?? '';
     if (phone.isNotEmpty) {
-      _phone.text = phone;
+      _phone.text = formatRuPhoneForField(phone);
     }
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _prefillPhoneFromProfile());
@@ -296,7 +420,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
       final data = await profile.getProfile(uid);
       final phone = (data['phone'] ?? '').toString().trim();
       if (!mounted || phone.isEmpty || _phone.text.trim().isNotEmpty) return;
-      _phone.text = phone;
+      _phone.text = formatRuPhoneForField(phone);
       setState(() {});
     } catch (_) {}
   }
@@ -1099,6 +1223,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     required String currentValue,
     required ValueChanged<String> onSelected,
     String Function(String value)? labelBuilder,
+    String? manualHint,
   }) async {
     var selected = currentValue.trim();
 
@@ -1154,15 +1279,38 @@ class _AddListingScreenState extends State<AddListingScreen> {
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  child: FilledButton(
-                    onPressed: () {
-                      if (selected.isEmpty && items.isNotEmpty) {
-                        selected = items.first;
-                      }
-                      onSelected(selected);
-                      Navigator.pop(ctx);
-                    },
-                    child: const Text('Выбрать'),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () async {
+                            final custom = await _askText(
+                              title: '$title вручную',
+                              hint: manualHint ?? 'Введите значение',
+                            );
+                            if (custom == null || !mounted) return;
+                            onSelected(custom);
+                            if (ctx.mounted) {
+                              Navigator.pop(ctx);
+                            }
+                          },
+                          child: const Text('Другое / вручную'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton(
+                          onPressed: () {
+                            if (selected.isEmpty && items.isNotEmpty) {
+                              selected = items.first;
+                            }
+                            onSelected(selected);
+                            Navigator.pop(ctx);
+                          },
+                          child: const Text('Выбрать'),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1227,8 +1375,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     // ✅ обязательные авто поля
     CarSpecs? car;
     if (_isAuto) {
-      if (!_validInt(_carYear.text) ||
-          !_validInt(_carMileage.text)) {
+      if (!_validInt(_carYear.text) || !_validInt(_carMileage.text)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -1243,9 +1390,10 @@ class _AddListingScreenState extends State<AddListingScreen> {
       final mileage = int.parse(_carMileage.text.trim());
       final engine = _carEngine.text.trim().isEmpty
           ? null
-          : double.tryParse(_carEngine.text.trim().replaceAll(',', '.'));
-      final power =
-          _carPower.text.trim().isEmpty ? null : int.tryParse(_carPower.text.trim());
+          : parseEngineVolumeInput(_carEngine.text);
+      final power = _carPower.text.trim().isEmpty
+          ? null
+          : parsePowerHpInput(_carPower.text);
 
       final owners = _carOwners.text.trim().isEmpty
           ? null
@@ -1668,12 +1816,14 @@ class _AddListingScreenState extends State<AddListingScreen> {
               title: 'Объём двигателя',
               value: _carEngine.text.trim().isEmpty
                   ? ''
-                  : '${_carEngine.text.trim().replaceAll(',', '.')} л',
+                  : formatEngineVolume(parseEngineVolumeInput(_carEngine.text)),
               onTap: () => _openValuePickerSheet(
                 title: 'Объём двигателя',
                 items: _itemsWithCurrentValue(_engineVolumes, _carEngine.text),
                 currentValue: _carEngine.text.trim().replaceAll(',', '.'),
-                labelBuilder: (value) => '$value л',
+                labelBuilder: (value) =>
+                    formatEngineVolume(parseEngineVolumeInput(value)),
+                manualHint: 'Например: 2.2 или 300 куб. см',
                 onSelected: (value) => setState(() => _carEngine.text = value),
               ),
             ),
@@ -1688,6 +1838,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
                 items: _itemsWithCurrentValue(_powerValues, _carPower.text),
                 currentValue: _carPower.text.trim(),
                 labelBuilder: (value) => '$value л.с.',
+                manualHint: 'Например: 193 л.с.',
                 onSelected: (value) => setState(() => _carPower.text = value),
               ),
             ),
@@ -1764,14 +1915,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
                 labelText: 'VIN (необязательно)',
               ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _carNote,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Дополнительно (необязательно)',
-              ),
-            ),
           ],
 
           const SizedBox(height: 12),
@@ -1779,10 +1922,15 @@ class _AddListingScreenState extends State<AddListingScreen> {
           TextField(
             controller: _phone,
             keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(
+            onChanged: (_) => setState(() {}),
+            inputFormatters: const <TextInputFormatter>[
+              RuPhoneInputFormatter(),
+            ],
+            decoration: InputDecoration(
               labelText: 'Телефон (для звонка)',
-              helperText:
-                  'Номер из профиля подставляется автоматически, его можно изменить для этого объявления',
+              helperText: _phone.text.trim().isEmpty
+                  ? 'Номер из профиля подставляется автоматически, его можно изменить для этого объявления'
+                  : 'Будет показано как: ${formatRussianPhone(_phone.text)}',
             ),
           ),
 

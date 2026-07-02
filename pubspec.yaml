@@ -1,13 +1,15 @@
 name: atta
 description: ATTA MVP - classifieds app
 publish_to: 'none'
-version: 1.0.1+10
+version: 1.0.1+12
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
+    sdk: flutter
+  flutter_localizations:
     sdk: flutter
 
   # State
@@ -21,7 +23,7 @@ dependencies:
 
   # Utils
   uuid: ^4.5.1
-  intl: ^0.19.0
+  intl: ^0.20.2
   timeago: ^3.7.0
 
   # UI / media

@@ -11,6 +11,8 @@ import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/theme_service.dart';
 import 'package:atta/src/utils/media_url.dart';
+import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/utils/share_texts.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/skeletons.dart';
@@ -120,18 +122,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return _profileStream!;
   }
 
-  String _formatPhone(String value) {
-    final digits = value.replaceAll(RegExp(r'\D'), '');
-    String normalized = digits;
-    if (normalized.length == 11 &&
-        (normalized.startsWith('7') || normalized.startsWith('8'))) {
-      normalized = normalized.substring(1);
-    }
-    if (normalized.length != 10) return value;
-    return '+7 ${normalized.substring(0, 3)} ${normalized.substring(3, 6)}-'
-        '${normalized.substring(6, 8)}-${normalized.substring(8)}';
-  }
-
   String _shortUserId(String uid) {
     final text = uid.trim();
     if (text.length <= 14) return text;
@@ -157,9 +147,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required String uid,
     required String name,
   }) async {
-    final profileLink = 'https://atta.app/profile/$uid';
-    final message =
-        'Присоединяйся к ATTA. Удобно покупать и продавать рядом.\nПрофиль $name: $profileLink';
+    final shareText = buildInviteShareText(currentUserId: uid);
+    final message = shareText.text;
+    if (message == null) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shareText.errorMessage ?? appInstallUrlNotConfiguredMessage,
+          ),
+        ),
+      );
+      return;
+    }
 
     try {
       await SharePlus.instance.share(
@@ -172,7 +172,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Не удалось открыть меню отправки. Попробуйте ещё раз.'),
+          content:
+              Text('Не удалось открыть меню отправки. Попробуйте ещё раз.'),
         ),
       );
     }
@@ -297,7 +298,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             'Avatar flow uploadResponse.avatarUrl=$uploadedAvatarUrl originalAvatarUrl=${avatarResolution.originalUrl} resolvedAvatarUrl=${avatarResolution.resolvedUrl}',
           );
         }
-        if (uploadedAvatarUrl.isEmpty || avatarResolution.resolvedUrl.trim().isEmpty) {
+        if (uploadedAvatarUrl.isEmpty ||
+            avatarResolution.resolvedUrl.trim().isEmpty) {
           throw Exception('backend_empty_avatar_url');
         }
         await _precacheAvatar(context, avatarResolution.resolvedUrl.trim());
@@ -318,10 +320,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       } catch (e) {
         if (mounted) {
           setState(() {
-            _avatarOverrideUrl =
-                _avatarOverrideUrl?.trim().isNotEmpty == true
-                    ? _avatarOverrideUrl
-                    : (previousAvatarUrl.isEmpty ? null : previousAvatarUrl);
+            _avatarOverrideUrl = _avatarOverrideUrl?.trim().isNotEmpty == true
+                ? _avatarOverrideUrl
+                : (previousAvatarUrl.isEmpty ? null : previousAvatarUrl);
             _avatarPreviewBytes = null;
             _isAvatarUploading = false;
           });
@@ -458,7 +459,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final name =
               profile.pickNameFromRow(data, fallback: authFallbackName);
           final phone = (data['phone'] ?? '').toString().trim();
-          final phoneDisplay = phone.isEmpty ? '' : _formatPhone(phone);
+          final phoneDisplay = phone.isEmpty ? '' : formatRussianPhone(phone);
           final phoneVerified =
               data['phoneVerified'] == true || data['phone_verified'] == true;
 
@@ -983,7 +984,7 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile> {
   void _retry() {
     final walletService = context.read<WalletService>();
     setState(() {
-      _future = walletService.checkAccrual();
+      _future = walletService.checkAccrual(forceRefresh: true);
     });
   }
 

@@ -744,6 +744,7 @@ class _TimewebFavoriteListingsTabState
     extends State<_TimewebFavoriteListingsTab>
     with AutomaticKeepAliveClientMixin {
   late Future<List<Listing>> _listingsFuture;
+  StreamSubscription<Set<String>>? _favoritesSub;
   List<Listing>? _items;
   bool _loading = true;
   bool _loadedOnce = false;
@@ -762,14 +763,20 @@ class _TimewebFavoriteListingsTabState
       _loading = false;
     }
     _listingsFuture = _loadListings();
+    _favoritesSub = widget.favs.streamFavoriteIds(widget.userId).listen(
+      _handleFavoriteIdsChanged,
+    );
+  }
+
+  @override
+  void dispose() {
+    _favoritesSub?.cancel();
+    super.dispose();
   }
 
   Future<List<Listing>> _loadListings() async {
-    final all = await widget.listings.getListings(category: 'Все', search: '');
     final favoriteIds = await widget.favs.getFavoriteIds(widget.userId);
-    final items = all
-        .where((listing) => favoriteIds.contains(listing.id))
-        .toList(growable: false);
+    final items = await _resolveFavoriteListings(favoriteIds);
     if (!mounted) return items;
     setState(() {
       _items = items;
@@ -778,6 +785,47 @@ class _TimewebFavoriteListingsTabState
       _errorText = null;
     });
     return items;
+  }
+
+  Future<List<Listing>> _resolveFavoriteListings(Set<String> favoriteIds) async {
+    if (favoriteIds.isEmpty) {
+      return const <Listing>[];
+    }
+    final cachedFeed = widget.listings.peekListings(category: 'Все', search: '');
+    final byId = <String, Listing>{
+      for (final listing in cachedFeed)
+        if (favoriteIds.contains(listing.id)) listing.id: listing,
+    };
+    final missingIds = favoriteIds.where((id) => !byId.containsKey(id)).toList();
+    if (missingIds.isNotEmpty) {
+      final fetched = await Future.wait(
+        missingIds.map(
+          (id) => widget.listings.getListingById(id).catchError((_) => null),
+        ),
+      );
+      for (final listing in fetched.whereType<Listing>()) {
+        byId[listing.id] = listing;
+      }
+    }
+    return byId.values.toList(growable: false);
+  }
+
+  void _handleFavoriteIdsChanged(Set<String> favoriteIds) {
+    if (!mounted) return;
+    final currentItems = List<Listing>.from(_items ?? const <Listing>[]);
+    final filteredItems = currentItems
+        .where((listing) => favoriteIds.contains(listing.id))
+        .toList(growable: false);
+    final hasMissingListings = favoriteIds.any(
+      (id) => !filteredItems.any((listing) => listing.id == id),
+    );
+    setState(() {
+      _items = filteredItems;
+      _loadedOnce = true;
+    });
+    if (hasMissingListings) {
+      unawaited(_loadListings());
+    }
   }
 
   Future<void> _refresh() async {
@@ -799,7 +847,6 @@ class _TimewebFavoriteListingsTabState
       listingId: listingId,
       makeFavorite: false,
     );
-    await _refresh();
   }
 
   @override

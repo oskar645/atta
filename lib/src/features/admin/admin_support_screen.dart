@@ -18,6 +18,59 @@ class AdminSupportTab extends StatelessWidget {
     );
   }
 
+  Future<void> _hideTicket(
+    BuildContext context, {
+    required Map<String, dynamic> ticket,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Удалить переписку из списка поддержки?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) {
+      return;
+    }
+
+    final ticketId = (ticket['id'] ?? '').toString().trim();
+    final updatedAt = (ticket['updated_at'] ?? '').toString().trim();
+    if (ticketId.isEmpty || updatedAt.isEmpty) {
+      showAppSnack(
+        context,
+        'Не удалось скрыть переписку. Попробуйте ещё раз.',
+        isError: true,
+      );
+      return;
+    }
+
+    try {
+      await context.read<SupportService>().hideAdminTicket(
+            ticketId: ticketId,
+            updatedAt: updatedAt,
+          );
+      if (!context.mounted) return;
+      showAppSnack(context, 'Переписка скрыта');
+    } catch (_) {
+      if (!context.mounted) return;
+      showAppSnack(
+        context,
+        'Не удалось скрыть переписку. Попробуйте ещё раз.',
+        isError: true,
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final support = context.read<SupportService>();
@@ -92,6 +145,7 @@ class AdminSupportTab extends StatelessWidget {
                   ),
                 );
               },
+              onLongPress: () => _hideTicket(context, ticket: data),
             );
           },
         );

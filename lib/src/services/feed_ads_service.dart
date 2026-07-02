@@ -24,11 +24,20 @@ class FeedAdsService {
   Future<FeedAd?>? _activeAdInFlight;
   final StreamController<FeedAd?> _activeAdController =
       StreamController<FeedAd?>.broadcast();
+  final Map<String, DateTime> _lastDebugLogAt = <String, DateTime>{};
 
   static const Duration _activeAdTtl = Duration(minutes: 2);
+  static const Duration _debugLogCooldown = Duration(seconds: 30);
 
   void _debugSource(String message) {
     if (!kDebugMode) return;
+    final now = DateTime.now();
+    final lastLoggedAt = _lastDebugLogAt[message];
+    if (lastLoggedAt != null &&
+        now.difference(lastLoggedAt) < _debugLogCooldown) {
+      return;
+    }
+    _lastDebugLogAt[message] = now;
     debugPrint(message);
   }
 

@@ -376,6 +376,68 @@ void main() {
       'listing-1',
     );
   });
+
+  test('getListingsPage returns first page with cursor metadata', () async {
+    final api = _FakeListingsApi(
+      listItems: List<Map<String, dynamic>>.generate(
+        25,
+        (index) => _listingMap(
+          const <String>[],
+          id: 'listing-$index',
+          status: 'approved',
+          publishedAt:
+              '2026-07-01T10:${(59 - index).toString().padLeft(2, '0')}:00.000Z',
+        ),
+      ),
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getListingsPage(
+      category: 'Все',
+      search: '',
+      limit: 20,
+    );
+
+    expect(page.items, hasLength(20));
+    expect(page.hasMore, isTrue);
+    expect((page.nextCursor ?? '').isNotEmpty, isTrue);
+  });
+
+  test('getListingsPage preserves search and category on next page', () async {
+    final api = _FakeListingsApi(
+      listItems: List<Map<String, dynamic>>.generate(
+        30,
+        (index) => _listingMap(
+          const <String>[],
+          id: 'listing-$index',
+          status: 'approved',
+          publishedAt:
+              '2026-07-01T10:${(59 - index).toString().padLeft(2, '0')}:00.000Z',
+        ),
+      ),
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final firstPage = await service.getListingsPage(
+      category: 'Электроника',
+      search: 'Товар',
+      limit: 20,
+    );
+    final secondPage = await service.getListingsPage(
+      category: 'Электроника',
+      search: 'Товар',
+      limit: 20,
+      cursor: firstPage.nextCursor,
+    );
+
+    expect(firstPage.items, hasLength(20));
+    expect(secondPage.items, hasLength(10));
+    expect(api.listQueries.first['category'], 'Электроника');
+    expect(api.listQueries.first['search'], 'Товар');
+    expect(api.listQueries.last['category'], 'Электроника');
+    expect(api.listQueries.last['search'], 'Товар');
+    expect(api.listQueries.last['cursor'], firstPage.nextCursor);
+  });
 }
 
 class _FakeListingsApi extends ListingsApi {
@@ -386,6 +448,7 @@ class _FakeListingsApi extends ListingsApi {
 
   final List<Map<String, dynamic>> listItems;
   final Map<String, Map<String, dynamic>> findByIdItems;
+  final List<Map<String, dynamic>> listQueries = <Map<String, dynamic>>[];
 
   @override
   Future<Map<String, dynamic>> create(Map<String, dynamic> body) async {
@@ -421,8 +484,18 @@ class _FakeListingsApi extends ListingsApi {
   Future<Map<String, dynamic>> list({
     Map<String, dynamic>? queryParameters,
   }) async {
+    final query = Map<String, dynamic>.from(queryParameters ?? const {});
+    listQueries.add(query);
+    final limit = (query['limit'] as int?) ?? int.tryParse('${query['limit']}');
+    final cursor = (query['cursor'] ?? '').toString().trim();
+    final start = cursor.isEmpty ? 0 : int.tryParse(cursor) ?? 0;
+    final effectiveLimit = limit ?? listItems.length;
+    final end = (start + effectiveLimit).clamp(0, listItems.length);
+    final slice = listItems.sublist(start, end);
     return <String, dynamic>{
-      'items': listItems,
+      'items': slice,
+      'nextCursor': end < listItems.length ? '$end' : null,
+      'hasMore': end < listItems.length,
     };
   }
 }

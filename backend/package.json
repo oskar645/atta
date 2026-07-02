@@ -17,6 +17,8 @@
     "pm2:stop": "pm2 delete atta-backend",
     "pm2:logs": "pm2 logs atta-backend",
     "admin": "ts-node apps/api/src/scripts/grant-admin.ts",
+    "admin:grant-test-bonus": "ts-node apps/api/src/scripts/grant-admin-test-bonus.ts",
+    "wallet:admin-bonus": "ts-node apps/api/src/scripts/grant-admin-test-bonus.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev --name init",

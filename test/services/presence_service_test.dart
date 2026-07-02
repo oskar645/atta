@@ -18,7 +18,12 @@ void main() {
     final service = PresenceService(
       socketService: _FakeChatSocketService(),
       apiClient: _FakeApiClient(
-        onGet: (path, {queryParameters, authorized = false}) async {
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
           expect(path, '/presence/user-1');
           expect(authorized, true);
           return <String, dynamic>{
@@ -38,7 +43,12 @@ void main() {
     final service = PresenceService(
       socketService: socket,
       apiClient: _FakeApiClient(
-        onGet: (path, {queryParameters, authorized = false}) async {
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
           return <String, dynamic>{
             'userId': 'user-1',
             'isOnline': false,
@@ -65,6 +75,7 @@ class _FakeApiClient extends ApiClient {
     String path, {
     Map<String, dynamic>? queryParameters,
     bool authorized,
+    bool sendAuthIfAvailable,
   }) onGet;
 
   @override
@@ -72,11 +83,13 @@ class _FakeApiClient extends ApiClient {
     String path, {
     Map<String, dynamic>? queryParameters,
     bool authorized = false,
+    bool sendAuthIfAvailable = false,
   }) {
     return onGet(
       path,
       queryParameters: queryParameters,
       authorized: authorized,
+      sendAuthIfAvailable: sendAuthIfAvailable,
     );
   }
 }

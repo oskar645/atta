@@ -53,15 +53,31 @@ class ChatSocketService {
   bool _lastConnectionValue = false;
   DateTime? _lastConnectAttemptAt;
   DateTime? _lastFailureLoggedAt;
-  Duration _reconnectDelay = const Duration(seconds: 2);
+  int _reconnectAttempt = 0;
 
   static const Duration _connectRetryCooldown = Duration(seconds: 5);
-  static const Duration _maxReconnectDelay = Duration(seconds: 20);
+  static const List<Duration> _reconnectBackoffSteps = <Duration>[
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+    Duration(seconds: 10),
+    Duration(seconds: 30),
+  ];
 
   Stream<ChatSocketEvent> get events => _events.stream;
   Stream<PresenceSnapshot> get presenceUpdates => _presence.stream;
   Stream<bool> get connectionChanges => _connected.stream;
   bool get isConnected => _socket?.connected == true;
+
+  @visibleForTesting
+  static bool isExpectedSocketCloseError(Object error) {
+    final type = error.runtimeType.toString();
+    if (type == 'WebSocketConnectionClosed') {
+      return true;
+    }
+    final message = error.toString().toLowerCase();
+    return message.contains('websocketconnectionclosed') ||
+        message.contains('connection closed');
+  }
 
   void _debugLog(String message) {
     if (!ApiConfig.useTimewebBackend || !kDebugMode) return;
@@ -111,7 +127,7 @@ class ChatSocketService {
 
       socket.onConnect((_) {
         _socket = socket;
-        _reconnectDelay = const Duration(seconds: 2);
+        _reconnectAttempt = 0;
         _emitConnection(true);
         for (final chatId in _joinedChats) {
           socket.emit('chat.join', {'chatId': chatId});
@@ -181,11 +197,16 @@ class ChatSocketService {
     _disconnectRequested = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _reconnectAttempt = 0;
     _stopPing();
     final socket = _socket;
     _socket = null;
     _emitConnection(false);
-    socket?.disconnect();
+    _runSocketOperation(
+      () => socket?.disconnect(),
+      debugContext: 'disconnect',
+      ignoreExpectedCloseError: true,
+    );
     _disposeSocket(socket);
     _connecting = false;
   }
@@ -198,9 +219,14 @@ class ChatSocketService {
   Future<void> reconnect() async {
     if (_disposed) return;
     if (isConnected || _connecting) return;
-    _socket?.disconnect();
+    _runSocketOperation(
+      () => _socket?.disconnect(),
+      debugContext: 'reconnect.disconnect',
+      ignoreExpectedCloseError: true,
+    );
     _disposeSocket(_socket);
     _socket = null;
+    _lastConnectAttemptAt = null;
     await connect();
   }
 
@@ -274,16 +300,17 @@ class ChatSocketService {
     if (_reconnectTimer != null || _disconnectRequested || _disposed) {
       return;
     }
-    final delay = _reconnectDelay;
-    _reconnectDelay = Duration(
-      seconds: (_reconnectDelay.inSeconds * 2)
-          .clamp(2, _maxReconnectDelay.inSeconds),
-    );
+    final delay = _reconnectBackoffSteps[
+        _reconnectAttempt.clamp(0, _reconnectBackoffSteps.length - 1)];
+    if (_reconnectAttempt < _reconnectBackoffSteps.length - 1) {
+      _reconnectAttempt += 1;
+    }
     _reconnectTimer = Timer(delay, () async {
       _reconnectTimer = null;
       if (_disconnectRequested || _disposed || isConnected || _connecting) {
         return;
       }
+      _lastConnectAttemptAt = null;
       await connect();
     });
   }
@@ -313,6 +340,26 @@ class ChatSocketService {
   }
 
   void _disposeSocket(io.Socket? socket) {
-    socket?.dispose();
+    _runSocketOperation(
+      () => socket?.dispose(),
+      debugContext: 'dispose',
+      ignoreExpectedCloseError: true,
+    );
+  }
+
+  void _runSocketOperation(
+    void Function() action, {
+    required String debugContext,
+    required bool ignoreExpectedCloseError,
+  }) {
+    try {
+      action();
+    } catch (error) {
+      if (ignoreExpectedCloseError && isExpectedSocketCloseError(error)) {
+        _debugLog('Socket $debugContext ignored expected close: $error');
+        return;
+      }
+      rethrow;
+    }
   }
 }

@@ -38,8 +38,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Кошелёк недоступен'), findsOneWidget);
-    expect(
-        find.text('Не удалось загрузить кошелёк. Проверьте интернет или VPN.'),
+    expect(find.text('Проверьте интернет-соединение и попробуйте снова.'),
         findsOneWidget);
     expect(find.text('Повторить'), findsOneWidget);
   });
@@ -87,12 +86,36 @@ void main() {
     expect(find.text('225 бонусов'), findsOneWidget);
     expect(
       find.text(
-        'История операций временно недоступна. Проверьте интернет или VPN.',
+        'Проверьте интернет-соединение и попробуйте снова.',
       ),
       findsOneWidget,
     );
     expect(find.text('Операций пока нет'), findsOneWidget);
     expect(find.text('Кошелёк недоступен'), findsNothing);
+  });
+
+  testWidgets('wallet screen refresh fetches fresh balance and history',
+      (tester) async {
+    final walletService = _RefreshingWalletService();
+
+    await tester.pumpWidget(
+      Provider<WalletService>.value(
+        value: walletService,
+        child: const MaterialApp(home: WalletScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('225 бонусов'), findsOneWidget);
+    expect(find.text('Начислено 25 бонусов за вход'), findsOneWidget);
+
+    await tester.drag(find.byType(RefreshIndicator), const Offset(0, 300));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(find.text('5225 бонусов'), findsOneWidget);
+    expect(find.text('Тестовое пополнение администратора'), findsOneWidget);
   });
 }
 
@@ -109,15 +132,14 @@ class _FakeWalletService extends WalletService {
             'type': 'accrual',
             'amount': index + 1,
             'reason': 'daily_login_bonus',
-            'created_at':
-                '2026-06-${(19 - index).clamp(10, 19)}T10:00:00.000Z',
+            'created_at': '2026-06-${(19 - index).clamp(10, 19)}T10:00:00.000Z',
           }),
         );
 
   final List<WalletTransaction> _transactions;
 
   @override
-  Future<Wallet> checkAccrual() async {
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
     await Future<void>.delayed(const Duration(milliseconds: 120));
     return Wallet.fromMap({
       'balance': 225,
@@ -131,7 +153,8 @@ class _FakeWalletService extends WalletService {
   }
 
   @override
-  Future<List<WalletTransaction>> getTransactions() async {
+  Future<List<WalletTransaction>> getTransactions(
+      {bool forceRefresh = false}) async {
     return _transactions;
   }
 }
@@ -152,9 +175,9 @@ List<WalletTransaction> _singleTransaction() {
 
 class _FailingWalletService extends WalletService {
   @override
-  Future<Wallet> checkAccrual() async {
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
     throw const ApiException(
-      'Не удалось загрузить кошелёк. Проверьте интернет или VPN.',
+      'Проверьте интернет-соединение и попробуйте снова.',
       code: 'timeout',
     );
   }
@@ -162,10 +185,55 @@ class _FailingWalletService extends WalletService {
 
 class _TransactionsFailingWalletService extends _FakeWalletService {
   @override
-  Future<List<WalletTransaction>> getTransactions() async {
+  Future<List<WalletTransaction>> getTransactions(
+      {bool forceRefresh = false}) async {
     throw const ApiException(
-      'История операций временно недоступна. Проверьте интернет или VPN.',
+      'Проверьте интернет-соединение и попробуйте снова.',
       code: 'timeout',
     );
+  }
+}
+
+class _RefreshingWalletService extends WalletService {
+  int _walletFetches = 0;
+  int _transactionFetches = 0;
+
+  @override
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
+    _walletFetches += 1;
+    final balance = _walletFetches == 1 ? 225 : 5225;
+    return Wallet.fromMap({
+      'balance': balance,
+      'maxBalance': 10000,
+      'welcomeBonus': 200,
+      'dailyBonusAmount': 25,
+      'lastDailyBonusAt': '2026-06-19T10:00:00.000Z',
+      'canClaimDailyBonus': false,
+      'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<List<WalletTransaction>> getTransactions(
+      {bool forceRefresh = false}) async {
+    _transactionFetches += 1;
+    if (_transactionFetches == 1) {
+      return _singleTransaction();
+    }
+    return [
+      WalletTransaction.fromMap({
+        'id': 'tx-admin-1',
+        'user_id': 'user-1',
+        'wallet_id': 'wallet-1',
+        'type': 'accrual',
+        'amount': 5000,
+        'reason': 'recurring_bonus',
+        'metadata': {
+          'description': 'Тестовое пополнение администратора',
+          'reference': 'ADMIN_TEST_BONUS_5000_V1',
+        },
+        'created_at': '2026-07-02T10:00:00.000Z',
+      }),
+    ];
   }
 }

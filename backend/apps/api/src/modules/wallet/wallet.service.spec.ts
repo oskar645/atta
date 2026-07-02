@@ -105,11 +105,15 @@ function createService(initial?: {
         where,
         take,
       }: {
-        where: { userId: string };
+        where: { userId: string; reason?: WalletTransactionReason };
         take?: number;
       }) =>
         [...transactions]
-          .filter((item) => item.userId === where.userId)
+          .filter(
+            (item) =>
+              item.userId === where.userId &&
+              (where.reason == null || item.reason === where.reason),
+          )
           .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
           .slice(0, take ?? Number.MAX_SAFE_INTEGER)
           .map((item) => ({ ...item })),
@@ -263,6 +267,44 @@ test('concurrent accrual does not double credit and stores daily_login_bonus rea
       (item) => item.reason === DAILY_LOGIN_BONUS_REASON,
     ).length,
     1,
+  );
+});
+
+test('manual admin test bonus credits only once and stores russian description', async () => {
+  const { service, state } = createService({
+    wallet: {
+      bonusBalance: 300,
+    },
+  });
+
+  const first = await service.accrueManualBonusIfNeeded('user-1', {
+    amount: 5000,
+    reference: 'ADMIN_TEST_BONUS_5000_V1',
+    description: 'Тестовое пополнение администратора',
+  });
+  const second = await service.accrueManualBonusIfNeeded('user-1', {
+    amount: 5000,
+    reference: 'ADMIN_TEST_BONUS_5000_V1',
+    description: 'Тестовое пополнение администратора',
+  });
+
+  assert.equal(first.applied, true);
+  assert.equal(second.applied, false);
+  assert.equal(first.wallet.bonusBalance, 5300);
+  assert.equal(second.wallet.bonusBalance, 5300);
+  assert.equal(
+    state.transactions.filter(
+      (item) =>
+        item.reason === WalletTransactionReason.RECURRING_BONUS &&
+        item.metadata.reference === 'ADMIN_TEST_BONUS_5000_V1',
+    ).length,
+    1,
+  );
+  assert.equal(
+    state.transactions.find(
+      (item) => item.metadata.reference === 'ADMIN_TEST_BONUS_5000_V1',
+    )?.metadata.description,
+    'Тестовое пополнение администратора',
   );
 });
 

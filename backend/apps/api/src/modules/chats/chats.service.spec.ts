@@ -50,6 +50,7 @@ function createMessage() {
     id: 'message-1',
     chatId: 'chat-1',
     senderId: 'seller-1',
+    clientMessageId: null,
     messageType: 'TEXT',
     text: 'Здравствуйте',
     imageBucket: null,
@@ -125,6 +126,57 @@ test('sendMessage updates chats without creating in-app notification', async () 
     deletedByBuyerAt: null,
     deletedBySellerAt: null,
   });
+});
+
+test('sendMessage with duplicate clientMessageId returns existing message once', async () => {
+  const existingMessage = {
+    ...createMessage(),
+    clientMessageId: '7d1b7418-8080-4dde-bdb8-64551a986d53',
+  };
+  let createCalled = false;
+
+  const service = new ChatsService(
+    {
+      chat: {
+        findUnique: async () => createChat(),
+      },
+      chatMessage: {
+        findFirst: async () => existingMessage,
+        create: async () => {
+          createCalled = true;
+          return existingMessage;
+        },
+      },
+      $transaction: async () => {
+        throw new Error('transaction should not run for duplicate clientMessageId');
+      },
+    } as never,
+    {
+      getPresenceMap: async () => new Map(),
+    } as never,
+    {
+      buildProtectedChatUrl: () => '',
+    } as never,
+  );
+
+  const result = await service.sendMessage(
+    {
+      userId: 'seller-1',
+      role: 'user',
+    } as never,
+    'chat-1',
+    {
+      text: 'Здравствуйте',
+      clientMessageId: '7d1b7418-8080-4dde-bdb8-64551a986d53',
+    },
+  );
+
+  assert.equal(result.message.id, 'message-1');
+  assert.equal(
+    result.message.clientMessageId,
+    '7d1b7418-8080-4dde-bdb8-64551a986d53',
+  );
+  assert.equal(createCalled, false);
 });
 
 test('listChats sorts by lastMessageAt desc and keeps empty chats below', async () => {
@@ -393,4 +445,37 @@ test('listChats returns separate chats for same participants with different list
   assert.equal(result.items[1].id, 'chat-mercedes');
   assert.equal(result.items[1].listingId, 'listing-mercedes');
   assert.equal(result.items[1].listingPreview.title, 'Mercedes');
+});
+
+test('markMessageDelivered does not convert message to read', async () => {
+  const service = new ChatsService(
+    {
+      chatMessage: {
+        findUnique: async () => createMessage(),
+        update: async ({ data }: { data: Record<string, unknown> }) => ({
+          ...createMessage(),
+          deliveredAt: data['deliveredAt'],
+          readAt: null,
+        }),
+      },
+    } as never,
+    {
+      getPresenceMap: async () => new Map(),
+    } as never,
+    {
+      buildProtectedChatUrl: () => '',
+    } as never,
+  );
+
+  const result = await service.markMessageDelivered(
+    {
+      userId: 'buyer-1',
+      role: 'user',
+    } as never,
+    'message-1',
+  );
+
+  assert.equal(result.message.status, 'delivered');
+  assert.equal(result.message.readAt, null);
+  assert.ok(result.message.deliveredAt);
 });

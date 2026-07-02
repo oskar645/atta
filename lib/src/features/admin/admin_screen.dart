@@ -17,6 +17,7 @@ import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 
@@ -179,11 +180,24 @@ class _TimewebAdminListingsModerationTabState
   List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
   String? _errorText;
   bool _loading = true;
+  bool _loadedOnce = false;
+  Timer? _autoRefreshTimer;
+
+  static const Duration _autoRefreshInterval = Duration(seconds: 15);
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      unawaited(_refreshSilently());
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
@@ -203,6 +217,7 @@ class _TimewebAdminListingsModerationTabState
           _items = items;
           _errorText = null;
           _loading = false;
+          _loadedOnce = true;
         });
       }
       return items;
@@ -211,6 +226,7 @@ class _TimewebAdminListingsModerationTabState
         setState(() {
           _errorText = _friendlyAdminError(error);
           _loading = false;
+          _loadedOnce = true;
         });
       }
       return List<Map<String, dynamic>>.from(_items);
@@ -255,6 +271,15 @@ class _TimewebAdminListingsModerationTabState
       _future = _load();
     });
     await _future;
+  }
+
+  Future<void> _refreshSilently() async {
+    if (!mounted || _busy) return;
+    setState(() {
+      _loading = true;
+      _errorText = null;
+    });
+    await _load();
   }
 
   Future<void> _setStatus(String status) async {
@@ -344,15 +369,15 @@ class _TimewebAdminListingsModerationTabState
     required String hint,
     required String confirmText,
   }) async {
-    final controller = TextEditingController();
+    var value = '';
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
         content: TextField(
-          controller: controller,
           minLines: 2,
           maxLines: 4,
+          onChanged: (next) => value = next,
           decoration: InputDecoration(
             hintText: hint,
             border: const OutlineInputBorder(),
@@ -364,13 +389,12 @@ class _TimewebAdminListingsModerationTabState
             child: const Text('Отмена'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            onPressed: () => Navigator.pop(ctx, value.trim()),
             child: Text(confirmText),
           ),
         ],
       ),
     );
-    controller.dispose();
 
     final normalized = (result ?? '').trim();
     if (normalized.isEmpty) return null;
@@ -417,7 +441,7 @@ class _TimewebAdminListingsModerationTabState
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _future,
       builder: (context, snap) {
-        final items = _items.isNotEmpty
+        final items = _loadedOnce
             ? _items
             : (snap.data ?? const <Map<String, dynamic>>[]);
         if (_loading && items.isEmpty) {
@@ -497,9 +521,12 @@ class _TimewebAdminListingsModerationTabState
               ...items.map(
                 (item) {
                   final listingId = _id(item);
-                  final rawPhotos = item['photo_urls'] ?? item['photoUrls'] ?? [];
+                  final rawPhotos =
+                      item['photo_urls'] ?? item['photoUrls'] ?? [];
                   final photos = rawPhotos is List
-                      ? rawPhotos.map((entry) => entry.toString()).toList(growable: false)
+                      ? rawPhotos
+                          .map((entry) => entry.toString())
+                          .toList(growable: false)
                       : const <String>[];
                   return Card(
                     key: ValueKey('admin-moderation-item:$listingId'),
@@ -534,7 +561,8 @@ class _TimewebAdminListingsModerationTabState
                                     width: 92,
                                     height: 72,
                                     child: MediaPreviewBox(
-                                      imageUrl: photos.isNotEmpty ? photos.first : '',
+                                      imageUrl:
+                                          photos.isNotEmpty ? photos.first : '',
                                       categoryHint: 'listings',
                                       borderRadius: 12,
                                     ),
@@ -542,11 +570,14 @@ class _TimewebAdminListingsModerationTabState
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          (item['title'] ?? 'Без названия').toString(),
-                                          style: const TextStyle(fontWeight: FontWeight.w800),
+                                          (item['title'] ?? 'Без названия')
+                                              .toString(),
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w800),
                                         ),
                                         const SizedBox(height: 6),
                                         Text(
@@ -571,7 +602,9 @@ class _TimewebAdminListingsModerationTabState
                                           'Нажмите, чтобы открыть подробный просмотр',
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: Theme.of(context).colorScheme.outline,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .outline,
                                           ),
                                         ),
                                       ],
@@ -1479,6 +1512,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     final subcategory = (d['subcategory'] ?? '').toString();
     final desc = (d['description'] ?? '').toString();
     final phone = (d['phone'] ?? '').toString();
+    final phoneDisplay = formatRussianPhone(phone);
     final ownerId = (d['owner_id'] ?? '').toString();
     final ownerName = (d['owner_name'] ?? d['ownerName'] ?? '').toString();
     final status = (d['status'] ?? '').toString();
@@ -1538,9 +1572,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                           shape: BoxShape.circle,
                           color: index == _photoIndex
                               ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context)
-                                  .colorScheme
-                                  .outlineVariant,
+                              : Theme.of(context).colorScheme.outlineVariant,
                         ),
                       ),
                     ),
@@ -1616,9 +1648,11 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                 if (ownerName.trim().isNotEmpty)
                   _AdminInfoRow(label: 'Имя', value: ownerName),
                 if (phone.trim().isNotEmpty)
-                  _AdminInfoRow(label: 'Телефон', value: phone),
+                  _AdminInfoRow(label: 'Телефон', value: phoneDisplay),
                 if (createdAt.trim().isNotEmpty)
-                  _AdminInfoRow(label: 'Создано', value: _formatModerationDate(createdAt)),
+                  _AdminInfoRow(
+                      label: 'Создано',
+                      value: _formatModerationDate(createdAt)),
                 if (ownerId.trim().isNotEmpty)
                   _AdminInfoRow(label: 'owner_id', value: ownerId),
               ],

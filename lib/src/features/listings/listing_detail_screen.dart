@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:atta/src/features/auth/login_screen.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
 import 'package:atta/src/features/listings/listing_archive_flow.dart';
@@ -12,6 +16,7 @@ import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/deep_link_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
@@ -21,8 +26,11 @@ import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/listing_share_files.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/utils/share_texts.dart';
+import 'package:atta/src/utils/vehicle_specs.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
@@ -49,6 +57,7 @@ class ListingDetailScreen extends StatefulWidget {
 
 class _ListingDetailScreenState extends State<ListingDetailScreen> {
   bool _viewCounted = false;
+  bool _loginRedirectScheduled = false;
 
   bool _showFullDescription = false;
   bool _showAllSpecs = false;
@@ -280,41 +289,42 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   }
 
   Future<void> _shareAnnouncement(
-    String listingId,
     String title, {
     required int price,
     required String city,
-    String? photoUrl,
+    required List<String> photoUrls,
   }) async {
-    final shareLink = 'https://atta.app/listing/$listingId';
-    final cityText = city.trim().isEmpty ? 'Город не указан' : city.trim();
-    final message =
-        'Объявление в ATTA: $title\nЦена: ${formatPrice(price)} ₽\nГород: $cityText\n$shareLink';
+    final shareText = buildListingShareText(
+      title: title,
+      price: price,
+      city: city,
+    );
+    final message = shareText.text;
+    if (message == null) {
+      if (mounted) {
+        showAppSnack(
+          context,
+          shareText.errorMessage ?? appInstallUrlNotConfiguredMessage,
+          isError: true,
+        );
+      }
+      return;
+    }
 
     try {
-      final url = (photoUrl ?? '').trim();
-      if (url.isNotEmpty) {
-        final res = await http.get(Uri.parse(url));
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          await SharePlus.instance.share(
-            ShareParams(
-              files: [
-                XFile.fromData(
-                  res.bodyBytes,
-                  name: 'listing.jpg',
-                  mimeType: 'image/jpeg',
-                ),
-              ],
-              text: message,
-              subject: title,
-            ),
-          );
-          return;
-        }
+      List<XFile> files = const <XFile>[];
+      try {
+        files = await buildListingShareFiles(
+          photoUrls: photoUrls,
+          downloadPhoto: _downloadSharePhoto,
+        );
+      } catch (_) {
+        files = const <XFile>[];
       }
 
       await SharePlus.instance.share(
         ShareParams(
+          files: files.isEmpty ? null : files,
           text: message,
           subject: 'Объявление в ATTA',
         ),
@@ -328,6 +338,14 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         );
       }
     }
+  }
+
+  Future<Uint8List?> _downloadSharePhoto(String url) async {
+    final res = await http.get(Uri.parse(url));
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      return null;
+    }
+    return res.bodyBytes;
   }
 
   Future<void> _deleteListingAsAdmin({
@@ -405,7 +423,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       MapEntry('Кузов', car.bodyType),
       MapEntry('Топливо', car.fuel),
       if (car.engineVolume != null)
-        MapEntry('Двигатель', '${car.engineVolume!.toStringAsFixed(1)} л'),
+        MapEntry('Двигатель', formatEngineVolume(car.engineVolume)),
       if (car.powerHp != null) MapEntry('Мощность', '${car.powerHp} л.с.'),
       MapEntry('Коробка', car.transmission),
       MapEntry('Привод', car.drive),
@@ -619,13 +637,28 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           future: _listingFuture,
           builder: (context, snap) {
             if (snap.hasError) {
+              final error = snap.error!;
+              final auth = context.read<AuthService>();
+              if (error is ApiException &&
+                  error.isUnauthorized &&
+                  !auth.isAuthenticated &&
+                  !_loginRedirectScheduled) {
+                _loginRedirectScheduled = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const LoginScreen(),
+                    ),
+                  );
+                });
+              }
               return Scaffold(
                 appBar: AppBar(),
                 body: AppErrorView(
-                  message: shouldShowNetworkVpnHint(snap.error!)
-                      ? kNetworkVpnHintMessage
-                      : 'Не удалось открыть объявление.',
+                  message: _listingOpenErrorText(error),
                   onRetry: () async {
+                    _loginRedirectScheduled = false;
                     _reloadListing();
                   },
                 ),
@@ -664,8 +697,11 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             final listing = snap.data;
             if (listing == null) {
               return Scaffold(
-                  appBar: AppBar(),
-                  body: const Center(child: Text('Объявление удалено')));
+                appBar: AppBar(),
+                body: const Center(
+                  child: Text('Объявление не найдено или больше недоступно'),
+                ),
+              );
             }
             final status = listing.status;
             final rejectionReason = listing.rejectionReason.trim();
@@ -678,9 +714,18 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               return Scaffold(
                 appBar: AppBar(),
                 body: const Center(
-                    child: Text('Объявление на модерации или недоступно')),
+                  child: Text('Объявление не найдено или больше недоступно'),
+                ),
               );
             }
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              unawaited(
+                context
+                    .read<DeepLinkService>()
+                    .clearPendingListingIdIfMatches(widget.listingId),
+              );
+            });
 
             final canContact = (status == 'approved') || isOwner || isAdmin;
 
@@ -719,13 +764,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                       IconButton(
                         tooltip: 'Поделиться',
                         onPressed: () => _shareAnnouncement(
-                          listing.id,
                           listing.title,
                           price: listing.price,
                           city: listing.cityShort,
-                          photoUrl: listing.photoUrls.isEmpty
-                              ? null
-                              : listing.photoUrls.first,
+                          photoUrls: listing.photoUrls,
                         ),
                         icon: const Icon(Icons.share_outlined),
                       ),
@@ -1313,6 +1355,24 @@ String _adminDeleteErrorText(Object error) {
   return 'Не удалось удалить объявление. Попробуйте ещё раз.';
 }
 
+String _listingOpenErrorText(Object error) {
+  if (shouldShowNetworkVpnHint(error)) {
+    return kNetworkVpnHintMessage;
+  }
+  if (error is ApiException) {
+    if (error.isUnauthorized) {
+      return 'Войдите снова, чтобы открыть это объявление';
+    }
+    if (error.isNotFound || error.statusCode == 403) {
+      return 'Объявление не найдено или больше недоступно';
+    }
+    if (error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+  }
+  return 'Не удалось открыть объявление.';
+}
+
 class _SellerReviewsOverviewSection extends StatefulWidget {
   const _SellerReviewsOverviewSection({
     required this.sellerId,
@@ -1675,7 +1735,7 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
                       Text(
                         widget.phoneHidden
                             ? 'Телефон: скрыт'
-                            : 'Телефон: ${widget.phone}',
+                            : 'Телефон: ${formatRussianPhone(widget.phone)}',
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

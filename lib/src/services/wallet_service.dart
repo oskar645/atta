@@ -73,7 +73,7 @@ class WalletService {
     }
   }
 
-  Future<Wallet> getWallet() async {
+  Future<Wallet> getWallet({bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) {
       return _cachedWallet ??
           const Wallet(
@@ -89,6 +89,10 @@ class WalletService {
             daysUntilNextAccrual: 0,
             secondsUntilNextAccrual: 0,
           );
+    }
+
+    if (forceRefresh) {
+      _walletFuture = null;
     }
 
     final existing = _walletFuture;
@@ -107,8 +111,12 @@ class WalletService {
     }
   }
 
-  Future<List<WalletTransaction>> getTransactions() async {
+  Future<List<WalletTransaction>> getTransactions(
+      {bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) return const <WalletTransaction>[];
+    if (forceRefresh) {
+      _transactionsFuture = null;
+    }
     final existing = _transactionsFuture;
     if (existing != null) {
       return existing;
@@ -124,9 +132,12 @@ class WalletService {
     }
   }
 
-  Future<Wallet> checkAccrual() async {
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) {
-      return getWallet();
+      return getWallet(forceRefresh: forceRefresh);
+    }
+    if (forceRefresh) {
+      _accrualFuture = null;
     }
     final existing = _accrualFuture;
     if (existing != null) {
@@ -185,7 +196,7 @@ class WalletService {
     return future.timeout(
       _walletTimeout,
       onTimeout: () => throw const ApiException(
-        'Не удалось загрузить кошелёк. Проверьте интернет или VPN.',
+        'Проверьте интернет-соединение и попробуйте снова.',
         code: 'timeout',
       ),
     );

@@ -73,6 +73,13 @@ type FeedListingLike = {
   promotions?: PromotionLike[] | null;
 };
 
+type FeedCursorPayload = {
+  bumpAt: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  id: string;
+};
+
 const getLatestActiveBumpAt = (promotions?: PromotionLike[] | null): Date | null => {
   let latest: Date | null = null;
 
@@ -146,6 +153,86 @@ const compareFeedListingsSafe = (
   }
 
   return b.id.localeCompare(a.id);
+};
+
+const toFeedCursorPayload = (listing: FeedListingLike): FeedCursorPayload => ({
+  bumpAt: getLatestActiveBumpAt(listing.promotions)?.toISOString() ?? null,
+  publishedAt: listing.publishedAt?.toISOString() ?? null,
+  createdAt: listing.createdAt.toISOString(),
+  id: listing.id,
+});
+
+const encodeFeedCursor = (listing: FeedListingLike) =>
+  Buffer.from(JSON.stringify(toFeedCursorPayload(listing))).toString('base64url');
+
+const parseFeedCursor = (rawCursor?: string): FeedCursorPayload | null => {
+  const cursor = rawCursor?.trim() ?? '';
+  if (!cursor) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8'),
+    ) as Partial<FeedCursorPayload>;
+    if (
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      parsed.createdAt.trim().length === 0 ||
+      parsed.id.trim().length === 0
+    ) {
+      return null;
+    }
+
+    return {
+      bumpAt:
+        typeof parsed.bumpAt === 'string' && parsed.bumpAt.trim().length > 0
+          ? parsed.bumpAt
+          : null,
+      publishedAt:
+        typeof parsed.publishedAt === 'string' &&
+        parsed.publishedAt.trim().length > 0
+          ? parsed.publishedAt
+          : null,
+      createdAt: parsed.createdAt,
+      id: parsed.id,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const compareFeedListingToCursor = (
+  listing: FeedListingLike,
+  cursor: FeedCursorPayload,
+) => {
+  const bumpAt = getLatestActiveBumpAt(listing.promotions);
+  const cursorBumpAt = cursor.bumpAt ? new Date(cursor.bumpAt) : null;
+
+  if (bumpAt != null || cursorBumpAt != null) {
+    if (bumpAt == null) return 1;
+    if (cursorBumpAt == null) return -1;
+    const bumpDiff = cursorBumpAt.getTime() - bumpAt.getTime();
+    if (bumpDiff !== 0) {
+      return bumpDiff;
+    }
+  }
+
+  const listingPublishedAt = listing.publishedAt?.getTime() ?? 0;
+  const cursorPublishedAt = cursor.publishedAt
+    ? new Date(cursor.publishedAt).getTime()
+    : 0;
+  if (listingPublishedAt !== cursorPublishedAt) {
+    return cursorPublishedAt - listingPublishedAt;
+  }
+
+  const listingCreatedAt = listing.createdAt.getTime();
+  const cursorCreatedAt = new Date(cursor.createdAt).getTime();
+  if (listingCreatedAt !== cursorCreatedAt) {
+    return cursorCreatedAt - listingCreatedAt;
+  }
+
+  return cursor.id.localeCompare(listing.id);
 };
 
 @Injectable()
@@ -235,6 +322,8 @@ export class ListingsService {
     ownerId?: string;
     ownerMe?: string;
     status?: string;
+    limit?: number;
+    cursor?: string;
   }) {
     const search = params?.search?.trim();
     const category = params?.category?.trim();
@@ -242,6 +331,8 @@ export class ListingsService {
     const ownerId = params?.ownerId?.trim();
     const ownerMe = params?.ownerMe?.trim();
     const status = params?.status?.trim();
+    const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
+    const cursor = parseFeedCursor(params?.cursor);
     const andConditions: Prisma.ListingWhereInput[] = [];
 
     const where: Prisma.ListingWhereInput = {
@@ -387,8 +478,24 @@ export class ListingsService {
       });
     }
 
+    const startIndex =
+      cursor == null
+        ? 0
+        : listings.findIndex(
+            (listing) => compareFeedListingToCursor(listing, cursor) > 0,
+          );
+    const safeStartIndex = startIndex < 0 ? listings.length : startIndex;
+    const pageItems = listings.slice(safeStartIndex, safeStartIndex + limit);
+    const hasMore = safeStartIndex + limit < listings.length;
+    const nextCursor =
+      hasMore && pageItems.length > 0
+        ? encodeFeedCursor(pageItems[pageItems.length - 1]!)
+        : null;
+
     return {
-      items: listings.map((listing) => serializeListing(listing)),
+      items: pageItems.map((listing) => serializeListing(listing)),
+      nextCursor,
+      hasMore,
       allowed_statuses: LISTING_STATUSES,
     };
   }

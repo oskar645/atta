@@ -2,6 +2,7 @@ import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -301,7 +302,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                             ],
                           ),
                           const SizedBox(height: 6),
-                          Text('Телефон: ${_value(item, const ['phone'])}'),
+                          Text(
+                            'Телефон: ${formatRussianPhone(_value(item, const [
+                                  'phone'
+                                ]))}',
+                          ),
                           Text('User ID: ${_value(item, const ['id'])}'),
                           Text('Дата регистрации: ${_value(item, const [
                                 'created_at'

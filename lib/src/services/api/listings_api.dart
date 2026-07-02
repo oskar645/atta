@@ -23,7 +23,7 @@ class ListingsApi {
   Future<Map<String, dynamic>> getById(String id) async {
     final response = await client.get(
       '/listings/$id',
-      authorized: true,
+      sendAuthIfAvailable: true,
     );
     return Map<String, dynamic>.from(response as Map);
   }

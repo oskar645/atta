@@ -9,8 +9,11 @@ import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/utils/vehicle_specs.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' as latlng;
@@ -220,7 +223,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     _city.text = l.city;
     _desc.text = l.description;
     _price.text = formatPrice(l.price);
-    _phone.text = l.phone;
+    _phone.text = formatRuPhoneForField(l.phone);
     _phoneHidden = l.phoneHidden;
 
     for (final k in _delivery.keys) {
@@ -236,7 +239,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
       _carYear.text = '${c.year}';
       _carMileage.text = '${c.mileageKm}';
       _carEngine.text =
-          c.engineVolume == null ? '' : c.engineVolume!.toStringAsFixed(1);
+          c.engineVolume == null ? '' : formatEngineVolume(c.engineVolume);
       _carPower.text = c.powerHp?.toString() ?? '';
       _carOwners.text = c.owners?.toString() ?? '';
       _carVin.text = c.vin ?? '';
@@ -700,10 +703,10 @@ class _EditListingScreenState extends State<EditListingScreen> {
       final mileage = int.parse(_carMileage.text.trim());
       final engine = _carEngine.text.trim().isEmpty
           ? null
-          : double.tryParse(_carEngine.text.trim().replaceAll(',', '.'));
+          : parseEngineVolumeInput(_carEngine.text);
       final power = _carPower.text.trim().isEmpty
           ? null
-          : int.tryParse(_carPower.text.trim());
+          : parsePowerHpInput(_carPower.text);
 
       final owners = _carOwners.text.trim().isEmpty
           ? null
@@ -1168,14 +1171,14 @@ class _EditListingScreenState extends State<EditListingScreen> {
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
-                  labelText: 'Объём двигателя (л), например: 2.5'),
+                  labelText: 'Объём двигателя, например: 2.2 или 300 куб. см'),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _carPower,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                  labelText: 'Мощность (л.с.), например: 181'),
+                  labelText: 'Мощность (л.с.), например: 193'),
             ),
             const SizedBox(height: 12),
             _drop(
@@ -1209,8 +1212,16 @@ class _EditListingScreenState extends State<EditListingScreen> {
           TextField(
             controller: _phone,
             keyboardType: TextInputType.phone,
-            decoration:
-                const InputDecoration(labelText: 'Телефон (для звонка)'),
+            onChanged: (_) => setState(() {}),
+            inputFormatters: const <TextInputFormatter>[
+              RuPhoneInputFormatter(),
+            ],
+            decoration: InputDecoration(
+              labelText: 'Телефон (для звонка)',
+              helperText: _phone.text.trim().isEmpty
+                  ? null
+                  : 'Будет показано как: ${formatRussianPhone(_phone.text)}',
+            ),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,

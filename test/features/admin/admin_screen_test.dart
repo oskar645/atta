@@ -82,15 +82,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Модерация'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('admin-moderation-item:listing-pending')));
+      await tester.tap(
+          find.byKey(const ValueKey('admin-moderation-item:listing-pending')));
       await tester.pumpAndSettle();
 
       expect(find.text('Проверка объявления'), findsOneWidget);
       expect(find.text('Описание'), findsOneWidget);
       expect(find.text('Продавец'), findsOneWidget);
-      expect(find.textContaining('Подробное описание объявления'), findsOneWidget);
+      expect(
+          find.textContaining('Подробное описание объявления'), findsOneWidget);
       expect(find.textContaining('Телефон'), findsOneWidget);
-      expect(find.textContaining('+79990000000'), findsOneWidget);
+      expect(find.textContaining('+7 999 000 00 00'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Дополнительные поля'), 300);
       await tester.pumpAndSettle();
       expect(find.text('Дополнительные поля'), findsOneWidget);
@@ -100,6 +102,73 @@ void main() {
       expect(find.text('Отклонить ❌'), findsOneWidget);
     },
   );
+
+  testWidgets('moderation approve removes item immediately', (tester) async {
+    final adminService = _FakeAdminService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<SavedSearchService>.value(
+            value: _FakeSavedSearchService(),
+          ),
+        ],
+        child: const MaterialApp(home: AdminScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Модерация'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pending listing'), findsOneWidget);
+
+    await tester.tap(find.text('Одобрить'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Pending listing'), findsNothing);
+    expect(adminService.approvedIds, <String>['listing-pending']);
+  });
+
+  testWidgets('moderation reject removes item immediately', (tester) async {
+    final adminService = _FakeAdminService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<SavedSearchService>.value(
+            value: _FakeSavedSearchService(),
+          ),
+        ],
+        child: const MaterialApp(home: AdminScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Модерация'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pending listing'), findsOneWidget);
+
+    await tester.tap(find.text('Отклонить'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'Нарушение правил');
+    await tester.tap(find.text('Отклонить').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('Pending listing'), findsNothing);
+    expect(adminService.rejectedIds, <String>['listing-pending']);
+  });
 }
 
 class _FakeAuthService extends AuthService {
@@ -113,6 +182,10 @@ class _FakeAuthService extends AuthService {
 }
 
 class _FakeAdminService extends AdminService {
+  final List<String> approvedIds = <String>[];
+  final List<String> rejectedIds = <String>[];
+  bool _showPending = true;
+
   @override
   Stream<bool> streamIsAdmin(String uid) => Stream<bool>.value(true);
 
@@ -126,7 +199,8 @@ class _FakeAdminService extends AdminService {
   Stream<int> streamOpenReportsCount() => Stream<int>.value(0);
 
   @override
-  Future<Map<String, dynamic>> dashboardStats({bool forceRefresh = false}) async {
+  Future<Map<String, dynamic>> dashboardStats(
+      {bool forceRefresh = false}) async {
     return <String, dynamic>{
       'stats': <String, dynamic>{
         'users': 1,
@@ -167,9 +241,33 @@ class _FakeAdminService extends AdminService {
     }
 
     return <String, dynamic>{
-      'items': <Map<String, dynamic>>[
-        _listingMap(id: 'listing-pending', title: 'Pending listing'),
-      ],
+      'items': _showPending
+          ? <Map<String, dynamic>>[
+              _listingMap(id: 'listing-pending', title: 'Pending listing'),
+            ]
+          : const <Map<String, dynamic>>[],
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> approveListing(String listingId) async {
+    approvedIds.add(listingId);
+    _showPending = false;
+    return <String, dynamic>{
+      'listing': _listingMap(id: listingId, title: 'Pending listing')
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> rejectListing(
+    String listingId, {
+    String? reason,
+    String? moderationNote,
+  }) async {
+    rejectedIds.add(listingId);
+    _showPending = false;
+    return <String, dynamic>{
+      'listing': _listingMap(id: listingId, title: 'Pending listing')
     };
   }
 

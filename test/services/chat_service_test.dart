@@ -48,7 +48,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
     expect(socket.deliveredIds, contains('message-1'));
-    expect(socket.readIds, contains('message-1'));
+    expect(socket.readIds, isEmpty);
     await sub.cancel();
   });
 
@@ -249,7 +249,7 @@ void main() {
       socketService: _FakeChatSocketService(),
       api: _FakeChatsApi(
         listMessagesError: const ApiException(
-          'Проверьте интернет или VPN, затем попробуйте снова.',
+          'Проверьте интернет-соединение и попробуйте снова.',
         ),
       ),
       mediaApi: _FakeMediaApi(),
@@ -306,7 +306,8 @@ void main() {
     await sub.cancel();
   });
 
-  test('resolveMessageImageUrl appends token for protected backend media', () async {
+  test('resolveMessageImageUrl appends token for protected backend media',
+      () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(
       accessToken: 'access-token',
@@ -360,6 +361,88 @@ void main() {
       isEmpty,
     );
     await sub.cancel();
+  });
+
+  test(
+      'optimistic message plus REST plus socket echo stays one visible message',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi();
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final states = <List<ChatMessage>>[];
+    final sub = service.streamMessages('chat-1').listen(
+          (items) => states.add(List<ChatMessage>.from(items)),
+        );
+
+    await service.sendMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'Без дубля',
+    );
+    final sentClientMessageId = api.lastClientMessageId!;
+    socket.emitEvent(
+      'message.new',
+      <String, dynamic>{
+        'message': <String, dynamic>{
+          'id': 'server-message-1',
+          'chatId': 'chat-1',
+          'senderId': 'user-1',
+          'text': 'Без дубля',
+          'clientMessageId': sentClientMessageId,
+          'status': 'sent',
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    socket.emitEvent(
+      'message.sent',
+      <String, dynamic>{
+        'chat': _chatMap(),
+        'message': <String, dynamic>{
+          'id': 'server-message-1',
+          'chatId': 'chat-1',
+          'senderId': 'user-1',
+          'text': 'Без дубля',
+          'clientMessageId': sentClientMessageId,
+          'status': 'sent',
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(messages.where((item) => item.text == 'Без дубля'), hasLength(1));
+    expect(states.where((items) => items.length > 1), isEmpty);
+    await sub.cancel();
+  });
+
+  test('sendMessage prepares socket connection and chat join before REST send',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi();
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.sendMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'Первый вход',
+    );
+
+    expect(socket.connectCalls, greaterThanOrEqualTo(1));
+    expect(socket.joinedChats, contains('chat-1'));
+    expect(api.sendMessageCalls, 1);
+    final messages = await service.streamMessages('chat-1').first;
+    expect(messages.single.status, 'sent');
   });
 
   test('pending image message is merged with server message without duplicate',
@@ -745,6 +828,78 @@ void main() {
     expect(
         chats.map((item) => item.id).toList(), ['filled-chat', 'empty-chat']);
   });
+
+  test('resume on home refreshes inbox without markRead', () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(unreadCount: 2),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.handleAppResumed('user-1');
+
+    expect(api.listChatsCalls, greaterThanOrEqualTo(1));
+    expect(api.markChatReadCalls, isEmpty);
+    expect(socket.reconnectCalls, 1);
+  });
+
+  test('resume inside active chat rejoins, refreshes and marks only that chat',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-a', unreadCount: 1),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-a').listen((_) {});
+    service.setForegroundChat('chat-a');
+
+    await service.handleAppResumed('user-1');
+
+    expect(socket.joinedChats, contains('chat-a'));
+    expect(api.listMessagesCalls, contains('chat-a'));
+    expect(api.markChatReadCalls, ['chat-a']);
+    await sub.cancel();
+  });
+
+  test('repeated resume is throttled and does not duplicate refreshes',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-a', unreadCount: 1),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-a').listen((_) {});
+    service.setForegroundChat('chat-a');
+
+    await service.handleAppResumed('user-1');
+    await service.handleAppResumed('user-1');
+    await service.handleAppResumed('user-1');
+
+    expect(api.listChatsCalls, 2);
+    expect(api.listMessagesCalls.where((id) => id == 'chat-a').length, 2);
+    expect(api.markChatReadCalls.where((id) => id == 'chat-a').length, 1);
+    await sub.cancel();
+  });
 }
 
 Map<String, dynamic> _chatMap({
@@ -779,15 +934,36 @@ class _FakeChatSocketService extends ChatSocketService {
       StreamController<ChatSocketEvent>.broadcast();
   final List<String> deliveredIds = <String>[];
   final List<String> readIds = <String>[];
+  final List<String> joinedChats = <String>[];
+  int connectCalls = 0;
+  int reconnectCalls = 0;
+  bool connected = false;
 
   @override
   Stream<ChatSocketEvent> get events => _eventsController.stream;
 
   @override
-  Future<void> connect() async {}
+  Future<void> connect() async {
+    if (connected) {
+      return;
+    }
+    connectCalls += 1;
+    connected = true;
+  }
 
   @override
-  Future<void> joinChat(String chatId) async {}
+  Future<void> reconnect() async {
+    reconnectCalls += 1;
+    connected = true;
+  }
+
+  @override
+  Future<void> joinChat(String chatId) async {
+    joinedChats.add(chatId);
+  }
+
+  @override
+  bool get isConnected => connected;
 
   @override
   void leaveChat(String chatId) {}
@@ -820,15 +996,21 @@ class _FakeChatsApi extends ChatsApi {
   final List<Map<String, dynamic>> chats;
   final Duration sendMessageDelay;
   final List<String> getChatCalls = <String>[];
+  final List<String> listMessagesCalls = <String>[];
+  final List<String> markChatReadCalls = <String>[];
+  int listChatsCalls = 0;
   int sendMessageCalls = 0;
+  String? lastClientMessageId;
 
   @override
   Future<Map<String, dynamic>> listChats() async {
+    listChatsCalls += 1;
     return <String, dynamic>{'items': chats};
   }
 
   @override
   Future<Map<String, dynamic>> listMessages(String chatId) async {
+    listMessagesCalls.add(chatId);
     if (listMessagesError != null) {
       throw listMessagesError!;
     }
@@ -847,11 +1029,22 @@ class _FakeChatsApi extends ChatsApi {
   }
 
   @override
+  Future<Map<String, dynamic>> markChatRead(String chatId) async {
+    markChatReadCalls.add(chatId);
+    return <String, dynamic>{
+      'chat': _chatMap(id: chatId, unreadCount: 0),
+      'messageIds': const <String>[],
+    };
+  }
+
+  @override
   Future<Map<String, dynamic>> sendMessage({
     required String chatId,
     required String text,
+    String? clientMessageId,
   }) async {
     sendMessageCalls += 1;
+    lastClientMessageId = clientMessageId;
     if (sendMessageDelay > Duration.zero) {
       await Future<void>.delayed(sendMessageDelay);
     }
@@ -865,6 +1058,7 @@ class _FakeChatsApi extends ChatsApi {
         'chatId': chatId,
         'senderId': 'user-1',
         'text': text,
+        'clientMessageId': clientMessageId,
         'status': 'sent',
         'createdAt': DateTime.now().toIso8601String(),
       },

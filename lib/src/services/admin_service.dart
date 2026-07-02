@@ -484,6 +484,12 @@ class AdminService {
         updatedAt: DateTime.now(),
         value: value,
       );
+      if (key == 'listings:pending') {
+        final pendingCount = _extractItems(value).length;
+        if (!_pendingCountController.isClosed) {
+          _pendingCountController.add(pendingCount);
+        }
+      }
       return value;
     } on ApiException catch (error) {
       if (error.statusCode == 403) {

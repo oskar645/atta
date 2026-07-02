@@ -1,6 +1,7 @@
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -135,7 +136,9 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
               ),
               const SizedBox(height: 8),
               Text('User ID: ${(item['userId'] ?? '').toString()}'),
-              Text('Телефон: ${(item['userPhone'] ?? '').toString()}'),
+              Text(
+                'Телефон: ${formatRussianPhone((item['userPhone'] ?? '').toString())}',
+              ),
             ],
           ),
         ),

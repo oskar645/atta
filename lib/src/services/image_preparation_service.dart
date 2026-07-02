@@ -103,6 +103,24 @@ class ImagePreparationService {
     );
   }
 
+  Future<PreparedImage> prepareListingShareImageBytes(
+    Uint8List bytes, {
+    String fileName = 'listing-share.jpg',
+  }) {
+    return _prepareImageBytes(
+      bytes,
+      fileName: fileName,
+      targetBytes: 350 * 1024,
+      maxBytes: 500 * 1024,
+      maxDimension: 800,
+      minQuality: 70,
+      maxQuality: 75,
+      squareCrop: false,
+      tooLargeMessage: 'Не удалось подготовить фото для отправки.',
+      debugLabel: 'listing_share',
+    );
+  }
+
   Future<PreparedImage> _prepareImageFile(
     File file, {
     required int targetBytes,

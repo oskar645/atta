@@ -19,8 +19,6 @@ class ReviewsService {
       <String, List<Map<String, dynamic>>>{};
   final Map<String, StreamController<List<Map<String, dynamic>>>> _controllers =
       <String, StreamController<List<Map<String, dynamic>>>>{};
-  final Map<String, Stream<List<Map<String, dynamic>>>> _streams =
-      <String, Stream<List<Map<String, dynamic>>>>{};
   final Map<String, Future<List<Map<String, dynamic>>>> _inFlight =
       <String, Future<List<Map<String, dynamic>>>>{};
   final Map<String, DateTime> _cachedAt = <String, DateTime>{};
@@ -108,14 +106,26 @@ class ReviewsService {
         const <Map<String, dynamic>>[],
       ).asBroadcastStream();
     }
-    return _streams.putIfAbsent(id, () {
-      final controller = _controllerFor(id);
+    return Stream<List<Map<String, dynamic>>>.multi((controller) {
       final cached = _cache[id];
       final cachedAt = _cachedAt[id];
       final initial = cached
               ?.map((item) => Map<String, dynamic>.from(item))
               .toList(growable: false) ??
           const <Map<String, dynamic>>[];
+      controller.add(initial);
+
+      final sub = _controllerFor(id).stream.listen(
+        (items) {
+          controller.add(
+            items
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(growable: false),
+          );
+        },
+        onError: controller.addError,
+      );
+
       final isFresh = cached != null &&
           cachedAt != null &&
           DateTime.now().difference(cachedAt) < _cacheTtl;
@@ -128,8 +138,8 @@ class ReviewsService {
         );
       }
 
-      return controller.stream.startWith(initial).asBroadcastStream();
-    });
+      controller.onCancel = () => sub.cancel();
+    }).asBroadcastStream();
   }
 
   Stream<Map<String, dynamic>> streamSellerRating(String sellerId) {
@@ -242,14 +252,6 @@ class ReviewsService {
   void resetSession() {
     _cache.clear();
     _cachedAt.clear();
-    _streams.clear();
     _inFlight.clear();
-  }
-}
-
-extension<T> on Stream<T> {
-  Stream<T> startWith(T initial) async* {
-    yield initial;
-    yield* this;
   }
 }

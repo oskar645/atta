@@ -50,7 +50,7 @@ void main() {
     );
   });
 
-  test('repeated streamSellerReviews reuses same stream and fetch cycle',
+  test('late streamSellerReviews subscribers receive cached snapshot',
       () async {
     final api = _FakeReviewsApi(
       initialItems: <Map<String, dynamic>>[
@@ -67,12 +67,15 @@ void main() {
     );
     final service = ReviewsService(api: api);
 
-    final streamA = service.streamSellerReviews('seller-1');
-    final streamB = service.streamSellerReviews('seller-1');
+    final firstItemsFuture = service.streamSellerReviews('seller-1').first;
+    final firstItems = await firstItemsFuture;
+    expect(firstItems, isEmpty);
 
     await service.refreshSellerReviews('seller-1');
+    final lateItems = await service.streamSellerReviews('seller-1').first;
 
-    expect(identical(streamA, streamB), isTrue);
+    expect(lateItems.length, 1);
+    expect(lateItems.first['id'], 'review-1');
     expect(api.listCalls, 1);
   });
 }

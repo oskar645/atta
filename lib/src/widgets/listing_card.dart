@@ -86,13 +86,28 @@ class ListingCard extends StatelessWidget {
                               horizontal: 8,
                               vertical: 4,
                             ),
-                            color: Colors.transparent,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.72),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.9),
+                              ),
+                              boxShadow: const <BoxShadow>[
+                                BoxShadow(
+                                  color: Color(0x16000000),
+                                  blurRadius: 6,
+                                  offset: Offset(0, 1),
+                                ),
+                              ],
+                            ),
                             child: const Text(
                               'Просмотрено',
+                              key: ValueKey('listing_seen_badge'),
                               style: TextStyle(
                                 fontSize: 10,
-                                fontWeight: FontWeight.w400,
+                                fontWeight: FontWeight.w600,
                                 color: Colors.black87,
+                                height: 1,
                               ),
                             ),
                           ),
@@ -159,7 +174,8 @@ class ListingCard extends StatelessWidget {
                                   )
                                 : null,
                             color: hasVipPromotion
-                                ? vipAccentColor(context).withValues(alpha: 0.08)
+                                ? vipAccentColor(context)
+                                    .withValues(alpha: 0.08)
                                 : Colors.transparent,
                           ),
                           child: Padding(

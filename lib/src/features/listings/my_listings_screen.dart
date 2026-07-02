@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'dart:async';
 
 class MyListingsScreen extends StatefulWidget {
   const MyListingsScreen({super.key});
@@ -150,6 +151,7 @@ class _TimewebMyListingsTab extends StatefulWidget {
 class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
     with AutomaticKeepAliveClientMixin {
   late Future<List<Listing>> _future;
+  StreamSubscription<void>? _refreshSub;
   List<Listing>? _items;
   bool _loadedOnce = false;
   String? _errorText;
@@ -166,6 +168,22 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
       _loading = false;
     }
     _future = _load();
+    _refreshSub = context.read<ListingsService>().refreshes.listen((_) {
+      if (!mounted) return;
+      setState(() {
+        _items = context.read<ListingsService>().peekMyListingsByStatuses(
+              statuses: widget.statuses,
+            );
+        _loadedOnce = true;
+        _loading = false;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshSub?.cancel();
+    super.dispose();
   }
 
   Future<List<Listing>> _load() {

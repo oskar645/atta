@@ -436,6 +436,7 @@ model ChatMessage {
   id          String          @id @default(uuid()) @db.Uuid
   chatId       String         @map("chat_id") @db.Uuid
   senderId     String         @map("sender_id") @db.Uuid
+  clientMessageId String?     @map("client_message_id")
   messageType  ChatMessageType @default(TEXT) @map("message_type")
   text         String         @default("")
   imageBucket  String?        @map("image_bucket")
@@ -450,6 +451,7 @@ model ChatMessage {
 
   @@index([chatId, createdAt])
   @@index([senderId, createdAt])
+  @@unique([chatId, senderId, clientMessageId])
   @@map("chat_messages")
 }
 

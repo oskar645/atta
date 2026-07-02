@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
@@ -8,6 +9,7 @@ import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 class SupportService {
@@ -45,6 +47,10 @@ class SupportService {
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
   static const Duration _adminTicketsCacheTtl = Duration(seconds: 20);
+  static const String _hiddenAdminTicketsPrefsKeyPrefix =
+      'support_hidden_admin_tickets_v1';
+  Map<String, String> _hiddenAdminTickets = <String, String>{};
+  String? _hiddenAdminTicketsOwnerUid;
 
   void activateAdminSession({required bool isAdmin}) {
     _adminSessionActive = isAdmin;
@@ -67,6 +73,8 @@ class SupportService {
     _adminTicketsPoller = null;
     _resetAdminState();
     _adminSessionActive = false;
+    _hiddenAdminTickets = <String, String>{};
+    _hiddenAdminTicketsOwnerUid = null;
   }
 
   List<Map<String, dynamic>> peekMessages(String ticketId) {
@@ -307,6 +315,30 @@ class SupportService {
     });
   }
 
+  Future<void> hideAdminTicket({
+    required String ticketId,
+    required String updatedAt,
+  }) async {
+    final normalizedTicketId = ticketId.trim();
+    final normalizedUpdatedAt = updatedAt.trim();
+    if (normalizedTicketId.isEmpty || normalizedUpdatedAt.isEmpty) {
+      return;
+    }
+
+    await _loadHiddenAdminTickets();
+    _hiddenAdminTickets[normalizedTicketId] = normalizedUpdatedAt;
+    await _saveHiddenAdminTickets();
+
+    _adminTicketsCache = _adminTicketsCache
+        .where(
+          (item) => (item['id'] ?? '').toString().trim() != normalizedTicketId,
+        )
+        .toList(growable: false);
+    _lastAdminTicketsRefreshAt = DateTime.now();
+    _adminTicketsControllerFor()
+        .add(List<Map<String, dynamic>>.from(_adminTicketsCache));
+  }
+
   Future<void> adminReply({
     required String ticketId,
     required String text,
@@ -466,7 +498,7 @@ class SupportService {
 
     final future = () async {
       final response = await _api.adminList();
-      final items = _extractItems(response);
+      final items = await _filterHiddenAdminTickets(_extractItems(response));
       _adminTicketsCache = List<Map<String, dynamic>>.from(items);
       _lastAdminTicketsRefreshAt = DateTime.now();
       _adminTicketsControllerFor().add(List<Map<String, dynamic>>.from(items));
@@ -550,6 +582,92 @@ class SupportService {
     _adminTicketsInFlight = null;
     _lastAdminTicketsRefreshAt = null;
     _adminTicketsController?.add(const <Map<String, dynamic>>[]);
+  }
+
+  Future<void> _loadHiddenAdminTickets() async {
+    final currentUser = await _tokenStorage.readCurrentUser();
+    final uid = currentUser?.uid.trim() ?? '';
+    if (_hiddenAdminTicketsOwnerUid == uid) {
+      return;
+    }
+    _hiddenAdminTicketsOwnerUid = uid;
+    _hiddenAdminTickets = <String, String>{};
+    if (uid.isEmpty) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final raw =
+        prefs.getString('$_hiddenAdminTicketsPrefsKeyPrefix:$uid')?.trim();
+    if (raw == null || raw.isEmpty) {
+      return;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        _hiddenAdminTickets = decoded.map(
+          (key, value) => MapEntry(
+            key.toString().trim(),
+            value?.toString().trim() ?? '',
+          ),
+        )..removeWhere((key, value) => key.isEmpty || value.isEmpty);
+      }
+    } catch (_) {
+      _hiddenAdminTickets = <String, String>{};
+    }
+  }
+
+  Future<void> _saveHiddenAdminTickets() async {
+    final uid = _hiddenAdminTicketsOwnerUid?.trim() ?? '';
+    if (uid.isEmpty) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_hiddenAdminTicketsPrefsKeyPrefix:$uid',
+      jsonEncode(_hiddenAdminTickets),
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> _filterHiddenAdminTickets(
+    List<Map<String, dynamic>> items,
+  ) async {
+    await _loadHiddenAdminTickets();
+    if (_hiddenAdminTickets.isEmpty) {
+      return items;
+    }
+
+    final visible = <Map<String, dynamic>>[];
+    var mutated = false;
+    for (final item in items) {
+      final id = (item['id'] ?? '').toString().trim();
+      if (id.isEmpty) {
+        visible.add(item);
+        continue;
+      }
+      final hiddenUpdatedAt = _hiddenAdminTickets[id]?.trim() ?? '';
+      if (hiddenUpdatedAt.isEmpty) {
+        visible.add(item);
+        continue;
+      }
+      final itemUpdatedAt = (item['updated_at'] ?? '').toString().trim();
+      final itemUpdatedAtDt = DateTime.tryParse(itemUpdatedAt);
+      final hiddenUpdatedAtDt = DateTime.tryParse(hiddenUpdatedAt);
+      final shouldStayHidden = itemUpdatedAtDt != null &&
+          hiddenUpdatedAtDt != null &&
+          !itemUpdatedAtDt.isAfter(hiddenUpdatedAtDt);
+      if (shouldStayHidden) {
+        continue;
+      }
+      _hiddenAdminTickets.remove(id);
+      mutated = true;
+      visible.add(item);
+    }
+
+    if (mutated) {
+      await _saveHiddenAdminTickets();
+    }
+
+    return visible;
   }
 
   bool _isAdminTicketsRefreshStale() {

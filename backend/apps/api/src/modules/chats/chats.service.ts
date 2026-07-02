@@ -188,6 +188,8 @@ export class ChatsService {
       media_url: imageUrl,
       attachmentUrl: imageUrl,
       attachment_url: imageUrl,
+      clientMessageId: message.clientMessageId,
+      client_message_id: message.clientMessageId,
       status: this.messageStatus(message),
       createdAt: message.createdAt.toISOString(),
       created_at: message.createdAt.toISOString(),
@@ -328,14 +330,36 @@ export class ChatsService {
     if (!text) {
       throw new BadRequestException('Текст сообщения пустой');
     }
+    const clientMessageId = dto.clientMessageId?.trim() || null;
 
     const recipientId = chat.buyerId === authUser.userId ? chat.sellerId : chat.buyerId;
+
+    if (clientMessageId) {
+      const existing = await this.prisma.chatMessage.findFirst({
+        where: {
+          chatId,
+          senderId: authUser.userId,
+          clientMessageId,
+          deletedAt: null,
+        },
+        include: messageInclude,
+      });
+      if (existing) {
+        return {
+          chat: await this.serializeChat(existing.chat, authUser.userId),
+          recipientChat: await this.serializeChat(existing.chat, recipientId),
+          message: this.serializeMessage(existing),
+          recipientId,
+        };
+      }
+    }
 
     const result = await this.prisma.$transaction(async (tx) => {
       const message = await tx.chatMessage.create({
         data: {
           chatId,
           senderId: authUser.userId,
+          clientMessageId,
           messageType: ChatMessageType.TEXT,
           text,
         },
@@ -737,7 +761,11 @@ export class ChatsService {
       throw new ForbiddenException('Нет доступа к сообщению');
     }
 
-    if (message.senderId === authUser.userId || message.deliveredAt) {
+    if (
+      message.senderId === authUser.userId ||
+      message.deliveredAt ||
+      message.readAt
+    ) {
       return {
         message: this.serializeMessage(message),
         recipientId: authUser.userId,

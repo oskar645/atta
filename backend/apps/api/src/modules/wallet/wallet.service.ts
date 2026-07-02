@@ -342,6 +342,91 @@ export class WalletService {
     }, tx);
   }
 
+  async accrueManualBonusIfNeeded(
+    userId: string,
+    {
+      amount,
+      reference,
+      description,
+    }: {
+      amount: number;
+      reference: string;
+      description: string;
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    if (amount <= 0) {
+      throw new BadRequestException('Bonus amount must be positive');
+    }
+
+    const normalizedReference = reference.trim();
+    const normalizedDescription = description.trim();
+    if (!normalizedReference) {
+      throw new BadRequestException('Bonus reference is required');
+    }
+
+    return this.runInTransaction(async (transaction) => {
+      const wallet = await this.ensureWalletForUser(userId, transaction);
+      await this.lockWalletRow(transaction, userId);
+      const currentWallet = await transaction.wallet.findUniqueOrThrow({
+        where: {
+          userId,
+        },
+      });
+
+      const existingTransactions = await transaction.walletTransaction.findMany({
+        where: {
+          userId,
+          reason: WalletTransactionReason.RECURRING_BONUS,
+        },
+      });
+      const alreadyApplied = existingTransactions.some((item) => {
+        if (!item.metadata || typeof item.metadata !== 'object' || Array.isArray(item.metadata)) {
+          return false;
+        }
+        return (item.metadata as Record<string, unknown>).reference === normalizedReference;
+      });
+
+      if (alreadyApplied) {
+        return {
+          applied: false,
+          wallet: currentWallet,
+        };
+      }
+
+      const updatedWallet = await transaction.wallet.update({
+        where: {
+          id: wallet.id,
+        },
+        data: {
+          bonusBalance: {
+            increment: amount,
+          },
+        },
+      });
+
+      await transaction.walletTransaction.create({
+        data: {
+          userId,
+          walletId: wallet.id,
+          type: WalletTransactionType.ACCRUAL,
+          amount,
+          reason: WalletTransactionReason.RECURRING_BONUS,
+          metadata: this.buildTransactionMetadata({
+            reference: normalizedReference,
+            description: normalizedDescription,
+            source: 'admin_test_bonus',
+          }),
+        },
+      });
+
+      return {
+        applied: true,
+        wallet: updatedWallet,
+      };
+    }, tx);
+  }
+
   async ensureWalletAndBonuses(userId: string) {
     await this.ensureWalletForUser(userId);
     await this.accrueWelcomeBonusIfNeeded(userId);

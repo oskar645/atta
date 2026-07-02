@@ -39,12 +39,15 @@ class ChatsApi {
   Future<Map<String, dynamic>> sendMessage({
     required String chatId,
     required String text,
+    String? clientMessageId,
   }) async {
     final response = await client.post(
       '/chats/$chatId/messages',
       authorized: true,
       body: {
         'text': text,
+        if (clientMessageId != null && clientMessageId.trim().isNotEmpty)
+          'clientMessageId': clientMessageId.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);

@@ -4,6 +4,7 @@ import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/deep_link_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
@@ -110,6 +111,19 @@ void main() {
 
     expect(find.text('Продать быстрее'), findsOneWidget);
   });
+
+  testWidgets('listing detail shows formatted russian phone', (tester) async {
+    await tester.pumpWidget(_buildTestApp());
+
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.textContaining('Телефон:'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.textContaining('+7 999 000 00 00'), findsWidgets);
+  });
 }
 
 Widget _buildTestApp({
@@ -133,6 +147,7 @@ Widget _buildTestApp({
       Provider<ProfileService>.value(
         value: profileService ?? _FakeProfileService(),
       ),
+      Provider<DeepLinkService>.value(value: DeepLinkService()),
       Provider<ReportsService>.value(value: ReportsService()),
       Provider<ReviewsService>.value(
         value: reviewsService ?? _FakeReviewsService(),
@@ -306,7 +321,7 @@ class _FakeWalletService extends WalletService {
   }
 
   @override
-  Future<Wallet> getWallet() async {
+  Future<Wallet> getWallet({bool forceRefresh = false}) async {
     return const Wallet(
       balance: 100,
       maxBalance: 1000,

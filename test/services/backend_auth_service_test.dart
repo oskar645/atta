@@ -220,6 +220,114 @@ void main() {
     expect(service.currentUser, isNull);
   });
 
+  test('refreshSession keeps cached session on network refresh error',
+      () async {
+    final authApi = _FakeAuthApi()
+      ..refreshError = const ApiException(
+        'Проверьте интернет-соединение и попробуйте снова.',
+        code: 'network',
+      );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+
+    final refreshed = await service.refreshSession();
+
+    expect(refreshed, isTrue);
+    expect(service.currentUser, isNotNull);
+    expect(service.currentUser?.uid, 'user-1');
+  });
+
+  test('restoreSessionOnResume refreshes expired access token without logout',
+      () async {
+    final authApi = _FakeAuthApi();
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+    authApi.meError = const ApiException(
+      'expired',
+      statusCode: 401,
+    );
+    authApi.failMeCalls = 1;
+
+    final user = await service.restoreSessionOnResume(force: true);
+
+    expect(user, isNotNull);
+    expect(service.currentUser, isNotNull);
+    expect(authApi.refreshCalls, 1);
+    expect(authApi.meCalls, greaterThanOrEqualTo(2));
+  });
+
+  test('restoreSessionOnResume keeps user signed in on network error',
+      () async {
+    final authApi = _FakeAuthApi();
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+    authApi.meError = const ApiException(
+      'Проверьте интернет-соединение и попробуйте снова.',
+      code: 'network',
+    );
+
+    final user = await service.restoreSessionOnResume(force: true);
+
+    expect(user, isNotNull);
+    expect(service.currentUser, isNotNull);
+    expect(authApi.refreshCalls, 0);
+  });
+
+  test('concurrent restoreSessionOnResume performs one shared auth check',
+      () async {
+    final authApi = _FakeAuthApi();
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+    authApi.meResponse = <String, dynamic>{
+      'user': <String, dynamic>{
+        'id': 'user-1',
+        'email': 'user@example.com',
+      },
+    };
+    authApi.meDelay = const Duration(milliseconds: 40);
+
+    final results = await Future.wait([
+      service.restoreSessionOnResume(force: true),
+      service.restoreSessionOnResume(force: true),
+      service.restoreSessionOnResume(force: true),
+    ]);
+
+    expect(results.every((user) => user?.uid == 'user-1'), isTrue);
+    expect(authApi.meCalls, 2);
+  });
+
   test('refreshSession revalidates admin profile via /auth/me', () async {
     final authApi = _FakeAuthApi()
       ..meResponse = <String, dynamic>{
@@ -246,6 +354,31 @@ void main() {
     expect(refreshed, isTrue);
     expect(authApi.meCalls, greaterThanOrEqualTo(1));
     expect(service.currentUser?.isAdmin, isTrue);
+  });
+
+  test('concurrent refreshSession performs one shared refresh request',
+      () async {
+    final authApi = _FakeAuthApi()
+      ..refreshDelay = const Duration(milliseconds: 40);
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signIn(
+      email: 'user@example.com',
+      password: 'secret',
+    );
+
+    final results = await Future.wait([
+      service.refreshSession(),
+      service.refreshSession(),
+      service.refreshSession(),
+    ]);
+
+    expect(results, everyElement(isTrue));
+    expect(authApi.refreshCalls, 1);
   });
 
   test('ensureInitialized asks to sign in again when refresh fails', () async {
@@ -302,6 +435,10 @@ class _FakeAuthApi extends AuthApi {
   Object? meError;
   Map<String, dynamic>? meResponse;
   int meCalls = 0;
+  int refreshCalls = 0;
+  int failMeCalls = 0;
+  Duration meDelay = Duration.zero;
+  Duration refreshDelay = Duration.zero;
 
   @override
   Future<Map<String, dynamic>> login({
@@ -326,15 +463,26 @@ class _FakeAuthApi extends AuthApi {
   @override
   Future<Map<String, dynamic>> me() async {
     meCalls += 1;
+    if (meDelay > Duration.zero) {
+      await Future<void>.delayed(meDelay);
+    }
+    if (failMeCalls > 0) {
+      failMeCalls -= 1;
+      final error = meError!;
+      if (failMeCalls == 0) {
+        meError = null;
+      }
+      throw error;
+    }
     if (meError != null) {
       throw meError!;
     }
     return meResponse ??
         <String, dynamic>{
-      'user': <String, dynamic>{
-        'id': 'user-1',
-      },
-    };
+          'user': <String, dynamic>{
+            'id': 'user-1',
+          },
+        };
   }
 
   @override
@@ -349,6 +497,10 @@ class _FakeAuthApi extends AuthApi {
   Future<Map<String, dynamic>> refresh({
     required String refreshToken,
   }) async {
+    refreshCalls += 1;
+    if (refreshDelay > Duration.zero) {
+      await Future<void>.delayed(refreshDelay);
+    }
     if (refreshError != null) {
       throw refreshError!;
     }

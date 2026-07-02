@@ -36,12 +36,14 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? queryParameters,
     bool authorized = false,
+    bool sendAuthIfAvailable = false,
   }) {
     return _send(
       'GET',
       path,
       queryParameters: queryParameters,
       authorized: authorized,
+      sendAuthIfAvailable: sendAuthIfAvailable,
     );
   }
 
@@ -177,6 +179,7 @@ class ApiClient {
     Map<String, dynamic>? queryParameters,
     Object? body,
     bool authorized = false,
+    bool sendAuthIfAvailable = false,
     bool allowAuthRetry = true,
     int networkRetryAttempt = 0,
   }) async {
@@ -197,9 +200,11 @@ class ApiClient {
       'Content-Type': 'application/json',
     };
 
-    if (authorized) {
+    if (authorized || sendAuthIfAvailable) {
       final token = await _tokenStorage.readAccessToken();
-      headers['Authorization'] = 'Bearer ${token!.trim()}';
+      if (token != null && token.trim().isNotEmpty) {
+        headers['Authorization'] = 'Bearer ${token.trim()}';
+      }
     }
 
     _logRequest(method, uri, authorized: authorized);
@@ -213,7 +218,7 @@ class ApiClient {
       ).timeout(ApiConfig.requestTimeout);
 
       _logResponse(method, uri, response.statusCode);
-      if (authorized &&
+      if ((authorized || sendAuthIfAvailable) &&
           response.statusCode == 401 &&
           allowAuthRetry &&
           !_shouldSkipAuthRefresh(path)) {
@@ -225,6 +230,7 @@ class ApiClient {
             queryParameters: queryParameters,
             body: body,
             authorized: authorized,
+            sendAuthIfAvailable: sendAuthIfAvailable,
             allowAuthRetry: false,
             networkRetryAttempt: networkRetryAttempt,
           );
@@ -239,6 +245,7 @@ class ApiClient {
           queryParameters: queryParameters,
           body: body,
           authorized: authorized,
+          sendAuthIfAvailable: sendAuthIfAvailable,
           allowAuthRetry: allowAuthRetry,
           networkRetryAttempt: 1,
         );
@@ -253,6 +260,7 @@ class ApiClient {
           queryParameters: queryParameters,
           body: body,
           authorized: authorized,
+          sendAuthIfAvailable: sendAuthIfAvailable,
           allowAuthRetry: allowAuthRetry,
           networkRetryAttempt: 1,
         );

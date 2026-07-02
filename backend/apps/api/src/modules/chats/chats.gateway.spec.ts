@@ -58,6 +58,59 @@ test('emitOutgoingMessage keeps personalized chat payload out of shared room eve
   });
 });
 
+test('emitOutgoingMessage sends personalized unread counts per user', () => {
+  const emissions: Array<{
+    room: string;
+    event: string;
+    payload: Record<string, unknown>;
+  }> = [];
+
+  const gateway = new ChatsGateway(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  gateway.server = {
+    to(room: string) {
+      return {
+        emit(event: string, payload: Record<string, unknown>) {
+          emissions.push({ room, event, payload });
+        },
+      };
+    },
+    emit() {},
+  } as never;
+
+  gateway.emitOutgoingMessage(
+    {
+      id: 'chat-1',
+      unreadCount: 0,
+    },
+    {
+      id: 'chat-1',
+      unreadCount: 1,
+    },
+    {
+      id: 'message-1',
+      chatId: 'chat-1',
+      senderId: 'seller-1',
+    },
+    'buyer-1',
+  );
+
+  const senderChatUpdated = emissions.find(
+    (item) => item.room == 'user:seller-1' && item.event == 'chat.updated',
+  );
+  const recipientChatUpdated = emissions.find(
+    (item) => item.room == 'user:buyer-1' && item.event == 'chat.updated',
+  );
+
+  assert.equal(senderChatUpdated?.payload['chat']?.['unreadCount'], 0);
+  assert.equal(recipientChatUpdated?.payload['chat']?.['unreadCount'], 1);
+});
+
 test('emitNotificationNew sends global notification to all sockets', () => {
   const emissions: Array<{
     room: string;

@@ -333,9 +333,6 @@ class ChatService {
           _upsertMessage(message);
           if (message.senderId != (_activeUserId ?? '')) {
             _socketService?.sendDelivered(message.id);
-            if (_foregroundChatId == message.chatId) {
-              _socketService?.sendRead(message.id);
-            }
           }
         }
         break;
@@ -543,13 +540,19 @@ class ChatService {
 
   Future<void> handleAppResumed(String uid) async {
     _activeUserId = uid;
-    await _socketService?.connect();
+    if (_socketService?.isConnected != true) {
+      await _socketService?.reconnect();
+    }
     final now = DateTime.now();
     final lastRefreshAt = _lastAppResumeRefreshAt;
     if (lastRefreshAt != null &&
         now.difference(lastRefreshAt) < _resumeRefreshCooldown) {
       for (final chatId in _activeChatIds.toList()) {
         await _socketService?.joinChat(chatId);
+      }
+      final foregroundChatId = _foregroundChatId;
+      if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
+        await markChatRead(chatId: foregroundChatId, uid: uid);
       }
       return;
     }
@@ -560,6 +563,10 @@ class ChatService {
       await _refreshChat(chatId);
       await _refreshMessages(chatId);
       await _socketService?.joinChat(chatId);
+    }
+    final foregroundChatId = _foregroundChatId;
+    if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
+      await markChatRead(chatId: foregroundChatId, uid: uid);
     }
   }
 
@@ -696,7 +703,8 @@ class ChatService {
                 ChatMessage.fromMap(Map<String, dynamic>.from(rawMessage)));
           }
         } catch (error) {
-          _debugSource('markMessageDelivered skipped for ${message.id}: $error');
+          _debugSource(
+              'markMessageDelivered skipped for ${message.id}: $error');
         }
       }
     } catch (error) {
@@ -750,7 +758,10 @@ class ChatService {
     required String senderId,
     required String text,
   }) async {
-    final tempId = 'temp-${_uuid.v4()}';
+    await _ensureTimewebReady(senderId);
+    await _socketService?.joinChat(chatId);
+    final localClientMessageId = _uuid.v4();
+    final tempId = 'temp-$localClientMessageId';
     final createdAt = DateTime.now();
     _upsertMessage(
       ChatMessage(
@@ -758,14 +769,18 @@ class ChatService {
         chatId: chatId,
         senderId: senderId,
         text: text,
-        clientMessageId: tempId,
+        clientMessageId: localClientMessageId,
         status: 'pending',
         createdAt: createdAt,
       ),
     );
 
     try {
-      final response = await _api.sendMessage(chatId: chatId, text: text);
+      final response = await _api.sendMessage(
+        chatId: chatId,
+        text: text,
+        clientMessageId: localClientMessageId,
+      );
       final rawChat = response['chat'];
       if (rawChat is Map) {
         _upsertChat(Chat.fromMap(Map<String, dynamic>.from(rawChat)));
@@ -776,7 +791,8 @@ class ChatService {
         if ((normalized['text'] ?? '').toString().trim().isEmpty) {
           normalized['text'] = text;
         }
-        normalized['clientMessageId'] = tempId;
+        normalized['clientMessageId'] =
+            normalized['clientMessageId'] ?? localClientMessageId;
         _upsertMessage(
           ChatMessage.fromMap(normalized),
         );
@@ -789,7 +805,7 @@ class ChatService {
           chatId: chatId,
           senderId: senderId,
           text: text,
-          clientMessageId: tempId,
+          clientMessageId: localClientMessageId,
           status: 'failed',
           createdAt: createdAt,
         ),

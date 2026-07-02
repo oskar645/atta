@@ -89,7 +89,43 @@ void main() {
     expect(await storage.readRefreshToken(), isNull);
   });
 
-  test('timeout shows Russian network or VPN hint', () async {
+  test('network error during refresh does not clear session', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final client = ApiClient(
+      tokenStorage: storage,
+      httpClient: _FakeHttpClient(),
+    );
+    var expiredCalls = 0;
+
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: () async => true,
+      onSessionExpired: () async {
+        expiredCalls += 1;
+        await storage.clear();
+      },
+    );
+
+    await expectLater(
+      () => client.get('/secure', authorized: true),
+      throwsA(
+        isA<ApiException>().having(
+          (e) => e.statusCode,
+          'statusCode',
+          401,
+        ),
+      ),
+    );
+    expect(expiredCalls, 0);
+    expect(await storage.readAccessToken(), isNotNull);
+    expect(await storage.readRefreshToken(), isNotNull);
+  });
+
+  test('timeout shows Russian network hint', () async {
     final client = ApiClient(
       tokenStorage: TokenStorage(),
       httpClient: _TimeoutHttpClient(),
@@ -101,7 +137,7 @@ void main() {
         isA<ApiException>().having((e) => e.code, 'code', 'timeout').having(
               (e) => e.message,
               'message',
-              'Проверьте интернет или VPN, затем попробуйте снова.',
+              'Проверьте интернет-соединение и попробуйте снова.',
             ),
       ),
     );

@@ -5,6 +5,7 @@ import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -45,7 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final loadedPhone = (data['phone'] ?? '').toString().trim();
 
       _nameCtrl.text = loadedName.isNotEmpty ? loadedName : _nameCtrl.text;
-      _phoneCtrl.text = _formatPhoneForField(
+      _phoneCtrl.text = formatRuPhoneForField(
         loadedPhone.isNotEmpty ? loadedPhone : _phoneCtrl.text,
       );
       _emailCtrl.text = profileEmail.isNotEmpty
@@ -71,17 +72,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (email.isEmpty) return '';
     if (email.endsWith('@phone.atta.local')) return '';
     return email;
-  }
-
-  String _formatPhoneForField(String value) {
-    final digits = value.replaceAll(RegExp(r'\D'), '');
-    String normalized = digits;
-    if (normalized.length == 11 &&
-        (normalized.startsWith('7') || normalized.startsWith('8'))) {
-      normalized = normalized.substring(1);
-    }
-    if (normalized.length != 10) return value;
-    return '+7 ${normalized.substring(0, 3)} ${normalized.substring(3, 6)}-${normalized.substring(6, 8)}-${normalized.substring(8)}';
   }
 
   bool _looksLikeEmail(String value) {

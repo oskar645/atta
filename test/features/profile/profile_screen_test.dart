@@ -510,7 +510,7 @@ class _ProfileWalletFailingService extends WalletService {
   }
 
   @override
-  Future<Wallet> checkAccrual() async {
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
     throw Exception('wallet failed');
   }
 }

@@ -185,6 +185,53 @@ void main() {
     expect(api.ticketCalls['ticket-admin'] ?? 0, 0);
   });
 
+  test('hideAdminTicket removes ticket and keeps it hidden until new update',
+      () async {
+    final api = _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[])
+      ..adminTickets = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'ticket-1',
+          'name': 'Пользователь',
+          'last_message': 'Старое обращение',
+          'updated_at': '2026-07-02T10:00:00.000Z',
+        },
+      ];
+    final service = SupportService(api: api);
+    await _seedAdminSession();
+    service.activateAdminSession(isAdmin: true);
+
+    final initial = await service.refreshAdminTickets(force: true);
+    expect(initial, hasLength(1));
+
+    await service.hideAdminTicket(
+      ticketId: 'ticket-1',
+      updatedAt: '2026-07-02T10:00:00.000Z',
+    );
+    expect(await service.streamTicketsForAdmin().first, isEmpty);
+
+    api.adminTickets = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': 'ticket-1',
+        'name': 'Пользователь',
+        'last_message': 'Старое обращение',
+        'updated_at': '2026-07-02T10:00:00.000Z',
+      },
+    ];
+    expect(await service.refreshAdminTickets(force: true), isEmpty);
+
+    api.adminTickets = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': 'ticket-1',
+        'name': 'Пользователь',
+        'last_message': 'Новое сообщение',
+        'updated_at': '2026-07-02T10:05:00.000Z',
+      },
+    ];
+    final restored = await service.refreshAdminTickets(force: true);
+    expect(restored, hasLength(1));
+    expect(restored.single['last_message'], 'Новое сообщение');
+  });
+
   test('sendMessage with image keeps old messages and stores image url',
       () async {
     final api = _FakeSupportApi(
@@ -315,6 +362,7 @@ class _FakeSupportApi extends SupportApi {
   Object? adminListError;
   Object? sendError;
   int adminListCalls = 0;
+  List<Map<String, dynamic>> adminTickets = const <Map<String, dynamic>>[];
   final List<String?> uploadTicketIds = <String?>[];
   final Set<String> missingTicketIds = <String>{};
   final Map<String, int> ticketCalls = <String, int>{};
@@ -377,8 +425,8 @@ class _FakeSupportApi extends SupportApi {
     if (adminListError != null) {
       throw adminListError!;
     }
-    return const <String, dynamic>{
-      'items': <Map<String, dynamic>>[],
+    return <String, dynamic>{
+      'items': adminTickets,
     };
   }
 

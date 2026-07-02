@@ -55,7 +55,12 @@ class BackendAuthService {
 
   Future<void>? _initialization;
   Future<AuthUser>? _meInFlight;
+  Future<bool>? _refreshInFlight;
+  Future<AuthUser?>? _resumeRestoreInFlight;
   AuthUser? _currentUser;
+  DateTime? _lastResumeRestoreAt;
+
+  static const Duration _resumeRestoreCooldown = Duration(seconds: 5);
 
   Stream<AuthSessionEvent> get onAuthStateChange => _events.stream;
   AuthUser? get currentUser => _currentUser;
@@ -374,6 +379,23 @@ class BackendAuthService {
   }
 
   Future<bool> refreshSession() async {
+    final existing = _refreshInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = _refreshSessionInternal();
+    _refreshInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_refreshInFlight, future)) {
+        _refreshInFlight = null;
+      }
+    }
+  }
+
+  Future<bool> _refreshSessionInternal() async {
     final refreshToken = await _tokenStorage.readRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) {
       await _clearSession();
@@ -397,7 +419,13 @@ class BackendAuthService {
         rethrow;
       }
       return true;
-    } on ApiException catch (_) {
+    } on ApiException catch (error) {
+      if (error.isNetworkError ||
+          error.isTimeout ||
+          error.isServerUnavailable) {
+        return _currentUser != null ||
+            await _tokenStorage.readCurrentUser() != null;
+      }
       await _clearSession();
       return false;
     }
@@ -411,7 +439,59 @@ class BackendAuthService {
     if (_currentUser == null) {
       return null;
     }
-    return me();
+    return restoreSessionOnResume(force: true);
+  }
+
+  Future<AuthUser?> restoreSessionOnResume({bool force = false}) async {
+    _currentUser ??= await _tokenStorage.readCurrentUser();
+    if (_currentUser == null) {
+      return null;
+    }
+
+    final existing = _resumeRestoreInFlight;
+    if (existing != null) {
+      return existing;
+    }
+
+    final now = DateTime.now();
+    final lastRestoreAt = _lastResumeRestoreAt;
+    if (!force &&
+        lastRestoreAt != null &&
+        now.difference(lastRestoreAt) < _resumeRestoreCooldown) {
+      return _currentUser;
+    }
+
+    final future = _restoreSessionOnResumeInternal();
+    _resumeRestoreInFlight = future;
+    try {
+      final user = await future;
+      _lastResumeRestoreAt = DateTime.now();
+      return user;
+    } finally {
+      if (identical(_resumeRestoreInFlight, future)) {
+        _resumeRestoreInFlight = null;
+      }
+    }
+  }
+
+  Future<AuthUser?> _restoreSessionOnResumeInternal() async {
+    try {
+      return await me();
+    } on ApiException catch (error) {
+      if (error.isUnauthorized) {
+        final refreshed = await refreshSession();
+        if (!refreshed) {
+          return _currentUser;
+        }
+        return _currentUser ?? await me();
+      }
+      if (error.isNetworkError ||
+          error.isTimeout ||
+          error.isServerUnavailable) {
+        return _currentUser;
+      }
+      rethrow;
+    }
   }
 
   Future<AuthUser> _consumeAuthPayload(Map<String, dynamic> response) async {
@@ -599,6 +679,7 @@ class BackendAuthService {
 
   Future<void> _clearSession() async {
     _currentUser = null;
+    _lastResumeRestoreAt = null;
     await _tokenStorage.clear();
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedOut));
   }

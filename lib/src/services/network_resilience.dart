@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 const String kServerUnavailableMessage =
     'Не удалось подключиться к серверу. Проверьте интернет или попробуйте позже.';
 const String kNetworkVpnHintMessage =
-    'Проверьте интернет или VPN, затем попробуйте снова.';
+    'Проверьте интернет-соединение и попробуйте снова.';
 
 bool isNetworkException(Object error) {
   return error is TimeoutException ||
