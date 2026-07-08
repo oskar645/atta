@@ -82,13 +82,14 @@ class ListingCard extends StatelessWidget {
                           right: 8,
                           top: 8,
                           child: Container(
+                            key: const ValueKey('listing_seen_badge_container'),
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
+                              horizontal: 7,
+                              vertical: 3,
                             ),
                             decoration: BoxDecoration(
                               color: Colors.white.withValues(alpha: 0.72),
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(9),
                               border: Border.all(
                                 color: Colors.white.withValues(alpha: 0.9),
                               ),
@@ -104,7 +105,7 @@ class ListingCard extends StatelessWidget {
                               'Просмотрено',
                               key: ValueKey('listing_seen_badge'),
                               style: TextStyle(
-                                fontSize: 10,
+                                fontSize: 9,
                                 fontWeight: FontWeight.w600,
                                 color: Colors.black87,
                                 height: 1,

@@ -36,6 +36,23 @@ void main() {
     );
     expect(badgePositioned.right, 8);
     expect(badgePositioned.left, isNull);
+
+    final badgeContainer = tester.widget<Container>(
+      find.byKey(const ValueKey('listing_seen_badge_container')),
+    );
+    expect(
+      badgeContainer.padding,
+      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+    );
+
+    final badgeText = tester.widget<Text>(
+      find.byKey(const ValueKey('listing_seen_badge')),
+    );
+    expect(badgeText.style?.fontSize, 9);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('listing_seen_badge_container'))).height,
+      lessThan(24),
+    );
   });
 }
 
