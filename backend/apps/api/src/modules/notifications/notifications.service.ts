@@ -1,8 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { NotificationScope, NotificationType, Prisma } from '@prisma/client';
 
+import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { ApnsService } from '../apns/apns.service';
+import { ChatsGateway } from '../chats/chats.gateway';
 import { PrismaService } from '../prisma/prisma.service';
 
 const excludedInAppNotificationTypes = [NotificationType.CHAT_MESSAGE];
@@ -12,6 +14,7 @@ export class NotificationsService {
   constructor(
     private readonly apnsService: ApnsService,
     private readonly prisma: PrismaService,
+    private readonly chatsGateway: ChatsGateway,
   ) {}
 
   private toType(type?: string) {
@@ -39,10 +42,7 @@ export class NotificationsService {
     type: NotificationType;
     payload?: Prisma.JsonValue | null;
   }) {
-    const payload =
-      item.payload && typeof item.payload === 'object' && !Array.isArray(item.payload)
-        ? (item.payload as Record<string, unknown>)
-        : {};
+    const payload = this.normalizePayload(item.payload);
 
     return {
       id: item.id,
@@ -67,6 +67,35 @@ export class NotificationsService {
     };
   }
 
+  private normalizePayload(payload: Prisma.JsonValue | null | undefined) {
+    const raw =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? ({ ...(payload as Record<string, unknown>) } as Record<string, unknown>)
+        : {};
+    const imageUrl = `${raw.imageUrl ?? raw.image_url ?? ''}`.trim();
+    const actionUrl = `${raw.actionUrl ?? raw.action_url ?? ''}`.trim();
+    const description = `${raw.description ?? ''}`.trim();
+    const actionLabel = `${raw.actionLabel ?? raw.action_label ?? ''}`.trim();
+    if (imageUrl.length > 0) {
+      raw.imageUrl = normalizeStoredMediaUrl(imageUrl, {
+        category: 'misc',
+      });
+      raw.image_url = raw.imageUrl;
+    }
+    if (actionUrl.length > 0) {
+      raw.actionUrl = actionUrl;
+      raw.action_url = actionUrl;
+    }
+    if (description.length > 0) {
+      raw.description = description;
+    }
+    if (actionLabel.length > 0) {
+      raw.actionLabel = actionLabel;
+      raw.action_label = actionLabel;
+    }
+    return raw;
+  }
+
   private inAppWhereClause(authUser: AuthenticatedUser): Prisma.UserNotificationWhereInput {
     return {
       OR: [
@@ -77,6 +106,52 @@ export class NotificationsService {
         notIn: excludedInAppNotificationTypes,
       },
     };
+  }
+
+  private sanitizePayload(payload?: Record<string, unknown>) {
+    const normalized =
+      payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? ({ ...(payload as Record<string, unknown>) } as Record<string, unknown>)
+        : {};
+    const description = `${normalized.description ?? ''}`.trim();
+    const imageUrl = `${normalized.imageUrl ?? normalized.image_url ?? ''}`.trim();
+    const actionUrl = `${normalized.actionUrl ?? normalized.action_url ?? ''}`.trim();
+    const result: Record<string, unknown> = {};
+
+    if (description.length > 0) {
+      result.description = description;
+    }
+    if (imageUrl.length > 0) {
+      result.imageUrl = imageUrl;
+    }
+    if (actionUrl.length > 0) {
+      result.actionUrl = actionUrl;
+    }
+
+    return result;
+  }
+
+  private ensureAdminNotificationHasContent(params: {
+    title?: string;
+    body?: string;
+    payload?: Record<string, unknown>;
+  }) {
+    const title = params.title?.trim() ?? '';
+    const body = params.body?.trim() ?? '';
+    const payload = this.sanitizePayload(params.payload);
+    const description = `${payload.description ?? ''}`.trim();
+    const imageUrl = `${payload.imageUrl ?? ''}`.trim();
+
+    if (
+      title.length === 0 &&
+      body.length === 0 &&
+      description.length === 0 &&
+      imageUrl.length === 0
+    ) {
+      throw new BadRequestException('Добавьте текст, описание или фото.');
+    }
+
+    return payload;
   }
 
   async listInAppNotifications(authUser: AuthenticatedUser) {
@@ -110,6 +185,7 @@ export class NotificationsService {
     title?: string;
     body?: string;
     type?: string;
+    payload?: Record<string, unknown>;
   }) {
     const userId = body.userId?.trim() ?? '';
     if (!userId) {
@@ -129,11 +205,13 @@ export class NotificationsService {
       throw new NotFoundException('User with this user_id was not found');
     }
 
+    const payload = this.ensureAdminNotificationHasContent(body);
     const item = await this.createSystemNotification({
       userId,
       title: body.title?.trim() ?? '',
       body: body.body?.trim() ?? '',
       type: this.toType(body.type),
+      payload,
     });
 
     return {
@@ -142,7 +220,13 @@ export class NotificationsService {
     };
   }
 
-  async sendToAll(body: { title?: string; body?: string; type?: string }) {
+  async sendToAll(body: {
+    title?: string;
+    body?: string;
+    type?: string;
+    payload?: Record<string, unknown>;
+  }) {
+    const payload = this.ensureAdminNotificationHasContent(body);
     const item = await this.prisma.userNotification.create({
       data: {
         userId: null,
@@ -150,6 +234,7 @@ export class NotificationsService {
         title: body.title?.trim() ?? '',
         body: body.body?.trim() ?? '',
         type: this.toType(body.type),
+        payload: payload as Prisma.InputJsonValue,
       },
     });
 
@@ -166,7 +251,7 @@ export class NotificationsService {
     type?: NotificationType;
     payload?: Record<string, unknown>;
   }) {
-    return this.prisma.userNotification.create({
+    const item = await this.prisma.userNotification.create({
       data: {
         userId: params.userId,
         scope: NotificationScope.PERSONAL,
@@ -176,6 +261,11 @@ export class NotificationsService {
         payload: (params.payload ?? {}) as Prisma.InputJsonValue,
       },
     });
+    this.chatsGateway.emitNotificationNew(
+      this.serialize(item),
+      params.userId.trim(),
+    );
+    return item;
   }
 
   serializeNotification(item: {

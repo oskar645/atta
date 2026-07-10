@@ -71,24 +71,33 @@ export class AdminNotificationsController {
   @Post('send-user')
   async sendToUser(
     @Body()
-    body: { user_id?: string; userId?: string; title?: string; body?: string; type?: string },
+    body: {
+      user_id?: string;
+      userId?: string;
+      title?: string;
+      body?: string;
+      type?: string;
+      payload?: Record<string, unknown>;
+    },
   ) {
-    const result = await this.notificationsService.sendToUser({
+    return this.notificationsService.sendToUser({
       userId: body.user_id ?? body.userId,
       title: body.title,
       body: body.body,
       type: body.type,
+      payload: body.payload,
     });
-    this.chatsGateway.emitNotificationNew(
-      result.item,
-      (result.item.user_id ?? '').toString(),
-    );
-    return result;
   }
 
   @Post('send-all')
   async sendToAll(
-    @Body() body: { title?: string; body?: string; type?: string },
+    @Body()
+    body: {
+      title?: string;
+      body?: string;
+      type?: string;
+      payload?: Record<string, unknown>;
+    },
   ) {
     const result = await this.notificationsService.sendToAll(body);
     this.chatsGateway.emitNotificationNew(result.item);

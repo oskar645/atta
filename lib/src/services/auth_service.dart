@@ -8,6 +8,7 @@ import 'package:atta/src/services/api/users_api.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/backend_auth_service.dart';
+import 'package:atta/src/services/deep_link_service.dart';
 
 export 'package:atta/src/services/auth/auth_models.dart';
 
@@ -25,6 +26,7 @@ class AuthService {
     ApiClient.configureAuthHandlers(
       onRefreshSession: _backend.refreshSession,
       onSessionExpired: _backend.expireSession,
+      onAwaitAuthorizedSession: _backend.awaitPrivateAuthReady,
     );
   }
 
@@ -104,13 +106,22 @@ class AuthService {
     required String displayName,
     required bool acceptedLegal,
     required String verificationCheckId,
-  }) =>
-      _backend.signUpWithVerifiedPhone(
-        phone: phone,
-        password: password,
-        displayName: displayName,
-        verificationCheckId: verificationCheckId,
-      );
+    String referralCode = '',
+  }) async {
+    final pendingReferralCode = referralCode.trim().isNotEmpty
+        ? referralCode.trim()
+        : (await DeepLinkService().readPendingInviteReferrerId()) ?? '';
+    await _backend.signUpWithVerifiedPhone(
+      phone: phone,
+      password: password,
+      displayName: displayName,
+      verificationCheckId: verificationCheckId,
+      referralCode: pendingReferralCode,
+    );
+    if (pendingReferralCode.isNotEmpty) {
+      await DeepLinkService().clearPendingInviteReferrerId();
+    }
+  }
 
   Future<void> resetPasswordWithVerifiedPhone({
     required String phone,

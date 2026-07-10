@@ -2,9 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
+import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
+
+String _ticketUserId(Map<String, dynamic> ticket) {
+  const candidates = <String>[
+    'uid',
+    'user_id',
+    'userId',
+    'requesterId',
+    'requester_id',
+    'customerId',
+    'customer_id',
+    'createdById',
+    'created_by_id',
+    'authorId',
+    'author_id',
+  ];
+  for (final key in candidates) {
+    final value = (ticket[key] ?? '').toString().trim();
+    if (value.isNotEmpty) {
+      return value;
+    }
+  }
+  return '';
+}
 
 class AdminSupportTab extends StatelessWidget {
   const AdminSupportTab({super.key});
@@ -97,7 +121,7 @@ class AdminSupportTab extends StatelessWidget {
           itemBuilder: (_, i) {
             final data = docs[i];
 
-            final uid = (data['uid'] ?? '').toString();
+            final uid = _ticketUserId(data);
             final name = (data['name'] ?? 'Пользователь').toString();
             final last = (data['last_message'] ?? '').toString();
             final unreadForAdmin = data['unread_for_admin'] == true;
@@ -157,7 +181,7 @@ class AdminSupportTab extends StatelessWidget {
 class AdminTicketScreen extends StatefulWidget {
   final String ticketId;
   final String titleName;
-  final String userUid; // можно убрать, если не используешь
+  final String userUid;
 
   const AdminTicketScreen({
     super.key,
@@ -174,6 +198,7 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
   final TextEditingController _text = TextEditingController();
   Stream<List<Map<String, dynamic>>>? _messagesStream;
   bool _sending = false;
+  bool _openingProfile = false;
   static const List<String> _ruMonthsGenitive = <String>[
     'января',
     'февраля',
@@ -189,13 +214,57 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
     'декабря',
   ];
 
-  void _openUserProfile() {
-    if (widget.userUid.trim().isEmpty) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SellerPublicProfileScreen(sellerId: widget.userUid),
-      ),
-    );
+  Future<void> _openUserProfile() async {
+    if (_openingProfile) return;
+
+    final userUid = widget.userUid.trim();
+    if (userUid.isEmpty) {
+      showAppSnack(
+        context,
+        'Не удалось открыть профиль пользователя',
+        isError: true,
+      );
+      return;
+    }
+
+    _openingProfile = true;
+    if (mounted) {
+      setState(() {});
+    }
+    try {
+      final row = await context.read<ProfileService>().getProfile(userUid);
+      if (!mounted) return;
+      if (row.isEmpty) {
+        showAppSnack(
+          context,
+          'Профиль пользователя недоступен',
+          isError: true,
+        );
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => SellerPublicProfileScreen(
+            sellerId: userUid,
+            showAdminFields: true,
+            titleText: 'Профиль пользователя',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnack(
+        context,
+        'Не удалось открыть профиль пользователя',
+        isError: true,
+      );
+    } finally {
+      _openingProfile = false;
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   /// 4 быстрых кнопки: короткие названия + длинный текст (вставляем в поле)
@@ -365,7 +434,13 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.open_in_new, size: 18),
+              Icon(
+                Icons.open_in_new,
+                size: 18,
+                color: _openingProfile
+                    ? Theme.of(context).colorScheme.outline
+                    : null,
+              ),
             ],
           ),
         ),

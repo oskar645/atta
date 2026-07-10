@@ -18,6 +18,11 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> onlineUsers() async {
+    final response = await client.get('/admin/online-users', authorized: true);
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> userById(String userId) async {
     final response = await client.get('/admin/users/$userId', authorized: true);
     return Map<String, dynamic>.from(response as Map);

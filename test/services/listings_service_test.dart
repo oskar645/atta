@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/listings_api.dart';
@@ -146,20 +148,20 @@ void main() {
         listItems: <Map<String, dynamic>>[
           _listingMap(
             const <String>[],
+            id: 'new',
+            status: 'approved',
+            publishedAt: '2026-06-19T10:00:10.000Z',
+            createdAt: '2026-06-19T09:00:00.000Z',
+            updatedAt: '2026-06-19T09:30:00.000Z',
+          ),
+          _listingMap(
+            const <String>[],
             id: 'old',
             status: 'approved',
             publishedAt: '2026-06-19T10:00:05.000Z',
             createdAt: '2026-06-19T10:00:00.000Z',
             updatedAt: '2026-06-19T12:00:00.000Z',
             viewCount: 999,
-          ),
-          _listingMap(
-            const <String>[],
-            id: 'new',
-            status: 'approved',
-            publishedAt: '2026-06-19T10:00:10.000Z',
-            createdAt: '2026-06-19T09:00:00.000Z',
-            updatedAt: '2026-06-19T09:30:00.000Z',
           ),
           _listingMap(
             const <String>[],
@@ -228,6 +230,429 @@ void main() {
     expect(secondLoad.map((item) => item.id).toList(), ['fresh', 'old']);
   });
 
+  test(
+      'public feed preserves backend paid ordering instead of resorting by time',
+      () async {
+    final service = ListingsService(
+      api: _FakeListingsApi(
+        listItems: <Map<String, dynamic>>[
+          for (var i = 0; i < 8; i++)
+            _listingMap(
+              const <String>[],
+              id: 'head-${i + 1}',
+              status: 'approved',
+              publishedAt:
+                  '2026-06-19T10:${(59 - i).toString().padLeft(2, '0')}:00.000Z',
+            ),
+          _listingMap(
+            const <String>[],
+            id: 'vip',
+            status: 'approved',
+            publishedAt: '2026-06-19T01:00:00.000Z',
+            promotions: <String, dynamic>{
+              'activeVip': <String, dynamic>{
+                'id': 'promo-vip',
+                'type': 'vip',
+                'title': 'VIP',
+                'status': 'active',
+                'startsAt': '2026-06-19T12:00:00.000Z',
+                'endsAt': '2099-06-19T12:00:00.000Z',
+              },
+            },
+          ),
+          _listingMap(
+            const <String>[],
+            id: 'tail',
+            status: 'approved',
+            publishedAt: '2026-06-19T09:00:00.000Z',
+          ),
+        ],
+      ),
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final items = await service.getListings(category: 'Все', search: '');
+
+    expect(
+      items.map((item) => item.id).toList(),
+      [
+        'head-1',
+        'head-2',
+        'head-3',
+        'head-4',
+        'head-5',
+        'head-6',
+        'head-7',
+        'head-8',
+        'vip',
+        'tail'
+      ],
+    );
+  });
+
+  test('refreshFeedAfterPromotion clears feed cache and reloads updated order',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'fresh',
+          status: 'approved',
+          publishedAt: '2026-06-19T10:00:00.000Z',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'promoted',
+          status: 'approved',
+          publishedAt: '2026-06-19T09:00:00.000Z',
+        ),
+      ],
+      findByIdItems: <String, Map<String, dynamic>>{
+        'promoted': _listingMap(
+          const <String>[],
+          id: 'promoted',
+          status: 'approved',
+          publishedAt: '2026-06-19T09:00:00.000Z',
+          promotions: <String, dynamic>{
+            'activeVip': <String, dynamic>{
+              'id': 'promo-vip',
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'startsAt': '2026-06-19T12:00:00.000Z',
+              'endsAt': '2099-06-19T12:00:00.000Z',
+            },
+          },
+        ),
+      },
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final firstLoad = await service.getListings(category: 'Все', search: '');
+    expect(firstLoad.map((item) => item.id).toList(), ['fresh', 'promoted']);
+    expect(api.listQueries, hasLength(1));
+
+    api.listItems
+      ..clear()
+      ..addAll(<Map<String, dynamic>>[
+        for (var i = 0; i < 7; i++)
+          _listingMap(
+            const <String>[],
+            id: 'head-${i + 1}',
+            status: 'approved',
+            publishedAt:
+                '2026-06-19T10:${(59 - i).toString().padLeft(2, '0')}:00.000Z',
+          ),
+        _listingMap(
+          const <String>[],
+          id: 'fresh',
+          status: 'approved',
+          publishedAt: '2026-06-19T10:00:00.000Z',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'promoted',
+          status: 'approved',
+          publishedAt: '2026-06-19T09:00:00.000Z',
+          promotions: <String, dynamic>{
+            'activeVip': <String, dynamic>{
+              'id': 'promo-vip',
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'startsAt': '2026-06-19T12:00:00.000Z',
+              'endsAt': '2099-06-19T12:00:00.000Z',
+            },
+          },
+        ),
+      ]);
+
+    service.refreshFeedAfterPromotion(
+      listing: Listing.fromMap(api.findByIdItems['promoted']!),
+    );
+    final secondLoad = await service.getListings(category: 'Все', search: '');
+
+    expect(api.listQueries.length, greaterThan(1));
+    expect(secondLoad.map((item) => item.id).toList().take(9), [
+      'head-1',
+      'head-2',
+      'head-3',
+      'head-4',
+      'head-5',
+      'head-6',
+      'head-7',
+      'fresh',
+      'promoted',
+    ]);
+  });
+
+  test('my listings use private endpoint and keep favorites count', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'mine-1',
+          status: 'approved',
+          viewCount: 3,
+          favoriteCount: 2,
+        ),
+      ],
+    );
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final items = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    expect(api.myListingsCalls, 1);
+    expect(api.listQueries, isEmpty);
+    expect(items.single.favoriteCount, 2);
+  });
+
+  test('my listings filter out foreign owner rows and deduplicate results',
+      () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'mine-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'mine-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'foreign-1',
+          status: 'approved',
+          ownerId: 'user-2',
+        ),
+      ],
+    );
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final items = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    expect(items.map((item) => item.id).toList(), <String>['mine-1']);
+  });
+
+  test('my listings use requested uid even before cached current user restore',
+      () async {
+    await TokenStorage().clear();
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'mine-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'foreign-1',
+          status: 'approved',
+          ownerId: 'user-2',
+        ),
+      ],
+    );
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final items = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    expect(items.map((item) => item.id).toList(), <String>['mine-1']);
+    expect(api.myListingsCalls, 1);
+  });
+
+  test('my listings single-flight reuses one in-flight request', () async {
+    await TokenStorage().saveSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final completer = Completer<Map<String, dynamic>>();
+    final api = _DelayedMyListingsApi(responseCompleter: completer);
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final first = service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+    final second = service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    expect(api.myListingsCalls, 1);
+
+    completer.complete(
+      <String, dynamic>{
+        'items': <Map<String, dynamic>>[
+          _listingMap(
+            const <String>[],
+            id: 'mine-1',
+            status: 'approved',
+            ownerId: 'user-1',
+          ),
+        ],
+        'nextCursor': null,
+        'hasMore': false,
+      },
+    );
+
+    final results = await Future.wait(<Future<List<Listing>>>[first, second]);
+    expect(results[0].single.id, 'mine-1');
+    expect(results[1].single.id, 'mine-1');
+    expect(api.myListingsCalls, 1);
+  });
+
+  test('resetSession clears previous account my listings cache', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'token-1',
+      refreshToken: 'refresh-1',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'mine-user-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final firstItems = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    await storage.saveSession(
+      accessToken: 'token-2',
+      refreshToken: 'refresh-2',
+      currentUser: const AuthUser(uid: 'user-2', isAdmin: true),
+    );
+    service.resetSession();
+    api.myListItems
+      ..clear()
+      ..add(
+        _listingMap(
+          const <String>[],
+          id: 'mine-user-2',
+          status: 'approved',
+          ownerId: 'user-2',
+        ),
+      );
+
+    final secondItems = await service.getMyListingsByStatuses(
+      'user-2',
+      statuses: const {'approved'},
+    );
+
+    expect(firstItems.map((item) => item.id).toList(), <String>['mine-user-1']);
+    expect(
+        secondItems.map((item) => item.id).toList(), <String>['mine-user-2']);
+    expect(api.myListingsCalls, 2);
+  });
+
+  test('my listings timeout returns cached items and allows next refresh',
+      () async {
+    await TokenStorage().saveSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'mine-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final first = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+    expect(first.single.id, 'mine-1');
+
+    api.myListingsError = TimeoutException('Future not completed');
+    final cached = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+      forceRefresh: true,
+    );
+    expect(cached.single.id, 'mine-1');
+    expect(
+        service.lastMyListingsErrorForUser('user-1'), isA<TimeoutException>());
+
+    api.myListingsError = null;
+    api.myListItems
+      ..clear()
+      ..add(
+        _listingMap(
+          const <String>[],
+          id: 'mine-2',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      );
+    final refreshed = await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+      forceRefresh: true,
+    );
+    expect(refreshed.single.id, 'mine-2');
+    expect(service.lastMyListingsErrorForUser('user-1'), isNull);
+  });
+
   test('archive removes listing from cached public feed immediately', () async {
     final api = _FakeListingsApi(
       listItems: <Map<String, dynamic>>[
@@ -258,6 +683,60 @@ void main() {
 
     expect(before.map((item) => item.id).toList(), ['listing-1']);
     expect(after, isEmpty);
+  });
+
+  test('refreshListingsByOwner deduplicates and keeps newest approved first',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'listing-old',
+          status: 'approved',
+          publishedAt: '2026-06-19T10:00:00.000Z',
+        ),
+      ],
+    );
+    final service = ListingsService(
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final firstLoad = await service.getListingsByOwnerAll('user-1');
+    api.listItems
+      ..clear()
+      ..addAll(<Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'listing-old',
+          status: 'approved',
+          publishedAt: '2026-06-19T10:00:00.000Z',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'listing-old',
+          status: 'approved',
+          publishedAt: '2026-06-19T10:00:00.000Z',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'listing-new',
+          status: 'approved',
+          publishedAt: '2026-06-19T11:00:00.000Z',
+        ),
+      ]);
+
+    final refreshed = await service.refreshListingsByOwner('user-1');
+
+    expect(firstLoad.map((item) => item.id).toList(), <String>['listing-old']);
+    expect(
+      refreshed.map((item) => item.id).toList(),
+      <String>['listing-new', 'listing-old'],
+    );
+    expect(
+      service.peekListingsByOwner('user-1').map((item) => item.id).toList(),
+      <String>['listing-new', 'listing-old'],
+    );
   });
 
   test('uploaded photo updates cached listing immediately', () async {
@@ -304,7 +783,7 @@ void main() {
       currentUser: const AuthUser(uid: 'user-1'),
     );
     final api = _FakeListingsApi(
-      listItems: <Map<String, dynamic>>[
+      myListItems: <Map<String, dynamic>>[
         _listingMap(
           const <String>[],
           id: 'listing-1',
@@ -344,7 +823,7 @@ void main() {
       currentUser: const AuthUser(uid: 'user-1'),
     );
     final api = _FakeListingsApi(
-      listItems: <Map<String, dynamic>>[
+      myListItems: <Map<String, dynamic>>[
         _listingMap(
           const <String>[],
           id: 'listing-1',
@@ -443,12 +922,16 @@ void main() {
 class _FakeListingsApi extends ListingsApi {
   _FakeListingsApi({
     this.listItems = const <Map<String, dynamic>>[],
+    this.myListItems = const <Map<String, dynamic>>[],
     this.findByIdItems = const <String, Map<String, dynamic>>{},
   }) : super(ApiClient(tokenStorage: TokenStorage()));
 
   final List<Map<String, dynamic>> listItems;
+  final List<Map<String, dynamic>> myListItems;
   final Map<String, Map<String, dynamic>> findByIdItems;
   final List<Map<String, dynamic>> listQueries = <Map<String, dynamic>>[];
+  int myListingsCalls = 0;
+  Object? myListingsError;
 
   @override
   Future<Map<String, dynamic>> create(Map<String, dynamic> body) async {
@@ -498,6 +981,33 @@ class _FakeListingsApi extends ListingsApi {
       'hasMore': end < listItems.length,
     };
   }
+
+  @override
+  Future<Map<String, dynamic>> myListings() async {
+    myListingsCalls += 1;
+    if (myListingsError != null) {
+      throw myListingsError!;
+    }
+    return <String, dynamic>{
+      'items': myListItems,
+      'nextCursor': null,
+      'hasMore': false,
+    };
+  }
+}
+
+class _DelayedMyListingsApi extends _FakeListingsApi {
+  _DelayedMyListingsApi({
+    required this.responseCompleter,
+  });
+
+  final Completer<Map<String, dynamic>> responseCompleter;
+
+  @override
+  Future<Map<String, dynamic>> myListings() {
+    myListingsCalls += 1;
+    return responseCompleter.future;
+  }
 }
 
 class _FakeMediaApi extends MediaApi {
@@ -542,14 +1052,17 @@ Map<String, dynamic> _listingMap(
   List<String> photoUrls, {
   String id = 'listing-1',
   String status = 'pending',
+  String ownerId = 'user-1',
   String? publishedAt,
   String createdAt = '2026-06-19T10:00:00.000Z',
   String updatedAt = '2026-06-19T10:00:00.000Z',
   int viewCount = 0,
+  int favoriteCount = 0,
+  Map<String, dynamic>? promotions,
 }) =>
     <String, dynamic>{
       'id': id,
-      'owner_id': 'user-1',
+      'owner_id': ownerId,
       'title': 'Товар',
       'description': 'Описание',
       'category': 'Электроника',
@@ -564,8 +1077,10 @@ Map<String, dynamic> _listingMap(
       'created_at': DateTime.parse(createdAt).toIso8601String(),
       'updated_at': DateTime.parse(updatedAt).toIso8601String(),
       'view_count': viewCount,
+      'favorites_count': favoriteCount,
+      'promotions': promotions ?? const <String, dynamic>{},
       'delivery': const <String, bool>{'pickup': true},
-      'owner': const <String, dynamic>{'id': 'user-1'},
+      'owner': <String, dynamic>{'id': ownerId},
       'photo_urls': photoUrls,
       'photo_items': [
         for (var i = 0; i < photoUrls.length; i++)

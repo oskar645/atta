@@ -1,9 +1,10 @@
+import 'dart:async';
+
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/auth_service.dart';
-import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
@@ -15,8 +16,8 @@ import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -50,28 +51,28 @@ class SellerPublicProfileScreen extends StatefulWidget {
 class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
+  final GlobalKey<_SellerListingsSectionState> _listingsKey =
+      GlobalKey<_SellerListingsSectionState>();
   bool _followBusy = false;
-
-  String _shortUserId(String uid) {
-    final text = uid.trim();
-    if (text.length <= 14) return text;
-    return '${text.substring(0, 8)}...${text.substring(text.length - 4)}';
-  }
-
-  Future<void> _copyUserId(BuildContext context, String uid) async {
-    final text = uid.trim();
-    if (text.isEmpty) return;
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('ID пользователя скопирован')),
-    );
-  }
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
+  }
+
+  Future<void> _handleRefresh({
+    required ProfileService profile,
+    required ReviewsService reviews,
+  }) async {
+    await Future.wait<void>(<Future<void>>[
+      _listingsKey.currentState?.refresh() ?? Future<void>.value(),
+      reviews.refreshSellerReviews(widget.sellerId).then((_) {}),
+      profile.getProfile(widget.sellerId).then((_) {}),
+    ]);
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -159,7 +160,6 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     final chats = context.read<ChatService>();
     final follows = context.read<FollowService>();
     final presence = context.read<PresenceService>();
-    final admin = context.read<AdminService>();
     final me = context.read<AuthService>().currentUser;
 
     final myUid = me?.uid ?? '';
@@ -213,297 +213,263 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
           final canCall = phone.isNotEmpty && !isMe;
           final canWrite = myUid.isNotEmpty && !isMe;
 
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  color: Theme.of(context).colorScheme.surface,
-                  border: Border.all(
-                    color:
-                        Theme.of(context).dividerColor.withValues(alpha: 0.18),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    StreamBuilder<bool>(
-                      stream: presence.streamIsOnline(widget.sellerId),
-                      builder: (context, onlineSnap) {
-                        final isOnline = onlineSnap.data == true;
-                        return PresenceBadge(
-                          isOnline: isOnline,
-                          dotSize: 14,
-                          child: _Avatar(
-                            photoUrl: photoUrl,
-                            fallbackText: sellerName,
-                          ),
-                        );
-                      },
+          return RefreshIndicator(
+            onRefresh: () => _handleRefresh(profile: profile, reviews: reviews),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: Theme.of(context).colorScheme.surface,
+                    border: Border.all(
+                      color: Theme.of(context)
+                          .dividerColor
+                          .withValues(alpha: 0.18),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  sellerName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              StreamBuilder<bool>(
-                                stream: myUid.isEmpty
-                                    ? const Stream<bool>.empty()
-                                    : admin.streamIsAdmin(myUid),
-                                initialData: false,
-                                builder: (context, adminSnap) {
-                                  final canCopyId =
-                                      isMe || adminSnap.data == true;
-                                  if (!canCopyId) {
-                                    return const SizedBox.shrink();
-                                  }
-
-                                  return _CopyIdChip(
-                                    label: 'ID',
-                                    value: _shortUserId(widget.sellerId),
-                                    onTap: () =>
-                                        _copyUserId(context, widget.sellerId),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          StreamBuilder<Map<String, dynamic>>(
-                            stream: reviews.streamSellerRating(widget.sellerId),
-                            builder: (_, rSnap) {
-                              final rating =
-                                  rSnap.data ?? const {'avg': 0.0, 'count': 0};
-                              final avg =
-                                  (rating['avg'] as num?)?.toDouble() ?? 0.0;
-                              final cnt =
-                                  (rating['count'] as num?)?.toInt() ?? 0;
-                              return Row(
-                                children: [
-                                  const Icon(
-                                    Icons.star,
-                                    size: 18,
-                                    color: Colors.amber,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    avg.toStringAsFixed(1),
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '($cnt)',
-                                    style: TextStyle(
-                                      color:
-                                          Theme.of(context).colorScheme.outline,
-                                    ),
-                                  ),
-                                ],
-                              );
-                            },
-                          ),
-                          if (widget.showAdminFields) ...[
-                            const SizedBox(height: 10),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      StreamBuilder<bool>(
+                        stream: presence.streamIsOnline(widget.sellerId),
+                        builder: (context, onlineSnap) {
+                          final isOnline = onlineSnap.data == true;
+                          return PresenceBadge(
+                            isOnline: isOnline,
+                            dotSize: 14,
+                            child: _Avatar(
+                              photoUrl: photoUrl,
+                              fallbackText: sellerName,
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
                               children: [
-                                if (statusText.isNotEmpty)
-                                  _AdminInfoChip(
-                                    icon: Icons.verified_user_outlined,
-                                    label: statusText,
+                                Expanded(
+                                  child: Text(
+                                    sellerName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                    ),
                                   ),
-                                _AdminInfoChip(
-                                  icon: Icons.phone_outlined,
-                                  label: phoneDisplay,
-                                ),
-                                _AdminInfoChip(
-                                  icon: isAdminUser
-                                      ? Icons.admin_panel_settings_outlined
-                                      : Icons.person_outline,
-                                  label: isAdminUser
-                                      ? 'Администратор'
-                                      : 'Пользователь',
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 6),
+                            StreamBuilder<Map<String, dynamic>>(
+                              stream:
+                                  reviews.streamSellerRating(widget.sellerId),
+                              builder: (_, rSnap) {
+                                final rating = rSnap.data ??
+                                    const {'avg': 0.0, 'count': 0};
+                                final avg =
+                                    (rating['avg'] as num?)?.toDouble() ?? 0.0;
+                                final cnt =
+                                    (rating['count'] as num?)?.toInt() ?? 0;
+                                return Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.star,
+                                      size: 18,
+                                      color: Colors.amber,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      avg.toStringAsFixed(1),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      '($cnt)',
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                            if (widget.showAdminFields) ...[
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  if (statusText.isNotEmpty)
+                                    _AdminInfoChip(
+                                      icon: Icons.verified_user_outlined,
+                                      label: statusText,
+                                    ),
+                                  _AdminInfoChip(
+                                    icon: Icons.phone_outlined,
+                                    label: phoneDisplay,
+                                  ),
+                                  _AdminInfoChip(
+                                    icon: isAdminUser
+                                        ? Icons.admin_panel_settings_outlined
+                                        : Icons.person_outline,
+                                    label: isAdminUser
+                                        ? 'Администратор'
+                                        : 'Пользователь',
+                                  ),
+                                ],
+                              ),
+                            ],
                           ],
-                        ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (!isMe && myUid.isNotEmpty)
+                  StreamBuilder<bool>(
+                    stream: follows.streamIsFollowing(
+                      followerId: myUid,
+                      sellerId: widget.sellerId,
+                    ),
+                    initialData: false,
+                    builder: (context, followSnap) {
+                      final isFollowing = followSnap.data == true;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: FilledButton.icon(
+                          onPressed: _followBusy
+                              ? null
+                              : () => _toggleFollow(
+                                    follows: follows,
+                                    myUid: myUid,
+                                    isFollowing: isFollowing,
+                                  ),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52),
+                            backgroundColor: isFollowing
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .secondaryContainer
+                                : null,
+                            foregroundColor: isFollowing
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .onSecondaryContainer
+                                : null,
+                          ),
+                          icon: _followBusy
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : Icon(
+                                  isFollowing
+                                      ? Icons.notifications_active_outlined
+                                      : Icons.person_add_alt_1_outlined,
+                                ),
+                          label: Text(
+                            isFollowing
+                                ? 'Вы подписаны на новые объявления'
+                                : 'Подписаться на продавца',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: canCall
+                            ? () async {
+                                final normalizedPhone =
+                                    normalizeRuPhoneForApi(phone);
+                                final uri = Uri(
+                                  scheme: 'tel',
+                                  path: normalizedPhone.isEmpty
+                                      ? phone
+                                      : '+$normalizedPhone',
+                                );
+                                await launchUrl(uri);
+                              }
+                            : null,
+                        icon: const Icon(Icons.call),
+                        label: Text(canCall ? 'Позвонить' : 'Телефон скрыт'),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton.tonalIcon(
+                        onPressed: canWrite
+                            ? () => _openChat(
+                                  context: context,
+                                  listingsSvc: listingsSvc,
+                                  chats: chats,
+                                  myUid: myUid,
+                                  sellerId: widget.sellerId,
+                                  sellerName: sellerName,
+                                  sellerAvatar: photoUrl,
+                                )
+                            : null,
+                        icon: const Icon(Icons.chat_bubble_outline),
+                        label: const Text('Написать'),
                       ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 12),
-              if (!isMe && myUid.isNotEmpty)
-                StreamBuilder<bool>(
-                  stream: follows.streamIsFollowing(
-                    followerId: myUid,
-                    sellerId: widget.sellerId,
+                const SizedBox(height: 12),
+                ListTile(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  initialData: false,
-                  builder: (context, followSnap) {
-                    final isFollowing = followSnap.data == true;
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: FilledButton.icon(
-                        onPressed: _followBusy
-                            ? null
-                            : () => _toggleFollow(
-                                  follows: follows,
-                                  myUid: myUid,
-                                  isFollowing: isFollowing,
-                                ),
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size.fromHeight(52),
-                          backgroundColor: isFollowing
-                              ? Theme.of(context).colorScheme.secondaryContainer
-                              : null,
-                          foregroundColor: isFollowing
-                              ? Theme.of(context)
-                                  .colorScheme
-                                  .onSecondaryContainer
-                              : null,
-                        ),
-                        icon: _followBusy
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : Icon(
-                                isFollowing
-                                    ? Icons.notifications_active_outlined
-                                    : Icons.person_add_alt_1_outlined,
-                              ),
-                        label: Text(
-                          isFollowing
-                              ? 'Вы подписаны на новые объявления'
-                              : 'Подписаться на продавца',
+                  tileColor:
+                      Theme.of(context).colorScheme.surfaceContainerHighest,
+                  leading: Icon(
+                    Icons.rate_review_outlined,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  title: const Text('Отзывы продавца'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => SellerReviewsScreen(
+                          sellerId: widget.sellerId,
+                          sellerName: sellerName,
+                          listingId: '',
                         ),
                       ),
                     );
                   },
                 ),
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: canCall
-                          ? () async {
-                              final normalizedPhone =
-                                  normalizeRuPhoneForApi(phone);
-                              final uri = Uri(
-                                scheme: 'tel',
-                                path: normalizedPhone.isEmpty
-                                    ? phone
-                                    : '+$normalizedPhone',
-                              );
-                              await launchUrl(uri);
-                            }
-                          : null,
-                      icon: const Icon(Icons.call),
-                      label: Text(canCall ? 'Позвонить' : 'Телефон скрыт'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton.tonalIcon(
-                      onPressed: canWrite
-                          ? () => _openChat(
-                                context: context,
-                                listingsSvc: listingsSvc,
-                                chats: chats,
-                                myUid: myUid,
-                                sellerId: widget.sellerId,
-                                sellerName: sellerName,
-                                sellerAvatar: photoUrl,
-                              )
-                          : null,
-                      icon: const Icon(Icons.chat_bubble_outline),
-                      label: const Text('Написать'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              ListTile(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                const SizedBox(height: 16),
+                AnimatedBuilder(
+                  animation: _tab,
+                  builder: (context, _) {
+                    return _SellerListingsSection(
+                      key: _listingsKey,
+                      ownerId: widget.sellerId,
+                      listingsService: listingsSvc,
+                      isArchive: _tab.index == 1,
+                    );
+                  },
                 ),
-                tileColor:
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                leading: Icon(
-                  Icons.rate_review_outlined,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                title: const Text('Отзывы'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => SellerReviewsScreen(
-                        sellerId: widget.sellerId,
-                        sellerName: sellerName,
-                        listingId: '',
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              AnimatedBuilder(
-                animation: _tab,
-                builder: (context, _) {
-                  final tabIndex = _tab.index;
-                  return tabIndex == 0
-                      ? _SellerListingsGrid(
-                          stream: listingsSvc
-                              .streamListingsByOwnerAll(widget.sellerId)
-                              .map(
-                                (items) => items
-                                    .where((x) => x.status == 'approved')
-                                    .toList(),
-                              ),
-                          isArchive: false,
-                        )
-                      : _SellerListingsGrid(
-                          stream: listingsSvc
-                              .streamListingsByOwnerAll(widget.sellerId)
-                              .map(
-                                (items) => items
-                                    .where(
-                                      (x) =>
-                                          x.status == 'deleted' ||
-                                          x.status == 'archived' ||
-                                          x.status == 'sold' ||
-                                          x.status == 'rejected',
-                                    )
-                                    .toList(),
-                              ),
-                          isArchive: true,
-                        );
-                },
-              ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -564,144 +530,196 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-class _CopyIdChip extends StatelessWidget {
-  final String label;
-  final String value;
-  final VoidCallback onTap;
-
-  const _CopyIdChip({
-    required this.label,
-    required this.value,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.outline,
-                ),
-              ),
-              if (value.trim().isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
-                ),
-              ],
-              const SizedBox(width: 6),
-              Icon(
-                Icons.copy_rounded,
-                size: 16,
-                color: Theme.of(context).colorScheme.outline,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SellerListingsGrid extends StatelessWidget {
-  final Stream<List<Listing>> stream;
-  final bool isArchive;
-
-  const _SellerListingsGrid({
-    required this.stream,
+class _SellerListingsSection extends StatefulWidget {
+  const _SellerListingsSection({
+    super.key,
+    required this.ownerId,
+    required this.listingsService,
     required this.isArchive,
   });
 
+  final String ownerId;
+  final ListingsService listingsService;
+  final bool isArchive;
+
+  @override
+  State<_SellerListingsSection> createState() => _SellerListingsSectionState();
+}
+
+class _SellerListingsSectionState extends State<_SellerListingsSection> {
+  late StreamSubscription<void> _refreshSubscription;
+  List<Listing> _allItems = const <Listing>[];
+  Object? _error;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _allItems = widget.listingsService.peekListingsByOwner(widget.ownerId);
+    _refreshSubscription = widget.listingsService.refreshes.listen((_) {
+      unawaited(_load());
+    });
+    unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant _SellerListingsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ownerId == widget.ownerId) return;
+    _allItems = widget.listingsService.peekListingsByOwner(widget.ownerId);
+    _error = null;
+    unawaited(_load(forceRefresh: true));
+  }
+
+  @override
+  void dispose() {
+    _refreshSubscription.cancel();
+    super.dispose();
+  }
+
+  Future<void> refresh() => _load(forceRefresh: true);
+
+  Future<void> _load({bool forceRefresh = false}) async {
+    if (_isLoading) return;
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    } else {
+      _isLoading = true;
+      _error = null;
+    }
+    try {
+      final rows = forceRefresh
+          ? await widget.listingsService.refreshListingsByOwner(widget.ownerId)
+          : await widget.listingsService.getListingsByOwnerAll(widget.ownerId);
+      if (!mounted) return;
+      setState(() {
+        _allItems = rows;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<Listing> _visibleItems() {
+    if (widget.isArchive) {
+      return _allItems
+          .where(
+            (x) =>
+                x.status == 'deleted' ||
+                x.status == 'archived' ||
+                x.status == 'sold' ||
+                x.status == 'rejected',
+          )
+          .toList(growable: false);
+    }
+    return _allItems
+        .where((x) => x.status == 'approved')
+        .toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<Listing>>(
-      stream: stream,
-      builder: (context, lSnap) {
-        if (lSnap.hasError) {
-          return Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text('Ошибка объявлений: ${lSnap.error}'),
-          );
-        }
-        if (lSnap.connectionState == ConnectionState.waiting &&
-            !lSnap.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    if (_error != null && _allItems.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text('Ошибка объявлений: $_error'),
+      );
+    }
 
-        final items = lSnap.data ?? const <Listing>[];
-        if (items.isEmpty) {
-          return Center(
+    if (_isLoading && _allItems.isEmpty) {
+      return GridView.builder(
+        itemCount: 4,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 0.78,
+        ),
+        itemBuilder: (_, __) => const SkeletonListingCard(),
+      );
+    }
+
+    final items = _visibleItems();
+    if (items.isEmpty) {
+      return Center(
+        child: Text(
+          widget.isArchive ? 'Архив пуст' : 'Пока нет объявлений',
+          style: TextStyle(color: Theme.of(context).colorScheme.outline),
+        ),
+      );
+    }
+
+    final grid = GridView.builder(
+      itemCount: items.length,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 0.78,
+      ),
+      itemBuilder: (_, i) => _ListingCard(
+        listing: items[i],
+        isArchive: widget.isArchive,
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ListingDetailScreen(listingId: items[i].id),
+            ),
+          );
+        },
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
             child: Text(
-              isArchive ? 'Архив пуст' : 'Пока нет объявлений',
-              style: TextStyle(color: Theme.of(context).colorScheme.outline),
-            ),
-          );
-        }
-
-        final grid = GridView.builder(
-          itemCount: items.length,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 0.78,
-          ),
-          itemBuilder: (_, i) => _ListingCard(
-            listing: items[i],
-            isArchive: isArchive,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => ListingDetailScreen(listingId: items[i].id),
-                ),
-              );
-            },
-          ),
-        );
-
-        if (!isArchive) return grid;
-
-        return Column(
-          children: [
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              ),
-              child: Text(
-                'Архив: история объявлений продавца (продано, снято, отклонено).',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
+              'Не удалось обновить объявления',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.error,
               ),
             ),
-            grid,
-          ],
-        );
-      },
+          ),
+        if (widget.isArchive)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: Text(
+              'Архив: история объявлений продавца (продано, снято, отклонено).',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        grid,
+      ],
     );
   }
 }

@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { ChatsGateway } from '../chats/chats.gateway';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { ModerateReportDto } from './dto/moderate-report.dto';
@@ -14,6 +15,7 @@ import { ReportsService } from './reports.service';
 export class ReportsController {
   constructor(
     private readonly reportsService: ReportsService,
+    private readonly chatsGateway: ChatsGateway,
     private readonly rateLimitService: RateLimitService,
   ) {}
 
@@ -30,7 +32,23 @@ export class ReportsController {
         windowMs: 60 * 1000,
       },
     );
-    return this.reportsService.create(authUser, body);
+    return this.reportsService.create(authUser, body).then((result) => {
+      const notifications = result['admin_notifications'];
+      if (Array.isArray(notifications)) {
+        for (const item of notifications) {
+          if (!item || typeof item !== 'object') {
+            continue;
+          }
+          const notification = item as Record<string, unknown>;
+          const userId = `${notification['user_id'] ?? ''}`.trim();
+          if (userId.length === 0) {
+            continue;
+          }
+          this.chatsGateway.emitNotificationNew(notification, userId);
+        }
+      }
+      return result;
+    });
   }
 }
 
@@ -60,5 +78,21 @@ export class AdminReportsController {
     @Body() body: ModerateReportDto,
   ) {
     return this.reportsService.reject(reportId, authUser, body.comment);
+  }
+
+  @Patch(':id/reopen')
+  reopen(
+    @Param('id', new ParseUUIDPipe()) reportId: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.reportsService.reopen(reportId, authUser);
+  }
+
+  @Delete(':id')
+  hide(
+    @Param('id', new ParseUUIDPipe()) reportId: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.reportsService.hide(reportId, authUser);
   }
 }

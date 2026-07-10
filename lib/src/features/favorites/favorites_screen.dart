@@ -20,6 +20,15 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+const Duration _privateTabLoadTimeout = Duration(seconds: 12);
+
+void _debugFavoritesLog(String message) {
+  assert(() {
+    debugPrint(message);
+    return true;
+  }());
+}
+
 class FavoritesScreen extends StatefulWidget {
   const FavoritesScreen({super.key});
 
@@ -35,6 +44,13 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   @override
   void initState() {
     super.initState();
+    final user = context.read<AuthService>().currentUser;
+    _debugFavoritesLog('Favorites open');
+    _debugFavoritesLog(
+      user == null
+          ? 'Favorites load skipped reason=no_user'
+          : 'auth ready user=${user.uid}',
+    );
     _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(_handleTabChanged);
   }
@@ -201,8 +217,8 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                                           .colorScheme
                                           .surfaceContainerHighest,
                                       child: photo == null
-                                          ? const Icon(
-                                              Icons.image_not_supported_outlined)
+                                          ? const Icon(Icons
+                                              .image_not_supported_outlined)
                                           : CachedNetworkImage(
                                               imageUrl: photo,
                                               fit: BoxFit.cover,
@@ -421,79 +437,64 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                       item.sellerId: item.followedAt,
                   };
 
-                  return StreamBuilder<Set<String>>(
-                    stream: favs.streamFavoriteIds(user.uid),
-                    builder: (context, favSnap) {
-                      final favIds = favSnap.data ?? <String>{};
+                  return StreamBuilder<List<Listing>>(
+                    stream: listings.streamListings(
+                      category: 'Все',
+                      search: '',
+                    ),
+                    builder: (context, listSnap) {
+                      if (!listSnap.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
 
-                      return StreamBuilder<List<Listing>>(
-                        stream: listings.streamListings(
-                            category: 'Все', search: ''),
-                        builder: (context, listSnap) {
-                          if (!listSnap.hasData) {
-                            return const Center(
-                                child: CircularProgressIndicator());
-                          }
+                      final all = listSnap.data ?? const <Listing>[];
+                      final subscribedListings = all.where((listing) {
+                        final followedAt =
+                            followedSinceBySeller[listing.ownerId];
+                        if (followedAt == null) return false;
+                        return listing.createdAt.isAfter(followedAt);
+                      }).toList()
+                        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-                          final all = listSnap.data ?? const <Listing>[];
-                          final subscribedListings = all.where((listing) {
-                            final followedAt =
-                                followedSinceBySeller[listing.ownerId];
-                            if (followedAt == null) return false;
-                            return listing.createdAt.isAfter(followedAt);
-                          }).toList()
-                            ..sort(
-                                (a, b) => b.createdAt.compareTo(a.createdAt));
+                      if (subscribedListings.isEmpty) {
+                        return const Center(
+                          child: Text(
+                              'Пока нет новых объявлений по вашим подпискам'),
+                        );
+                      }
 
-                          if (subscribedListings.isEmpty) {
-                            return const Center(
-                              child: Text(
-                                  'Пока нет новых объявлений по вашим подпискам'),
-                            );
-                          }
-
-                          return GridView.builder(
-                            padding: const EdgeInsets.all(10),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              mainAxisSpacing: 8,
-                              crossAxisSpacing: 8,
-                              childAspectRatio: 0.72,
-                            ),
-                            itemCount: subscribedListings.length,
-                            itemBuilder: (context, index) {
-                              final item = subscribedListings[index];
-                              return ListingCard(
-                                listing: item,
-                                isFav: favIds.contains(item.id),
-                                isSeen: history.hasViewed(item.id),
-                                reviews: reviews,
-                                onToggleFav: (makeFav) async {
-                                  try {
-                                    await favs.toggleFavorite(
-                                      uid: user.uid,
-                                      listingId: item.id,
-                                      makeFavorite: makeFav,
-                                    );
-                                  } catch (e) {
-                                    if (context.mounted) {
-                                      showAppSnack(
-                                        context,
-                                        'Не удалось изменить избранное: $e',
-                                        isError: true,
-                                      );
-                                    }
-                                  }
-                                },
-                                onOpen: () => Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        ListingDetailScreen(listingId: item.id),
-                                  ),
-                                ),
+                      return GridView.builder(
+                        padding: const EdgeInsets.all(10),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 0.72,
+                        ),
+                        itemCount: subscribedListings.length,
+                        itemBuilder: (context, index) {
+                          final item = subscribedListings[index];
+                          return FavoriteListingCard(
+                            listing: item,
+                            favoritesService: favs,
+                            userId: user.uid,
+                            isSeen: history.hasViewed(item.id),
+                            reviews: reviews,
+                            onError: (error) {
+                              if (!context.mounted) return;
+                              showAppSnack(
+                                context,
+                                'Не удалось изменить избранное: $error',
+                                isError: true,
                               );
                             },
+                            onOpen: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    ListingDetailScreen(listingId: item.id),
+                              ),
+                            ),
                           );
                         },
                       );
@@ -535,90 +536,65 @@ class _ViewedListingsTab extends StatelessWidget {
       return const Center(child: Text('Вы ещё не просматривали объявления'));
     }
 
-    return StreamBuilder<Set<String>>(
-      stream: favs.streamFavoriteIds(userId),
-      builder: (context, favSnap) {
-        if (favSnap.hasError) {
+    return StreamBuilder<List<Listing>>(
+      stream: listings.streamListings(category: 'Все', search: ''),
+      builder: (context, listSnap) {
+        if (listSnap.hasError) {
           return Center(
-            child: Text('Не удалось загрузить избранное: ${favSnap.error}'),
+            child: Text(
+              'Не удалось загрузить просмотренные: ${listSnap.error}',
+            ),
           );
         }
 
-        if (!favSnap.hasData) {
+        if (!listSnap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        final favIds = favSnap.data ?? const <String>{};
+        final byId = <String, Listing>{
+          for (final item in listSnap.data ?? const <Listing>[]) item.id: item,
+        };
+        final items = viewedIds
+            .map((id) => byId[id])
+            .whereType<Listing>()
+            .toList(growable: false);
 
-        return StreamBuilder<List<Listing>>(
-          stream: listings.streamListings(category: 'Все', search: ''),
-          builder: (context, listSnap) {
-            if (listSnap.hasError) {
-              return Center(
-                child: Text(
-                  'Не удалось загрузить просмотренные: ${listSnap.error}',
-                ),
-              );
-            }
+        if (items.isEmpty) {
+          return const Center(
+            child: Text('Нет доступных просмотренных объявлений'),
+          );
+        }
 
-            if (!listSnap.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            final byId = <String, Listing>{
-              for (final item in listSnap.data ?? const <Listing>[])
-                item.id: item,
-            };
-            final items = viewedIds
-                .map((id) => byId[id])
-                .whereType<Listing>()
-                .toList(growable: false);
-
-            if (items.isEmpty) {
-              return const Center(
-                child: Text('Нет доступных просмотренных объявлений'),
-              );
-            }
-
-            return GridView.builder(
-              padding: const EdgeInsets.all(10),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 0.72,
-              ),
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                return ListingCard(
-                  listing: item,
-                  isFav: favIds.contains(item.id),
-                  isSeen: history.hasViewed(item.id),
-                  reviews: reviews,
-                  onToggleFav: (makeFav) async {
-                    try {
-                      await favs.toggleFavorite(
-                        uid: userId,
-                        listingId: item.id,
-                        makeFavorite: makeFav,
-                      );
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      showAppSnack(
-                        context,
-                        'Не удалось изменить избранное: $e',
-                        isError: true,
-                      );
-                    }
-                  },
-                  onOpen: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ListingDetailScreen(listingId: item.id),
-                    ),
-                  ),
+        return GridView.builder(
+          padding: const EdgeInsets.all(10),
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: 0.72,
+          ),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return FavoriteListingCard(
+              listing: item,
+              favoritesService: favs,
+              userId: userId,
+              isSeen: history.hasViewed(item.id),
+              reviews: reviews,
+              onError: (error) {
+                if (!context.mounted) return;
+                showAppSnack(
+                  context,
+                  'Не удалось изменить избранное: $error',
+                  isError: true,
                 );
               },
+              onOpen: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ListingDetailScreen(listingId: item.id),
+                ),
+              ),
             );
           },
         );
@@ -742,103 +718,196 @@ class _TimewebFavoriteListingsTab extends StatefulWidget {
 
 class _TimewebFavoriteListingsTabState
     extends State<_TimewebFavoriteListingsTab>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
+  static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
   late Future<List<Listing>> _listingsFuture;
+  late final Stream<Set<String>> _favoriteIdsStream;
+  Future<List<Listing>>? _activeLoadFuture;
   StreamSubscription<Set<String>>? _favoritesSub;
+  final Set<String> _missingListingIds = <String>{};
   List<Listing>? _items;
   bool _loading = true;
   bool _loadedOnce = false;
   String? _errorText;
+  DateTime? _lastRefreshAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _debugFavoritesLog('Favorites listings open');
+    _favoriteIdsStream =
+        widget.favs.streamCachedFavoriteIds(widget.userId).asBroadcastStream();
     final cachedIds = widget.favs.peekFavoriteIds(widget.userId);
     final cachedListings =
         widget.listings.peekListings(category: 'Все', search: '');
     if (cachedIds.isNotEmpty && cachedListings.isNotEmpty) {
-      _items = cachedListings
-          .where((listing) => cachedIds.contains(listing.id))
-          .toList(growable: false);
+      final cachedById = <String, Listing>{
+        for (final listing in cachedListings)
+          if (cachedIds.contains(listing.id)) listing.id: listing,
+      };
+      _items = _orderedListingsFromIds(cachedIds, cachedById);
       _loading = false;
     }
-    _listingsFuture = _loadListings();
-    _favoritesSub = widget.favs.streamFavoriteIds(widget.userId).listen(
+    _listingsFuture = _startListingsLoad();
+    _favoritesSub = _favoriteIdsStream.listen(
       _handleFavoriteIdsChanged,
     );
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _favoritesSub?.cancel();
     super.dispose();
   }
 
-  Future<List<Listing>> _loadListings() async {
-    final favoriteIds = await widget.favs.getFavoriteIds(widget.userId);
-    final items = await _resolveFavoriteListings(favoriteIds);
-    if (!mounted) return items;
-    setState(() {
-      _items = items;
-      _loading = false;
-      _loadedOnce = true;
-      _errorText = null;
-    });
-    return items;
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final lastRefreshAt = _lastRefreshAt;
+    if (lastRefreshAt != null &&
+        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
+      return;
+    }
+    unawaited(_refresh());
   }
 
-  Future<List<Listing>> _resolveFavoriteListings(Set<String> favoriteIds) async {
+  Future<List<Listing>> _startListingsLoad({bool forceFavorites = false}) {
+    final inFlight = _activeLoadFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final future = _loadListings(forceFavorites: forceFavorites);
+    _activeLoadFuture = future;
+    future.whenComplete(() {
+      if (identical(_activeLoadFuture, future)) {
+        _activeLoadFuture = null;
+      }
+    });
+    return future;
+  }
+
+  Future<List<Listing>> _loadListings({bool forceFavorites = false}) async {
+    final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
+    _debugFavoritesLog('Favorites load start user=${widget.userId}');
+    try {
+      final favoriteIds = forceFavorites
+          ? await widget.favs.forceRefreshFavoriteIds(widget.userId)
+          : await widget.favs.refreshFavoriteIds(widget.userId);
+      final items = await _resolveFavoriteListings(favoriteIds);
+      final loadError = widget.favs.lastRefreshErrorForUser(widget.userId);
+      if (!mounted) return items;
+      setState(() {
+        _items = items;
+        _loading = false;
+        _loadedOnce = true;
+        _errorText = !hadItems && loadError != null
+            ? 'Не удалось загрузить избранное.'
+            : null;
+      });
+      _lastRefreshAt = DateTime.now();
+      _debugFavoritesLog(
+        items.isEmpty
+            ? 'Favorites load empty'
+            : 'Favorites load success count=${items.length}',
+      );
+      return items;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadedOnce = true;
+          if (!hadItems) {
+            _errorText = 'Не удалось загрузить избранное.';
+          }
+        });
+      }
+      _debugFavoritesLog('Favorites load error message=$error');
+      return List<Listing>.from(_items ?? const <Listing>[]);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+      _debugFavoritesLog('Favorites load finally loading=false');
+    }
+  }
+
+  Future<List<Listing>> _resolveFavoriteListings(
+      Set<String> favoriteIds) async {
     if (favoriteIds.isEmpty) {
+      _missingListingIds.clear();
       return const <Listing>[];
     }
-    final cachedFeed = widget.listings.peekListings(category: 'Все', search: '');
+    final cachedFeed =
+        widget.listings.peekListings(category: 'Все', search: '');
     final byId = <String, Listing>{
       for (final listing in cachedFeed)
         if (favoriteIds.contains(listing.id)) listing.id: listing,
     };
-    final missingIds = favoriteIds.where((id) => !byId.containsKey(id)).toList();
+    final missingIds = favoriteIds
+        .where(
+            (id) => !byId.containsKey(id) && !_missingListingIds.contains(id))
+        .toList();
     if (missingIds.isNotEmpty) {
       final fetched = await Future.wait(
         missingIds.map(
           (id) => widget.listings.getListingById(id).catchError((_) => null),
         ),
       );
-      for (final listing in fetched.whereType<Listing>()) {
-        byId[listing.id] = listing;
+      for (var i = 0; i < missingIds.length; i++) {
+        final listing = fetched[i];
+        if (listing is Listing) {
+          byId[listing.id] = listing;
+          _missingListingIds.remove(listing.id);
+        } else {
+          _missingListingIds.add(missingIds[i]);
+        }
       }
     }
-    return byId.values.toList(growable: false);
+    return _orderedListingsFromIds(favoriteIds, byId);
   }
 
   void _handleFavoriteIdsChanged(Set<String> favoriteIds) {
     if (!mounted) return;
-    final currentItems = List<Listing>.from(_items ?? const <Listing>[]);
-    final filteredItems = currentItems
-        .where((listing) => favoriteIds.contains(listing.id))
-        .toList(growable: false);
+    _missingListingIds.removeWhere((id) => !favoriteIds.contains(id));
+    final currentById = <String, Listing>{
+      for (final listing in _items ?? const <Listing>[]) listing.id: listing,
+    };
+    final filteredItems = _orderedListingsFromIds(favoriteIds, currentById);
     final hasMissingListings = favoriteIds.any(
-      (id) => !filteredItems.any((listing) => listing.id == id),
+      (id) => !currentById.containsKey(id),
     );
     setState(() {
       _items = filteredItems;
       _loadedOnce = true;
     });
-    if (hasMissingListings) {
-      unawaited(_loadListings());
+    if (hasMissingListings && _activeLoadFuture == null) {
+      unawaited(_startListingsLoad().catchError((_) => const <Listing>[]));
     }
   }
 
   Future<void> _refresh() async {
-    final next = _loadListings();
+    _debugFavoritesLog('Favorites refresh start user=${widget.userId}');
+    _missingListingIds.clear();
+    if (mounted) {
+      setState(() {
+        _errorText = null;
+        _loading = (_items ?? const <Listing>[]).isEmpty;
+      });
+    }
+    final next = _startListingsLoad(forceFavorites: true);
     setState(() {
       _listingsFuture = next;
     });
     try {
-      await Future.wait([
-        widget.favs.refreshFavoriteIds(widget.userId),
-        next,
-      ]);
-    } catch (_) {}
+      await next;
+      _lastRefreshAt = DateTime.now();
+    } catch (error) {
+      _debugFavoritesLog('Favorites refresh error message=$error');
+    }
   }
 
   Future<void> _removeFavorite(String listingId) async {
@@ -849,6 +918,16 @@ class _TimewebFavoriteListingsTabState
     );
   }
 
+  List<Listing> _orderedListingsFromIds(
+    Set<String> favoriteIds,
+    Map<String, Listing> byId,
+  ) {
+    return favoriteIds
+        .map((id) => byId[id])
+        .whereType<Listing>()
+        .toList(growable: false);
+  }
+
   @override
   bool get wantKeepAlive => true;
 
@@ -856,7 +935,7 @@ class _TimewebFavoriteListingsTabState
   Widget build(BuildContext context) {
     super.build(context);
     return StreamBuilder<Set<String>>(
-      stream: widget.favs.streamFavoriteIds(widget.userId),
+      stream: _favoriteIdsStream,
       initialData: widget.favs.peekFavoriteIds(widget.userId),
       builder: (context, favSnap) {
         return FutureBuilder<List<Listing>>(
@@ -933,7 +1012,8 @@ class _TimewebFavoriteListingsTabState
                                   .colorScheme
                                   .surfaceContainerHighest,
                               child: photo == null
-                                  ? const Icon(Icons.image_not_supported_outlined)
+                                  ? const Icon(
+                                      Icons.image_not_supported_outlined)
                                   : CachedNetworkImage(
                                       imageUrl: photo,
                                       fit: BoxFit.cover,
@@ -1010,6 +1090,7 @@ class _TimewebSavedSearchesTabState extends State<_TimewebSavedSearchesTab>
   @override
   void initState() {
     super.initState();
+    _debugFavoritesLog('Favorites saved searches open');
     final cached = widget.savedSearches.peekSavedSearches(widget.userId);
     if (cached.isNotEmpty) {
       _items = cached;
@@ -1019,15 +1100,46 @@ class _TimewebSavedSearchesTabState extends State<_TimewebSavedSearchesTab>
   }
 
   Future<List<SavedSearch>> _load() async {
-    final items = await widget.savedSearches.getSavedSearches(widget.userId);
-    if (!mounted) return items;
-    setState(() {
-      _items = items;
-      _loading = false;
-      _loadedOnce = true;
-      _errorText = null;
-    });
-    return items;
+    final hadItems = (_items ?? const <SavedSearch>[]).isNotEmpty;
+    _debugFavoritesLog(
+        'Favorites saved searches load start user=${widget.userId}');
+    try {
+      final items = await widget.savedSearches
+          .getSavedSearches(widget.userId)
+          .timeout(_privateTabLoadTimeout);
+      if (!mounted) return items;
+      setState(() {
+        _items = items;
+        _loading = false;
+        _loadedOnce = true;
+        _errorText = null;
+      });
+      _debugFavoritesLog(
+        items.isEmpty
+            ? 'Favorites saved searches load empty'
+            : 'Favorites saved searches load success count=${items.length}',
+      );
+      return items;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadedOnce = true;
+          if (!hadItems) {
+            _errorText = 'Не удалось загрузить сохранённые поиски.';
+          }
+        });
+      }
+      _debugFavoritesLog('Favorites saved searches load error message=$error');
+      rethrow;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+      _debugFavoritesLog('Favorites saved searches load finally loading=false');
+    }
   }
 
   Future<void> _refresh() async {
@@ -1236,6 +1348,7 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
   @override
   void initState() {
     super.initState();
+    _debugFavoritesLog('Favorites viewed open');
     final cachedListings =
         widget.listings.peekListings(category: 'Все', search: '');
     if (cachedListings.isNotEmpty &&
@@ -1253,23 +1366,52 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
   }
 
   Future<List<Listing>> _load() async {
-    final byId = {
-      for (final item
-          in await widget.listings.getListings(category: 'Все', search: ''))
-        item.id: item,
-    };
-    final items = widget.history.viewedIdsNewestFirst
-        .map((id) => byId[id])
-        .whereType<Listing>()
-        .toList(growable: false);
-    if (!mounted) return items;
-    setState(() {
-      _items = items;
-      _loading = false;
-      _loadedOnce = true;
-      _errorText = null;
-    });
-    return items;
+    final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
+    _debugFavoritesLog('Favorites viewed load start user=${widget.userId}');
+    try {
+      final allListings = await widget.listings
+          .getListings(category: 'Все', search: '')
+          .timeout(_privateTabLoadTimeout);
+      final byId = {
+        for (final item in allListings) item.id: item,
+      };
+      final items = widget.history.viewedIdsNewestFirst
+          .map((id) => byId[id])
+          .whereType<Listing>()
+          .toList(growable: false);
+      if (!mounted) return items;
+      setState(() {
+        _items = items;
+        _loading = false;
+        _loadedOnce = true;
+        _errorText = null;
+      });
+      _debugFavoritesLog(
+        items.isEmpty
+            ? 'Favorites viewed load empty'
+            : 'Favorites viewed load success count=${items.length}',
+      );
+      return items;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadedOnce = true;
+          if (!hadItems) {
+            _errorText = 'Не удалось загрузить просмотренные.';
+          }
+        });
+      }
+      _debugFavoritesLog('Favorites viewed load error message=$error');
+      rethrow;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+      _debugFavoritesLog('Favorites viewed load finally loading=false');
+    }
   }
 
   Future<void> _refresh() async {
@@ -1292,87 +1434,70 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
       return const Center(child: CircularProgressIndicator());
     }
 
-    return StreamBuilder<Set<String>>(
-      stream: widget.favs.streamFavoriteIds(widget.userId),
-      initialData: widget.favs.peekFavoriteIds(widget.userId),
-      builder: (context, favSnap) {
-        return FutureBuilder<List<Listing>>(
-          future: _future,
-          builder: (context, snap) {
-            final items = _items ?? snap.data ?? const <Listing>[];
-            if (_loading && items.isEmpty) {
-              return const _FavoritesGridSkeleton();
-            }
-            if (snap.hasError) {
-              _errorText ??= 'Не удалось загрузить просмотренные.';
-            }
-            if (_errorText != null && items.isEmpty) {
-              return _FavoritesAsyncStateView(
-                message: _errorText!,
-                onRetry: _refresh,
-              );
-            }
-            final favIds = favSnap.data ?? const <String>{};
-            if (_loadedOnce && widget.history.viewedIdsNewestFirst.isEmpty) {
-              return _RefreshableEmptyState(
-                message: 'Вы ещё не просматривали объявления',
-                onRefresh: _refresh,
-              );
-            }
-            if (_loadedOnce && items.isEmpty) {
-              return _RefreshableEmptyState(
-                message: 'Нет доступных просмотренных объявлений',
-                onRefresh: _refresh,
-              );
-            }
+    return FutureBuilder<List<Listing>>(
+      future: _future,
+      builder: (context, snap) {
+        final items = _items ?? snap.data ?? const <Listing>[];
+        if (_loading && items.isEmpty) {
+          return const _FavoritesGridSkeleton();
+        }
+        if (snap.hasError) {
+          _errorText ??= 'Не удалось загрузить просмотренные.';
+        }
+        if (_errorText != null && items.isEmpty) {
+          return _FavoritesAsyncStateView(
+            message: _errorText!,
+            onRetry: _refresh,
+          );
+        }
+        if (_loadedOnce && widget.history.viewedIdsNewestFirst.isEmpty) {
+          return _RefreshableEmptyState(
+            message: 'Вы ещё не просматривали объявления',
+            onRefresh: _refresh,
+          );
+        }
+        if (_loadedOnce && items.isEmpty) {
+          return _RefreshableEmptyState(
+            message: 'Нет доступных просмотренных объявлений',
+            onRefresh: _refresh,
+          );
+        }
 
-            return RefreshIndicator(
-              onRefresh: _refresh,
-              child: GridView.builder(
-                padding: const EdgeInsets.all(10),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  childAspectRatio: 0.72,
-                ),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  return ListingCard(
-                    listing: item,
-                    isFav: favIds.contains(item.id),
-                    isSeen: widget.history.hasViewed(item.id),
-                    reviews: widget.reviews,
-                    onToggleFav: (makeFav) async {
-                      try {
-                        await widget.favs.toggleFavorite(
-                          uid: widget.userId,
-                          listingId: item.id,
-                          makeFavorite: makeFav,
-                        );
-                        if (context.mounted) {
-                          await _refresh();
-                        }
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        showAppSnack(
-                          context,
-                          'Не удалось изменить избранное: $e',
-                          isError: true,
-                        );
-                      }
-                    },
-                    onOpen: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ListingDetailScreen(listingId: item.id),
-                      ),
-                    ),
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: GridView.builder(
+            padding: const EdgeInsets.all(10),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.72,
+            ),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return FavoriteListingCard(
+                listing: item,
+                favoritesService: widget.favs,
+                userId: widget.userId,
+                isSeen: widget.history.hasViewed(item.id),
+                reviews: widget.reviews,
+                onError: (error) {
+                  if (!context.mounted) return;
+                  showAppSnack(
+                    context,
+                    'Не удалось изменить избранное: $error',
+                    isError: true,
                   );
                 },
-              ),
-            );
-          },
+                onOpen: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ListingDetailScreen(listingId: item.id),
+                  ),
+                ),
+              );
+            },
+          ),
         );
       },
     );
@@ -1413,6 +1538,7 @@ class _TimewebFollowedListingsTabState
   @override
   void initState() {
     super.initState();
+    _debugFavoritesLog('Favorites followed open');
     final cachedFollowed = widget.follows.peekFollowedSellers(widget.userId);
     final cachedListings =
         widget.listings.peekListings(category: 'Все', search: '');
@@ -1432,25 +1558,57 @@ class _TimewebFollowedListingsTabState
   }
 
   Future<List<Listing>> _load() async {
-    final followed = await widget.follows.getFollowedSellers(widget.userId);
-    final followedSinceBySeller = <String, DateTime>{
-      for (final item in followed) item.sellerId: item.followedAt,
-    };
-    final all = await widget.listings.getListings(category: 'Все', search: '');
-    final items = all.where((listing) {
-      final followedAt = followedSinceBySeller[listing.ownerId];
-      if (followedAt == null) return false;
-      return listing.createdAt.isAfter(followedAt);
-    }).toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    if (!mounted) return items;
-    setState(() {
-      _items = items;
-      _loading = false;
-      _loadedOnce = true;
-      _errorText = null;
-    });
-    return items;
+    final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
+    _debugFavoritesLog('Favorites followed load start user=${widget.userId}');
+    try {
+      final followed = await widget.follows
+          .getFollowedSellers(widget.userId)
+          .timeout(_privateTabLoadTimeout);
+      final followedSinceBySeller = <String, DateTime>{
+        for (final item in followed) item.sellerId: item.followedAt,
+      };
+      final all = await widget.listings
+          .getListings(category: 'Все', search: '')
+          .timeout(_privateTabLoadTimeout);
+      final items = all.where((listing) {
+        final followedAt = followedSinceBySeller[listing.ownerId];
+        if (followedAt == null) return false;
+        return listing.createdAt.isAfter(followedAt);
+      }).toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (!mounted) return items;
+      setState(() {
+        _items = items;
+        _loading = false;
+        _loadedOnce = true;
+        _errorText = null;
+      });
+      _debugFavoritesLog(
+        items.isEmpty
+            ? 'Favorites followed load empty'
+            : 'Favorites followed load success count=${items.length}',
+      );
+      return items;
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadedOnce = true;
+          if (!hadItems) {
+            _errorText = 'Не удалось загрузить подписки.';
+          }
+        });
+      }
+      _debugFavoritesLog('Favorites followed load error message=$error');
+      rethrow;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+      _debugFavoritesLog('Favorites followed load finally loading=false');
+    }
   }
 
   Future<void> _refresh() async {
@@ -1470,82 +1628,65 @@ class _TimewebFollowedListingsTabState
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return StreamBuilder<Set<String>>(
-      stream: widget.favs.streamFavoriteIds(widget.userId),
-      initialData: widget.favs.peekFavoriteIds(widget.userId),
-      builder: (context, favSnap) {
-        return FutureBuilder<List<Listing>>(
-          future: _future,
-          builder: (context, snap) {
-            final items = _items ?? snap.data ?? const <Listing>[];
-            if (_loading && items.isEmpty) {
-              return const _FavoritesGridSkeleton();
-            }
-            if (snap.hasError) {
-              _errorText ??= 'Не удалось загрузить подписки.';
-            }
-            if (_errorText != null && items.isEmpty) {
-              return _FavoritesAsyncStateView(
-                message: _errorText!,
-                onRetry: _refresh,
-              );
-            }
-            final favIds = favSnap.data ?? const <String>{};
-            if (_loadedOnce && items.isEmpty) {
-              return _RefreshableEmptyState(
-                message:
-                    'Подпишитесь на продавцов, чтобы видеть их новые объявления',
-                onRefresh: _refresh,
-              );
-            }
+    return FutureBuilder<List<Listing>>(
+      future: _future,
+      builder: (context, snap) {
+        final items = _items ?? snap.data ?? const <Listing>[];
+        if (_loading && items.isEmpty) {
+          return const _FavoritesGridSkeleton();
+        }
+        if (snap.hasError) {
+          _errorText ??= 'Не удалось загрузить подписки.';
+        }
+        if (_errorText != null && items.isEmpty) {
+          return _FavoritesAsyncStateView(
+            message: _errorText!,
+            onRetry: _refresh,
+          );
+        }
+        if (_loadedOnce && items.isEmpty) {
+          return _RefreshableEmptyState(
+            message:
+                'Подпишитесь на продавцов, чтобы видеть их новые объявления',
+            onRefresh: _refresh,
+          );
+        }
 
-            return RefreshIndicator(
-              onRefresh: _refresh,
-              child: GridView.builder(
-                padding: const EdgeInsets.all(10),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisSpacing: 8,
-                  crossAxisSpacing: 8,
-                  childAspectRatio: 0.72,
-                ),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final item = items[index];
-                  return ListingCard(
-                    listing: item,
-                    isFav: favIds.contains(item.id),
-                    isSeen: widget.history.hasViewed(item.id),
-                    reviews: widget.reviews,
-                    onToggleFav: (makeFav) async {
-                      try {
-                        await widget.favs.toggleFavorite(
-                          uid: widget.userId,
-                          listingId: item.id,
-                          makeFavorite: makeFav,
-                        );
-                        if (context.mounted) {
-                          await _refresh();
-                        }
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        showAppSnack(
-                          context,
-                          'Не удалось изменить избранное: $e',
-                          isError: true,
-                        );
-                      }
-                    },
-                    onOpen: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ListingDetailScreen(listingId: item.id),
-                      ),
-                    ),
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: GridView.builder(
+            padding: const EdgeInsets.all(10),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 0.72,
+            ),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return FavoriteListingCard(
+                listing: item,
+                favoritesService: widget.favs,
+                userId: widget.userId,
+                isSeen: widget.history.hasViewed(item.id),
+                reviews: widget.reviews,
+                onError: (error) {
+                  if (!context.mounted) return;
+                  showAppSnack(
+                    context,
+                    'Не удалось изменить избранное: $error',
+                    isError: true,
                   );
                 },
-              ),
-            );
-          },
+                onOpen: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ListingDetailScreen(listingId: item.id),
+                  ),
+                ),
+              );
+            },
+          ),
         );
       },
     );
@@ -1771,69 +1912,53 @@ class _SavedSearchResultsScreen extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: StreamBuilder<Set<String>>(
-              stream: favs.streamFavoriteIds(user.uid),
-              builder: (context, favSnap) {
-                final favIds = favSnap.data ?? <String>{};
+            child: StreamBuilder<List<Listing>>(
+              stream: listings.streamListings(
+                category: savedSearch.category,
+                search: savedSearch.search,
+                filters: savedSearch.toFilters(),
+              ),
+              builder: (context, snap) {
+                if (!snap.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                return StreamBuilder<List<Listing>>(
-                  stream: listings.streamListings(
-                    category: savedSearch.category,
-                    search: savedSearch.search,
-                    filters: savedSearch.toFilters(),
+                final items = snap.data!;
+                if (items.isEmpty) {
+                  return const Center(child: Text('Ничего не найдено'));
+                }
+
+                return GridView.builder(
+                  padding: const EdgeInsets.all(10),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: 0.72,
                   ),
-                  builder: (context, snap) {
-                    if (!snap.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-
-                    final items = snap.data!;
-                    if (items.isEmpty) {
-                      return const Center(child: Text('Ничего не найдено'));
-                    }
-
-                    return GridView.builder(
-                      padding: const EdgeInsets.all(10),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                        childAspectRatio: 0.72,
-                      ),
-                      itemCount: items.length,
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        return ListingCard(
-                          listing: item,
-                          isFav: favIds.contains(item.id),
-                          isSeen: history.hasViewed(item.id),
-                          reviews: reviews,
-                          onToggleFav: (makeFav) async {
-                            try {
-                              await favs.toggleFavorite(
-                                uid: user.uid,
-                                listingId: item.id,
-                                makeFavorite: makeFav,
-                              );
-                            } catch (e) {
-                              if (context.mounted) {
-                                showAppSnack(
-                                  context,
-                                  'Не удалось изменить избранное: $e',
-                                  isError: true,
-                                );
-                              }
-                            }
-                          },
-                          onOpen: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ListingDetailScreen(listingId: item.id),
-                            ),
-                          ),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final item = items[index];
+                    return FavoriteListingCard(
+                      listing: item,
+                      favoritesService: favs,
+                      userId: user.uid,
+                      isSeen: history.hasViewed(item.id),
+                      reviews: reviews,
+                      onError: (error) {
+                        if (!context.mounted) return;
+                        showAppSnack(
+                          context,
+                          'Не удалось изменить избранное: $error',
+                          isError: true,
                         );
                       },
+                      onOpen: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ListingDetailScreen(listingId: item.id),
+                        ),
+                      ),
                     );
                   },
                 );

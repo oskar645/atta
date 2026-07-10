@@ -4,6 +4,7 @@ import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/presence_service.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -38,6 +39,31 @@ void main() {
     expect(values, <bool>[false, true]);
   });
 
+  test('streamIsOnline does not force socket reconnect for fallback GET',
+      () async {
+    final socket = _FakeChatSocketService();
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': true,
+          };
+        },
+      ),
+    );
+
+    await service.streamIsOnline('user-1').take(2).toList();
+
+    expect(socket.connectCalls, 0);
+  });
+
   test('setOnline and heartbeat use Timeweb socket bridge', () async {
     final socket = _FakeChatSocketService();
     final service = PresenceService(
@@ -60,10 +86,119 @@ void main() {
     await service.setOnline(uid: 'user-1', isOnline: true);
     await service.heartbeat('user-1');
 
-    expect(socket.connectCalls, 2);
+    expect(socket.connectCalls, 0);
     expect(socket.lastSetPresence, true);
+    expect(socket.lastSetPresenceReason, 'presence.setOnline');
     expect(socket.pingCalls, 1);
+    expect(socket.lastPingReason, 'presence.heartbeat');
   });
+
+  test('presence heartbeat when socket connected does not call connect repeatedly',
+      () async {
+    final socket = _FakeChatSocketService()..connected = true;
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': false,
+          };
+        },
+      ),
+    );
+
+    await service.heartbeat('user-1');
+    await service.heartbeat('user-1');
+    await service.heartbeat('user-1');
+
+    expect(socket.connectCalls, 0);
+    expect(socket.pingCalls, 3);
+  });
+
+  test('streamIsOnline returns cached stream for same user', () {
+    final service = PresenceService(
+      socketService: _FakeChatSocketService(),
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': true,
+          };
+        },
+      ),
+    );
+
+    expect(
+      identical(
+        service.streamIsOnline('user-1'),
+        service.streamIsOnline('user-1'),
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets(
+      'presence stream survives mount unmount remount without exception',
+      (tester) async {
+    final apiClient = _FakeApiClient(
+      onGet: (
+        path, {
+        queryParameters,
+        authorized = false,
+        sendAuthIfAvailable = false,
+      }) async {
+        return <String, dynamic>{
+          'userId': 'user-1',
+          'isOnline': true,
+        };
+      },
+    );
+    final service = PresenceService(
+      socketService: _FakeChatSocketService(),
+      apiClient: apiClient,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: _PresenceProbe(service: service)),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpAndSettle();
+
+    await tester.pumpWidget(
+      MaterialApp(home: _PresenceProbe(service: service)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(apiClient.getCalls, 2);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _PresenceProbe extends StatelessWidget {
+  const _PresenceProbe({required this.service});
+
+  final PresenceService service;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: service.streamIsOnline('user-1'),
+      builder: (context, snapshot) => Text('${snapshot.data ?? false}'),
+    );
+  }
 }
 
 class _FakeApiClient extends ApiClient {
@@ -77,6 +212,7 @@ class _FakeApiClient extends ApiClient {
     bool authorized,
     bool sendAuthIfAvailable,
   }) onGet;
+  int getCalls = 0;
 
   @override
   Future<dynamic> get(
@@ -85,6 +221,7 @@ class _FakeApiClient extends ApiClient {
     bool authorized = false,
     bool sendAuthIfAvailable = false,
   }) {
+    getCalls += 1;
     return onGet(
       path,
       queryParameters: queryParameters,
@@ -101,23 +238,31 @@ class _FakeChatSocketService extends ChatSocketService {
       StreamController<PresenceSnapshot>.broadcast();
   int connectCalls = 0;
   int pingCalls = 0;
+  bool connected = false;
   bool? lastSetPresence;
+  String? lastSetPresenceReason;
+  String? lastPingReason;
 
   @override
   Stream<PresenceSnapshot> get presenceUpdates => _presenceController.stream;
 
   @override
-  Future<void> connect() async {
+  bool get isConnected => connected;
+
+  @override
+  Future<void> connect({String reason = 'unspecified'}) async {
     connectCalls++;
   }
 
   @override
-  Future<void> setPresence(bool isOnline) async {
+  Future<void> setPresence(bool isOnline, {String reason = 'presence.set'}) async {
     lastSetPresence = isOnline;
+    lastSetPresenceReason = reason;
   }
 
   @override
-  Future<void> ping() async {
+  Future<void> ping({String reason = 'presence.ping'}) async {
     pingCalls++;
+    lastPingReason = reason;
   }
 }

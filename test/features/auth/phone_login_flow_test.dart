@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:atta/src/features/auth/login_screen.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
@@ -51,6 +53,8 @@ void main() {
       expect(auth.checkedPhones, <String>['79281234567']);
       expect(auth.startedVerificationPhones, isEmpty);
       expect(auth.loginPhoneCalls, 0);
+      expect(find.text('Введите пароль от аккаунта'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Номер телефона'), findsNothing);
       expect(find.widgetWithText(TextField, 'Пароль'), findsOneWidget);
       expect(find.text('Войти'), findsOneWidget);
     },
@@ -90,6 +94,47 @@ void main() {
       expect(auth.loginPhoneCalls, 1);
       expect(auth.lastLoginPhone, '79281234567');
       expect(auth.lastLoginPassword, 'secret123');
+      expect(find.text('Добро пожаловать'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'login-phone ignores rapid second tap while request is in flight',
+    (tester) async {
+      final auth = _FakeAuthService(
+        registeredPhones: <String>{'79281234567'},
+        signInCompleter: Completer<void>(),
+      );
+
+      await tester.pumpWidget(
+        Provider<AuthService>.value(
+          value: auth,
+          child: const MaterialApp(home: LoginScreen()),
+        ),
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Номер телефона').first,
+        '928 123 45 67',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Продолжить'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Пароль'),
+        'secret123',
+      );
+      await tester.pump();
+      await tester.tap(find.widgetWithText(FilledButton, 'Войти'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Войти'));
+      await tester.pump();
+
+      expect(auth.loginPhoneCalls, 1);
+      expect(find.text('Подождите...'), findsOneWidget);
+
+      auth.signInCompleter!.complete();
+      await tester.pumpAndSettle();
     },
   );
 
@@ -156,7 +201,8 @@ void main() {
         find.widgetWithText(FilledButton, 'Войти'),
       );
       expect(button.onPressed, isNull);
-      expect(find.text('Пароль должен быть не короче 8 символов'), findsOneWidget);
+      expect(
+          find.text('Пароль должен быть не короче 8 символов'), findsOneWidget);
 
       await tester.enterText(
         find.widgetWithText(TextField, 'Пароль'),
@@ -290,15 +336,30 @@ class _FakeAuthService extends AuthService {
   _FakeAuthService({
     Set<String>? registeredPhones,
     this.signInError,
+    this.signInCompleter,
   }) : _registeredPhones = registeredPhones ?? <String>{};
 
   final Set<String> _registeredPhones;
   final Object? signInError;
+  final Completer<void>? signInCompleter;
+  final StreamController<AuthSessionEvent> _authEvents =
+      StreamController<AuthSessionEvent>.broadcast();
   final List<String> checkedPhones = <String>[];
   final List<String> startedVerificationPhones = <String>[];
   int loginPhoneCalls = 0;
   String? lastLoginPhone;
   String? lastLoginPassword;
+  bool _isAuthenticated = false;
+
+  @override
+  Stream<AuthSessionEvent> get onAuthStateChange => _authEvents.stream;
+
+  @override
+  bool get isAuthenticated => _isAuthenticated;
+
+  @override
+  AuthUser? get currentUser =>
+      _isAuthenticated ? const AuthUser(uid: 'user-1') : null;
 
   @override
   bool get useTimewebBackend => true;
@@ -333,5 +394,12 @@ class _FakeAuthService extends AuthService {
     loginPhoneCalls += 1;
     lastLoginPhone = phone;
     lastLoginPassword = password;
+    if (signInCompleter != null) {
+      await signInCompleter!.future;
+    }
+    _isAuthenticated = true;
+    _authEvents.add(
+      const AuthSessionEvent(type: AuthSessionEventType.signedIn),
+    );
   }
 }

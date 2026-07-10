@@ -37,6 +37,7 @@ test('listInAppNotifications excludes chat message records', async () => {
         }),
       },
     } as never,
+    {} as never,
   );
 
   const result = await service.listInAppNotifications({
@@ -70,6 +71,7 @@ test('markRead does not allow reading hidden chat notifications', async () => {
         },
       },
     } as never,
+    {} as never,
   );
 
   await assert.rejects(
@@ -117,6 +119,7 @@ test('markAllSeen stores seen timestamp and returns updated counters', async () 
         },
       },
     } as never,
+    {} as never,
   );
 
   const result = await service.markAllSeen({
@@ -128,4 +131,89 @@ test('markAllSeen stores seen timestamp and returns updated counters', async () 
   assert.equal(updateManyCalled, true);
   assert.equal(result.updated_personal, 2);
   assert.ok(typeof result.global_seen_at === 'string');
+});
+
+test('sendToAll keeps media and link payload in serialized notification', async () => {
+  const service = new NotificationsService(
+    {} as never,
+    {
+      userNotification: {
+        create: async ({ data }: Record<string, any>) => ({
+          id: 'global-1',
+          userId: null,
+          scope: NotificationScope.GLOBAL,
+          title: data.title,
+          body: data.body,
+          isRead: false,
+          createdAt: baseDate,
+          type: NotificationType.GENERIC,
+          payload: data.payload,
+        }),
+      },
+    } as never,
+    {} as never,
+  );
+
+test('createSystemNotification emits personal realtime event for recipient only', async () => {
+  const emitted: Array<{ notification: Record<string, unknown>; userId?: string }> = [];
+  const service = new NotificationsService(
+    {} as never,
+    {
+      userNotification: {
+        create: async ({ data }: Record<string, any>) => ({
+          id: 'personal-1',
+          userId: data.userId,
+          scope: NotificationScope.PERSONAL,
+          title: data.title,
+          body: data.body,
+          isRead: false,
+          createdAt: baseDate,
+          type: NotificationType.SUPPORT,
+          payload: data.payload,
+        }),
+      },
+    } as never,
+    {
+      emitNotificationNew: (
+        notification: Record<string, unknown>,
+        userId?: string,
+      ) => {
+        emitted.push({ notification, userId });
+      },
+    } as never,
+  );
+
+  const item = await service.createSystemNotification({
+    userId: 'user-42',
+    title: 'Ответ поддержки',
+    body: 'Новое сообщение',
+    type: NotificationType.SUPPORT,
+    payload: {
+      actionType: 'support_reply',
+      ticketId: 'ticket-1',
+    },
+  });
+
+  assert.equal(item.userId, 'user-42');
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].userId, 'user-42');
+  assert.equal(emitted[0].notification['scope'], 'personal');
+});
+
+  const result = await service.sendToAll({
+    title: 'Новость',
+    body: 'Текст',
+    payload: {
+      description: 'Подробности',
+      imageUrl: 'https://cdn.example.com/misc/notification.jpg',
+      actionUrl: 'https://t.me/atta_app',
+    },
+  });
+
+  assert.equal(result.item.payload.description, 'Подробности');
+  assert.equal(result.item.payload.actionUrl, 'https://t.me/atta_app');
+  assert.equal(
+    result.item.payload.imageUrl,
+    'https://cdn.example.com/misc/notification.jpg',
+  );
 });

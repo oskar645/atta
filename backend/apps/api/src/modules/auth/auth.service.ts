@@ -18,6 +18,7 @@ import { randomUUID } from 'crypto';
 
 import { env } from '../../config/env';
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
+import { resolveReferralUserId } from '../../common/referral-code';
 import { parseAdminPhoneNumbers } from '../../config/env';
 import { serializeAdminProfile, serializeUser } from '../../common/serializers';
 import { PrismaService } from '../prisma/prisma.service';
@@ -155,13 +156,17 @@ export class AuthService {
       payload.verificationCheckId,
       payload.verification_check_id,
     );
+    const referralCode = this.pickOptionalReferralCode(
+      payload.referralCode,
+      payload.referral_code,
+    );
     const displayName = (payload.displayName ?? payload.display_name ?? '').trim();
 
     if (!displayName) {
       throw new BadRequestException('Display name is required');
     }
 
-    await this.assertConfirmedPhoneVerification({
+    const verification = await this.assertConfirmedPhoneVerification({
       phone: normalizedPhone,
       purpose: PhoneVerificationPurpose.SIGNUP,
       checkId: verificationCheckId,
@@ -197,7 +202,21 @@ export class AuthService {
 
     const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
     const session = await this.createSession(userWithAdmin);
+    await this.prisma.phoneVerification.update({
+      where: {
+        id: verification.id,
+      },
+      data: {
+        createdUserId: userWithAdmin.id,
+      },
+    });
     await this.ensureWalletBootstrapSafely(userWithAdmin.id);
+    await this.applyReferralBonusSafely({
+      newUser: userWithAdmin,
+      normalizedPhone,
+      referralCode,
+      verificationId: verification.id,
+    });
 
     return this.buildAuthResponse(userWithAdmin, session.auth);
   }
@@ -824,6 +843,10 @@ export class AuthService {
     return values.find((value) => value?.trim())?.trim() ?? '';
   }
 
+  private pickOptionalReferralCode(...values: Array<string | undefined>) {
+    return values.find((value) => value?.trim())?.trim() ?? '';
+  }
+
   private async assertConfirmedPhoneVerification(params: {
     phone: string;
     purpose: PhoneVerificationPurpose;
@@ -850,6 +873,89 @@ export class AuthService {
     }
 
     return verification;
+  }
+
+  private async applyReferralBonusSafely(params: {
+    newUser: UserWithAdminProfile;
+    normalizedPhone: string;
+    referralCode: string;
+    verificationId: string;
+  }) {
+    try {
+      await this.applyReferralBonusIfEligible(params);
+    } catch (error) {
+      console.warn(
+        `[AuthService] referral bonus skipped for user=${params.newUser.id}: ${
+          error instanceof Error ? error.message : 'unknown error'
+        }`,
+      );
+    }
+  }
+
+  private async applyReferralBonusIfEligible(params: {
+    newUser: UserWithAdminProfile;
+    normalizedPhone: string;
+    referralCode: string;
+    verificationId: string;
+  }) {
+    const normalizedReferralCode = params.referralCode.trim();
+    if (!normalizedReferralCode) {
+      return;
+    }
+
+    const inviterUserId = resolveReferralUserId(normalizedReferralCode);
+    if (!inviterUserId || inviterUserId === params.newUser.id) {
+      return;
+    }
+
+    const priorSignupForPhone = await this.prisma.phoneVerification.findFirst({
+      where: {
+        phone: params.normalizedPhone,
+        purpose: PhoneVerificationPurpose.SIGNUP,
+        status: PhoneVerificationStatus.CONFIRMED,
+        createdUserId: {
+          not: null,
+        },
+        id: {
+          not: params.verificationId,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+    if (priorSignupForPhone) {
+      return;
+    }
+
+    const inviter = await this.prisma.user.findUnique({
+      where: {
+        id: inviterUserId,
+      },
+      include: {
+        adminProfile: true,
+      },
+    });
+    if (!inviter || inviter.deletedAt || inviter.status === UserStatus.DELETED) {
+      return;
+    }
+
+    const inviterPhone = normalizeRussianPhone(inviter.phone ?? '');
+    if (inviterPhone && inviterPhone === params.normalizedPhone) {
+      return;
+    }
+
+    await this.walletService.accrueManualBonusIfNeeded(inviter.id, {
+      amount: 100,
+      reference: `REFERRAL_INVITER_BONUS:${params.newUser.id}`,
+      description: 'Бонус за приглашение друга',
+      source: 'referral_bonus',
+      metadata: {
+        referralCode: normalizedReferralCode,
+        invitedUserId: params.newUser.id,
+        invitedPhone: params.normalizedPhone,
+      },
+    });
   }
 
   private async ensureAdminBootstrapForUserId(userId: string) {

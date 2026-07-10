@@ -12,7 +12,7 @@ import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 
-import { env } from '../../config/env';
+import { env, parseCorsOrigins } from '../../config/env';
 import { AuthTokenPayload } from '../auth/auth.types';
 import { PresenceService } from '../presence/presence.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,7 +21,8 @@ import { ChatsService } from './chats.service';
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: parseCorsOrigins(),
+    credentials: true,
   },
 })
 export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {

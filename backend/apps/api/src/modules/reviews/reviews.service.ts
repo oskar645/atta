@@ -227,9 +227,11 @@ export class ReviewsService {
       } оставил новый отзыв.`,
       type: NotificationType.GENERIC,
       payload: {
+        actionType: 'review_new',
         reviewId: review.id,
         sellerId,
         authorId: authUser.userId,
+        listingId,
       },
     });
 

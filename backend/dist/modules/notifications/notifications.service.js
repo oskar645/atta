@@ -12,13 +12,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationsService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
+const serializers_1 = require("../../common/serializers");
 const apns_service_1 = require("../apns/apns.service");
+const chats_gateway_1 = require("../chats/chats.gateway");
 const prisma_service_1 = require("../prisma/prisma.service");
 const excludedInAppNotificationTypes = [client_1.NotificationType.CHAT_MESSAGE];
 let NotificationsService = class NotificationsService {
-    constructor(apnsService, prisma) {
+    constructor(apnsService, prisma, chatsGateway) {
         this.apnsService = apnsService;
         this.prisma = prisma;
+        this.chatsGateway = chatsGateway;
     }
     toType(type) {
         switch ((type ?? '').trim().toLowerCase()) {
@@ -34,9 +37,7 @@ let NotificationsService = class NotificationsService {
         }
     }
     serialize(item) {
-        const payload = item.payload && typeof item.payload === 'object' && !Array.isArray(item.payload)
-            ? item.payload
-            : {};
+        const payload = this.normalizePayload(item.payload);
         return {
             id: item.id,
             user_id: item.userId,
@@ -57,6 +58,33 @@ let NotificationsService = class NotificationsService {
             senderAvatarUrl: `${payload.senderAvatarUrl ?? ''}`.trim() || null,
         };
     }
+    normalizePayload(payload) {
+        const raw = payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? { ...payload }
+            : {};
+        const imageUrl = `${raw.imageUrl ?? raw.image_url ?? ''}`.trim();
+        const actionUrl = `${raw.actionUrl ?? raw.action_url ?? ''}`.trim();
+        const description = `${raw.description ?? ''}`.trim();
+        const actionLabel = `${raw.actionLabel ?? raw.action_label ?? ''}`.trim();
+        if (imageUrl.length > 0) {
+            raw.imageUrl = (0, serializers_1.normalizeStoredMediaUrl)(imageUrl, {
+                category: 'misc',
+            });
+            raw.image_url = raw.imageUrl;
+        }
+        if (actionUrl.length > 0) {
+            raw.actionUrl = actionUrl;
+            raw.action_url = actionUrl;
+        }
+        if (description.length > 0) {
+            raw.description = description;
+        }
+        if (actionLabel.length > 0) {
+            raw.actionLabel = actionLabel;
+            raw.action_label = actionLabel;
+        }
+        return raw;
+    }
     inAppWhereClause(authUser) {
         return {
             OR: [
@@ -67,6 +95,39 @@ let NotificationsService = class NotificationsService {
                 notIn: excludedInAppNotificationTypes,
             },
         };
+    }
+    sanitizePayload(payload) {
+        const normalized = payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? { ...payload }
+            : {};
+        const description = `${normalized.description ?? ''}`.trim();
+        const imageUrl = `${normalized.imageUrl ?? normalized.image_url ?? ''}`.trim();
+        const actionUrl = `${normalized.actionUrl ?? normalized.action_url ?? ''}`.trim();
+        const result = {};
+        if (description.length > 0) {
+            result.description = description;
+        }
+        if (imageUrl.length > 0) {
+            result.imageUrl = imageUrl;
+        }
+        if (actionUrl.length > 0) {
+            result.actionUrl = actionUrl;
+        }
+        return result;
+    }
+    ensureAdminNotificationHasContent(params) {
+        const title = params.title?.trim() ?? '';
+        const body = params.body?.trim() ?? '';
+        const payload = this.sanitizePayload(params.payload);
+        const description = `${payload.description ?? ''}`.trim();
+        const imageUrl = `${payload.imageUrl ?? ''}`.trim();
+        if (title.length === 0 &&
+            body.length === 0 &&
+            description.length === 0 &&
+            imageUrl.length === 0) {
+            throw new common_1.BadRequestException('Добавьте текст, описание или фото.');
+        }
+        return payload;
     }
     async listInAppNotifications(authUser) {
         const [items, user] = await Promise.all([
@@ -108,11 +169,13 @@ let NotificationsService = class NotificationsService {
         if (!user) {
             throw new common_1.NotFoundException('User with this user_id was not found');
         }
+        const payload = this.ensureAdminNotificationHasContent(body);
         const item = await this.createSystemNotification({
             userId,
             title: body.title?.trim() ?? '',
             body: body.body?.trim() ?? '',
             type: this.toType(body.type),
+            payload,
         });
         return {
             source: 'timeweb',
@@ -120,6 +183,7 @@ let NotificationsService = class NotificationsService {
         };
     }
     async sendToAll(body) {
+        const payload = this.ensureAdminNotificationHasContent(body);
         const item = await this.prisma.userNotification.create({
             data: {
                 userId: null,
@@ -127,6 +191,7 @@ let NotificationsService = class NotificationsService {
                 title: body.title?.trim() ?? '',
                 body: body.body?.trim() ?? '',
                 type: this.toType(body.type),
+                payload: payload,
             },
         });
         return {
@@ -135,7 +200,7 @@ let NotificationsService = class NotificationsService {
         };
     }
     async createSystemNotification(params) {
-        return this.prisma.userNotification.create({
+        const item = await this.prisma.userNotification.create({
             data: {
                 userId: params.userId,
                 scope: client_1.NotificationScope.PERSONAL,
@@ -145,6 +210,8 @@ let NotificationsService = class NotificationsService {
                 payload: (params.payload ?? {}),
             },
         });
+        this.chatsGateway.emitNotificationNew(this.serialize(item), params.userId.trim());
+        return item;
     }
     serializeNotification(item) {
         return this.serialize(item);
@@ -256,6 +323,7 @@ exports.NotificationsService = NotificationsService;
 exports.NotificationsService = NotificationsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [apns_service_1.ApnsService,
-        prisma_service_1.PrismaService])
+        prisma_service_1.PrismaService,
+        chats_gateway_1.ChatsGateway])
 ], NotificationsService);
 //# sourceMappingURL=notifications.service.js.map

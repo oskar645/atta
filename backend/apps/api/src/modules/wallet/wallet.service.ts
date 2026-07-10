@@ -133,7 +133,10 @@ export class WalletService {
           type: WalletTransactionType.ACCRUAL,
           amount: accruedAmount,
           reason: WalletTransactionReason.WELCOME_BONUS,
-          metadata: this.buildTransactionMetadata(),
+          metadata: this.buildTransactionMetadata({
+            description: 'Бонус за регистрацию',
+            source: 'welcome_bonus',
+          }),
         },
       });
 
@@ -348,10 +351,14 @@ export class WalletService {
       amount,
       reference,
       description,
+      source,
+      metadata,
     }: {
       amount: number;
       reference: string;
       description: string;
+      source?: string;
+      metadata?: Prisma.InputJsonValue;
     },
     tx?: Prisma.TransactionClient,
   ) {
@@ -415,7 +422,13 @@ export class WalletService {
           metadata: this.buildTransactionMetadata({
             reference: normalizedReference,
             description: normalizedDescription,
-            source: 'admin_test_bonus',
+            source:
+              source?.trim().length
+                ? source.trim()
+                : 'manual_bonus',
+            ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+              ? (metadata as Record<string, unknown>)
+              : {}),
           }),
         },
       });

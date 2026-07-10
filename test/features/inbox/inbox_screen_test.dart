@@ -10,12 +10,15 @@ import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
-  testWidgets('opening inbox list keeps unread chat unread and does not mark read',
+  testWidgets(
+      'opening inbox list keeps unread chat unread and does not mark read',
       (tester) async {
     final chatService = _InboxFakeChatService(
       chats: <Chat>[
@@ -73,7 +76,8 @@ void main() {
     expect(chatService.markChatsDeliveredCalls, isNotEmpty);
   });
 
-  testWidgets('inbox shows separate chats for same seller with different listings',
+  testWidgets(
+      'inbox shows separate chats for same seller with different listings',
       (tester) async {
     final chatService = _InboxFakeChatService(
       chats: <Chat>[
@@ -134,8 +138,81 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
 
-    expect(chatService.refreshInboxCalls, 1);
+    expect(chatService.refreshInboxCalls, 2);
     expect(chatService.markChatReadCalls, isEmpty);
+  });
+
+  testWidgets(
+      'inbox keeps cached chats visible when stream emits an error after load',
+      (tester) async {
+    final chatService = _InboxFakeChatService(
+      chats: <Chat>[
+        _chatFixture(id: 'chat-1', unreadForBuyer: 1),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildInboxApp(
+        chatService: chatService,
+        child: const InboxScreen(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Seller'), findsOneWidget);
+
+    chatService.emitChatsError(Exception('network'));
+    await tester.pump();
+
+    expect(find.text('Seller'), findsOneWidget);
+    expect(find.byType(AppErrorView), findsNothing);
+  });
+
+  testWidgets('inbox does not show empty state before first refresh completes',
+      (tester) async {
+    final refreshCompleter = Completer<void>();
+    final chatService = _InboxFakeChatService(
+      chats: const <Chat>[],
+      refreshInboxCompleter: refreshCompleter,
+    );
+
+    await tester.pumpWidget(
+      _buildInboxApp(
+        chatService: chatService,
+        child: const InboxScreen(),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Пока нет сообщений'), findsNothing);
+    expect(find.byType(SkeletonChatRow), findsWidgets);
+
+    refreshCompleter.complete();
+    await tester.pump();
+
+    expect(find.text('Пока нет сообщений'), findsOneWidget);
+  });
+
+  testWidgets('inbox retry after timeout starts a new inbox request',
+      (tester) async {
+    final chatService = _RetryInboxFakeChatService();
+
+    await tester.pumpWidget(
+      _buildInboxApp(
+        chatService: chatService,
+        child: const InboxScreen(),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.byType(AppErrorView), findsOneWidget);
+
+    await tester.tap(find.text('Повторить').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Seller'), findsOneWidget);
+    expect(find.byType(AppErrorView), findsNothing);
+    expect(chatService.refreshInboxCalls, 2);
   });
 
   testWidgets('chat screen shows messages with small avatars', (tester) async {
@@ -170,8 +247,10 @@ void main() {
 
     expect(find.text('Моё сообщение'), findsOneWidget);
     expect(find.text('Чужое сообщение'), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('avatar-mine-out-1')), findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('avatar-other-in-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('avatar-mine-out-1')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('avatar-other-in-1')),
+        findsOneWidget);
   });
 
   testWidgets('tap outside input closes keyboard', (tester) async {
@@ -297,19 +376,37 @@ class _InboxFakeChatService extends ChatService {
     List<Chat>? chats,
     Chat? chat,
     List<ChatMessage>? messages,
+    Completer<void>? refreshInboxCompleter,
+    Object? refreshInboxError,
   })  : _chats = chats ?? <Chat>[_chatFixture()],
         _chat = chat ?? _chatFixture(),
-        _messages = messages ?? const <ChatMessage>[];
+        _messages = messages ?? const <ChatMessage>[],
+        _refreshInboxCompleter = refreshInboxCompleter,
+        _refreshInboxError = refreshInboxError;
 
   final List<Chat> _chats;
   final Chat _chat;
   final List<ChatMessage> _messages;
+  final Completer<void>? _refreshInboxCompleter;
+  final Object? _refreshInboxError;
+  final StreamController<List<Chat>> _myChatsController =
+      StreamController<List<Chat>>.broadcast();
   final List<String> markChatReadCalls = <String>[];
   final List<List<String>> markChatsDeliveredCalls = <List<String>>[];
   int refreshInboxCalls = 0;
 
   @override
-  Stream<List<Chat>> streamMyChats(String uid) => Stream<List<Chat>>.value(_chats);
+  Stream<List<Chat>> streamMyChats(String uid) =>
+      Stream<List<Chat>>.multi((controller) {
+        controller.add(_chats);
+        final sub = _myChatsController.stream.listen(
+          controller.add,
+          onError: controller.addError,
+        );
+        controller.onCancel = () async {
+          await sub.cancel();
+        };
+      }, isBroadcast: true);
 
   @override
   Stream<int> streamUnreadTotal(String uid) => Stream<int>.value(
@@ -325,6 +422,13 @@ class _InboxFakeChatService extends ChatService {
   @override
   Future<void> refreshInbox(String uid) async {
     refreshInboxCalls += 1;
+    if (_refreshInboxError != null) {
+      throw _refreshInboxError!;
+    }
+    final completer = _refreshInboxCompleter;
+    if (completer != null) {
+      await completer.future;
+    }
   }
 
   @override
@@ -355,4 +459,52 @@ class _InboxFakeChatService extends ChatService {
 
   @override
   void setForegroundChat(String? chatId) {}
+
+  void emitChats(List<Chat> chats) {
+    _myChatsController.add(chats);
+  }
+
+  void emitChatsError(Object error) {
+    _myChatsController.addError(error);
+  }
+}
+
+class _RetryInboxFakeChatService extends ChatService {
+  final StreamController<List<Chat>> _myChatsController =
+      StreamController<List<Chat>>.broadcast();
+  int refreshInboxCalls = 0;
+  Object? _lastError;
+
+  @override
+  Object? get lastChatsLoadError => _lastError;
+
+  @override
+  Stream<List<Chat>> streamMyChats(String uid) =>
+      Stream<List<Chat>>.multi((controller) {
+        controller.add(const <Chat>[]);
+        final sub = _myChatsController.stream.listen(
+          controller.add,
+          onError: controller.addError,
+        );
+        controller.onCancel = () async {
+          await sub.cancel();
+        };
+      }, isBroadcast: true);
+
+  @override
+  Future<void> refreshInbox(String uid) async {
+    refreshInboxCalls += 1;
+    if (refreshInboxCalls == 1) {
+      _lastError = TimeoutException('Future not completed');
+      return;
+    }
+    _lastError = null;
+    _myChatsController.add(<Chat>[_chatFixture()]);
+  }
+
+  @override
+  Future<void> markChatsDelivered({
+    required Iterable<String> chatIds,
+    required String uid,
+  }) async {}
 }

@@ -1,20 +1,28 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/in_app_notifications_api.dart';
+import 'package:atta/src/services/api/media_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/image_preparation_service.dart';
+import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart';
 
 class NotificationsService {
   NotificationsService({
     InAppNotificationsApi? api,
-    Duration pollInterval = const Duration(seconds: 45),
+    MediaApi? mediaApi,
+    ImagePreparationService? imagePreparationService,
   })  : _api = api ?? InAppNotificationsApi(_apiClient),
-        _pollInterval = pollInterval;
+        _mediaApi = mediaApi ?? MediaApi(_apiClient),
+        _imagePreparationService =
+            imagePreparationService ?? ImagePreparationService();
 
   final InAppNotificationsApi _api;
-  final Duration _pollInterval;
+  final MediaApi _mediaApi;
+  final ImagePreparationService _imagePreparationService;
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
   static final Map<String, DateTime> _lastSeenGlobalAt = <String, DateTime>{};
@@ -33,7 +41,6 @@ class NotificationsService {
   final Map<String, DateTime> _lastRefreshAttemptAt = <String, DateTime>{};
   String? _activeUserId;
   int _sessionVersion = 0;
-  Timer? _pollTimer;
   static const String savedSearchNotificationTitle =
       'Новое объявление по вашему поиску';
   static const Duration _cacheTtl = Duration(seconds: 30);
@@ -61,7 +68,6 @@ class NotificationsService {
       _clearCachedStreams();
     }
     _activeUserId = normalized;
-    _configurePolling();
   }
 
   void resetSession() {
@@ -72,8 +78,6 @@ class NotificationsService {
     }
     _activeUserId = null;
     _sessionVersion++;
-    _pollTimer?.cancel();
-    _pollTimer = null;
     _clearCachedStreams();
   }
 
@@ -353,7 +357,10 @@ class NotificationsService {
   Future<void> markPersonalReadById(String notificationId) async {
     _debugSource('Notifications source: Timeweb');
     await _api.markRead(notificationId);
-    _markRealtimeNotificationRead(notificationId);
+    final touchedUserId = _markNotificationReadInCaches(notificationId);
+    if (touchedUserId.isNotEmpty) {
+      _refreshSignals.add(touchedUserId);
+    }
   }
 
   Future<void> markAllPersonalRead(String userId) async {
@@ -367,7 +374,7 @@ class NotificationsService {
     })) {
       final id = (row['id'] ?? '').toString().trim();
       if (id.isEmpty) continue;
-      _markRealtimeNotificationRead(id);
+      _markNotificationReadInCaches(id);
     }
     final cachedRows = _serverRowsByUser[userId];
     if (cachedRows != null) {
@@ -389,7 +396,7 @@ class NotificationsService {
       final id = (row['id'] ?? '').toString();
       if (id.isEmpty) continue;
       await _api.markRead(id);
-      _markRealtimeNotificationRead(id);
+      _markNotificationReadInCaches(id);
     }
     _refreshSignals.add(userId);
   }
@@ -397,24 +404,72 @@ class NotificationsService {
   Future<void> deleteById(String notificationId) async {
     _debugSource('Notifications source: Timeweb');
     await _api.deleteById(notificationId);
-    _removeRealtimeNotification(notificationId);
+    final touchedUserId = _removeNotificationFromCaches(notificationId);
+    if (touchedUserId.isNotEmpty) {
+      _refreshSignals.add(touchedUserId);
+    }
   }
 
   Future<void> sendGlobal({
-    required String title,
-    required String body,
+    String? title,
+    String? body,
+    Map<String, dynamic>? payload,
   }) async {
     _debugSource('Notifications source: Timeweb');
-    await _api.sendAll(title: title, body: body);
+    await _api.sendAll(title: title, body: body, payload: payload);
   }
 
   Future<void> sendPersonal({
     required String userId,
-    required String title,
-    required String body,
+    String? title,
+    String? body,
+    Map<String, dynamic>? payload,
   }) async {
     _debugSource('Notifications source: Timeweb');
-    await _api.sendUser(userId: userId, title: title, body: body);
+    await _api.sendUser(
+      userId: userId,
+      title: title,
+      body: body,
+      payload: payload,
+    );
+  }
+
+  Future<String> uploadNotificationImage(File file) async {
+    try {
+      final prepared =
+          await _imagePreparationService.prepareNotificationImage(file);
+      final response = await _mediaApi.uploadNotificationImage(
+        bytes: prepared.bytes,
+        fileName: prepared.fileName,
+        contentType: prepared.contentType,
+      );
+      final rawUrl =
+          (response['url'] ?? response['imageUrl'] ?? '').toString().trim();
+      final resolution = resolveMediaUrl(
+        rawUrl,
+        categoryHint: 'misc',
+      );
+      if (kDebugMode) {
+        debugPrint(
+          'Notification upload response imageUrl=$rawUrl resolved=${resolution.resolvedUrl} category=notification provider=${resolution.provider}',
+        );
+      }
+      return resolution.resolvedUrl;
+    } on ApiException catch (error) {
+      if (error.isNotFound) {
+        throw const ApiException(
+          'Не удалось загрузить фото для уведомления. Попробуйте позже.',
+          statusCode: 404,
+          code: 'notification_upload_not_available',
+        );
+      }
+      throw ApiException(
+        'Не удалось загрузить фото для уведомления. Попробуйте другое фото.',
+        statusCode: error.statusCode,
+        code: error.code,
+        details: error.details,
+      );
+    }
   }
 
   Stream<List<Map<String, dynamic>>> _createTimewebNotificationsStream({
@@ -499,18 +554,6 @@ class NotificationsService {
     _refreshByUserInFlight.clear();
     _lastSuccessfulRefreshAt.clear();
     _lastRefreshAttemptAt.clear();
-  }
-
-  void _configurePolling() {
-    _pollTimer?.cancel();
-    _pollTimer = null;
-    final userId = _activeUserId;
-    if (userId == null || userId.isEmpty || _pollInterval <= Duration.zero) {
-      return;
-    }
-    _pollTimer = Timer.periodic(_pollInterval, (_) {
-      unawaited(refreshActiveSession(force: true));
-    });
   }
 
   Future<void> _refreshUserNotifications(
@@ -641,29 +684,42 @@ class NotificationsService {
     return rowsById.values.toList();
   }
 
-  void _markRealtimeNotificationRead(String notificationId) {
+  String _markNotificationReadInCaches(String notificationId) {
     var touchedUserId = '';
+    for (final entry in _serverRowsByUser.entries) {
+      for (final row in entry.value) {
+        final id = (row['id'] ?? '').toString().trim();
+        if (id != notificationId) continue;
+        row['is_read'] = true;
+        touchedUserId = entry.key;
+      }
+    }
     for (final entry in _realtimeRowsByUser.entries) {
       final row = entry.value[notificationId];
       if (row == null) continue;
       row['is_read'] = true;
       touchedUserId = entry.key;
     }
-    if (touchedUserId.isNotEmpty) {
-      _refreshSignals.add(touchedUserId);
-    }
+    return touchedUserId;
   }
 
-  void _removeRealtimeNotification(String notificationId) {
+  String _removeNotificationFromCaches(String notificationId) {
     var touchedUserId = '';
+    for (final entry in _serverRowsByUser.entries) {
+      final before = entry.value.length;
+      entry.value.removeWhere(
+        (row) => (row['id'] ?? '').toString().trim() == notificationId,
+      );
+      if (entry.value.length != before) {
+        touchedUserId = entry.key;
+      }
+    }
     for (final entry in _realtimeRowsByUser.entries) {
       if (entry.value.remove(notificationId) != null) {
         touchedUserId = entry.key;
       }
     }
-    if (touchedUserId.isNotEmpty) {
-      _refreshSignals.add(touchedUserId);
-    }
+    return touchedUserId;
   }
 
   void _syncGlobalSeenAt(String userId, dynamic raw) {
@@ -687,5 +743,5 @@ class NotificationsService {
   }
 
   @visibleForTesting
-  bool get hasActivePollingTimer => _pollTimer != null;
+  bool get hasActivePollingTimer => false;
 }

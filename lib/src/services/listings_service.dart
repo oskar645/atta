@@ -121,9 +121,11 @@ class ListingsService {
   ListingsService({
     ListingsApi? api,
     MediaApi? mediaApi,
+    Duration privateRequestTimeout = const Duration(seconds: 12),
   })  : _api = api ?? ListingsApi(_apiClient),
         _mediaApi = mediaApi ?? MediaApi(_apiClient),
-        _imagePreparationService = ImagePreparationService();
+        _imagePreparationService = ImagePreparationService(),
+        _privateRequestTimeout = privateRequestTimeout;
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -131,6 +133,7 @@ class ListingsService {
   final ListingsApi _api;
   final MediaApi _mediaApi;
   final ImagePreparationService _imagePreparationService;
+  final Duration _privateRequestTimeout;
   final StreamController<void> _refreshController =
       StreamController<void>.broadcast();
   final Map<String, Listing> _listingById = <String, Listing>{};
@@ -141,11 +144,17 @@ class ListingsService {
   List<Listing>? _myListingsCache;
   DateTime? _myListingsCachedAt;
   Future<List<Listing>>? _myListingsInFlight;
+  String? _myListingsCacheUserId;
+  String? _myListingsInFlightUserId;
+  Object? _lastMyListingsError;
+  String? _lastMyListingsErrorUserId;
   final Map<String, List<Listing>> _ownerListingsCache =
       <String, List<Listing>>{};
   final Map<String, DateTime> _ownerListingsCachedAt = <String, DateTime>{};
   final Map<String, Future<List<Listing>>> _ownerListingsInFlight =
       <String, Future<List<Listing>>>{};
+  final Map<String, Future<ListingsFeedPage>> _feedPageInFlight =
+      <String, Future<ListingsFeedPage>>{};
 
   static const Duration _cacheTtl = Duration(seconds: 20);
 
@@ -175,9 +184,9 @@ class ListingsService {
 
   Stream<List<Listing>> streamMyListings(String uid) async* {
     _debugSource('Listings source: Timeweb');
-    yield await _fetchMyListings();
+    yield await _fetchMyListings(uid);
     await for (final _ in _refreshController.stream) {
-      yield await _fetchMyListings();
+      yield await _fetchMyListings(uid);
     }
   }
 
@@ -189,6 +198,26 @@ class ListingsService {
     return streamListingsByOwnerAll(ownerId).map(
       (items) => items.where((x) => x.status == 'approved').toList(),
     );
+  }
+
+  List<Listing> peekListingsByOwner(String ownerId) {
+    return List<Listing>.from(
+      _ownerListingsCache[ownerId.trim()] ?? const <Listing>[],
+    );
+  }
+
+  Future<List<Listing>> getListingsByOwnerAll(String ownerId) async {
+    _debugSource('Listings source: Timeweb');
+    return _fetchListingsByOwner(ownerId);
+  }
+
+  Future<List<Listing>> refreshListingsByOwner(String ownerId) async {
+    final id = ownerId.trim();
+    if (id.isEmpty) return const <Listing>[];
+    _ownerListingsCache.remove(id);
+    _ownerListingsCachedAt.remove(id);
+    _debugSource('Listings source: Timeweb');
+    return _fetchListingsByOwner(id, forceRefresh: true);
   }
 
   Stream<List<Listing>> streamListingsByOwnerAll(String ownerId) async* {
@@ -265,32 +294,61 @@ class ListingsService {
           category: category,
           search: search,
         );
+    final requestKey = [
+      effectiveFilters.category.trim(),
+      effectiveFilters.search.trim(),
+      effectiveFilters.subcategory.trim(),
+      effectiveFilters.location.trim(),
+      effectiveFilters.preferLocationFirst,
+      effectiveFilters.radiusKm ?? '',
+      effectiveFilters.autoBrand.trim(),
+      effectiveFilters.autoModel.trim(),
+      effectiveFilters.autoCondition.trim(),
+      effectiveFilters.autoMileageTo ?? '',
+      effectiveFilters.onlyUncrashed,
+      limit,
+      (cursor ?? '').trim(),
+    ].join('|');
+    final existing = _feedPageInFlight[requestKey];
+    if (existing != null) {
+      return existing;
+    }
 
-    _debugSource('Listings source: Timeweb');
-    final response = await _api.list(
-      queryParameters: {
-        if (!_isAllCategory(effectiveFilters.category))
-          'category': effectiveFilters.category,
-        if (effectiveFilters.search.trim().isNotEmpty)
-          'search': effectiveFilters.search.trim(),
-        if (effectiveFilters.location.trim().isNotEmpty)
-          'city': effectiveFilters.location.trim(),
-        'limit': limit,
-        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
-      },
-    );
-    final items = _extractItems(response);
-    final filtered =
-        items.where((item) => _matchesFilters(item, effectiveFilters)).toList();
-    filtered.sort(_compareFeedListings);
-    _cacheListings(items);
-    return ListingsFeedPage(
-      items: filtered,
-      hasMore: response['hasMore'] == true || response['has_more'] == true,
-      nextCursor: (response['nextCursor'] ?? response['next_cursor'])
-          ?.toString()
-          .trim(),
-    );
+    final future = () async {
+      _debugSource('Listings source: Timeweb');
+      final response = await _api.list(
+        queryParameters: {
+          if (!_isAllCategory(effectiveFilters.category))
+            'category': effectiveFilters.category,
+          if (effectiveFilters.search.trim().isNotEmpty)
+            'search': effectiveFilters.search.trim(),
+          if (effectiveFilters.location.trim().isNotEmpty)
+            'city': effectiveFilters.location.trim(),
+          'limit': limit,
+          if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+        },
+      );
+      final items = _extractItems(response);
+      final filtered = items
+          .where((item) => _matchesFilters(item, effectiveFilters))
+          .toList();
+      _cacheListings(items);
+      return ListingsFeedPage(
+        items: filtered,
+        hasMore: response['hasMore'] == true || response['has_more'] == true,
+        nextCursor: (response['nextCursor'] ?? response['next_cursor'])
+            ?.toString()
+            .trim(),
+      );
+    }();
+    _feedPageInFlight[requestKey] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_feedPageInFlight[requestKey], future)) {
+        _feedPageInFlight.remove(requestKey);
+      }
+    }
   }
 
   List<Listing> peekListings({
@@ -322,9 +380,13 @@ class ListingsService {
   Future<List<Listing>> getMyListingsByStatuses(
     String uid, {
     required Set<String> statuses,
+    bool forceRefresh = false,
   }) async {
     _debugSource('Listings source: Timeweb');
-    final items = await _fetchMyListings();
+    final items = await _fetchMyListings(
+      uid,
+      forceRefresh: forceRefresh,
+    );
     return items.where((item) => statuses.contains(item.status)).toList();
   }
 
@@ -333,6 +395,14 @@ class ListingsService {
   }) {
     final items = List<Listing>.from(_myListingsCache ?? const <Listing>[]);
     return items.where((item) => statuses.contains(item.status)).toList();
+  }
+
+  Object? lastMyListingsErrorForUser(String uid) {
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty || _lastMyListingsErrorUserId != normalizedUid) {
+      return null;
+    }
+    return _lastMyListingsError;
   }
 
   Future<Listing?> getLatestApprovedListingByOwner(String ownerId) async {
@@ -485,6 +555,12 @@ class ListingsService {
       _upsertListingInCaches(listing);
     }
     return listing;
+  }
+
+  Listing? peekListingById(String id) {
+    final normalizedId = id.trim();
+    if (normalizedId.isEmpty) return null;
+    return _listingById[normalizedId];
   }
 
   Future<Listing?> refreshListingById(String listingId) async {
@@ -760,12 +836,12 @@ class ListingsService {
     }
 
     if (filters.autoCondition.trim().isNotEmpty &&
-        !_containsNormalized(car.condition, filters.autoCondition)) {
+        !_containsNormalized(car.condition ?? '', filters.autoCondition)) {
       return false;
     }
 
     if (filters.autoMileageTo != null &&
-        car.mileageKm > filters.autoMileageTo!) {
+        (car.mileageKm == null || car.mileageKm! > filters.autoMileageTo!)) {
       return false;
     }
 
@@ -983,8 +1059,7 @@ class ListingsService {
         }
       }
 
-      final filtered = List<Listing>.from(aggregated)
-        ..sort(_compareFeedListings);
+      final filtered = List<Listing>.from(aggregated);
       _timewebCache[key] = filtered;
       _timewebCachedAt[key] = DateTime.now();
       return filtered;
@@ -999,70 +1074,121 @@ class ListingsService {
     }
   }
 
-  Future<List<Listing>> _fetchMyListings() async {
+  Future<List<Listing>> _fetchMyListings(
+    String requestedUserId, {
+    bool forceRefresh = false,
+  }) async {
+    final uid = requestedUserId.trim();
+    if (uid.isEmpty) {
+      _debugPrivateTab('MyListings load skipped reason=no_user');
+      return const <Listing>[];
+    }
+    if (_myListingsCacheUserId != null && _myListingsCacheUserId != uid) {
+      _clearMyListingsCache();
+    }
     final cached = _myListingsCache;
-    if (cached != null &&
+    if (!forceRefresh &&
+        cached != null &&
         _myListingsCachedAt != null &&
         DateTime.now().difference(_myListingsCachedAt!) < _cacheTtl) {
       return List<Listing>.from(cached);
     }
     final existing = _myListingsInFlight;
-    if (existing != null) return existing;
-    final currentUser = await _tokenStorage.readCurrentUser();
-    final uid = currentUser?.uid ?? '';
-    if (uid.isEmpty) return const <Listing>[];
+    if (existing != null && _myListingsInFlightUserId == uid) {
+      _debugPrivateTab('MyListings load skipped reason=in_flight user=$uid');
+      return existing;
+    }
     final future = () async {
-      final response = await _api.list(
-        queryParameters: {
-          'ownerId': uid,
-        },
-      );
-      final items = _extractItems(response);
-      _cacheListings(items);
-      _myListingsCache = List<Listing>.from(items);
-      _myListingsCachedAt = DateTime.now();
-      return items;
+      _debugPrivateTab('MyListings load start user=$uid');
+      try {
+        final response =
+            await _api.myListings().timeout(_privateRequestTimeout);
+        final items = _sanitizeMyListings(
+          _extractItems(response),
+          currentUserId: uid,
+        );
+        _cacheListings(items);
+        final latestUser = requestedUserId.trim();
+        if (latestUser == uid) {
+          _myListingsCache = List<Listing>.from(items);
+          _myListingsCachedAt = DateTime.now();
+          _myListingsCacheUserId = uid;
+        }
+        _lastMyListingsError = null;
+        _lastMyListingsErrorUserId = uid;
+        _debugPrivateTab(
+          items.isEmpty
+              ? 'MyListings load empty'
+              : 'MyListings load success count=${items.length}',
+        );
+        return items;
+      } catch (error) {
+        _lastMyListingsError = error;
+        _lastMyListingsErrorUserId = uid;
+        _debugPrivateTab('MyListings load error message=$error user=$uid');
+        return List<Listing>.from(_myListingsCache ?? const <Listing>[]);
+      } finally {
+        _debugPrivateTab('MyListings load finally loading=false user=$uid');
+      }
     }();
     _myListingsInFlight = future;
+    _myListingsInFlightUserId = uid;
     try {
       return await future;
     } finally {
       if (identical(_myListingsInFlight, future)) {
         _myListingsInFlight = null;
+        _myListingsInFlightUserId = null;
+        _debugPrivateTab('MyListings inFlight cleared user=$uid');
       }
     }
   }
 
-  Future<List<Listing>> _fetchListingsByOwner(String ownerId) async {
-    final cached = _ownerListingsCache[ownerId];
-    final cachedAt = _ownerListingsCachedAt[ownerId];
-    if (cached != null &&
+  Future<List<Listing>> _fetchListingsByOwner(
+    String ownerId, {
+    bool forceRefresh = false,
+  }) async {
+    final id = ownerId.trim();
+    if (id.isEmpty) return const <Listing>[];
+    final cached = _ownerListingsCache[id];
+    final cachedAt = _ownerListingsCachedAt[id];
+    if (!forceRefresh &&
+        cached != null &&
         cachedAt != null &&
         DateTime.now().difference(cachedAt) < _cacheTtl) {
       return List<Listing>.from(cached);
     }
-    final existing = _ownerListingsInFlight[ownerId];
+    final existing = _ownerListingsInFlight[id];
     if (existing != null) return existing;
     final future = () async {
       final response = await _api.list(
         queryParameters: {
-          'ownerId': ownerId,
+          'ownerId': id,
         },
       );
-      final items = _extractItems(response);
+      final items = _dedupeAndSortListings(_extractItems(response));
       _cacheListings(items);
-      _ownerListingsCache[ownerId] = List<Listing>.from(items);
-      _ownerListingsCachedAt[ownerId] = DateTime.now();
+      _ownerListingsCache[id] = List<Listing>.from(items);
+      _ownerListingsCachedAt[id] = DateTime.now();
       return items;
     }();
-    _ownerListingsInFlight[ownerId] = future;
+    _ownerListingsInFlight[id] = future;
     try {
       return await future;
     } finally {
-      if (identical(_ownerListingsInFlight[ownerId], future)) {
-        _ownerListingsInFlight.remove(ownerId);
+      if (identical(_ownerListingsInFlight[id], future)) {
+        _ownerListingsInFlight.remove(id);
       }
     }
+  }
+
+  List<Listing> _dedupeAndSortListings(List<Listing> items) {
+    final byId = <String, Listing>{};
+    for (final item in items) {
+      byId[item.id] = item;
+    }
+    final unique = byId.values.toList()..sort(_compareFeedListings);
+    return unique;
   }
 
   List<Listing> _extractItems(Map<String, dynamic> response) {
@@ -1090,10 +1216,22 @@ class ListingsService {
   void _clearCachedCollections() {
     _timewebCache.clear();
     _timewebCachedAt.clear();
-    _myListingsCache = null;
-    _myListingsCachedAt = null;
+    _timewebInFlight.clear();
+    _feedPageInFlight.clear();
+    _clearMyListingsCache();
     _ownerListingsCache.clear();
     _ownerListingsCachedAt.clear();
+    _ownerListingsInFlight.clear();
+  }
+
+  void _clearMyListingsCache() {
+    _myListingsCache = null;
+    _myListingsCachedAt = null;
+    _myListingsCacheUserId = null;
+    _myListingsInFlight = null;
+    _myListingsInFlightUserId = null;
+    _lastMyListingsError = null;
+    _lastMyListingsErrorUserId = null;
   }
 
   void _cacheListings(List<Listing> items) {
@@ -1115,10 +1253,32 @@ class ListingsService {
     _replaceListingInCollectionCaches(listing);
   }
 
+  void refreshFeedAfterPromotion({Listing? listing}) {
+    if (listing != null) {
+      _upsertListingInCaches(listing);
+    }
+    _timewebCache.clear();
+    _timewebCachedAt.clear();
+    _timewebInFlight.clear();
+    _feedPageInFlight.clear();
+    if (!_refreshController.isClosed) {
+      _refreshController.add(null);
+    }
+    if (listing != null) {
+      unawaited(_refreshListingFromBackend(listing.id));
+    }
+  }
+
   void _replaceListingInCollectionCaches(Listing listing) {
     if (_myListingsCache != null) {
-      _myListingsCache =
-          _replaceListingInCollection(_myListingsCache!, listing);
+      final currentUserId = _myListingsCacheUserId?.trim() ?? '';
+      final includeInMyListings =
+          currentUserId.isNotEmpty && listing.ownerId.trim() == currentUserId;
+      _myListingsCache = _replaceListingInFeed(
+        _myListingsCache!,
+        listing,
+        includeListing: includeInMyListings,
+      );
       _myListingsCachedAt = DateTime.now();
     }
 
@@ -1157,11 +1317,20 @@ class ListingsService {
     Listing listing, {
     required bool includeListing,
   }) {
-    final next = source.where((item) => item.id != listing.id).toList();
-    if (includeListing) {
-      next.add(listing);
-      next.sort(_compareFeedListings);
+    final currentIndex = source.indexWhere((item) => item.id == listing.id);
+    if (!includeListing) {
+      if (currentIndex < 0) {
+        return List<Listing>.from(source);
+      }
+      return source.where((item) => item.id != listing.id).toList();
     }
+
+    if (currentIndex < 0) {
+      return <Listing>[listing, ...source];
+    }
+
+    final next = List<Listing>.from(source);
+    next[currentIndex] = listing;
     return next;
   }
 
@@ -1181,6 +1350,19 @@ class ListingsService {
       autoMileageTo: int.tryParse(parts[9]),
       onlyUncrashed: parts[10] == 'true',
     );
+  }
+
+  List<Listing> _sanitizeMyListings(
+    List<Listing> items, {
+    required String currentUserId,
+  }) {
+    final normalizedUserId = currentUserId.trim();
+    if (normalizedUserId.isEmpty) {
+      return const <Listing>[];
+    }
+    final filtered =
+        items.where((item) => item.ownerId.trim() == normalizedUserId).toList();
+    return _dedupeAndSortListings(filtered);
   }
 
   Future<void> _refreshListingFromBackend(String listingId) async {
@@ -1203,7 +1385,15 @@ class ListingsService {
 
   void resetSession() {
     _listingById.clear();
+    _feedPageInFlight.clear();
     _clearCachedCollections();
+  }
+
+  void _debugPrivateTab(String message) {
+    assert(() {
+      debugPrint(message);
+      return true;
+    }());
   }
 
   void _debugCreateListingStart({

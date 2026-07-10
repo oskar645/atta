@@ -1,11 +1,17 @@
 import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class CreateReportDto {
+  @IsOptional()
   @IsUUID()
-  listingId!: string;
+  listingId?: string;
 
+  @IsOptional()
   @IsUUID()
-  listingOwnerId!: string;
+  listingOwnerId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  reportedUserId?: string;
 
   @IsString()
   @MinLength(2)

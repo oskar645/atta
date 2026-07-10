@@ -63,13 +63,14 @@ class _EditListingScreenState extends State<EditListingScreen> {
   String? _autoGen;
 
   // авто selects
-  String _carBody = 'Седан';
-  String _carFuel = 'Бензин';
-  String _carTransmission = 'Автомат';
-  String _carDrive = 'Передний';
-  String _carCondition = 'Хорошее';
-  String _carColor = 'Чёрный';
+  String? _carBody;
+  String? _carFuel;
+  String? _carTransmission;
+  String? _carDrive;
+  String? _carCondition;
+  String? _carColor;
   bool? _carCleared;
+  String? _carPts;
 
   final Map<String, String> _deliveryNames = const {
     'cdek': 'СДЭК',
@@ -156,6 +157,13 @@ class _EditListingScreenState extends State<EditListingScreen> {
     'Другой',
   ];
 
+  static const _ptsTypes = <String>[
+    'Оригинал',
+    'Дубликат',
+    'Электронный',
+    'Нет',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -236,8 +244,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
       _autoModel = c.model;
       _autoGen = c.generation.trim().isEmpty ? null : c.generation;
 
-      _carYear.text = '${c.year}';
-      _carMileage.text = '${c.mileageKm}';
+      _carYear.text = c.year?.toString() ?? '';
+      _carMileage.text = c.mileageKm?.toString() ?? '';
       _carEngine.text =
           c.engineVolume == null ? '' : formatEngineVolume(c.engineVolume);
       _carPower.text = c.powerHp?.toString() ?? '';
@@ -245,13 +253,15 @@ class _EditListingScreenState extends State<EditListingScreen> {
       _carVin.text = c.vin ?? '';
       _carNote.text = c.note ?? '';
 
-      _carBody = c.bodyType;
-      _carFuel = c.fuel;
-      _carTransmission = c.transmission;
-      _carDrive = c.drive;
-      _carCondition = c.condition;
-      _carColor = c.color;
+      _carBody = (c.bodyType ?? '').trim().isEmpty ? null : c.bodyType;
+      _carFuel = (c.fuel ?? '').trim().isEmpty ? null : c.fuel;
+      _carTransmission =
+          (c.transmission ?? '').trim().isEmpty ? null : c.transmission;
+      _carDrive = (c.drive ?? '').trim().isEmpty ? null : c.drive;
+      _carCondition = (c.condition ?? '').trim().isEmpty ? null : c.condition;
+      _carColor = (c.color ?? '').trim().isEmpty ? null : c.color;
       _carCleared = c.isCleared;
+      _carPts = (c.pts ?? '').trim().isEmpty ? null : c.pts;
     }
 
     _lastTitleSuggestion = _buildTitleSuggestion();
@@ -484,14 +494,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
               if (step == 0) return kAutoBrandsPopular;
               if (step == 1) {
                 if (brand == null) return const [];
-                final models = kAutoModels[brand!];
-                if (models == null || models.isEmpty) {
-                  return const [kAutoCustomModelLabel];
-                }
-                return models;
+                return autoModelsForBrand(brand);
               }
-              final key = '${brand ?? ''}|${model ?? ''}';
-              final gens = kAutoGenerations[key] ?? const [];
+              final gens = autoGenerationsForBrandModel(brand, model);
               return [
                 kAutoSkipGenerationLabel,
                 ...gens,
@@ -500,9 +505,13 @@ class _EditListingScreenState extends State<EditListingScreen> {
             }
 
             final items = currentItems()
-                .where((x) => q.trim().isEmpty
-                    ? true
-                    : x.toLowerCase().contains(q.trim().toLowerCase()))
+                .where(
+                  (x) => step == 0
+                      ? autoBrandMatchesQuery(x, q)
+                      : q.trim().isEmpty
+                          ? true
+                          : x.toLowerCase().contains(q.trim().toLowerCase()),
+                )
                 .toList();
 
             String title() => step == 0
@@ -520,7 +529,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
                   v = custom;
                 }
                 setM(() {
-                  brand = v;
+                  brand = canonicalAutoBrand(v);
                   model = null;
                   gen = null;
                   step = 1;
@@ -685,22 +694,11 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
     CarSpecs? car;
     if (_isAuto) {
-      if (_isPassengerCar && (_autoBrand == null || _autoModel == null)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Выберите марку и модель')),
-        );
-        return;
-      }
-
-      if (!_validInt(_carYear.text) || !_validInt(_carMileage.text)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Заполните авто: год и пробег')),
-        );
-        return;
-      }
-
-      final year = int.parse(_carYear.text.trim());
-      final mileage = int.parse(_carMileage.text.trim());
+      final year =
+          _validInt(_carYear.text) ? int.parse(_carYear.text.trim()) : null;
+      final mileage = _validInt(_carMileage.text)
+          ? int.parse(_carMileage.text.trim())
+          : null;
       final engine = _carEngine.text.trim().isEmpty
           ? null
           : parseEngineVolumeInput(_carEngine.text);
@@ -735,6 +733,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
         condition: _carCondition,
         color: _carColor,
         isCleared: _carCleared,
+        pts: _carPts,
         owners: owners,
         vin: vin,
         note: note,
@@ -883,7 +882,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
   Widget _drop({
     required String label,
-    required String value,
+    required String? value,
     required List<String> items,
     required ValueChanged<String?> onChanged,
   }) {
@@ -1151,27 +1150,29 @@ class _EditListingScreenState extends State<EditListingScreen> {
             TextField(
               controller: _carMileage,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Пробег (км)'),
+              decoration:
+                  const InputDecoration(labelText: 'Пробег (необязательно)'),
             ),
             const SizedBox(height: 12),
             _drop(
-                label: 'Кузов',
+                label: 'Кузов (необязательно)',
                 value: _carBody,
                 items: _bodyTypes,
-                onChanged: (v) => setState(() => _carBody = v ?? _carBody)),
+                onChanged: (v) => setState(() => _carBody = v)),
             const SizedBox(height: 12),
             _drop(
-                label: 'Топливо',
+                label: 'Топливо (необязательно)',
                 value: _carFuel,
                 items: _fuelTypes,
-                onChanged: (v) => setState(() => _carFuel = v ?? _carFuel)),
+                onChanged: (v) => setState(() => _carFuel = v)),
             const SizedBox(height: 12),
             TextField(
               controller: _carEngine,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
-                  labelText: 'Объём двигателя, например: 2.2 или 300 куб. см'),
+                  labelText:
+                      'Объём двигателя (необязательно), например: 2.2 или 300 куб. см'),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -1182,30 +1183,34 @@ class _EditListingScreenState extends State<EditListingScreen> {
             ),
             const SizedBox(height: 12),
             _drop(
-                label: 'Коробка передач',
+                label: 'Коробка (необязательно)',
                 value: _carTransmission,
                 items: _transmissions,
-                onChanged: (v) =>
-                    setState(() => _carTransmission = v ?? _carTransmission)),
+                onChanged: (v) => setState(() => _carTransmission = v)),
             const SizedBox(height: 12),
             _drop(
-                label: 'Привод',
+                label: 'Привод (необязательно)',
                 value: _carDrive,
                 items: _drives,
-                onChanged: (v) => setState(() => _carDrive = v ?? _carDrive)),
+                onChanged: (v) => setState(() => _carDrive = v)),
             const SizedBox(height: 12),
             _drop(
-                label: 'Состояние',
+                label: 'Состояние (необязательно)',
                 value: _carCondition,
                 items: _conditions,
-                onChanged: (v) =>
-                    setState(() => _carCondition = v ?? _carCondition)),
+                onChanged: (v) => setState(() => _carCondition = v)),
             const SizedBox(height: 12),
             _drop(
-                label: 'Цвет',
+                label: 'Цвет (необязательно)',
                 value: _carColor,
                 items: _colors,
-                onChanged: (v) => setState(() => _carColor = v ?? _carColor)),
+                onChanged: (v) => setState(() => _carColor = v)),
+            const SizedBox(height: 12),
+            _drop(
+                label: 'ПТС (необязательно)',
+                value: _carPts,
+                items: _ptsTypes,
+                onChanged: (v) => setState(() => _carPts = v)),
             const SizedBox(height: 12),
           ],
           const SizedBox(height: 12),

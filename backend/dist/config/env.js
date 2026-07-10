@@ -27,7 +27,7 @@ const envSchema = zod_1.z.object({
     STORAGE_DRIVER: zod_1.z.enum(['local', 's3']).optional(),
     STORAGE_PROVIDER: zod_1.z.enum(['local', 's3']).optional(),
     LOCAL_UPLOADS_DIR: zod_1.z.string().default('/opt/atta-backend/uploads'),
-    MEDIA_PUBLIC_BASE_URL: zod_1.z.string().default('http://5.42.125.179/uploads'),
+    MEDIA_PUBLIC_BASE_URL: zod_1.z.string().default('https://attamarket.online/uploads'),
     S3_ENDPOINT: zod_1.z.string().optional().default(''),
     S3_REGION: zod_1.z.string().optional().default(''),
     S3_ACCESS_KEY: zod_1.z.string().optional().default(''),

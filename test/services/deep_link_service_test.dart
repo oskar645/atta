@@ -21,14 +21,47 @@ void main() {
     expect(link?.listingId, '8b22bde6-a806-4989-bb37-ef1b550ca853');
   });
 
-  test('atta://invite?ref={userId} parses as invite deep link', () {
+  test('atta://invite?ref={referralCode} parses as invite deep link', () {
     final link = parseAttaDeepLink(
-      Uri.parse('atta://invite?ref=99e19e73-29da-4b0a-87da-21c3f10d82a0'),
+      Uri.parse('atta://invite?ref=REFERRAL_CODE_123'),
     );
 
     expect(link, isNotNull);
     expect(link?.type, AttaDeepLinkType.invite);
-    expect(link?.referrerId, '99e19e73-29da-4b0a-87da-21c3f10d82a0');
+    expect(link?.referrerId, 'REFERRAL_CODE_123');
+  });
+
+  test('https://attamarket.online/listing/{id} parses as listing deep link',
+      () {
+    final link = parseAttaDeepLink(
+      Uri.parse(
+          'https://attamarket.online/listing/8b22bde6-a806-4989-bb37-ef1b550ca853'),
+    );
+
+    expect(link, isNotNull);
+    expect(link?.type, AttaDeepLinkType.listing);
+    expect(link?.listingId, '8b22bde6-a806-4989-bb37-ef1b550ca853');
+  });
+
+  test('https://www.attamarket.online/listing/{id} also parses', () {
+    final link = parseAttaDeepLink(
+      Uri.parse('https://www.attamarket.online/listing/listing-55'),
+    );
+
+    expect(link, isNotNull);
+    expect(link?.type, AttaDeepLinkType.listing);
+    expect(link?.listingId, 'listing-55');
+  });
+
+  test('https://attamarket.online/app?ref={code} parses as invite deep link',
+      () {
+    final link = parseAttaDeepLink(
+      Uri.parse('https://attamarket.online/app?ref=REFERRAL_CODE_456'),
+    );
+
+    expect(link, isNotNull);
+    expect(link?.type, AttaDeepLinkType.invite);
+    expect(link?.referrerId, 'REFERRAL_CODE_456');
   });
 
   test('saving pending listing deep link does not log out user', () async {
@@ -62,5 +95,27 @@ void main() {
 
     expect(pending, 'listing-77');
     expect(await service.readPendingListingId(), isNull);
+  });
+
+  test('pending listing deep link clears only for matching listing id',
+      () async {
+    final service = DeepLinkService();
+    await service.savePendingListingId('listing-88');
+
+    await service.clearPendingListingIdIfMatches('listing-99');
+    expect(await service.readPendingListingId(), 'listing-88');
+
+    await service.clearPendingListingIdIfMatches('listing-88');
+    expect(await service.readPendingListingId(), isNull);
+  });
+
+  test('pending invite referral code is stored and cleared', () async {
+    final service = DeepLinkService();
+
+    await service.savePendingInviteReferrerId('REFERRAL_CODE_789');
+    expect(await service.readPendingInviteReferrerId(), 'REFERRAL_CODE_789');
+
+    await service.clearPendingInviteReferrerId();
+    expect(await service.readPendingInviteReferrerId(), isNull);
   });
 }

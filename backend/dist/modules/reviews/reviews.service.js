@@ -169,9 +169,11 @@ let ReviewsService = class ReviewsService {
                 'Пользователь'} оставил новый отзыв.`,
             type: client_1.NotificationType.GENERIC,
             payload: {
+                actionType: 'review_new',
                 reviewId: review.id,
                 sellerId,
                 authorId: authUser.userId,
+                listingId,
             },
         });
         return {

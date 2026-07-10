@@ -30,6 +30,7 @@ class ProfileService {
     ReviewsApi? reviewsApi,
     ImagePreparationService? imagePreparationService,
     Future<void> Function(String url)? avatarCacheEvictor,
+    Duration requestTimeout = const Duration(seconds: 12),
   })  : _tokenStorage = tokenStorage ?? _sharedTokenStorage,
         _usersApi = usersApi ??
             UsersApi(_apiClientFor(tokenStorage ?? _sharedTokenStorage)),
@@ -41,7 +42,8 @@ class ProfileService {
             ReviewsApi(_apiClientFor(tokenStorage ?? _sharedTokenStorage)),
         _imagePreparationService =
             imagePreparationService ?? ImagePreparationService(),
-        _avatarCacheEvictor = avatarCacheEvictor;
+        _avatarCacheEvictor = avatarCacheEvictor,
+        _requestTimeout = requestTimeout;
 
   static final TokenStorage _sharedTokenStorage = TokenStorage();
   static ApiClient _apiClientFor(TokenStorage tokenStorage) =>
@@ -54,6 +56,7 @@ class ProfileService {
   final ReviewsApi _reviewsApi;
   final ImagePreparationService _imagePreparationService;
   final Future<void> Function(String url)? _avatarCacheEvictor;
+  final Duration _requestTimeout;
   final Map<String, Map<String, dynamic>> _profileCache = {};
   final Map<String, DateTime> _profileCachedAt = {};
   final Map<String, Future<Map<String, dynamic>>> _profileInFlight = {};
@@ -171,9 +174,11 @@ class ProfileService {
     }
     final inFlight = _profileInFlight[id];
     if (inFlight != null) {
+      _debugSource('Profile load skipped reason=in_flight user=$id');
       return inFlight;
     }
 
+    _debugSource('Profile refresh start user=$id');
     final future = _getProfileInternal(id, cached);
     _profileInFlight[id] = future;
     try {
@@ -181,6 +186,7 @@ class ProfileService {
     } finally {
       if (identical(_profileInFlight[id], future)) {
         _profileInFlight.remove(id);
+        _debugSource('Profile inFlight cleared user=$id');
       }
     }
   }
@@ -190,19 +196,31 @@ class ProfileService {
     Map<String, dynamic> cached,
   ) async {
     _debugSource('Profile source: Timeweb');
-    final currentUser = await _tokenStorage.readCurrentUser();
-    final response = currentUser?.uid == uid
-        ? await _usersApi.me()
-        : await _usersApi.publicProfile(uid);
-    final normalized = _mergeRows(
-      _currentUserFallback(uid, currentUser),
-      _normalizeBackendProfile(response),
-    );
-    if (currentUser?.uid == uid) {
-      await _syncCurrentUserFromProfile(normalized, currentUser);
+    try {
+      final currentUser = await _tokenStorage.readCurrentUser();
+      final response = currentUser?.uid == uid
+          ? await _usersApi.me().timeout(_requestTimeout)
+          : await _usersApi.publicProfile(uid).timeout(_requestTimeout);
+      final normalized = _mergeRows(
+        _currentUserFallback(uid, currentUser),
+        _normalizeBackendProfile(response),
+      );
+      if (currentUser?.uid == uid) {
+        await _syncCurrentUserFromProfile(normalized, currentUser);
+      }
+      if (normalized.isNotEmpty) _cacheProfile(uid, normalized);
+      _debugSource(
+        normalized.isEmpty
+            ? 'Profile load empty'
+            : 'Profile load success count=${normalized.length}',
+      );
+      return _mergeRows(cached, normalized);
+    } catch (error) {
+      _debugSource('Profile load error message=$error user=$uid');
+      rethrow;
+    } finally {
+      _debugSource('Profile load finally loading=false user=$uid');
     }
-    if (normalized.isNotEmpty) _cacheProfile(uid, normalized);
-    return _mergeRows(cached, normalized);
   }
 
   Future<void> updateProfile(String uid, Map<String, dynamic> data) async {
@@ -604,6 +622,8 @@ class ProfileService {
             'photoUrl',
           ]) ??
           currentUser.photoUrl,
+      referralCode: pickText(const ['referral_code', 'referralCode']) ??
+          currentUser.referralCode,
       isAdmin: row['isAdmin'] == true ||
           row['is_admin'] == true ||
           row['role'] == 'admin' ||

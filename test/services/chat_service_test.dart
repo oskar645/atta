@@ -325,12 +325,12 @@ void main() {
     );
 
     final resolved = await service.resolveMessageImageUrl(
-      'http://5.42.125.179/media/chats/file?key=chats%2Fchat-1%2Fphoto.jpg',
+      'https://attamarket.online/media/chats/file?key=chats%2Fchat-1%2Fphoto.jpg',
     );
 
     expect(
       resolved,
-      'http://5.42.125.179/media/chats/file?key=chats%2Fchat-1%2Fphoto.jpg&token=access-token',
+      'https://attamarket.online/media/chats/file?key=chats%2Fchat-1%2Fphoto.jpg&token=access-token',
     );
   });
 
@@ -869,7 +869,7 @@ void main() {
     await service.handleAppResumed('user-1');
 
     expect(socket.joinedChats, contains('chat-a'));
-    expect(api.listMessagesCalls, contains('chat-a'));
+    expect(api.listMessagesCalls, ['chat-a']);
     expect(api.markChatReadCalls, ['chat-a']);
     await sub.cancel();
   });
@@ -895,10 +895,101 @@ void main() {
     await service.handleAppResumed('user-1');
     await service.handleAppResumed('user-1');
 
-    expect(api.listChatsCalls, 2);
-    expect(api.listMessagesCalls.where((id) => id == 'chat-a').length, 2);
+    expect(api.listChatsCalls, 1);
+    expect(api.listMessagesCalls.where((id) => id == 'chat-a').length, 1);
     expect(api.markChatReadCalls.where((id) => id == 'chat-a').length, 1);
     await sub.cancel();
+  });
+
+  test('opening chat multiple times does not spam ensureReady', () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-a', unreadCount: 1),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final inboxSub = service.streamMyChats('user-1').listen((_) {});
+    final firstChatSub = service.streamMessages('chat-a').listen((_) {});
+    final secondChatSub = service.streamMessages('chat-a').listen((_) {});
+    await Future<void>.delayed(Duration.zero);
+
+    expect(socket.connectCalls, 1);
+
+    await inboxSub.cancel();
+    await firstChatSub.cancel();
+    await secondChatSub.cancel();
+  });
+
+  test('markChatsDelivered does not load messages for every inbox chat',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-a', unreadCount: 1),
+        _chatMap(id: 'chat-b', unreadCount: 1),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.refreshInbox('user-1');
+    await service.markChatsDelivered(
+      chatIds: const <String>['chat-a', 'chat-b'],
+      uid: 'user-1',
+    );
+
+    expect(api.listMessagesCalls, isEmpty);
+  });
+
+  test('refreshInbox does not wait for socket connect before loading chats',
+      () async {
+    final socket = _FakeChatSocketService(hangConnect: true);
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-a', unreadCount: 1),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.refreshInbox('user-1');
+
+    expect(api.listChatsCalls, 1);
+    expect(socket.connectCalls, 1);
+  });
+
+  test('refreshInbox timeout is swallowed and keeps cached chats', () async {
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-cached', unreadCount: 2),
+      ],
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.refreshInbox('user-1');
+    api.listChatsError = TimeoutException('Future not completed');
+
+    await service.refreshInbox('user-1');
+
+    expect(service.lastChatsLoadError, isA<TimeoutException>());
+    final chats = await service.streamMyChats('user-1').first;
+    expect(chats.single.id, 'chat-cached');
   });
 }
 
@@ -928,13 +1019,14 @@ Map<String, dynamic> _chatMap({
     };
 
 class _FakeChatSocketService extends ChatSocketService {
-  _FakeChatSocketService();
+  _FakeChatSocketService({this.hangConnect = false});
 
   final StreamController<ChatSocketEvent> _eventsController =
       StreamController<ChatSocketEvent>.broadcast();
   final List<String> deliveredIds = <String>[];
   final List<String> readIds = <String>[];
   final List<String> joinedChats = <String>[];
+  final bool hangConnect;
   int connectCalls = 0;
   int reconnectCalls = 0;
   bool connected = false;
@@ -943,22 +1035,25 @@ class _FakeChatSocketService extends ChatSocketService {
   Stream<ChatSocketEvent> get events => _eventsController.stream;
 
   @override
-  Future<void> connect() async {
+  Future<void> connect({String reason = 'unspecified'}) async {
     if (connected) {
       return;
     }
     connectCalls += 1;
+    if (hangConnect) {
+      return Completer<void>().future;
+    }
     connected = true;
   }
 
   @override
-  Future<void> reconnect() async {
+  Future<void> reconnect({String reason = 'manual'}) async {
     reconnectCalls += 1;
     connected = true;
   }
 
   @override
-  Future<void> joinChat(String chatId) async {
+  Future<void> joinChat(String chatId, {String reason = 'chat.join'}) async {
     joinedChats.add(chatId);
   }
 
@@ -986,12 +1081,14 @@ class _FakeChatSocketService extends ChatSocketService {
 class _FakeChatsApi extends ChatsApi {
   _FakeChatsApi({
     this.sendMessageError,
+    this.listChatsError,
     this.listMessagesError,
     this.chats = const <Map<String, dynamic>>[],
     this.sendMessageDelay = Duration.zero,
   }) : super(ApiClient(tokenStorage: TokenStorage()));
 
   final Object? sendMessageError;
+  Object? listChatsError;
   final Object? listMessagesError;
   final List<Map<String, dynamic>> chats;
   final Duration sendMessageDelay;
@@ -1005,6 +1102,9 @@ class _FakeChatsApi extends ChatsApi {
   @override
   Future<Map<String, dynamic>> listChats() async {
     listChatsCalls += 1;
+    if (listChatsError != null) {
+      throw listChatsError!;
+    }
     return <String, dynamic>{'items': chats};
   }
 

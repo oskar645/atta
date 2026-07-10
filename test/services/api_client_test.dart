@@ -125,6 +125,147 @@ void main() {
     expect(await storage.readRefreshToken(), isNotNull);
   });
 
+  test('concurrent 401 requests share one refresh and both retry', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final httpClient = _FakeHttpClient();
+    final client = ApiClient(
+      tokenStorage: storage,
+      httpClient: httpClient,
+    );
+
+    var refreshCalls = 0;
+    final refreshCompleter = Completer<void>();
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: () async {
+        refreshCalls += 1;
+        await refreshCompleter.future;
+        await storage.saveSession(
+          accessToken: 'fresh-token',
+          refreshToken: 'refresh-token',
+          currentUser: const AuthUser(uid: 'user-1'),
+        );
+        return true;
+      },
+      onSessionExpired: () async {},
+    );
+
+    final first = client.get('/auth/me', authorized: true);
+    final second = client.get('/viewed-listings', authorized: true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    refreshCompleter.complete();
+
+    final results =
+        await Future.wait<dynamic>(<Future<dynamic>>[first, second]);
+
+    expect(refreshCalls, 1);
+    expect(results, everyElement(containsPair('ok', true)));
+    expect(httpClient.calls, hasLength(4));
+    expect(
+      httpClient.calls
+          .where(
+              (call) => call.headers['Authorization'] == 'Bearer fresh-token')
+          .length,
+      2,
+    );
+  });
+
+  test('request started during refresh waits for new token before sending',
+      () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'expired-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final httpClient = _FakeHttpClient();
+    final client = ApiClient(
+      tokenStorage: storage,
+      httpClient: httpClient,
+    );
+
+    var refreshCalls = 0;
+    final refreshCompleter = Completer<void>();
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: () async {
+        refreshCalls += 1;
+        await refreshCompleter.future;
+        await storage.saveSession(
+          accessToken: 'fresh-token',
+          refreshToken: 'refresh-token',
+          currentUser: const AuthUser(uid: 'user-1'),
+        );
+        return true;
+      },
+      onSessionExpired: () async {},
+    );
+
+    final first = client.get('/secure', authorized: true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final second = client.get('/notifications', authorized: true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    refreshCompleter.complete();
+
+    final results =
+        await Future.wait<dynamic>(<Future<dynamic>>[first, second]);
+
+    expect(refreshCalls, 1);
+    expect(results, everyElement(containsPair('ok', true)));
+    expect(httpClient.calls, hasLength(3));
+    expect(
+      httpClient.calls.where((call) => call.url.path == '/notifications'),
+      hasLength(1),
+    );
+    expect(
+      httpClient.calls
+          .where(
+              (call) => call.headers['Authorization'] == 'Bearer fresh-token')
+          .length,
+      2,
+    );
+  });
+
+  test('startup auth gate delays first private request until session is ready',
+      () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'fresh-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final httpClient = _FakeHttpClient();
+    final client = ApiClient(
+      tokenStorage: storage,
+      httpClient: httpClient,
+    );
+
+    final authReady = Completer<void>();
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: () async => true,
+      onSessionExpired: () async {},
+      onAwaitAuthorizedSession: () => authReady.future,
+    );
+
+    final request = client.get('/favorites', authorized: true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(httpClient.calls, isEmpty);
+
+    authReady.complete();
+    final response = await request;
+
+    expect(response['ok'], true);
+    expect(httpClient.calls, hasLength(1));
+    expect(
+      httpClient.calls.single.headers['Authorization'],
+      'Bearer fresh-token',
+    );
+  });
+
   test('timeout shows Russian network hint', () async {
     final client = ApiClient(
       tokenStorage: TokenStorage(),

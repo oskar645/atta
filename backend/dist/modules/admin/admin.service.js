@@ -218,6 +218,52 @@ let AdminService = class AdminService {
             items: users.map((user) => (0, serializers_1.serializeUser)(user, { includePrivate: true })),
         };
     }
+    async listOnlineUsers() {
+        const onlineCutoff = new Date(Date.now() - 2 * 60 * 1000);
+        const users = await this.prisma.user.findMany({
+            where: {
+                deletedAt: null,
+                status: {
+                    not: client_1.UserStatus.DELETED,
+                },
+            },
+            include: {
+                presence: true,
+            },
+            take: 300,
+        });
+        const items = users
+            .map((user) => {
+            const lastSeenAt = user.presence?.lastSeen ?? null;
+            const isOnline = user.presence?.isOnline === true &&
+                lastSeenAt != null &&
+                lastSeenAt >= onlineCutoff;
+            return {
+                id: user.id,
+                display_name: user.displayName.trim() ||
+                    user.name.trim() ||
+                    user.phone?.trim() ||
+                    'Пользователь',
+                name: user.name.trim() || user.displayName.trim() || 'Пользователь',
+                phone: user.phone?.trim() || null,
+                avatar_url: (0, serializers_1.normalizeStoredMediaUrl)(user.avatarUrl, {
+                    category: 'avatars',
+                }),
+                is_online: isOnline,
+                last_seen_at: (0, serializers_1.toIsoString)(lastSeenAt),
+            };
+        })
+            .filter((item) => item.is_online)
+            .sort((left, right) => {
+            const leftTime = Date.parse(left.last_seen_at ?? '1970-01-01T00:00:00.000Z');
+            const rightTime = Date.parse(right.last_seen_at ?? '1970-01-01T00:00:00.000Z');
+            return rightTime - leftTime;
+        });
+        return {
+            source: 'timeweb',
+            items,
+        };
+    }
     async getUserById(id) {
         const user = await this.prisma.user.findUnique({
             where: { id },

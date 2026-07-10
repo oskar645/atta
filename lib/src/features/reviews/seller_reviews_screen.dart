@@ -23,12 +23,14 @@ class SellerReviewsScreen extends StatefulWidget {
   final String sellerId;
   final String sellerName;
   final String listingId;
+  final String initialReviewId;
 
   const SellerReviewsScreen({
     super.key,
     required this.sellerId,
     required this.sellerName,
     required this.listingId,
+    this.initialReviewId = '',
   });
 
   @override
@@ -36,6 +38,9 @@ class SellerReviewsScreen extends StatefulWidget {
 }
 
 class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
+  final ScrollController _scrollController = ScrollController();
+  bool _didTryInitialScroll = false;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +57,12 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
         } catch (_) {}
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _openAddReview() async {
@@ -114,8 +125,29 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
               }
 
               final items = snap.data ?? const <Map<String, dynamic>>[];
+              if (!_didTryInitialScroll &&
+                  widget.initialReviewId.trim().isNotEmpty &&
+                  items.isNotEmpty) {
+                _didTryInitialScroll = true;
+                final reviewIndex = items.indexWhere(
+                  (item) =>
+                      (item['id'] ?? '').toString().trim() ==
+                      widget.initialReviewId.trim(),
+                );
+                if (reviewIndex > 0) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!_scrollController.hasClients) return;
+                    _scrollController.animateTo(
+                      reviewIndex * 220,
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOut,
+                    );
+                  });
+                }
+              }
 
               return ListView(
+                controller: _scrollController,
                 padding: const EdgeInsets.all(12),
                 children: [
                   FilledButton.icon(

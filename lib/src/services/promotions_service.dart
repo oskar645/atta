@@ -100,7 +100,10 @@ class PromotionsService {
     );
   }
 
-  Future<ListingStats> getListingStats(String listingId) async {
+  Future<ListingStats> getListingStats(
+    String listingId, {
+    int initialFavoriteCount = 0,
+  }) async {
     if (!ApiConfig.useTimewebBackend) {
       return const ListingStats(
         views: 0,
@@ -129,7 +132,7 @@ class PromotionsService {
 
     return ListingStats(
       views: listing?.viewCount ?? 0,
-      favorites: 0,
+      favorites: listing?.favoriteCount ?? initialFavoriteCount,
       messages: 0,
       calls: 0,
       showcaseImpressions: showcaseImpressions,

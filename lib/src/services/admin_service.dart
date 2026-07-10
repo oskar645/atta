@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:atta/src/services/api/auth_api.dart';
@@ -7,6 +8,17 @@ import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class AdminSectionSnapshot {
+  const AdminSectionSnapshot({
+    required this.count,
+    required this.marker,
+  });
+
+  final int count;
+  final String marker;
+}
 
 class AdminService {
   AdminService({
@@ -17,18 +29,30 @@ class AdminService {
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  static const String moderationSection = 'moderation';
+  static const String supportSection = 'support';
+  static const String reportsSection = 'reports';
+  static const String _seenPrefsKeyPrefix = 'atta.admin.section_seen';
 
   final AdminApi _api;
   final AuthApi _authApi;
   final Map<String, _AdminCacheEntry> _cache = <String, _AdminCacheEntry>{};
-  final StreamController<int> _pendingCountController =
+  final StreamController<int> _moderationBadgeController =
       StreamController<int>.broadcast();
-  Stream<int>? _openReportsCountStream;
-  Stream<int>? _unreadSupportCountStream;
-  DateTime? _lastReportsCountRefreshAt;
-  DateTime? _lastSupportCountRefreshAt;
+  final StreamController<int> _reportsBadgeController =
+      StreamController<int>.broadcast();
+  final StreamController<int> _supportBadgeController =
+      StreamController<int>.broadcast();
+  final StreamController<bool> _needsAttentionController =
+      StreamController<bool>.broadcast();
   AuthUser? _lastAdminResolvedUser;
   DateTime? _lastAdminResolvedAt;
+  DateTime? _lastAttentionRefreshAt;
+  String? _activeAdminUid;
+  Map<String, String> _seenMarkers = <String, String>{};
+  final Map<String, AdminSectionSnapshot> _sectionSnapshots =
+      <String, AdminSectionSnapshot>{};
+  Future<void>? _seenMarkersLoadInFlight;
 
   static const Duration _defaultCacheTtl = Duration(seconds: 15);
   bool _sessionActive = true;
@@ -37,18 +61,28 @@ class AdminService {
     _sessionActive = true;
   }
 
+  void bindAdminUser(String uid) {
+    final normalized = uid.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    if (_activeAdminUid == normalized && _seenMarkersLoadInFlight == null) {
+      return;
+    }
+    _activeAdminUid = normalized;
+    unawaited(_ensureSeenMarkersLoaded());
+  }
+
   void resetSession() {
     _sessionActive = false;
     _cache.clear();
-    _openReportsCountStream = null;
-    _unreadSupportCountStream = null;
-    _lastReportsCountRefreshAt = null;
-    _lastSupportCountRefreshAt = null;
     _lastAdminResolvedUser = null;
     _lastAdminResolvedAt = null;
-    if (!_pendingCountController.isClosed) {
-      _pendingCountController.add(0);
-    }
+    _lastAttentionRefreshAt = null;
+    _activeAdminUid = null;
+    _seenMarkers = <String, String>{};
+    _sectionSnapshots.clear();
+    _emitSectionBadgeCounts();
   }
 
   Stream<bool> streamIsAdmin(String uid) {
@@ -68,133 +102,97 @@ class AdminService {
     if (!_sessionActive) {
       return Stream<int>.value(0);
     }
-    return Stream<int>.multi((controller) {
-      StreamSubscription<int>? sub;
-
-      Future<void> emitInitial() async {
-        final cachedPending = _pendingItemsFromCache();
-        if (cachedPending != null) {
-          controller.add(cachedPending.length);
-          return;
-        }
-        try {
-          final response = await listings(status: 'pending');
-          controller.add(_extractItems(response).length);
-        } catch (error) {
-          _debugSource('Admin source: Timeweb unavailable: $error');
-          controller.add(0);
-        }
-      }
-
-      emitInitial();
-      sub = _pendingCountController.stream.distinct().listen(
-            controller.add,
-            onError: controller.addError,
-          );
-      controller.onCancel = () async {
-        await sub?.cancel();
-      };
-    }).asBroadcastStream();
+    return _streamSectionBadgeCount(
+      moderationSection,
+      _moderationBadgeController,
+    );
   }
 
   Stream<int> streamOpenReportsCount() {
     if (!_sessionActive) {
       return Stream<int>.value(0);
     }
-    return _openReportsCountStream ??= Stream<int>.multi((controller) {
-      Future<void> emit() async {
-        try {
-          final response = await reports(
-            forceRefresh: _isCountRefreshStale(_lastReportsCountRefreshAt),
-          );
-          _lastReportsCountRefreshAt = DateTime.now();
-          controller.add(
-            _extractItems(response)
-                .where((item) => (item['status'] ?? '').toString() == 'open')
-                .length,
-          );
-        } catch (_) {
-          controller.add(0);
-        }
-      }
-
-      emit();
-    }).distinct().asBroadcastStream();
+    return _streamSectionBadgeCount(
+      reportsSection,
+      _reportsBadgeController,
+    );
   }
 
   Stream<int> streamUnreadSupportForAdminCount() {
     if (!_sessionActive) {
       return Stream<int>.value(0);
     }
-    return _unreadSupportCountStream ??= Stream<int>.multi((controller) {
-      Future<void> emit() async {
-        try {
-          final response = await support(
-            forceRefresh: _isCountRefreshStale(_lastSupportCountRefreshAt),
-          );
-          _lastSupportCountRefreshAt = DateTime.now();
-          controller.add(
-            _extractItems(response)
-                .where((item) => item['unread_for_admin'] == true)
-                .length,
-          );
-        } catch (_) {
-          controller.add(0);
-        }
-      }
+    return _streamSectionBadgeCount(
+      supportSection,
+      _supportBadgeController,
+    );
+  }
 
-      emit();
+  Stream<bool> streamNeedsAttention({bool refreshOnListen = false}) {
+    if (!_sessionActive) {
+      return Stream<bool>.value(false);
+    }
+    return Stream<bool>.multi((controller) {
+      controller.add(_hasAttention);
+      final sub = _needsAttentionController.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      if (refreshOnListen) {
+        unawaited(refreshAdminAttention(force: false));
+      }
+      controller.onCancel = () async {
+        await sub.cancel();
+      };
     }).distinct().asBroadcastStream();
   }
 
-  Stream<bool> streamNeedsAttention() {
-    final controller = StreamController<bool>.broadcast();
-
-    int pending = 0;
-    int reports = 0;
-    int support = 0;
-
-    StreamSubscription<int>? s1;
-    StreamSubscription<int>? s2;
-    StreamSubscription<int>? s3;
-
-    void emit() {
-      if (!controller.isClosed) {
-        controller.add(pending > 0 || reports > 0 || support > 0);
-      }
+  Future<void> refreshAdminAttention({bool force = false}) async {
+    if (!_sessionActive) {
+      return;
     }
+    final currentUser = await _tokenStorage.readCurrentUser();
+    if (currentUser?.isAdmin != true) {
+      _cache.clear();
+      _lastAttentionRefreshAt = null;
+      _sectionSnapshots.clear();
+      _emitSectionBadgeCounts();
+      return;
+    }
+    await _ensureSeenMarkersLoaded();
+    if (!force &&
+        _lastAttentionRefreshAt != null &&
+        DateTime.now().difference(_lastAttentionRefreshAt!) <
+            _defaultCacheTtl) {
+      _emitSectionBadgeCounts();
+      return;
+    }
+    try {
+      final results = await Future.wait([
+        listings(status: 'pending', forceRefresh: force),
+        reports(forceRefresh: force),
+        support(forceRefresh: force),
+      ]);
+      _updateSnapshotFromResponse(moderationSection, results[0]);
+      _updateSnapshotFromResponse(reportsSection, results[1]);
+      _updateSnapshotFromResponse(supportSection, results[2]);
+      _lastAttentionRefreshAt = DateTime.now();
+      _emitSectionBadgeCounts();
+    } catch (error) {
+      _debugSource('Admin attention refresh skipped: $error');
+      _emitSectionBadgeCounts();
+    }
+  }
 
-    controller.onListen = () {
-      s1 = streamPendingModerationCount().listen(
-        (v) {
-          pending = v;
-          emit();
-        },
-        onError: controller.addError,
-      );
-      s2 = streamOpenReportsCount().listen(
-        (v) {
-          reports = v;
-          emit();
-        },
-        onError: controller.addError,
-      );
-      s3 = streamUnreadSupportForAdminCount().listen(
-        (v) {
-          support = v;
-          emit();
-        },
-        onError: controller.addError,
-      );
-    };
-
-    controller.onCancel = () async {
-      await s1?.cancel();
-      await s2?.cancel();
-      await s3?.cancel();
-    };
-
-    return controller.stream.distinct();
+  Future<void> markSectionSeen(String section) async {
+    await _ensureSeenMarkersLoaded();
+    final snapshot = _sectionSnapshots[section];
+    if (snapshot == null) {
+      return;
+    }
+    _seenMarkers[section] = snapshot.marker;
+    await _saveSeenMarkers();
+    _emitSectionBadgeCounts();
   }
 
   Future<Map<String, dynamic>> dashboardStats({bool forceRefresh = false}) =>
@@ -208,6 +206,8 @@ class AdminService {
 
   Future<Map<String, dynamic>> users({bool forceRefresh = false}) =>
       _cached('users', _api.users, forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> onlineUsers({bool forceRefresh = false}) =>
+      _cached('onlineUsers', _api.onlineUsers, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> userById(
     String userId, {
     bool forceRefresh = false,
@@ -397,11 +397,8 @@ class AdminService {
     } else {
       _replaceItemInCache('listings:$fallbackStatus', normalized);
     }
+    _updatePendingSnapshotFromCache();
     _cache.remove('dashboardStats');
-    final pendingCount = _pendingItemsFromCache()?.length ?? 0;
-    if (!_pendingCountController.isClosed) {
-      _pendingCountController.add(pendingCount);
-    }
   }
 
   void _replaceItemInCache(String key, Map<String, dynamic> item) {
@@ -443,9 +440,172 @@ class AdminService {
     debugPrint(message);
   }
 
-  bool _isCountRefreshStale(DateTime? lastRefreshAt) {
-    if (lastRefreshAt == null) return true;
-    return DateTime.now().difference(lastRefreshAt) >= _defaultCacheTtl;
+  Stream<int> _streamSectionBadgeCount(
+    String section,
+    StreamController<int> source,
+    {bool refreshOnListen = false}
+  ) {
+    return Stream<int>.multi((controller) {
+      controller.add(_unreadCountFor(section));
+      final sub = source.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      if (refreshOnListen) {
+        unawaited(refreshAdminAttention(force: false));
+      }
+      controller.onCancel = () async {
+        await sub.cancel();
+      };
+    }).distinct().asBroadcastStream();
+  }
+
+  Future<void> _ensureSeenMarkersLoaded() async {
+    final existing = _seenMarkersLoadInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    final future = _loadSeenMarkers();
+    _seenMarkersLoadInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_seenMarkersLoadInFlight, future)) {
+        _seenMarkersLoadInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _loadSeenMarkers() async {
+    final uid = _activeAdminUid?.trim() ?? '';
+    if (uid.isEmpty) {
+      _seenMarkers = <String, String>{};
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('$_seenPrefsKeyPrefix:$uid')?.trim() ?? '';
+    if (raw.isEmpty) {
+      _seenMarkers = <String, String>{};
+      return;
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        _seenMarkers = decoded.map(
+          (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+        );
+      } else {
+        _seenMarkers = <String, String>{};
+      }
+    } catch (_) {
+      _seenMarkers = <String, String>{};
+    }
+  }
+
+  Future<void> _saveSeenMarkers() async {
+    final uid = _activeAdminUid?.trim() ?? '';
+    if (uid.isEmpty) {
+      return;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_seenPrefsKeyPrefix:$uid',
+      jsonEncode(_seenMarkers),
+    );
+  }
+
+  void _updatePendingSnapshotFromCache() {
+    final pending = _pendingItemsFromCache();
+    if (pending == null) {
+      return;
+    }
+    _sectionSnapshots[moderationSection] =
+        _buildSectionSnapshot(pending, (item) => true);
+    _emitSectionBadgeCounts();
+  }
+
+  void _updateSnapshotFromResponse(String section, Map<String, dynamic> value) {
+    final items = _extractItems(value);
+    switch (section) {
+      case moderationSection:
+        _sectionSnapshots[section] =
+            _buildSectionSnapshot(items, (item) => true);
+        break;
+      case reportsSection:
+        _sectionSnapshots[section] = _buildSectionSnapshot(
+          items,
+          (item) =>
+              (item['status'] ?? '').toString().trim().toLowerCase() == 'open',
+        );
+        break;
+      case supportSection:
+        _sectionSnapshots[section] = _buildSectionSnapshot(
+          items,
+          (item) => item['unread_for_admin'] == true,
+        );
+        break;
+    }
+  }
+
+  AdminSectionSnapshot _buildSectionSnapshot(
+    List<Map<String, dynamic>> items,
+    bool Function(Map<String, dynamic> item) include,
+  ) {
+    final filtered = items.where(include).toList(growable: false);
+    if (filtered.isEmpty) {
+      return const AdminSectionSnapshot(count: 0, marker: '');
+    }
+    var latestMarker = '';
+    for (final item in filtered) {
+      final itemMarker = [
+        (item['updated_at'] ?? item['created_at'] ?? '').toString().trim(),
+        (item['id'] ?? '').toString().trim(),
+      ].join('|');
+      if (itemMarker.compareTo(latestMarker) > 0) {
+        latestMarker = itemMarker;
+      }
+    }
+    return AdminSectionSnapshot(
+      count: filtered.length,
+      marker: '${filtered.length}|$latestMarker',
+    );
+  }
+
+  int _unreadCountFor(String section) {
+    final snapshot = _sectionSnapshots[section];
+    if (snapshot == null || snapshot.count <= 0) {
+      return 0;
+    }
+    final seenMarker = _seenMarkers[section]?.trim() ?? '';
+    if (seenMarker.isNotEmpty && seenMarker == snapshot.marker) {
+      return 0;
+    }
+    return snapshot.count;
+  }
+
+  bool get _hasAttention =>
+      _unreadCountFor(moderationSection) > 0 ||
+      _unreadCountFor(reportsSection) > 0 ||
+      _unreadCountFor(supportSection) > 0;
+
+  void _emitSectionBadgeCounts() {
+    final moderationCount = _unreadCountFor(moderationSection);
+    final reportsCount = _unreadCountFor(reportsSection);
+    final supportCount = _unreadCountFor(supportSection);
+    if (!_moderationBadgeController.isClosed) {
+      _moderationBadgeController.add(moderationCount);
+    }
+    if (!_reportsBadgeController.isClosed) {
+      _reportsBadgeController.add(reportsCount);
+    }
+    if (!_supportBadgeController.isClosed) {
+      _supportBadgeController.add(supportCount);
+    }
+    if (!_needsAttentionController.isClosed) {
+      _needsAttentionController.add(
+        moderationCount > 0 || reportsCount > 0 || supportCount > 0,
+      );
+    }
   }
 
   Future<Map<String, dynamic>> _cached(
@@ -485,10 +645,14 @@ class AdminService {
         value: value,
       );
       if (key == 'listings:pending') {
-        final pendingCount = _extractItems(value).length;
-        if (!_pendingCountController.isClosed) {
-          _pendingCountController.add(pendingCount);
-        }
+        _updateSnapshotFromResponse(moderationSection, value);
+        _emitSectionBadgeCounts();
+      } else if (key == 'reports') {
+        _updateSnapshotFromResponse(reportsSection, value);
+        _emitSectionBadgeCounts();
+      } else if (key == 'support') {
+        _updateSnapshotFromResponse(supportSection, value);
+        _emitSectionBadgeCounts();
       }
       return value;
     } on ApiException catch (error) {
@@ -526,10 +690,7 @@ class AdminService {
       'phone=${_normalizePhoneForLog(user?.phone)} isAdmin=${user?.isAdmin == true}',
     );
     _cache.clear();
-    _openReportsCountStream = null;
-    _unreadSupportCountStream = null;
-    _lastReportsCountRefreshAt = null;
-    _lastSupportCountRefreshAt = null;
+    _lastAttentionRefreshAt = null;
   }
 
   Future<AuthUser?> _refreshAdminIdentity({
@@ -608,6 +769,7 @@ class AdminService {
       phone: _pickText(next.phone, previous.phone),
       phoneVerified: next.phoneVerified || previous.phoneVerified,
       photoUrl: _pickText(next.photoUrl, previous.photoUrl),
+      referralCode: _pickText(next.referralCode, previous.referralCode),
       isAdmin: next.isAdmin,
     );
   }

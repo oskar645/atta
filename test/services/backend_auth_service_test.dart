@@ -7,6 +7,7 @@ import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/backend_auth_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -124,6 +125,25 @@ void main() {
     expect(authApi.lastLoginPhoneVerificationCheckId, isNull);
   });
 
+  test('signUpWithVerifiedPhone forwards referralCode to backend', () async {
+    final authApi = _FakeAuthApi();
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.signUpWithVerifiedPhone(
+      phone: '+79281234567',
+      password: '12345678',
+      displayName: 'ATTA User',
+      verificationCheckId: 'verification-1',
+      referralCode: 'REFERRAL_CODE_999',
+    );
+
+    expect(authApi.lastSignupPhoneReferralCode, 'REFERRAL_CODE_999');
+  });
+
   test('userMessageForError maps backend auth code to russian text', () {
     final service = BackendAuthService(
       authApi: _FakeAuthApi(),
@@ -150,6 +170,7 @@ void main() {
       'normalized_phone': '79281234567',
       'isPhoneVerified': true,
       'avatar_url': 'https://example.com/avatar.jpg',
+      'referral_code': 'REFERRAL_CODE_ABC',
       'role': 'admin',
     });
 
@@ -158,6 +179,7 @@ void main() {
     expect(user.phone, '79281234567');
     expect(user.phoneVerified, isTrue);
     expect(user.photoUrl, 'https://example.com/avatar.jpg');
+    expect(user.referralCode, 'REFERRAL_CODE_ABC');
     expect(user.isAdmin, isTrue);
   });
 
@@ -193,7 +215,7 @@ void main() {
 
     expect(
       user.photoUrl,
-      'http://5.42.125.179/media/object?category=avatars&key=avatars%2Fuser-1%2Fphoto.jpg&v=2026-06-20T10%3A00%3A00.000Z',
+      'https://attamarket.online/media/object?category=avatars&key=avatars%2Fuser-1%2Fphoto.jpg&v=2026-06-20T10%3A00%3A00.000Z',
     );
   });
 
@@ -328,6 +350,57 @@ void main() {
     expect(authApi.meCalls, 2);
   });
 
+  test(
+      'ensureInitialized restores cached session without waiting for auth gate',
+      () async {
+    final authApi = _FakeAuthApi()..meDelay = const Duration(milliseconds: 200);
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: storage,
+    );
+
+    final stopwatch = Stopwatch()..start();
+    await service.ensureInitialized();
+    stopwatch.stop();
+
+    expect(service.currentUser?.uid, 'user-1');
+    expect(stopwatch.elapsedMilliseconds, lessThan(120));
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    expect(authApi.meCalls, 0);
+  });
+
+  test('ensureInitialized runs one proactive refresh for expired cached token',
+      () async {
+    final authApi = _FakeAuthApi()
+      ..refreshDelay = const Duration(milliseconds: 40);
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: _jwtWithExpOffset(const Duration(seconds: -30)),
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: storage,
+    );
+
+    await service.ensureInitialized();
+    expect(service.currentUser?.uid, 'user-1');
+
+    await service.awaitPrivateAuthReady();
+
+    expect(authApi.refreshCalls, 1);
+    expect(authApi.meCalls, 1);
+  });
+
   test('refreshSession revalidates admin profile via /auth/me', () async {
     final authApi = _FakeAuthApi()
       ..meResponse = <String, dynamic>{
@@ -381,19 +454,16 @@ void main() {
     expect(authApi.refreshCalls, 1);
   });
 
-  test('ensureInitialized asks to sign in again when refresh fails', () async {
+  test('ensureInitialized clears cached session when proactive refresh fails',
+      () async {
     final authApi = _FakeAuthApi()
-      ..meError = const ApiException(
-        'expired',
-        statusCode: 401,
-      )
       ..refreshError = const ApiException(
         'expired',
         statusCode: 401,
       );
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(
-      accessToken: 'expired-access',
+      accessToken: _jwtWithExpOffset(const Duration(seconds: -30)),
       refreshToken: 'expired-refresh',
       currentUser: const AuthUser(
         uid: 'user-1',
@@ -407,16 +477,8 @@ void main() {
       tokenStorage: tokenStorage,
     );
 
-    await expectLater(
-      service.ensureInitialized(),
-      throwsA(
-        isA<ApiException>().having(
-          (error) => error.message,
-          'message',
-          'Войдите снова',
-        ),
-      ),
-    );
+    await service.ensureInitialized();
+    await service.awaitPrivateAuthReady();
     expect(service.currentUser, isNull);
   });
 }
@@ -431,6 +493,7 @@ class _FakeAuthApi extends AuthApi {
 
   bool logoutCalled = false;
   String? lastLoginPhoneVerificationCheckId;
+  String? lastSignupPhoneReferralCode;
   Object? refreshError;
   Object? meError;
   Map<String, dynamic>? meResponse;
@@ -550,6 +613,44 @@ class _FakeAuthApi extends AuthApi {
       },
     };
   }
+
+  @override
+  Future<Map<String, dynamic>> signupPhone({
+    required String phone,
+    required String password,
+    required String displayName,
+    required String verificationCheckId,
+    String referralCode = '',
+  }) async {
+    lastSignupPhoneReferralCode =
+        referralCode.trim().isEmpty ? null : referralCode.trim();
+    return <String, dynamic>{
+      'auth': <String, dynamic>{
+        'access_token': 'access-token',
+        'refresh_token': 'refresh-token',
+      },
+      'user': <String, dynamic>{
+        'id': 'user-2',
+        'phone': phone,
+        'phone_verified': true,
+        'display_name': displayName,
+        'referral_code': 'OWN_REFERRAL_CODE',
+      },
+    };
+  }
+}
+
+String _jwtWithExpOffset(Duration offset) {
+  final header = base64Url.encode(utf8.encode('{"alg":"HS256","typ":"JWT"}'));
+  final payload = base64Url.encode(
+    utf8.encode(
+      jsonEncode(<String, dynamic>{
+        'exp':
+            DateTime.now().toUtc().add(offset).millisecondsSinceEpoch ~/ 1000,
+      }),
+    ),
+  );
+  return '$header.$payload.signature';
 }
 
 class _FakeUsersApi extends UsersApi {

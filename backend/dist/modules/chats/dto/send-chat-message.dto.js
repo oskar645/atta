@@ -21,6 +21,12 @@ __decorate([
     __metadata("design:type", String)
 ], SendChatMessageDto.prototype, "chatId", void 0);
 __decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], SendChatMessageDto.prototype, "clientMessageId", void 0);
+__decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(1),
     (0, class_validator_1.MaxLength)(4000),

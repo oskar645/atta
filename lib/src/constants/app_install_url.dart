@@ -1,5 +1,6 @@
-// TODO: Replace with the exact App Store URL when the production app id is known.
-const String appInstallUrl = 'https://apps.apple.com/search?term=ATTA';
+const String appInstallUrl =
+    'https://apps.apple.com/us/app/atta/id6762604298?l=ru';
+const String appInviteLandingUrl = 'https://attamarket.online/app';
 const String _appInstallUrlPlaceholder =
     'PASTE_APP_STORE_OR_TESTFLIGHT_LINK_HERE';
 
@@ -17,4 +18,20 @@ String? resolveConfiguredAppInstallUrl({String? overrideUrl}) {
   }
 
   return candidate;
+}
+
+String? resolveConfiguredInviteShareUrl({String? overrideUrl}) {
+  final overrideCandidate = overrideUrl?.trim() ?? '';
+  if (overrideCandidate.isNotEmpty) {
+    return resolveConfiguredAppInstallUrl(overrideUrl: overrideCandidate);
+  }
+
+  final inviteUri = Uri.tryParse(appInviteLandingUrl);
+  if (inviteUri != null &&
+      inviteUri.scheme == 'https' &&
+      inviteUri.host.trim().isNotEmpty) {
+    return appInviteLandingUrl;
+  }
+
+  return resolveConfiguredAppInstallUrl();
 }

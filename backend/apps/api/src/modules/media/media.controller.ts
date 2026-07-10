@@ -32,6 +32,7 @@ import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { UsersService } from '../users/users.service';
+import { normalizeStoredMediaUrl } from '../../common/serializers';
 
 const memoryImageUpload = FileInterceptor('file', {
   storage: require('multer').memoryStorage(),
@@ -243,6 +244,37 @@ export class MediaController {
       feedAdId,
       this.requireImage(file, 5 * 1024 * 1024),
     );
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('notifications/image')
+  @UseInterceptors(memoryImageUpload)
+  async uploadNotificationImage(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @UploadedFile() file?: UploadedImageFile,
+  ) {
+    this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
+      limit: 20,
+      windowMs: 60 * 1000,
+    });
+    const requiredFile = this.requireImage(file, 5 * 1024 * 1024);
+    const uploaded = await this.storageService.saveUploadedFile({
+      buffer: requiredFile.buffer,
+      category: 'misc',
+      contentType: requiredFile.mimetype,
+      context: {
+        userId: authUser.userId,
+      },
+      originalName: requiredFile.originalname,
+    });
+    return {
+      source: 'timeweb',
+      url: normalizeStoredMediaUrl(uploaded.url, {
+        category: 'misc',
+        providerHint: uploaded.provider,
+        storageKey: uploaded.key,
+      }),
+    };
   }
 
   @UseGuards(JwtAuthGuard)

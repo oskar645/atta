@@ -3,13 +3,13 @@ import 'package:atta/src/utils/price_formatter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('listing share text contains app install url and announcement fields',
+  test('listing share text contains public listing url and announcement fields',
       () {
     final result = buildListingShareText(
+      listingId: 'listing-42',
       title: 'Toyota Camry',
       price: 1200000,
       city: 'Москва',
-      installUrl: 'https://apps.apple.com/app/id123456789',
     );
     final text = result.text;
 
@@ -18,60 +18,77 @@ void main() {
     expect(text, contains('Toyota Camry'));
     expect(text, contains('Цена: ${formatPrice(1200000)}'));
     expect(text, contains('Город: Москва'));
-    expect(text, contains('https://apps.apple.com/app/id123456789'));
     expect(text, isNot(contains('atta://listing')));
+    expect(text, contains('https://attamarket.online/listing/listing-42'));
     expect(
       text,
       contains(
-        'Открыть ATTA:\nhttps://apps.apple.com/app/id123456789',
+        'Открыть объявление:\nhttps://attamarket.online/listing/listing-42',
       ),
     );
   });
 
-  test('listing share text returns russian error when install url is missing',
+  test('listing share text returns russian error when listing id is missing',
       () {
     final result = buildListingShareText(
+      listingId: '',
       title: 'Toyota Camry',
       price: 1200000,
       city: 'Москва',
-      installUrl: '',
     );
 
     expect(result.text, isNull);
     expect(
       result.errorMessage,
-      'Ссылка на приложение пока не настроена.',
+      'Ссылка на объявление пока недоступна.',
     );
   });
 
-  test('listing share text uses fallback app install url by default', () {
+  test('listing share text uses public listing url by default', () {
     final result = buildListingShareText(
+      listingId: 'listing-99',
       title: 'Toyota Camry',
       price: 1200000,
       city: 'Москва',
     );
 
     expect(result.errorMessage, isNull);
-    expect(result.text, contains('https://apps.apple.com/search?term=ATTA'));
+    expect(
+        result.text, contains('https://attamarket.online/listing/listing-99'));
   });
 
-  test('invite share text contains app install url only', () {
+  test('listing share text does not include userId referral code or ip', () {
+    final result = buildListingShareText(
+      listingId: 'listing-123',
+      title: 'BMW X5',
+      price: 2500000,
+      city: 'Казань',
+    );
+    final text = result.text ?? '';
+
+    expect(text, contains('https://attamarket.online/listing/listing-123'));
+    expect(text, isNot(contains('userId')));
+    expect(text, isNot(contains('user-1')));
+    expect(text, isNot(contains('ref=')));
+    expect(text, isNot(contains('referralCode')));
+    expect(text, isNot(contains('5.42.125.179')));
+    expect(text, isNot(contains('atta://')));
+  });
+
+  test('invite share text contains referral code but not user id', () {
     final result = buildInviteShareText(
-      currentUserId: 'user-42',
-      installUrl: 'https://apps.apple.com/app/id123456789',
+      referralCode: 'REF-CODE-42',
+      installUrl: 'https://attamarket.online/app',
     );
     final text = result.text;
 
     expect(result.errorMessage, isNull);
     expect(text, isNotNull);
-    expect(text, contains('Присоединяйся к ATTA'));
-    expect(text, contains('https://apps.apple.com/app/id123456789'));
+    expect(text, contains('Привет! Я пользуюсь ATTA'));
+    expect(text, contains('https://attamarket.online/app?ref=REF-CODE-42'));
+    expect(text, isNot(contains('https://apps.apple.com/search?term=ATTA')));
+    expect(text, isNot(contains('5.42.125.179')));
     expect(text, isNot(contains('atta://invite')));
-    expect(
-      text,
-      contains(
-        'Скачать приложение:\nhttps://apps.apple.com/app/id123456789',
-      ),
-    );
+    expect(text, isNot(contains('user-42')));
   });
 }

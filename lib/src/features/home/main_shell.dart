@@ -15,9 +15,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, this.initialIndex = 0});
+  const MainShell({
+    super.key,
+    this.initialIndex = 0,
+    this.pageBuilder,
+  });
 
   final int initialIndex;
+  final Widget Function(int index, HomeTabController controller)? pageBuilder;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -31,14 +36,7 @@ class _MainShellState extends State<MainShell> {
   MainShellController? _shellController;
   PresenceService? _presence;
   String? _presenceUid;
-
-  late final List<Widget> _pages = [
-    HomeScreen(controller: _homeTabController),
-    const FavoritesScreen(),
-    const MyListingsScreen(),
-    const InboxScreen(),
-    const ProfileScreen(),
-  ];
+  late final Set<int> _visitedTabs = <int>{0, widget.initialIndex};
 
   static const _inactive = Color(0xFF8E95A3);
   static const _search = Colors.blue;
@@ -51,16 +49,7 @@ class _MainShellState extends State<MainShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final auth = _auth;
-      final presence = _presence;
-      if (auth == null || presence == null) return;
-      final uid = auth.currentUser?.uid;
-      if (uid == null || uid.isEmpty) return;
-      _presenceUid = uid;
-      await presence.setOnline(uid: uid, isOnline: true);
-      _presenceTimer = Timer.periodic(const Duration(seconds: 45), (_) {
-        presence.heartbeat(uid);
-      });
+      await _startPresenceHeartbeatIfNeeded();
     });
   }
 
@@ -80,7 +69,7 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
-    _presenceTimer?.cancel();
+    _stopPresenceHeartbeat();
     _shellController?.removeListener(_handleExternalTabSelection);
     final presence = _presence;
     final uid = _presenceUid;
@@ -88,6 +77,28 @@ class _MainShellState extends State<MainShell> {
       presence?.setOnline(uid: uid, isOnline: false);
     }
     super.dispose();
+  }
+
+  Future<void> _startPresenceHeartbeatIfNeeded() async {
+    final auth = _auth;
+    final presence = _presence;
+    if (auth == null || presence == null) return;
+    final uid = auth.currentUser?.uid?.trim() ?? '';
+    if (uid.isEmpty) return;
+    if (_presenceTimer != null && _presenceUid == uid) {
+      return;
+    }
+    _stopPresenceHeartbeat();
+    _presenceUid = uid;
+    await presence.setOnline(uid: uid, isOnline: true);
+    _presenceTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      presence.heartbeat(uid);
+    });
+  }
+
+  void _stopPresenceHeartbeat() {
+    _presenceTimer?.cancel();
+    _presenceTimer = null;
   }
 
   Widget _dotIcon(Widget icon, bool show) {
@@ -110,7 +121,10 @@ class _MainShellState extends State<MainShell> {
     if (controller == null || !mounted || controller.selectedIndex == _i) {
       return;
     }
-    setState(() => _i = controller.selectedIndex);
+    setState(() {
+      _i = controller.selectedIndex;
+      _visitedTabs.add(_i);
+    });
   }
 
   void _onDestinationSelected(int v) {
@@ -129,8 +143,32 @@ class _MainShellState extends State<MainShell> {
     }
 
     if (v == _i) return;
-    setState(() => _i = v);
+    setState(() {
+      _i = v;
+      _visitedTabs.add(v);
+    });
     _shellController?.selectTab(v);
+  }
+
+  Widget _buildPage(int index) {
+    final customPageBuilder = widget.pageBuilder;
+    if (customPageBuilder != null) {
+      return customPageBuilder(index, _homeTabController);
+    }
+    switch (index) {
+      case 0:
+        return HomeScreen(controller: _homeTabController);
+      case 1:
+        return const FavoritesScreen();
+      case 2:
+        return const MyListingsScreen();
+      case 3:
+        return const InboxScreen();
+      case 4:
+        return const ProfileScreen();
+      default:
+        return const SizedBox.shrink();
+    }
   }
 
   @override
@@ -158,7 +196,12 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       body: IndexedStack(
         index: _i,
-        children: _pages,
+        children: List<Widget>.generate(5, (index) {
+          if (!_visitedTabs.contains(index)) {
+            return const SizedBox.shrink();
+          }
+          return _buildPage(index);
+        }),
       ),
       bottomNavigationBar: StreamBuilder<int>(
         stream: chat.streamUnreadTotal(uid),

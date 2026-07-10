@@ -97,6 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
+    final normalizedPhone = phone.isEmpty ? '' : normalizeRuPhoneForApi(phone);
     final email = _emailCtrl.text.trim().toLowerCase();
     final currentEmail = _visibleEmail(currentUser.email);
 
@@ -106,6 +107,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (!_looksLikeEmail(email)) {
       showAppSnack(context, 'Введите корректный email', isError: true);
+      return;
+    }
+    if (phone.isNotEmpty && normalizedPhone.isEmpty) {
+      showAppSnack(context, 'Введите номер телефона полностью', isError: true);
       return;
     }
 
@@ -122,7 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await profile.updateProfile(uid, {
         'display_name': name,
         'name': name,
-        'phone': phone,
+        'phone': normalizedPhone,
         if (email.isNotEmpty) 'email': email,
       });
 
@@ -248,8 +253,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 TextField(
                   controller: _phoneCtrl,
                   keyboardType: TextInputType.phone,
+                  inputFormatters: const [
+                    RuPhoneInputFormatter(),
+                  ],
                   decoration: InputDecoration(
                     labelText: 'Телефон',
+                    prefixText: '+7 ',
                     border: border,
                     enabledBorder: border,
                     focusedBorder: border,

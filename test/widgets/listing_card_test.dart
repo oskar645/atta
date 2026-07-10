@@ -49,10 +49,64 @@ void main() {
       find.byKey(const ValueKey('listing_seen_badge')),
     );
     expect(badgeText.style?.fontSize, 9);
-    expect(
-      tester.getSize(find.byKey(const ValueKey('listing_seen_badge_container'))).height,
-      lessThan(24),
+    expect(tester.getSize(find.byKey(const ValueKey('listing_seen_badge_container'))).height,
+        lessThan(24));
+  });
+
+  testWidgets('seller rating stays visible when seller has no reviews',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 220,
+            height: 320,
+            child: ListingCard(
+              listing: _listing(),
+              isFav: false,
+              isSeen: false,
+              reviews: _FakeReviewsService(),
+              onToggleFav: (_) {},
+              onOpen: () {},
+            ),
+          ),
+        ),
+      ),
     );
+    await tester.pump();
+
+    expect(find.text('Рейтинг продавца'), findsNothing);
+    expect(find.byIcon(Icons.star), findsOneWidget);
+    expect(find.text('0.0'), findsOneWidget);
+    expect(find.text('(0)'), findsOneWidget);
+  });
+
+  testWidgets('seller rating shows star value and review count without label',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 220,
+            height: 320,
+            child: ListingCard(
+              listing: _listing(),
+              isFav: false,
+              isSeen: false,
+              reviews: _RatedFakeReviewsService(),
+              onToggleFav: (_) {},
+              onOpen: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Рейтинг продавца'), findsNothing);
+    expect(find.byIcon(Icons.star), findsOneWidget);
+    expect(find.text('4.7'), findsOneWidget);
+    expect(find.text('(3)'), findsOneWidget);
   });
 }
 
@@ -61,6 +115,15 @@ class _FakeReviewsService extends ReviewsService {
   Stream<Map<String, dynamic>> streamSellerRating(String sellerId) {
     return Stream<Map<String, dynamic>>.value(
       const <String, dynamic>{'avg': 0.0, 'count': 0},
+    );
+  }
+}
+
+class _RatedFakeReviewsService extends ReviewsService {
+  @override
+  Stream<Map<String, dynamic>> streamSellerRating(String sellerId) {
+    return Stream<Map<String, dynamic>>.value(
+      const <String, dynamic>{'avg': 4.7, 'count': 3},
     );
   }
 }

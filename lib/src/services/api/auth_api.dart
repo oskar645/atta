@@ -120,6 +120,7 @@ class AuthApi {
     required String password,
     required String displayName,
     required String verificationCheckId,
+    String referralCode = '',
   }) async {
     final response = await _client.post(
       '/auth/signup-phone',
@@ -128,6 +129,7 @@ class AuthApi {
         'password': password,
         'displayName': displayName,
         'verificationCheckId': verificationCheckId,
+        if (referralCode.trim().isNotEmpty) 'referralCode': referralCode.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);

@@ -56,4 +56,20 @@ class ReportsApi {
     );
     return Map<String, dynamic>.from(response as Map);
   }
+
+  Future<Map<String, dynamic>> reopen(String reportId) async {
+    final response = await _client.patch(
+      '/admin/reports/$reportId/reopen',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> hide(String reportId) async {
+    final response = await _client.delete(
+      '/admin/reports/$reportId',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
 }

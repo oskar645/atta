@@ -16,7 +16,12 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 class SupportScreen extends StatefulWidget {
-  const SupportScreen({super.key});
+  const SupportScreen({
+    super.key,
+    this.initialTicketId,
+  });
+
+  final String? initialTicketId;
 
   @override
   State<SupportScreen> createState() => _SupportScreenState();
@@ -65,6 +70,27 @@ class _SupportScreenState extends State<SupportScreen> {
     final auth = context.read<AuthService>();
     final support = context.read<SupportService>();
     final uid = auth.currentUser!.uid;
+    final initialTicketId = widget.initialTicketId?.trim() ?? '';
+
+    if (initialTicketId.isNotEmpty) {
+      try {
+        await support.refreshMessages(initialTicketId);
+        if (!mounted) return;
+        setState(() {
+          _ticketId = initialTicketId;
+          _messagesStream = support.streamMessages(initialTicketId);
+          _loadingTicket = false;
+          _loadError = null;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _loadingTicket = false;
+          _loadError = 'Обращение в поддержку не найдено.';
+        });
+      }
+      return;
+    }
 
     try {
       final existing = await support.getOrCreateMyTicketId(uid: uid);

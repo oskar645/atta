@@ -2,6 +2,7 @@ import 'package:atta/src/features/promotions/sell_faster_screen.dart';
 import 'package:atta/src/models/active_promotion.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/promotion_plan.dart';
+import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/services/promotions_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
@@ -10,19 +11,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
-  testWidgets('sell faster screen shows updated plan prices in list and confirmation',
+  testWidgets(
+      'sell faster screen shows updated plan prices in list and confirmation',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 1600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
     final walletService = _FakeWalletService();
     final promotionsService = _FakePromotionsService(walletService);
+    final listingsService = _FakeListingsService();
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           Provider<WalletService>.value(value: walletService),
           Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
         ],
         child: MaterialApp(
           home: SellFasterScreen(listing: _listing()),
@@ -39,7 +43,8 @@ void main() {
     expect(find.text('150 поинтов'), findsOneWidget);
     expect(find.text('Турбо'), findsNothing);
 
-    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Подключить').first);
+    await tester
+        .ensureVisible(find.widgetWithText(FilledButton, 'Подключить').first);
     await tester.tap(find.widgetWithText(FilledButton, 'Подключить').first);
     await tester.pumpAndSettle();
 
@@ -52,12 +57,14 @@ void main() {
       (tester) async {
     final walletService = _FailingWalletService();
     final promotionsService = _FakePromotionsService(_FakeWalletService());
+    final listingsService = _FakeListingsService();
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           Provider<WalletService>.value(value: walletService),
           Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
         ],
         child: MaterialApp(
           home: SellFasterScreen(listing: _listing()),
@@ -79,12 +86,14 @@ void main() {
       (tester) async {
     final walletService = _FakeWalletService()..setBalance(10);
     final promotionsService = _FakePromotionsService(walletService);
+    final listingsService = _FakeListingsService();
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           Provider<WalletService>.value(value: walletService),
           Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
         ],
         child: MaterialApp(
           home: SellFasterScreen(listing: _listing()),
@@ -99,6 +108,40 @@ void main() {
 
     expect(find.text('Недостаточно поинтов'), findsOneWidget);
     expect(find.text('Получить поинты'), findsOneWidget);
+  });
+
+  testWidgets('successful activation refreshes public feed caches',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final walletService = _FakeWalletService();
+    final promotionsService = _FakePromotionsService(walletService);
+    final listingsService = _FakeListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<WalletService>.value(value: walletService),
+          Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: MaterialApp(
+          home: SellFasterScreen(listing: _listing()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester
+        .ensureVisible(find.widgetWithText(FilledButton, 'Подключить').at(1));
+    await tester.tap(find.widgetWithText(FilledButton, 'Подключить').at(1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Подключить').last);
+    await tester.pumpAndSettle();
+
+    expect(listingsService.refreshCalls, 1);
+    expect(listingsService.lastListing?.activeBump?.type, 'bump');
   });
 }
 
@@ -192,9 +235,44 @@ class _FakePromotionsService extends PromotionsService {
       String listingId, String type) async {
     showcaseActive = true;
     walletService.setBalance(0);
+    final listingMap = _listing().toMap();
+    listingMap['promotions'] = <String, dynamic>{
+      'activeBump': type == 'bump'
+          ? ActivePromotion.fromMap({
+              'id': 'promo-bump',
+              'type': 'bump',
+              'title': 'Поднятие',
+              'status': 'active',
+              'endsAt': '2026-06-20T10:00:00.000Z',
+            }).toMap()
+          : null,
+      'activeVip': type == 'vip'
+          ? ActivePromotion.fromMap({
+              'id': 'promo-vip',
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'endsAt': '2026-06-20T10:00:00.000Z',
+            }).toMap()
+          : null,
+      'activeShowcase': null,
+      'activeTurbo': null,
+    };
     return {
       'message': 'Объявление добавлено в Витрину ATTA',
+      'listing': listingMap,
     };
+  }
+}
+
+class _FakeListingsService extends ListingsService {
+  int refreshCalls = 0;
+  Listing? lastListing;
+
+  @override
+  void refreshFeedAfterPromotion({Listing? listing}) {
+    refreshCalls += 1;
+    lastListing = listing;
   }
 }
 
@@ -228,6 +306,7 @@ Listing _listing() {
     realEstateType: null,
     clothesType: null,
     viewCount: 0,
+    favoriteCount: 0,
     status: 'approved',
     rejectionReason: '',
     activeShowcase: null,

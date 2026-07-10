@@ -10,6 +10,7 @@ import 'package:http_parser/http_parser.dart';
 
 typedef ApiRefreshHandler = Future<bool> Function();
 typedef ApiSessionExpiredHandler = Future<void> Function();
+typedef ApiAuthorizedSessionWaiter = Future<void> Function();
 
 class ApiClient {
   ApiClient({
@@ -23,13 +24,17 @@ class ApiClient {
 
   static ApiRefreshHandler? _refreshHandler;
   static ApiSessionExpiredHandler? _sessionExpiredHandler;
+  static ApiAuthorizedSessionWaiter? _authorizedSessionWaiter;
+  static Future<bool>? _refreshInFlight;
 
   static void configureAuthHandlers({
     ApiRefreshHandler? onRefreshSession,
     ApiSessionExpiredHandler? onSessionExpired,
+    ApiAuthorizedSessionWaiter? onAwaitAuthorizedSession,
   }) {
     _refreshHandler = onRefreshSession;
     _sessionExpiredHandler = onSessionExpired;
+    _authorizedSessionWaiter = onAwaitAuthorizedSession;
   }
 
   Future<dynamic> get(
@@ -110,6 +115,12 @@ class ApiClient {
     bool allowAuthRetry = true,
   }) async {
     if (authorized) {
+      await _awaitAuthorizedSessionReady();
+    }
+    if (authorized) {
+      await _awaitActiveRefreshIfAny();
+    }
+    if (authorized) {
       final token = await _tokenStorage.readAccessToken();
       if (token == null || token.trim().isEmpty) {
         throw const ApiException(
@@ -183,6 +194,12 @@ class ApiClient {
     bool allowAuthRetry = true,
     int networkRetryAttempt = 0,
   }) async {
+    if (authorized || sendAuthIfAvailable) {
+      await _awaitAuthorizedSessionReady();
+    }
+    if (authorized || sendAuthIfAvailable) {
+      await _awaitActiveRefreshIfAny();
+    }
     if (authorized) {
       final token = await _tokenStorage.readAccessToken();
       if (token == null || token.trim().isEmpty) {
@@ -369,24 +386,59 @@ class ApiClient {
   }
 
   Future<bool> _tryRefreshSession() async {
+    final existing = _refreshInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    final future = _performRefreshSession().then(_resolveRefreshOutcome,
+        onError: (_) => _resolveRefreshOutcome(false));
+    _refreshInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_refreshInFlight, future)) {
+        _refreshInFlight = null;
+      }
+    }
+  }
+
+  Future<bool> _performRefreshSession() async {
     final refreshHandler = _refreshHandler;
     if (refreshHandler == null) {
-      await _sessionExpiredHandler?.call();
-      throw const ApiException(
-        'Сессия истекла. Войдите снова.',
-        statusCode: 401,
-        code: 'session_expired',
-      );
+      return false;
     }
     try {
-      final refreshed = await refreshHandler();
-      if (refreshed) return true;
-    } catch (_) {}
+      return await refreshHandler();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _resolveRefreshOutcome(bool refreshed) async {
+    if (refreshed) {
+      return true;
+    }
     await _sessionExpiredHandler?.call();
     throw const ApiException(
       'Сессия истекла. Войдите снова.',
       statusCode: 401,
       code: 'session_expired',
     );
+  }
+
+  Future<void> _awaitActiveRefreshIfAny() async {
+    final refreshFuture = _refreshInFlight;
+    if (refreshFuture == null) {
+      return;
+    }
+    await refreshFuture;
+  }
+
+  Future<void> _awaitAuthorizedSessionReady() async {
+    final waiter = _authorizedSessionWaiter;
+    if (waiter == null) {
+      return;
+    }
+    await waiter();
   }
 }

@@ -18,7 +18,7 @@ class FeedAdBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final borderRadius = BorderRadius.circular(18);
+    final borderRadius = BorderRadius.circular(16);
 
     return ClipRRect(
       borderRadius: borderRadius,
@@ -27,7 +27,7 @@ class FeedAdBanner extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: AspectRatio(
-            aspectRatio: 2.15,
+            aspectRatio: 2.9,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -61,7 +61,7 @@ class FeedAdBanner extends StatelessWidget {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.end,
@@ -90,8 +90,8 @@ class FeedAdBanner extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 20,
-                          height: 1.05,
+                          fontSize: 18,
+                          height: 1.08,
                           fontWeight: FontWeight.w900,
                         ),
                       ),

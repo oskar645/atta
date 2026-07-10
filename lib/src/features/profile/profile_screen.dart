@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:atta/src/features/admin/admin_screen.dart';
 import 'package:atta/src/features/profile/settings_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
 import 'package:atta/src/features/wallet/wallet_screen.dart';
+import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
@@ -19,10 +21,16 @@ import 'package:atta/src/widgets/skeletons.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+
+void _debugProfileLog(String message) {
+  assert(() {
+    debugPrint(message);
+    return true;
+  }());
+}
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
@@ -39,12 +47,40 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen>
+    with WidgetsBindingObserver {
   Uint8List? _avatarPreviewBytes;
   bool _isAvatarUploading = false;
   String? _avatarOverrideUrl;
   String? _profileStreamUid;
   Stream<Map<String, dynamic>>? _profileStream;
+  DateTime? _lastResumeRefreshAt;
+
+  static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final lastRefreshAt = _lastResumeRefreshAt;
+    if (lastRefreshAt != null &&
+        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
+      return;
+    }
+    _lastResumeRefreshAt = DateTime.now();
+    unawaited(_refreshProfileOnResume());
+  }
 
   Future<void> _precacheAvatar(BuildContext context, String imageUrl) async {
     final customPrecache = widget.precacheAvatar;
@@ -113,6 +149,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     AuthUser user,
   ) {
     if (_profileStream == null || _profileStreamUid != user.uid) {
+      _debugProfileLog('Profile open');
+      _debugProfileLog('auth ready user=${user.uid}');
+      _debugProfileLog('Profile cached user shown user=${user.uid}');
       _profileStreamUid = user.uid;
       _profileStream = profile.streamProfile(
         user.uid,
@@ -122,32 +161,35 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return _profileStream!;
   }
 
-  String _shortUserId(String uid) {
-    final text = uid.trim();
-    if (text.length <= 14) return text;
-    return '${text.substring(0, 8)}...${text.substring(text.length - 4)}';
-  }
-
-  Future<void> _copyText(
-    BuildContext context,
-    String value, {
-    String message = 'Скопировано',
-  }) async {
-    final text = value.trim();
-    if (text.isEmpty) return;
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+  Future<void> _refreshProfileOnResume() async {
+    final auth = context.read<AuthService>();
+    final profile = context.read<ProfileService>();
+    final user = auth.currentUser;
+    if (user == null) return;
+    _debugProfileLog('Profile cached user shown user=${user.uid}');
+    _debugProfileLog('auth me refresh start user=${user.uid}');
+    try {
+      await auth.restoreSessionOnResume(force: true);
+      _debugProfileLog('auth me success user=${user.uid}');
+    } catch (error) {
+      _debugProfileLog('auth me error message=$error user=${user.uid}');
+    } finally {
+      _debugProfileLog('profile finally loading=false user=${user.uid}');
+    }
+    unawaited(
+      profile.getProfile(user.uid).catchError((error) {
+        _debugProfileLog('Profile load error message=$error user=${user.uid}');
+        return <String, dynamic>{};
+      }),
     );
   }
 
   Future<void> _shareProfileInvite(
     BuildContext context, {
-    required String uid,
+    required String referralCode,
     required String name,
   }) async {
-    final shareText = buildInviteShareText(currentUserId: uid);
+    final shareText = buildInviteShareText(referralCode: referralCode);
     final message = shareText.text;
     if (message == null) {
       if (!context.mounted) return;
@@ -219,7 +261,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _editPhone(
       BuildContext context, String uid, String currentPhone) async {
-    final ctrl = TextEditingController(text: currentPhone);
+    final ctrl =
+        TextEditingController(text: formatRuPhoneForField(currentPhone));
     final profile = context.read<ProfileService>();
 
     final res = await showDialog<String>(
@@ -231,7 +274,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
           autofocus: true,
           keyboardType: TextInputType.phone,
           textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(hintText: 'Введите номер телефона'),
+          inputFormatters: const [
+            RuPhoneInputFormatter(),
+          ],
+          decoration: const InputDecoration(
+            hintText: '928 888-86-45',
+            prefixText: '+7 ',
+          ),
           onSubmitted: (_) => Navigator.pop(context, ctrl.text),
         ),
         actions: [
@@ -247,8 +296,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     final phone = (res ?? '').trim();
     if (phone.isEmpty) return;
+    final normalizedPhone = normalizeRuPhoneForApi(phone);
+    if (normalizedPhone.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Введите номер телефона полностью')),
+        );
+      }
+      return;
+    }
 
-    await profile.updateProfile(uid, {'phone': phone});
+    await profile.updateProfile(uid, {'phone': normalizedPhone});
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -405,16 +463,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user == null) {
       return const Scaffold(body: Center(child: Text('Нужно войти')));
     }
+    admin.bindAdminUser(user.uid);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Профиль'), centerTitle: false),
       body: StreamBuilder<Map<String, dynamic>>(
         initialData: (() {
           final cached = profile.getCachedProfile(user.uid);
-          if (cached.isEmpty &&
-              !(_avatarOverrideUrl?.trim().isNotEmpty ?? false)) {
-            return null;
-          }
           final merged = <String, dynamic>{
             if ((user.displayName?.trim().isNotEmpty ?? false))
               'display_name': user.displayName!.trim(),
@@ -545,16 +600,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 color: Theme.of(context).colorScheme.outline,
                               ),
                             ),
-                          const SizedBox(height: 8),
-                          _CopyIdChip(
-                            label: 'ID',
-                            value: _shortUserId(user.uid),
-                            onTap: () => _copyText(
-                              context,
-                              user.uid,
-                              message: 'ID аккаунта скопирован',
-                            ),
-                          ),
                           const SizedBox(height: 14),
                           _CompactStatsRow(
                             ratingAvgStream:
@@ -616,7 +661,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => _shareProfileInvite(
                         context,
-                        uid: user.uid,
+                        referralCode: user.referralCode ?? '',
                         name: name,
                       ),
                     ),
@@ -744,62 +789,6 @@ class _Avatar extends StatelessWidget {
         radius: 39,
         imageProvider: previewBytes == null ? null : MemoryImage(previewBytes!),
         isLoading: isLoading,
-      ),
-    );
-  }
-}
-
-class _CopyIdChip extends StatelessWidget {
-  final String label;
-  final String value;
-  final VoidCallback onTap;
-
-  const _CopyIdChip({
-    required this.label,
-    required this.value,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: Theme.of(context).colorScheme.outline,
-                ),
-              ),
-              if (value.trim().isNotEmpty) ...[
-                const SizedBox(width: 6),
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
-                ),
-              ],
-              const SizedBox(width: 6),
-              Icon(
-                Icons.copy_rounded,
-                size: 16,
-                color: Theme.of(context).colorScheme.outline,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -972,46 +961,85 @@ class _ProfileWalletTile extends StatefulWidget {
   State<_ProfileWalletTile> createState() => _ProfileWalletTileState();
 }
 
-class _ProfileWalletTileState extends State<_ProfileWalletTile> {
-  Future<dynamic>? _future;
+class _ProfileWalletTileState extends State<_ProfileWalletTile>
+    with WidgetsBindingObserver {
+  static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
+  late Future<Wallet?> _future;
+  String? _lastWalletErrorText;
+  DateTime? _lastRefreshAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _future = context.read<WalletService>().maybeCheckAccrualOncePerSession();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final lastRefreshAt = _lastRefreshAt;
+    if (lastRefreshAt != null &&
+        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
+      return;
+    }
+    _retry();
   }
 
   void _retry() {
     final walletService = context.read<WalletService>();
     setState(() {
+      _lastWalletErrorText = null;
       _future = walletService.checkAccrual(forceRefresh: true);
     });
+    _lastRefreshAt = DateTime.now();
   }
 
   String _walletErrorText(Object error) {
-    if (error is ApiException && error.message.trim().isNotEmpty) {
-      return 'Кошелёк временно недоступен';
+    if (error is ApiException && error.isUnauthorized) {
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
-    return 'Кошелёк временно недоступен';
+    return 'Не удалось обновить кошелёк. Попробуйте позже.';
+  }
+
+  void _showWalletErrorIfNeeded(Object error) {
+    final text = _walletErrorText(error);
+    if (_lastWalletErrorText == text) {
+      return;
+    }
+    _lastWalletErrorText = text;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(text)),
+      );
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final walletService = context.read<WalletService>();
-    return FutureBuilder<dynamic>(
+    return FutureBuilder<Wallet?>(
       future: _future,
+      initialData: walletService.cachedWallet,
       builder: (context, snapshot) {
         final wallet = snapshot.data ?? walletService.cachedWallet;
-        final loading = snapshot.connectionState != ConnectionState.done &&
-            wallet == null &&
-            !snapshot.hasError;
-        final hasError = snapshot.hasError && wallet == null;
-        if (loading) {
-          return const Padding(
-            padding: EdgeInsets.only(top: 8),
-            child: SkeletonWalletCard(),
-          );
+        final refreshing = snapshot.connectionState != ConnectionState.done;
+        final hasError = snapshot.hasError;
+        if (!refreshing) {
+          _lastRefreshAt = DateTime.now();
+        }
+        if (hasError) {
+          _showWalletErrorIfNeeded(snapshot.error!);
+        } else {
+          _lastWalletErrorText = null;
         }
         return Column(
           children: [
@@ -1022,25 +1050,48 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile> {
               tileColor: theme.colorScheme.surfaceContainerHighest,
               leading: const Icon(Icons.account_balance_wallet_outlined),
               title: const Text('ATTA Кошелёк'),
-              subtitle: Text(
-                loading
-                    ? 'Загрузка бонусов...'
-                    : hasError
-                        ? _walletErrorText(snapshot.error!)
-                        : 'Бонусы для продвижения',
+              subtitle: const Text('Бонусы для продвижения'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (wallet != null)
+                    Text(
+                      '${wallet.balance} бонусов',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: refreshing
+                        ? const Padding(
+                            padding: EdgeInsets.all(2),
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : hasError
+                            ? IconButton(
+                                padding: EdgeInsets.zero,
+                                splashRadius: 18,
+                                tooltip: 'Обновить кошелёк',
+                                onPressed: _retry,
+                                icon: const Icon(
+                                  Icons.refresh_rounded,
+                                  size: 20,
+                                ),
+                              )
+                            : IconButton(
+                                padding: EdgeInsets.zero,
+                                splashRadius: 18,
+                                tooltip: 'Обновить кошелёк',
+                                onPressed: _retry,
+                                icon: const Icon(
+                                  Icons.refresh_rounded,
+                                  size: 20,
+                                ),
+                              ),
+                  ),
+                ],
               ),
-              trailing: loading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.2),
-                    )
-                  : wallet != null
-                      ? Text(
-                          '${wallet.balance} бонусов',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        )
-                      : const Icon(Icons.refresh_rounded),
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -1049,19 +1100,10 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile> {
                 );
               },
             ),
-            if (hasError) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: _retry,
-                  child: const Text('Повторить'),
-                ),
-              ),
-            ],
           ],
         );
       },
     );
   }
+
 }

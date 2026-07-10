@@ -1,12 +1,20 @@
+import 'dart:async';
+
 import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/models/wallet_transaction.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/wallet_service.dart';
-import 'package:atta/src/widgets/app_error_view.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+void _debugWalletScreenLog(String message) {
+  assert(() {
+    debugPrint(message);
+    return true;
+  }());
+}
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key});
@@ -15,42 +23,81 @@ class WalletScreen extends StatefulWidget {
   State<WalletScreen> createState() => _WalletScreenState();
 }
 
-class _WalletScreenState extends State<WalletScreen> {
+class _WalletScreenState extends State<WalletScreen>
+    with WidgetsBindingObserver {
+  static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
   late Future<_WalletBundle> _future;
+  DateTime? _lastRefreshAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final walletService = context.read<WalletService>();
+    if (walletService.cachedWallet != null) {
+      _debugWalletScreenLog(
+        'Wallet cached balance shown balance=${walletService.cachedWallet!.balance}',
+      );
+    }
     _future = _load(walletService, forceRefresh: true);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_refreshBackgroundIfNeeded());
   }
 
   Future<_WalletBundle> _load(
     WalletService walletService, {
     required bool forceRefresh,
   }) async {
-    final wallet = await walletService.checkAccrual(forceRefresh: forceRefresh);
+    final cachedWallet = walletService.cachedWallet;
+    if (cachedWallet != null) {
+      _debugWalletScreenLog(
+        'Wallet cached balance shown balance=${cachedWallet.balance}',
+      );
+    }
+    _debugWalletScreenLog('Wallet refresh start');
     try {
+      final wallet =
+          await walletService.checkAccrual(forceRefresh: forceRefresh);
       final transactions =
           await walletService.getTransactions(forceRefresh: forceRefresh);
+      _lastRefreshAt = DateTime.now();
+      _debugWalletScreenLog('Wallet refresh success balance=${wallet.balance}');
       return _WalletBundle(
         wallet: wallet,
         transactions: transactions,
       );
     } catch (error) {
-      return _WalletBundle(
-        wallet: wallet,
-        transactions: const <WalletTransaction>[],
-        transactionsErrorText: _walletTransactionsErrorText(error),
-      );
+      _debugWalletScreenLog('Wallet refresh error message=$error');
+      if (cachedWallet != null) {
+        return _WalletBundle(
+          wallet: cachedWallet,
+          transactions: walletService.cachedTransactions,
+          transactionsErrorText: _walletTransactionsErrorText(error),
+        );
+      }
+      rethrow;
+    } finally {
+      _debugWalletScreenLog('Wallet finally loading=false');
     }
   }
 
-  void _reload() {
-    final walletService = context.read<WalletService>();
-    setState(() {
-      _future = _load(walletService, forceRefresh: true);
-    });
+  Future<void> _refreshBackgroundIfNeeded() async {
+    final lastRefreshAt = _lastRefreshAt;
+    if (lastRefreshAt != null &&
+        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
+      return;
+    }
+    await _refresh();
   }
 
   Future<void> _refresh() async {
@@ -59,7 +106,9 @@ class _WalletScreenState extends State<WalletScreen> {
     setState(() {
       _future = future;
     });
-    await future;
+    try {
+      await future;
+    } catch (_) {}
   }
 
   @override
@@ -71,14 +120,43 @@ class _WalletScreenState extends State<WalletScreen> {
       ),
       body: FutureBuilder<_WalletBundle>(
         future: _future,
+        initialData: _initialBundle(context.read<WalletService>()),
         builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return AppErrorView(
-              title: 'Кошелёк недоступен',
-              message: _walletErrorText(snapshot.error!),
-              onRetry: () async {
-                _reload();
-              },
+          if (snapshot.hasError && !snapshot.hasData) {
+            return ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    color: Theme.of(context).colorScheme.surface,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Баланс',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(_walletErrorText(snapshot.error!)),
+                    ],
+                  ),
+                ),
+              ],
             );
           }
           if (!snapshot.hasData) {
@@ -97,6 +175,7 @@ class _WalletScreenState extends State<WalletScreen> {
           }
 
           final bundle = snapshot.data!;
+          final refreshing = snapshot.connectionState != ConnectionState.done;
           final previewTransactions = _walletPreviewItems(bundle.transactions);
           return RefreshIndicator(
             onRefresh: _refresh,
@@ -130,9 +209,17 @@ class _WalletScreenState extends State<WalletScreen> {
                           fontWeight: FontWeight.w900,
                         ),
                       ),
+                      if (refreshing) ...[
+                        const SizedBox(height: 8),
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       const Text(
-                        'Бонусы можно использовать для продвижения объявлений. Пока всё бесплатно — реальные платежи не подключены.',
+                        'Бонусы для продвижения',
                       ),
                       const SizedBox(height: 12),
                       Text(
@@ -141,6 +228,10 @@ class _WalletScreenState extends State<WalletScreen> {
                       const SizedBox(height: 4),
                       Text(
                         'Ежедневный бонус: +${bundle.wallet.dailyBonusAmount} бонусов',
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Приглашение друга: получите 100 бонусов, когда приглашённый пользователь зарегистрируется в ATTA.',
                       ),
                       const SizedBox(height: 4),
                       Text('Максимум: ${bundle.wallet.maxBalance} бонусов'),
@@ -166,6 +257,21 @@ class _WalletScreenState extends State<WalletScreen> {
                     ],
                   ),
                 ),
+                if (snapshot.hasError) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                      ),
+                    ),
+                    child: Text(_walletErrorText(snapshot.error!)),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 Row(
                   children: [
@@ -209,11 +315,6 @@ class _WalletScreenState extends State<WalletScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(bundle.transactionsErrorText!),
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: _reload,
-                          child: const Text('Повторить'),
-                        ),
                       ],
                     ),
                   ),
@@ -252,38 +353,49 @@ class _WalletScreenState extends State<WalletScreen> {
   }
 }
 
+_WalletBundle? _initialBundle(WalletService walletService) {
+  final wallet = walletService.cachedWallet;
+  if (wallet == null) {
+    return null;
+  }
+  return _WalletBundle(
+    wallet: wallet,
+    transactions: walletService.cachedTransactions,
+  );
+}
+
 String _walletErrorText(Object error) {
   if (error is ApiException) {
     if (error.isUnauthorized) {
-      return 'Сессия истекла. Войдите снова.';
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
     if (error.isTimeout || error.isNetworkError) {
-      return 'Проверьте интернет-соединение и попробуйте снова.';
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
     if (error.message.trim().isNotEmpty) {
-      return error.message.trim();
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
   }
   return shouldShowNetworkVpnHint(error)
-      ? kNetworkVpnHintMessage
+      ? 'Не удалось обновить кошелёк. Попробуйте позже.'
       : 'Не удалось загрузить кошелёк. Попробуйте позже.';
 }
 
 String _walletTransactionsErrorText(Object error) {
   if (error is ApiException) {
     if (error.isUnauthorized) {
-      return 'История операций временно недоступна: сессия истекла.';
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
     if (error.isTimeout || error.isNetworkError) {
-      return 'Проверьте интернет-соединение и попробуйте снова.';
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
     if (error.message.trim().isNotEmpty) {
-      return 'История операций временно недоступна: ${error.message.trim()}';
+      return 'Не удалось обновить кошелёк. Попробуйте позже.';
     }
   }
   return shouldShowNetworkVpnHint(error)
-      ? 'Проверьте интернет-соединение и попробуйте снова.'
-      : 'История операций временно недоступна. Попробуйте позже.';
+      ? 'Не удалось обновить кошелёк. Попробуйте позже.'
+      : 'Не удалось обновить кошелёк. Попробуйте позже.';
 }
 
 class _WalletBundle {
@@ -321,6 +433,8 @@ String _transactionTitle(WalletTransaction transaction) {
       return 'Начислено ${transaction.amount} бонусов';
     case 'daily_login_bonus':
       return 'Начислено ${transaction.amount} бонусов за вход';
+    case 'referral_inviter_bonus':
+      return 'Бонус за приглашение друга';
     case 'promotion_showcase':
       return 'Списано ${transaction.amount} бонусов за Витрину ATTA';
     case 'promotion_bump':

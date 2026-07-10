@@ -7,6 +7,7 @@ class AuthUser {
   final String? phone;
   final bool phoneVerified;
   final String? photoUrl;
+  final String? referralCode;
   final bool isAdmin;
 
   const AuthUser({
@@ -16,6 +17,7 @@ class AuthUser {
     this.phone,
     this.phoneVerified = false,
     this.photoUrl,
+    this.referralCode,
     this.isAdmin = false,
   });
 
@@ -27,6 +29,7 @@ class AuthUser {
       'phone': phone,
       'phoneVerified': phoneVerified,
       'photoUrl': photoUrl,
+      'referralCode': referralCode,
       'isAdmin': isAdmin,
     };
   }
@@ -60,6 +63,7 @@ class AuthUser {
         if (raw == null || raw.isEmpty) return null;
         return resolvePublicMediaUrl(raw, categoryHint: 'avatars').trim();
       }(),
+      referralCode: pickText(const ['referralCode', 'referral_code']),
       isAdmin: json['isAdmin'] == true ||
           json['is_admin'] == true ||
           json['role'] == 'admin',

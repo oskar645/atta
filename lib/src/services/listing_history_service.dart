@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:atta/src/services/api/api_client.dart';
@@ -28,7 +30,7 @@ class ListingHistoryService extends ChangeNotifier {
     ViewedListingsApi? api,
   })  : _storage = tokenStorage ?? _tokenStorage,
         _viewedListingsApi = api ?? _api {
-    _load();
+    unawaited(_load());
   }
 
   bool get isLoaded => _loaded;
@@ -93,45 +95,60 @@ class ListingHistoryService extends ChangeNotifier {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
     final user = await _storage.readCurrentUser();
     final uid = user?.uid.trim() ?? '';
-    final stored =
-        prefs.getStringList(await _prefsKeyForUid(uid)) ?? const <String>[];
+    await _loadLocal(uid: uid);
+    await _syncRemote(uid);
+  }
+
+  Future<void> _loadLocal({String? uid}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final resolvedUid = uid ?? (await _storage.readCurrentUser())?.uid.trim() ?? '';
+    final stored = prefs.getStringList(await _prefsKeyForUid(resolvedUid)) ??
+        const <String>[];
     final localIds = stored
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .take(_maxItems)
         .toList(growable: false);
-    final mergedIds = <String>[...localIds];
-
-    if (ApiConfig.useTimewebBackend && uid.isNotEmpty) {
-      try {
-        final response = await _viewedListingsApi.list();
-        final backendIds = _extractBackendViewedIds(response);
-        for (final id in backendIds) {
-          mergedIds.remove(id);
-          mergedIds.insert(0, id);
-        }
-      } on ApiException catch (error) {
-        if (!error.isUnauthorized &&
-            !error.isNetworkError &&
-            !error.isTimeout &&
-            !error.isServerUnavailable) {
-          rethrow;
-        }
-      } catch (_) {}
-    }
-
-    final normalized = mergedIds.take(_maxItems).toList(growable: false);
     _viewedIds
       ..clear()
-      ..addAll(normalized);
-    await prefs.setStringList(await _prefsKeyForUid(uid), normalized);
-    _lastSyncedUserId = uid;
-    _lastRemoteSyncAt = DateTime.now();
+      ..addAll(localIds);
     _loaded = true;
     notifyListeners();
+  }
+
+  Future<void> _syncRemote(String uid) async {
+    if (!ApiConfig.useTimewebBackend || uid.isEmpty) {
+      _lastSyncedUserId = uid;
+      _lastRemoteSyncAt = DateTime.now();
+      return;
+    }
+    try {
+      final response = await _viewedListingsApi.list();
+      final backendIds = _extractBackendViewedIds(response);
+      final mergedIds = <String>[..._viewedIds];
+      for (final id in backendIds) {
+        mergedIds.remove(id);
+        mergedIds.insert(0, id);
+      }
+      final normalized = mergedIds.take(_maxItems).toList(growable: false);
+      _viewedIds
+        ..clear()
+        ..addAll(normalized);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(await _prefsKeyForUid(uid), normalized);
+      notifyListeners();
+    } on ApiException catch (error) {
+      if (!error.isUnauthorized &&
+          !error.isNetworkError &&
+          !error.isTimeout &&
+          !error.isServerUnavailable) {
+        rethrow;
+      }
+    } catch (_) {}
+    _lastSyncedUserId = uid;
+    _lastRemoteSyncAt = DateTime.now();
   }
 
   Future<void> _save() async {

@@ -71,6 +71,20 @@ class ImagePreparationService {
     );
   }
 
+  Future<PreparedImage> prepareNotificationImage(File file) {
+    return _prepareImageFile(
+      file,
+      targetBytes: 2200 * 1024,
+      maxBytes: 5 * 1024 * 1024,
+      maxDimension: 1800,
+      minQuality: 74,
+      maxQuality: 84,
+      squareCrop: false,
+      tooLargeMessage: 'Фото для уведомления слишком большое. Попробуйте другое фото.',
+      debugLabel: 'notification',
+    );
+  }
+
   Future<PreparedImage> prepareAvatar(File file) {
     return _prepareImageFile(
       file,

@@ -29,7 +29,7 @@ const envSchema = z.object({
   STORAGE_DRIVER: z.enum(['local', 's3']).optional(),
   STORAGE_PROVIDER: z.enum(['local', 's3']).optional(),
   LOCAL_UPLOADS_DIR: z.string().default('/opt/atta-backend/uploads'),
-  MEDIA_PUBLIC_BASE_URL: z.string().default('http://5.42.125.179/uploads'),
+  MEDIA_PUBLIC_BASE_URL: z.string().default('https://attamarket.online/uploads'),
   S3_ENDPOINT: z.string().optional().default(''),
   S3_REGION: z.string().optional().default(''),
   S3_ACCESS_KEY: z.string().optional().default(''),

@@ -45,4 +45,14 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], SignupPhoneDto.prototype, "verification_check_id", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SignupPhoneDto.prototype, "referralCode", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SignupPhoneDto.prototype, "referral_code", void 0);
 //# sourceMappingURL=signup-phone.dto.js.map

@@ -7,9 +7,11 @@ class ListingStatsScreen extends StatefulWidget {
   const ListingStatsScreen({
     super.key,
     required this.listingId,
+    this.initialFavoriteCount = 0,
   });
 
   final String listingId;
+  final int initialFavoriteCount;
 
   @override
   State<ListingStatsScreen> createState() => _ListingStatsScreenState();
@@ -21,8 +23,10 @@ class _ListingStatsScreenState extends State<ListingStatsScreen> {
   @override
   void initState() {
     super.initState();
-    _future =
-        context.read<PromotionsService>().getListingStats(widget.listingId);
+    _future = context.read<PromotionsService>().getListingStats(
+          widget.listingId,
+          initialFavoriteCount: widget.initialFavoriteCount,
+        );
   }
 
   @override
@@ -42,8 +46,6 @@ class _ListingStatsScreenState extends State<ListingStatsScreen> {
           final stats = snapshot.data!;
           final empty = stats.views == 0 &&
               stats.favorites == 0 &&
-              stats.messages == 0 &&
-              stats.calls == 0 &&
               stats.showcaseImpressions == 0 &&
               stats.showcaseClicks == 0 &&
               stats.activePromotions.isEmpty;
@@ -57,9 +59,9 @@ class _ListingStatsScreenState extends State<ListingStatsScreen> {
             children: [
               _StatTile(title: 'Просмотры', value: '${stats.views}'),
               _StatTile(
-                  title: 'Добавления в избранное', value: '${stats.favorites}'),
-              _StatTile(title: 'Сообщения', value: '${stats.messages}'),
-              _StatTile(title: 'Звонки', value: '${stats.calls}'),
+                title: 'Добавили в избранное',
+                value: '${stats.favorites}',
+              ),
               _StatTile(
                 title: 'Показы в Витрине',
                 value: '${stats.showcaseImpressions}',

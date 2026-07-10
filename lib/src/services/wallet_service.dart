@@ -5,23 +5,61 @@ import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/wallet_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void _debugWalletLog(String message) {
+  assert(() {
+    // ignore: avoid_print
+    print(message);
+    return true;
+  }());
+}
 
 class WalletService {
-  WalletService() : _api = WalletApi(_apiClient);
+  WalletService({
+    WalletApi? api,
+  }) : _api = api ?? WalletApi(_apiClient);
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  static const String _lastAccrualCheckDayKeyPrefix =
+      'wallet_last_accrual_check_day';
 
   final WalletApi _api;
   String? _activeUserId;
   bool _checkedAccrualThisSession = false;
-  Wallet? _cachedWallet;
-  Future<Wallet>? _accrualFuture;
-  Future<Wallet>? _walletFuture;
-  Future<List<WalletTransaction>>? _transactionsFuture;
+  final Map<String, Wallet> _walletCache = <String, Wallet>{};
+  final Map<String, List<WalletTransaction>> _transactionsCache =
+      <String, List<WalletTransaction>>{};
+  final Map<String, Future<Wallet>> _accrualFutures = <String, Future<Wallet>>{};
+  final Map<String, Future<Wallet>> _walletFutures = <String, Future<Wallet>>{};
+  final Map<String, Future<List<WalletTransaction>>> _transactionsFutures =
+      <String, Future<List<WalletTransaction>>>{};
   static const Duration _walletTimeout = Duration(seconds: 10);
 
-  Wallet? get cachedWallet => _cachedWallet;
+  Wallet? get cachedWallet {
+    final userId = _currentUserId;
+    if (userId == null) {
+      return null;
+    }
+    return _walletCache[userId];
+  }
+
+  List<WalletTransaction> get cachedTransactions {
+    final userId = _currentUserId;
+    if (userId == null) {
+      return const <WalletTransaction>[];
+    }
+    return _transactionsCache[userId] ?? const <WalletTransaction>[];
+  }
+
+  String? get _currentUserId {
+    final normalized = _activeUserId?.trim() ?? '';
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  }
 
   void activateSession(String uid) {
     final normalized = uid.trim();
@@ -29,53 +67,79 @@ class WalletService {
     if (_activeUserId == normalized) return;
     _activeUserId = normalized;
     _checkedAccrualThisSession = false;
-    _cachedWallet = null;
-    _accrualFuture = null;
-    _walletFuture = null;
-    _transactionsFuture = null;
   }
 
   void resetSession() {
     _activeUserId = null;
     _checkedAccrualThisSession = false;
-    _cachedWallet = null;
-    _accrualFuture = null;
-    _walletFuture = null;
-    _transactionsFuture = null;
   }
 
   Future<Wallet?> maybeCheckAccrualOncePerSession() async {
     if (!ApiConfig.useTimewebBackend) {
-      return _cachedWallet;
+      return cachedWallet;
     }
-    final inFlight = _accrualFuture;
+    final userId = _currentUserId;
+    if (userId == null) {
+      return cachedWallet;
+    }
+    final inFlight = _accrualFutures[userId];
     if (inFlight != null) {
       try {
         return await inFlight;
       } catch (_) {
-        return _cachedWallet;
+        return _walletCache[userId];
       }
     }
     if (_checkedAccrualThisSession) {
-      return _cachedWallet;
+      final cached = _walletCache[userId];
+      return cached ?? await getWallet();
+    }
+    if (await _wasCheckedToday(userId)) {
+      _checkedAccrualThisSession = true;
+      final cached = _walletCache[userId];
+      return cached ?? await getWallet();
     }
     _checkedAccrualThisSession = true;
-    final future = _fetchAccrualWallet();
-    _accrualFuture = future;
+    final future = _fetchAccrualWallet(userId);
+    _accrualFutures[userId] = future;
     try {
-      return await future;
+      final wallet = await future;
+      await _markCheckedToday(userId);
+      return wallet;
     } catch (_) {
-      return _cachedWallet;
+      return _walletCache[userId];
     } finally {
-      if (identical(_accrualFuture, future)) {
-        _accrualFuture = null;
+      if (identical(_accrualFutures[userId], future)) {
+        _accrualFutures.remove(userId);
       }
     }
   }
 
+  Future<bool> _wasCheckedToday(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedDay =
+        prefs.getString('$_lastAccrualCheckDayKeyPrefix:$userId')?.trim() ?? '';
+    return savedDay == _todayStamp();
+  }
+
+  Future<void> _markCheckedToday(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      '$_lastAccrualCheckDayKeyPrefix:$userId',
+      _todayStamp(),
+    );
+  }
+
+  String _todayStamp() {
+    final now = DateTime.now().toUtc();
+    final month = now.month.toString().padLeft(2, '0');
+    final day = now.day.toString().padLeft(2, '0');
+    return '${now.year}-$month-$day';
+  }
+
   Future<Wallet> getWallet({bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) {
-      return _cachedWallet ??
+      return cachedWallet ??
           const Wallet(
             balance: 0,
             maxBalance: 1000,
@@ -90,23 +154,40 @@ class WalletService {
             secondsUntilNextAccrual: 0,
           );
     }
-
-    if (forceRefresh) {
-      _walletFuture = null;
+    final userId = _currentUserId;
+    if (userId == null) {
+      return cachedWallet ??
+          const Wallet(
+            balance: 0,
+            maxBalance: 1000,
+            welcomeBonus: 100,
+            dailyBonusAmount: 25,
+            lastDailyBonusAt: null,
+            canClaimDailyBonus: true,
+            nextDailyBonusAt: null,
+            lastBonusAccrualAt: null,
+            nextAccrualAt: null,
+            daysUntilNextAccrual: 0,
+            secondsUntilNextAccrual: 0,
+          );
+    }
+    final cached = _walletCache[userId];
+    if (!forceRefresh && cached != null) {
+      return cached;
     }
 
-    final existing = _walletFuture;
+    final existing = _walletFutures[userId];
     if (existing != null) {
-      return existing;
+      return await existing;
     }
 
-    final future = _fetchWallet();
-    _walletFuture = future;
+    final future = _fetchWallet(userId);
+    _walletFutures[userId] = future;
     try {
       return await future;
     } finally {
-      if (identical(_walletFuture, future)) {
-        _walletFuture = null;
+      if (identical(_walletFutures[userId], future)) {
+        _walletFutures.remove(userId);
       }
     }
   }
@@ -114,20 +195,25 @@ class WalletService {
   Future<List<WalletTransaction>> getTransactions(
       {bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) return const <WalletTransaction>[];
-    if (forceRefresh) {
-      _transactionsFuture = null;
+    final userId = _currentUserId;
+    if (userId == null) {
+      return const <WalletTransaction>[];
     }
-    final existing = _transactionsFuture;
+    final cached = _transactionsCache[userId];
+    if (!forceRefresh && cached != null) {
+      return List<WalletTransaction>.from(cached);
+    }
+    final existing = _transactionsFutures[userId];
     if (existing != null) {
-      return existing;
+      return await existing;
     }
-    final future = _fetchTransactions();
-    _transactionsFuture = future;
+    final future = _fetchTransactions(userId);
+    _transactionsFutures[userId] = future;
     try {
       return await future;
     } finally {
-      if (identical(_transactionsFuture, future)) {
-        _transactionsFuture = null;
+      if (identical(_transactionsFutures[userId], future)) {
+        _transactionsFutures.remove(userId);
       }
     }
   }
@@ -136,42 +222,60 @@ class WalletService {
     if (!ApiConfig.useTimewebBackend) {
       return getWallet(forceRefresh: forceRefresh);
     }
-    if (forceRefresh) {
-      _accrualFuture = null;
+    final userId = _currentUserId;
+    if (userId == null) {
+      return getWallet(forceRefresh: forceRefresh);
     }
-    final existing = _accrualFuture;
+    if (!forceRefresh) {
+      final cached = _walletCache[userId];
+      if (cached != null) {
+        return cached;
+      }
+    }
+    final existing = _accrualFutures[userId];
     if (existing != null) {
-      return existing;
+      return await existing;
     }
-    final future = _fetchAccrualWallet();
-    _accrualFuture = future;
+    final future = _fetchAccrualWallet(userId);
+    _accrualFutures[userId] = future;
     try {
       return await future;
     } finally {
-      if (identical(_accrualFuture, future)) {
-        _accrualFuture = null;
+      if (identical(_accrualFutures[userId], future)) {
+        _accrualFutures.remove(userId);
       }
     }
   }
 
-  Future<Wallet> _fetchWallet() async {
-    final response = await _withTimeout(_api.getWallet());
-    final wallet = Wallet.fromMap(response);
-    _cachedWallet = wallet;
-    return wallet;
+  Future<Wallet> _fetchWallet(String userId) async {
+    _debugWalletLog('Wallet refresh start user=$userId');
+    try {
+      final response = await _withTimeout(_api.getWallet());
+      final wallet = Wallet.fromMap(response);
+      _walletCache[userId] = wallet;
+      _debugWalletLog(
+        'Wallet refresh success balance=${wallet.balance} user=$userId',
+      );
+      return wallet;
+    } catch (error) {
+      _debugWalletLog('Wallet refresh error message=$error user=$userId');
+      rethrow;
+    } finally {
+      _debugWalletLog('Wallet finally loading=false user=$userId');
+    }
   }
 
-  Future<List<WalletTransaction>> _fetchTransactions() async {
+  Future<List<WalletTransaction>> _fetchTransactions(String userId) async {
     final response = await _withTimeout(_api.getTransactions());
     final walletMap = response['wallet'];
     if (walletMap is Map) {
-      _cachedWallet = Wallet.fromMap(
+      _walletCache[userId] = Wallet.fromMap(
         walletMap.map((key, value) => MapEntry(key.toString(), value)),
       );
     }
     final items = response['items'];
     if (items is! List) return const <WalletTransaction>[];
-    return items
+    final transactions = items
         .whereType<Map>()
         .map(
           (item) => WalletTransaction.fromMap(
@@ -179,17 +283,30 @@ class WalletService {
           ),
         )
         .toList();
+    _transactionsCache[userId] = transactions;
+    return transactions;
   }
 
-  Future<Wallet> _fetchAccrualWallet() async {
-    final response = await _withTimeout(_api.checkAccrual());
-    final walletMap = response['wallet'];
-    final normalized = walletMap is Map
-        ? walletMap.map((key, value) => MapEntry(key.toString(), value))
-        : response;
-    final wallet = Wallet.fromMap(Map<String, dynamic>.from(normalized));
-    _cachedWallet = wallet;
-    return wallet;
+  Future<Wallet> _fetchAccrualWallet(String userId) async {
+    _debugWalletLog('Wallet accrue check start user=$userId');
+    try {
+      final response = await _withTimeout(_api.checkAccrual());
+      final walletMap = response['wallet'];
+      final normalized = walletMap is Map
+          ? walletMap.map((key, value) => MapEntry(key.toString(), value))
+          : response;
+      final wallet = Wallet.fromMap(Map<String, dynamic>.from(normalized));
+      _walletCache[userId] = wallet;
+      _debugWalletLog(
+        'Wallet accrue check success balance=${wallet.balance} user=$userId',
+      );
+      return wallet;
+    } catch (error) {
+      _debugWalletLog('Wallet refresh error message=$error user=$userId');
+      rethrow;
+    } finally {
+      _debugWalletLog('Wallet finally loading=false user=$userId');
+    }
   }
 
   Future<T> _withTimeout<T>(Future<T> future) {

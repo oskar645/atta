@@ -33,10 +33,6 @@ bool _isPhonePasswordLongEnough(String value) {
   return trimmed.length >= _minPhonePasswordLength;
 }
 
-bool _isPhonePasswordEntered(String value) {
-  return value.trim().isNotEmpty;
-}
-
 String _phonePasswordErrorText(String value) {
   if (value.trim().isEmpty) {
     return 'Введите пароль';
@@ -47,7 +43,6 @@ String _phonePasswordErrorText(String value) {
 class _PasswordTextField extends StatefulWidget {
   const _PasswordTextField({
     required this.controller,
-    this.enabled = true,
     this.labelText = 'Пароль',
     this.helperText,
     this.errorText,
@@ -59,7 +54,6 @@ class _PasswordTextField extends StatefulWidget {
   });
 
   final TextEditingController controller;
-  final bool enabled;
   final String labelText;
   final String? helperText;
   final String? errorText;
@@ -80,7 +74,6 @@ class _PasswordTextFieldState extends State<_PasswordTextField> {
   Widget build(BuildContext context) {
     return TextField(
       controller: widget.controller,
-      enabled: widget.enabled,
       obscureText: _obscureText,
       textInputAction: widget.textInputAction,
       keyboardType: widget.keyboardType,
@@ -99,7 +92,9 @@ class _PasswordTextFieldState extends State<_PasswordTextField> {
             });
           },
           icon: Icon(
-            _obscureText ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+            _obscureText
+                ? Icons.visibility_off_outlined
+                : Icons.visibility_outlined,
           ),
         ),
       ),
@@ -2075,10 +2070,21 @@ class _PhonePasswordLoginScreen extends StatefulWidget {
 
 class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
   final _passwordCtrl = TextEditingController();
+  StreamSubscription<AuthSessionEvent>? _authSub;
   bool _loading = false;
+  bool _didCloseAfterAuth = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _authSub = widget.authService.onAuthStateChange.listen((_) {
+      _closeAfterSuccessfulAuth();
+    });
+  }
 
   @override
   void dispose() {
+    _authSub?.cancel();
     _passwordCtrl.dispose();
     super.dispose();
   }
@@ -2096,7 +2102,16 @@ class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
   }
 
+  void _closeAfterSuccessfulAuth() {
+    if (!mounted || _didCloseAfterAuth || !widget.authService.isAuthenticated) {
+      return;
+    }
+    _didCloseAfterAuth = true;
+    Navigator.of(context).maybePop();
+  }
+
   Future<void> _submit() async {
+    if (_loading) return;
     final password = _passwordCtrl.text.trim();
     if (password.isEmpty) {
       _snack('Введите пароль');
@@ -2112,9 +2127,7 @@ class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
         phone: widget.phone,
         password: password,
       );
-
-      if (!mounted) return;
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      _closeAfterSuccessfulAuth();
     } catch (e) {
       _snack(widget.authService.userMessageForError(e, isSignIn: true));
     } finally {
@@ -2129,12 +2142,9 @@ class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(
-            enabled: false,
-            decoration: InputDecoration(
-              labelText: 'Номер телефона',
-              hintText: formatRuPhoneForDisplay(widget.phone),
-            ),
+          Text(
+            'Введите пароль от аккаунта',
+            style: Theme.of(context).textTheme.bodyLarge,
           ),
           const SizedBox(height: 12),
           _PasswordTextField(

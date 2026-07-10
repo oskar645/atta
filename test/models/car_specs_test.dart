@@ -42,4 +42,19 @@ void main() {
     expect(car!.engineVolume, isNull);
     expect(car.powerHp, isNull);
   });
+
+  test('car specs omit empty optional transport fields', () {
+    const car = CarSpecs(
+      brand: 'Changan',
+      model: 'UNI-Z',
+      generation: '',
+    );
+
+    final map = car.toMap();
+
+    expect(map.containsKey('year'), isFalse);
+    expect(map.containsKey('mileageKm'), isFalse);
+    expect(map.containsKey('bodyType'), isFalse);
+    expect(map.containsKey('pts'), isFalse);
+  });
 }

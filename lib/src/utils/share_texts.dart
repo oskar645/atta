@@ -1,4 +1,5 @@
 import 'package:atta/src/constants/app_install_url.dart';
+import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 
 const String appInstallUrlNotConfiguredMessage =
@@ -21,44 +22,54 @@ class ShareTextResult {
 }
 
 ShareTextResult buildListingShareText({
+  required String listingId,
   required String title,
   required int price,
   required String city,
-  String? installUrl,
 }) {
-  final resolvedInstallUrl =
-      resolveConfiguredAppInstallUrl(overrideUrl: installUrl);
-  if (resolvedInstallUrl == null) {
-    return const ShareTextResult.error(appInstallUrlNotConfiguredMessage);
+  final normalizedListingId = listingId.trim();
+  if (normalizedListingId.isEmpty) {
+    return const ShareTextResult.error('Ссылка на объявление пока недоступна.');
   }
 
   final normalizedTitle = title.trim().isEmpty ? 'Без названия' : title.trim();
   final normalizedCity = city.trim().isEmpty ? 'Не указан' : city.trim();
+  final listingUrl =
+      '${ApiConfig.publicWebUrl}/listing/${Uri.encodeComponent(normalizedListingId)}';
   return ShareTextResult.ready(
     'Посмотри объявление в ATTA:\n\n'
     '$normalizedTitle\n'
     'Цена: ${formatPrice(price)}\n'
     'Город: $normalizedCity\n\n'
-    'Открыть ATTA:\n'
-    '$resolvedInstallUrl',
+    'Открыть объявление:\n'
+    '$listingUrl',
   );
 }
 
 ShareTextResult buildInviteShareText({
-  required String currentUserId,
+  required String referralCode,
   String? installUrl,
 }) {
   final resolvedInstallUrl =
-      resolveConfiguredAppInstallUrl(overrideUrl: installUrl);
+      resolveConfiguredInviteShareUrl(overrideUrl: installUrl);
   if (resolvedInstallUrl == null) {
     return const ShareTextResult.error(appInstallUrlNotConfiguredMessage);
   }
 
-  // TODO: When the public domain is ready, replace the generic app link with
-  // https://attamarket.online/listing/{listingId} and the main install page.
+  final normalizedReferralCode = referralCode.trim();
+  final inviteUrl = normalizedReferralCode.isEmpty
+      ? resolvedInstallUrl
+      : Uri.parse(resolvedInstallUrl)
+          .replace(
+            queryParameters: <String, String>{
+              ...Uri.parse(resolvedInstallUrl).queryParameters,
+              'ref': normalizedReferralCode,
+            },
+          )
+          .toString();
+
   return ShareTextResult.ready(
-    'Присоединяйся к ATTA — удобные объявления рядом.\n\n'
-    'Скачать приложение:\n'
-    '$resolvedInstallUrl',
+    'Привет! Я пользуюсь ATTA — приложением для объявлений. Попробуй тоже:\n'
+    '$inviteUrl',
   );
 }

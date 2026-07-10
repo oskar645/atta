@@ -164,6 +164,53 @@ void main() {
     await sub.cancel();
   });
 
+  test('support ticket polling runs only while screen stream is subscribed',
+      () async {
+    final api =
+        _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
+    final service = SupportService(
+      api: api,
+      messagePollInterval: const Duration(milliseconds: 10),
+    );
+
+    final sub = service.streamMessages('ticket-1').listen((_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 35));
+    final callsWhileOpen = api.ticketCalls['ticket-1'] ?? 0;
+
+    expect(callsWhileOpen, greaterThanOrEqualTo(2));
+    expect(service.activeMessagePollerCount, 1);
+
+    await sub.cancel();
+    final callsAfterDispose = api.ticketCalls['ticket-1'] ?? 0;
+    await Future<void>.delayed(const Duration(milliseconds: 35));
+
+    expect(service.activeMessagePollerCount, 0);
+    expect(api.ticketCalls['ticket-1'], callsAfterDispose);
+  });
+
+  test('reopening support screen does not create two pollers for same ticket',
+      () async {
+    final api =
+        _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
+    final service = SupportService(
+      api: api,
+      messagePollInterval: const Duration(milliseconds: 10),
+    );
+
+    final subOne = service.streamMessages('ticket-1').listen((_) {});
+    final subTwo = service.streamMessages('ticket-1').listen((_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 15));
+
+    expect(service.activeMessagePollerCount, 1);
+
+    await subOne.cancel();
+    expect(service.activeMessagePollerCount, 1);
+
+    await subTwo.cancel();
+    await Future<void>.delayed(Duration.zero);
+    expect(service.activeMessagePollerCount, 0);
+  });
+
   test('admin ticket stream uses admin endpoint', () async {
     final api = _FakeSupportApi(
       initialMessages: const <Map<String, dynamic>>[
@@ -336,6 +383,37 @@ void main() {
     expect(items.single['body'], 'Текст из body');
     expect(items.single['created_at'], '2026-06-13T09:00:00.000Z');
   });
+
+  test('admin reply plus refresh does not create duplicate sender message',
+      () async {
+    final api = _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
+    final service = SupportService(api: api);
+    final completer = Completer<void>();
+    api.onAdminSend = () => completer.future;
+
+    final reply = service.adminReply(
+      ticketId: 'ticket-1',
+      text: 'Ответ админа',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    api._messages.insert(0, <String, dynamic>{
+      'id': 'admin-msg-server',
+      'ticket_id': 'ticket-1',
+      'sender': 'admin',
+      'text': 'Ответ админа',
+      'created_at': '2026-06-13T10:00:00.000Z',
+    });
+    await service.refreshAdminMessages('ticket-1');
+    completer.complete();
+    await reply;
+
+    final items = service.peekMessages('ticket-1');
+    expect(
+      items.where((item) => (item['text'] ?? '').toString() == 'Ответ админа'),
+      hasLength(1),
+    );
+  });
 }
 
 Future<void> _seedAdminSession() async {
@@ -367,6 +445,7 @@ class _FakeSupportApi extends SupportApi {
   final Set<String> missingTicketIds = <String>{};
   final Map<String, int> ticketCalls = <String, int>{};
   final List<String> adminTicketCalls = <String>[];
+  Future<void> Function()? onAdminSend;
 
   @override
   Future<Map<String, dynamic>> getTicket(String ticketId) async {
@@ -435,6 +514,27 @@ class _FakeSupportApi extends SupportApi {
     adminTicketCalls.add(ticketId);
     return <String, dynamic>{
       'items': _messages,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> adminSendMessage({
+    required String ticketId,
+    String text = '',
+    String? imageUrl,
+  }) async {
+    await onAdminSend?.call();
+    final item = <String, dynamic>{
+      'id': 'admin-msg-${_messages.length + 1}',
+      'ticket_id': ticketId,
+      'sender': 'admin',
+      'text': text,
+      if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
+      'created_at': '2026-06-13T10:00:00.000Z',
+    };
+    _messages.insert(0, item);
+    return <String, dynamic>{
+      'item': item,
     };
   }
 }

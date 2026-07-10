@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/auth_api.dart';
@@ -57,6 +58,7 @@ class BackendAuthService {
   Future<AuthUser>? _meInFlight;
   Future<bool>? _refreshInFlight;
   Future<AuthUser?>? _resumeRestoreInFlight;
+  Future<void>? _privateAuthReadyInFlight;
   AuthUser? _currentUser;
   DateTime? _lastResumeRestoreAt;
 
@@ -79,35 +81,53 @@ class BackendAuthService {
       return;
     }
 
-    try {
-      await me();
-    } on ApiException catch (error) {
-      if (error.isUnauthorized) {
-        final refreshed = await _tryRefreshSession();
-        if (!refreshed) {
-          throw const ApiException(
-            'Войдите снова',
-            statusCode: 401,
-            code: 'session_expired',
-          );
-        }
-        return;
-      }
-      if (error.isServerUnavailable ||
-          error.isNetworkError ||
-          error.isTimeout) {
-        _debugAuthLog(
-          'Auth restore skipped remote profile refresh, using cached session'
-          ' status=${error.statusCode} code=${error.code}',
-        );
-        _events
-            .add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
-        return;
-      }
-      rethrow;
-    }
-
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
+    _primePrivateAuthReady();
+  }
+
+  void _primePrivateAuthReady() {
+    if (_currentUser == null || _privateAuthReadyInFlight != null) {
+      return;
+    }
+    late final Future<void> trackedFuture;
+    trackedFuture = _ensurePrivateAuthReady().whenComplete(() {
+      if (identical(_privateAuthReadyInFlight, trackedFuture)) {
+        _privateAuthReadyInFlight = null;
+      }
+    });
+    _privateAuthReadyInFlight = trackedFuture;
+    unawaited(trackedFuture);
+  }
+
+  Future<void> awaitPrivateAuthReady() async {
+    final future = _privateAuthReadyInFlight;
+    if (future == null) {
+      return;
+    }
+    await future;
+  }
+
+  Future<void> _ensurePrivateAuthReady() async {
+    final accessToken = await _tokenStorage.readAccessToken();
+    if (!_isJwtExpired(accessToken)) {
+      final user = _currentUser;
+      if (user != null) {
+        _debugAuthLog('Auth ready user=${user.uid}');
+      }
+      return;
+    }
+    _debugAuthLog('Auth restore cached session');
+    _debugAuthLog('Auth refresh start');
+    final refreshed = await refreshSession();
+    if (refreshed) {
+      final user = _currentUser;
+      _debugAuthLog('Auth refresh success');
+      if (user != null) {
+        _debugAuthLog('Auth ready user=${user.uid}');
+      }
+      return;
+    }
+    _debugAuthLog('Auth refresh failed');
   }
 
   Future<AuthUser> signIn({
@@ -260,7 +280,15 @@ class BackendAuthService {
       verificationCheckId: verificationCheckId,
     );
     await _consumeAuthPayload(response);
-    await me();
+    unawaited(
+      me().catchError((Object error, StackTrace stackTrace) {
+        _debugAuthLog(
+          'Auth phone login profile refresh deferred failure: $error',
+          phone: phone,
+        );
+        throw error;
+      }),
+    );
     _debugAuthLog('Auth phone login success -> /auth/login-phone',
         phone: phone);
   }
@@ -270,6 +298,7 @@ class BackendAuthService {
     required String password,
     required String displayName,
     required String verificationCheckId,
+    String referralCode = '',
   }) async {
     _debugAuthLog('Auth phone signup request -> /auth/signup-phone',
         phone: phone);
@@ -278,6 +307,7 @@ class BackendAuthService {
       password: password,
       displayName: displayName,
       verificationCheckId: verificationCheckId,
+      referralCode: referralCode,
     );
     await _consumeAuthPayload(response);
     await me();
@@ -528,6 +558,36 @@ class BackendAuthService {
     return user;
   }
 
+  bool _isJwtExpired(String? token) {
+    final raw = token?.trim() ?? '';
+    if (raw.isEmpty) {
+      return true;
+    }
+    final parts = raw.split('.');
+    if (parts.length < 2) {
+      return false;
+    }
+    try {
+      final payload = utf8.decode(
+        base64Url.decode(base64Url.normalize(parts[1])),
+      );
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map) {
+        return false;
+      }
+      final expRaw = decoded['exp'];
+      final expSeconds =
+          expRaw is num ? expRaw.toInt() : int.tryParse('$expRaw');
+      if (expSeconds == null) {
+        return false;
+      }
+      final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+      return expSeconds <= nowSeconds + 15;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<AuthUser> _loadCurrentUser() async {
     late final Map<String, dynamic> response;
     try {
@@ -590,6 +650,7 @@ class BackendAuthService {
       isAdmin: raw['isAdmin'] == true ||
           raw['is_admin'] == true ||
           raw['role'] == 'admin',
+      referralCode: pick(raw['referralCode']) ?? pick(raw['referral_code']),
     );
   }
 
@@ -631,6 +692,7 @@ class BackendAuthService {
       phone: _pickPreferred(next.phone, previous.phone),
       phoneVerified: next.phoneVerified || previous.phoneVerified,
       photoUrl: _pickPreferred(next.photoUrl, previous.photoUrl),
+      referralCode: _pickPreferred(next.referralCode, previous.referralCode),
       isAdmin: preferServerAdmin
           ? next.isAdmin
           : sameUser
@@ -680,6 +742,7 @@ class BackendAuthService {
   Future<void> _clearSession() async {
     _currentUser = null;
     _lastResumeRestoreAt = null;
+    _privateAuthReadyInFlight = null;
     await _tokenStorage.clear();
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedOut));
   }

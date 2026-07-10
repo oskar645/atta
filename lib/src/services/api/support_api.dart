@@ -106,4 +106,23 @@ class SupportApi {
     );
     return Map<String, dynamic>.from(response as Map);
   }
+
+  Future<Map<String, dynamic>> adminContactUser({
+    required String userId,
+    String? name,
+    required String subject,
+    required String text,
+  }) async {
+    final response = await _client.post(
+      '/admin/support/contact-user',
+      authorized: true,
+      body: {
+        'user_id': userId,
+        if ((name ?? '').trim().isNotEmpty) 'name': name!.trim(),
+        'subject': subject.trim(),
+        'text': text.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
 }

@@ -3,6 +3,7 @@ import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/promotion_plan.dart';
 import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/services/api/api_exception.dart';
+import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/promotions_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
@@ -171,6 +172,19 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
       });
       final response =
           await promotionsService.promoteListing(widget.listing.id, plan.type);
+      final promotedListingRaw = response['listing'];
+      final promotedListing = promotedListingRaw is Map
+          ? Listing.fromMap(
+              promotedListingRaw.map(
+                (key, value) => MapEntry(key.toString(), value),
+              ),
+            )
+          : null;
+      if (mounted) {
+        context
+            .read<ListingsService>()
+            .refreshFeedAfterPromotion(listing: promotedListing);
+      }
       if (kDebugMode) {
         debugPrint(
           'SellFaster activate success listingId=${widget.listing.id} planId=${plan.type} response=$response',

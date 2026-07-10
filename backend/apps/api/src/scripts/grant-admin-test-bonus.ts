@@ -11,8 +11,8 @@ const walletService = new WalletService(prisma as never);
 
 const ADMIN_PHONES = ['79288888645', '79306939954'] as const;
 const BONUS_AMOUNT = 5000;
-const BONUS_REFERENCE = 'ADMIN_TEST_BONUS_5000_V1';
-const BONUS_DESCRIPTION = 'Тестовое пополнение администратора';
+const BONUS_REFERENCE = 'ADMIN_TEST_BONUS_5000_2026_07';
+const BONUS_DESCRIPTION = 'Тестовые бонусы от администрации ATTA';
 
 type AdminLookupResult = {
   found: boolean;
@@ -108,6 +108,7 @@ async function main() {
         amount: BONUS_AMOUNT,
         reference: BONUS_REFERENCE,
         description: BONUS_DESCRIPTION,
+        source: 'admin_test_bonus',
       },
     );
 

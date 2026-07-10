@@ -4,6 +4,7 @@ exports.serializeFavorite = exports.serializeListing = exports.listingStatusFrom
 const client_1 = require("@prisma/client");
 const env_1 = require("../config/env");
 const phone_1 = require("./phone");
+const referral_code_1 = require("./referral-code");
 const toIsoString = (value) => value ? value.toISOString() : null;
 exports.toIsoString = toIsoString;
 const normalizeJsonRecord = (value) => {
@@ -129,6 +130,7 @@ exports.normalizeStoredMediaUrl = normalizeStoredMediaUrl;
 const serializeUser = (user, options) => {
     const isAdmin = user.adminProfile?.isAdmin === true;
     const role = isAdmin ? 'admin' : 'user';
+    const referralCode = (0, referral_code_1.buildReferralCode)(user.id);
     const base = {
         id: user.id,
         display_name: user.displayName,
@@ -150,6 +152,8 @@ const serializeUser = (user, options) => {
         is_admin: isAdmin,
         isAdmin,
         role,
+        referral_code: referralCode,
+        referralCode,
         status: user.status.toLowerCase(),
         last_login_at: (0, exports.toIsoString)(user.lastLoginAt),
         avatar_updated_at: (0, exports.toIsoString)(user.updatedAt),
@@ -199,7 +203,7 @@ const listingStatusFromInput = (status) => {
     }
 };
 exports.listingStatusFromInput = listingStatusFromInput;
-const serializeListing = (listing) => ({
+const serializeListing = (listing, options) => ({
     ...(() => {
         const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
         const normalizedPhone = (0, phone_1.normalizeRussianPhone)(fallbackPhone) || fallbackPhone;
@@ -276,6 +280,11 @@ const serializeListing = (listing) => ({
         sort_order: photo.sortOrder,
     })) ?? [],
     view_count: listing.viewCount,
+    ...(options?.favoriteCount != null
+        ? {
+            favorites_count: Math.max(0, Number(options.favoriteCount) || 0),
+        }
+        : {}),
     status: (0, exports.listingStatusToResponse)(listing.status),
     rejection_reason: listing.rejectionReason ?? '',
     moderation_note: listing.moderationNote,

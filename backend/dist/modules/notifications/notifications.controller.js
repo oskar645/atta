@@ -97,14 +97,13 @@ let AdminNotificationsController = class AdminNotificationsController {
         this.chatsGateway = chatsGateway;
     }
     async sendToUser(body) {
-        const result = await this.notificationsService.sendToUser({
+        return this.notificationsService.sendToUser({
             userId: body.user_id ?? body.userId,
             title: body.title,
             body: body.body,
             type: body.type,
+            payload: body.payload,
         });
-        this.chatsGateway.emitNotificationNew(result.item, (result.item.user_id ?? '').toString());
-        return result;
     }
     async sendToAll(body) {
         const result = await this.notificationsService.sendToAll(body);

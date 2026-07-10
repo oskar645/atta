@@ -35,6 +35,8 @@ class SupportService {
   final Map<String, int> _messageListenerCounts = <String, int>{};
   final Map<String, Timer> _messagePollers = <String, Timer>{};
   final Map<String, bool> _ticketUsesAdminEndpoint = <String, bool>{};
+  final Map<String, Future<List<Map<String, dynamic>>>>
+      _messageRefreshInFlight = <String, Future<List<Map<String, dynamic>>>>{};
   final Set<String> _missingTicketIds = <String>{};
   List<Map<String, dynamic>> _adminTicketsCache =
       const <Map<String, dynamic>>[];
@@ -261,9 +263,9 @@ class SupportService {
           }
         }
 
-        _messageListenerCounts[streamKey] =
-            (_messageListenerCounts[streamKey] ?? 0) + 1;
-        _ensureMessagePolling(streamKey, normalizedTicketId);
+        _messageListenerCounts[normalizedTicketId] =
+            (_messageListenerCounts[normalizedTicketId] ?? 0) + 1;
+        _ensureMessagePolling(normalizedTicketId);
         pushCached();
         if (!_messageCache.containsKey(normalizedTicketId)) {
           unawaited(refreshInitial());
@@ -280,15 +282,18 @@ class SupportService {
         streamController.onCancel = () async {
           disposed = true;
           await sub?.cancel();
-          final remaining = (_messageListenerCounts[streamKey] ?? 1) - 1;
+          final remaining =
+              (_messageListenerCounts[normalizedTicketId] ?? 1) - 1;
           if (remaining <= 0) {
-            _messageListenerCounts.remove(streamKey);
-            _stopMessagePolling(streamKey);
+            _messageListenerCounts.remove(normalizedTicketId);
+            _stopMessagePolling(normalizedTicketId);
           } else {
-            _messageListenerCounts[streamKey] = remaining;
+            _messageListenerCounts[normalizedTicketId] = remaining;
           }
         };
-      }).asBroadcastStream(),
+      }).asBroadcastStream(
+        onCancel: (subscription) => subscription.cancel(),
+      ),
     );
   }
 
@@ -442,40 +447,50 @@ class SupportService {
         _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
       );
     }
-    try {
-      final response = useAdminEndpoint
-          ? await _api.adminTicket(normalizedTicketId)
-          : await _api.getTicket(normalizedTicketId);
-      final items = _extractItems(response);
-      _missingTicketIds.remove(normalizedTicketId);
-      _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
-      _publishMessages(
-        normalizedTicketId,
-        _mergeMessages(
-          _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
-          items,
-        ),
-      );
-      return List<Map<String, dynamic>>.from(
-        _messageCache[normalizedTicketId] ?? items,
-      );
-    } catch (error) {
-      if (error is ApiException && error.isNotFound) {
-        _debugSource(
-          'Support source: ticket $normalizedTicketId not found, stopping polling',
+    final existing = _messageRefreshInFlight[normalizedTicketId];
+    if (existing != null) {
+      return existing;
+    }
+    _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
+    final future = () async {
+      try {
+        final response = useAdminEndpoint
+            ? await _api.adminTicket(normalizedTicketId)
+            : await _api.getTicket(normalizedTicketId);
+        final items = _extractItems(response);
+        _missingTicketIds.remove(normalizedTicketId);
+        _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
+        _publishMessages(
+          normalizedTicketId,
+          _mergeMessages(
+            _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+            items,
+          ),
         );
-        _missingTicketIds.add(normalizedTicketId);
-        final keysToStop = _messagePollers.keys
-            .where((key) => key.endsWith(':$normalizedTicketId'))
-            .toList(growable: false);
-        for (final key in keysToStop) {
-          _stopMessagePolling(key);
-        }
         return List<Map<String, dynamic>>.from(
-          _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+          _messageCache[normalizedTicketId] ?? items,
         );
+      } catch (error) {
+        if (error is ApiException && error.isNotFound) {
+          _debugSource(
+            'Support source: ticket $normalizedTicketId not found, stopping polling',
+          );
+          _missingTicketIds.add(normalizedTicketId);
+          _stopMessagePolling(normalizedTicketId);
+          return List<Map<String, dynamic>>.from(
+            _messageCache[normalizedTicketId] ?? const <Map<String, dynamic>>[],
+          );
+        }
+        rethrow;
       }
-      rethrow;
+    }();
+    _messageRefreshInFlight[normalizedTicketId] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_messageRefreshInFlight[normalizedTicketId], future)) {
+        _messageRefreshInFlight.remove(normalizedTicketId);
+      }
     }
   }
 
@@ -536,18 +551,18 @@ class SupportService {
         StreamController<List<Map<String, dynamic>>>.broadcast();
   }
 
-  void _ensureMessagePolling(String streamKey, String ticketId) {
+  void _ensureMessagePolling(String ticketId) {
     final normalizedTicketId = ticketId.trim();
     if (normalizedTicketId.isEmpty ||
         _missingTicketIds.contains(normalizedTicketId) ||
-        _messagePollers.containsKey(streamKey) ||
-        (_messageListenerCounts[streamKey] ?? 0) <= 0) {
+        _messagePollers.containsKey(normalizedTicketId) ||
+        (_messageListenerCounts[normalizedTicketId] ?? 0) <= 0) {
       return;
     }
     final pollInterval = _ticketUsesAdminEndpoint[normalizedTicketId] == true
         ? _adminPollInterval
         : _messagePollInterval;
-    _messagePollers[streamKey] = Timer.periodic(
+    _messagePollers[normalizedTicketId] = Timer.periodic(
       pollInterval,
       (_) async {
         try {
@@ -561,8 +576,8 @@ class SupportService {
     );
   }
 
-  void _stopMessagePolling(String streamKey) {
-    _messagePollers.remove(streamKey)?.cancel();
+  void _stopMessagePolling(String ticketId) {
+    _messagePollers.remove(ticketId)?.cancel();
   }
 
   Future<bool> _canUseAdminEndpoints() async {
@@ -675,6 +690,9 @@ class SupportService {
     if (lastRefreshAt == null) return true;
     return DateTime.now().difference(lastRefreshAt) >= _adminTicketsCacheTtl;
   }
+
+  @visibleForTesting
+  int get activeMessagePollerCount => _messagePollers.length;
 
   void _publishMessages(String ticketId, List<Map<String, dynamic>> items) {
     final normalized = items
@@ -854,16 +872,38 @@ class SupportService {
     Set<String> removedIds = const <String>{},
   }) {
     final byId = <String, Map<String, dynamic>>{};
-    for (final item in current) {
-      final id = (item['id'] ?? '').toString();
-      if (id.isEmpty || removedIds.contains(id)) continue;
-      byId[id] = Map<String, dynamic>.from(item);
-    }
-    for (final item in incoming) {
+    final signatureToId = <String, String>{};
+
+    void upsert(Map<String, dynamic> item) {
       final normalized = Map<String, dynamic>.from(item);
       final id = (normalized['id'] ?? '').toString();
-      if (id.isEmpty || removedIds.contains(id)) continue;
+      if (id.isEmpty || removedIds.contains(id)) return;
+
+      final signature = _messageSignature(normalized);
+      final existingIdForSignature = signatureToId[signature];
+      if (existingIdForSignature != null && existingIdForSignature != id) {
+        final existing = byId[existingIdForSignature];
+        if (existing != null) {
+          final merged = _preferSupportMessage(existing, normalized);
+          final mergedId = (merged['id'] ?? '').toString();
+          byId.remove(existingIdForSignature);
+          if (mergedId.isNotEmpty && !removedIds.contains(mergedId)) {
+            byId[mergedId] = merged;
+            signatureToId[signature] = mergedId;
+          }
+          return;
+        }
+      }
+
       byId[id] = normalized;
+      signatureToId[signature] = id;
+    }
+
+    for (final item in current) {
+      upsert(item);
+    }
+    for (final item in incoming) {
+      upsert(item);
     }
 
     final merged = byId.values.toList()
@@ -875,5 +915,52 @@ class SupportService {
         return right.compareTo(left);
       });
     return merged;
+  }
+
+  String _messageSignature(Map<String, dynamic> item) {
+    final sender = (item['sender'] ?? '').toString().trim().toLowerCase();
+    final text = _pickMessageText(item);
+    final imageUrl = _pickImageUrl(item);
+    final createdAt = DateTime.tryParse(_pickCreatedAt(item))?.toUtc();
+    final normalizedCreatedAt = createdAt == null
+        ? ''
+        : DateTime.utc(
+            createdAt.year,
+            createdAt.month,
+            createdAt.day,
+            createdAt.hour,
+            createdAt.minute,
+            createdAt.second,
+          ).toIso8601String();
+    return [
+      sender,
+      text,
+      imageUrl.startsWith('file://') ? '' : imageUrl,
+      normalizedCreatedAt,
+    ].join('|');
+  }
+
+  Map<String, dynamic> _preferSupportMessage(
+    Map<String, dynamic> existing,
+    Map<String, dynamic> candidate,
+  ) {
+    final existingLocalOnly = existing['is_local_only'] == true;
+    final candidateLocalOnly = candidate['is_local_only'] == true;
+    if (existingLocalOnly && !candidateLocalOnly) {
+      return <String, dynamic>{...existing, ...candidate};
+    }
+    if (!existingLocalOnly && candidateLocalOnly) {
+      return <String, dynamic>{...candidate, ...existing};
+    }
+    final existingFailed = (existing['local_status'] ?? '').toString() == 'failed';
+    final candidateFailed =
+        (candidate['local_status'] ?? '').toString() == 'failed';
+    if (existingFailed && !candidateFailed) {
+      return <String, dynamic>{...existing, ...candidate};
+    }
+    if (!existingFailed && candidateFailed) {
+      return <String, dynamic>{...candidate, ...existing};
+    }
+    return <String, dynamic>{...existing, ...candidate};
   }
 }

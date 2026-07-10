@@ -30,5 +30,12 @@ void main() {
       expect(formatRussianPhone('12345'), '12345');
       expect(formatRussianPhone('+1 202 555 0123'), '+1 202 555 0123');
     });
+
+    test('does not produce malformed +7 prefixes', () {
+      expect(formatRussianPhone('79288888645'), isNot(contains('++7')));
+      expect(formatRussianPhone('79288888645'), isNot(contains('+77')));
+      expect(formatRussianPhone('+79288888645'), '+7 928 888 86 45');
+      expect(formatRussianPhone('89288888645'), '+7 928 888 86 45');
+    });
   });
 }

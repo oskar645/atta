@@ -87,4 +87,19 @@ class MediaApi {
     );
     return Map<String, dynamic>.from(response as Map);
   }
+
+  Future<Map<String, dynamic>> uploadNotificationImage({
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    final response = await _client.postMultipart(
+      '/media/notifications/image',
+      bytes: bytes,
+      fileName: fileName,
+      contentType: contentType,
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
 }

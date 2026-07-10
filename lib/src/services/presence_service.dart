@@ -19,6 +19,7 @@ class PresenceService {
   StreamSubscription<PresenceSnapshot>? _presenceSub;
   final Map<String, bool> _presenceMap = {};
   final Map<String, StreamController<bool>> _controllers = {};
+  final Map<String, Stream<bool>> _streams = {};
   final Map<String, DateTime> _lastFetchAt = {};
   final Map<String, Future<void>> _presenceFetchInFlight = {};
 
@@ -29,11 +30,30 @@ class PresenceService {
       uid,
       () => StreamController<bool>.broadcast(
         onListen: () {
-          _controllers[uid]?.add(_presenceMap[uid] ?? false);
+          _emitPresence(uid, _presenceMap[uid] ?? false);
           unawaited(_loadTimewebPresence(uid));
+        },
+        onCancel: () async {
+          final controller = _controllers[uid];
+          if (controller == null || controller.hasListener) {
+            return;
+          }
+          _controllers.remove(uid);
+          _streams.remove(uid);
+          _lastFetchAt.remove(uid);
+          _presenceFetchInFlight.remove(uid);
+          await controller.close();
         },
       ),
     );
+  }
+
+  void _emitPresence(String uid, bool value) {
+    final controller = _controllers[uid];
+    if (controller == null || controller.isClosed) {
+      return;
+    }
+    controller.add(value);
   }
 
   void _debugSource(String message) {
@@ -54,7 +74,7 @@ class PresenceService {
       _debugSource('Socket event: presence.changed');
       _presenceMap[userId] = snapshot.isOnline;
       _lastFetchAt[userId] = DateTime.now();
-      _controllers[userId]?.add(snapshot.isOnline);
+      _emitPresence(userId, snapshot.isOnline);
     });
   }
 
@@ -64,27 +84,31 @@ class PresenceService {
   }) async {
     _debugSource('Presence source: Timeweb');
     _ensureSocketSubscription();
-    await _socketService?.connect();
-    await _socketService?.setPresence(isOnline);
+    await _socketService?.setPresence(
+      isOnline,
+      reason: isOnline ? 'presence.setOnline' : 'presence.setOffline',
+    );
     _presenceMap[uid] = isOnline;
-    _controllerFor(uid).add(isOnline);
+    _emitPresence(uid, isOnline);
   }
 
   Future<void> heartbeat(String uid) async {
     _debugSource('Presence source: Timeweb');
     _ensureSocketSubscription();
-    await _socketService?.connect();
-    await _socketService?.ping();
+    await _socketService?.ping(reason: 'presence.heartbeat');
   }
 
   Future<void> resetSession() async {
     await _presenceSub?.cancel();
     _presenceSub = null;
     _presenceMap.clear();
+    _streams.clear();
     _lastFetchAt.clear();
     _presenceFetchInFlight.clear();
     for (final controller in _controllers.values) {
-      controller.add(false);
+      if (!controller.isClosed) {
+        controller.add(false);
+      }
     }
     await _socketService?.resetSession();
   }
@@ -95,7 +119,7 @@ class PresenceService {
     final lastFetchAt = _lastFetchAt[id];
     if (lastFetchAt != null &&
         DateTime.now().difference(lastFetchAt) < _fallbackPresenceTtl) {
-      _controllers[id]?.add(_presenceMap[id] ?? false);
+      _emitPresence(id, _presenceMap[id] ?? false);
       return;
     }
     final existing = _presenceFetchInFlight[id];
@@ -116,7 +140,6 @@ class PresenceService {
     _ensureSocketSubscription();
     try {
       _debugSource('Presence source: Timeweb');
-      await _socketService?.connect();
       final response =
           await _apiClient.get('/presence/$uid', authorized: true) as Map;
       final snapshot = PresenceSnapshot.fromMap(
@@ -124,9 +147,9 @@ class PresenceService {
       );
       _presenceMap[uid] = snapshot.isOnline;
       _lastFetchAt[uid] = DateTime.now();
-      _controllers[uid]?.add(snapshot.isOnline);
+      _emitPresence(uid, snapshot.isOnline);
     } catch (_) {
-      _controllers[uid]?.add(_presenceMap[uid] ?? false);
+      _emitPresence(uid, _presenceMap[uid] ?? false);
     }
   }
 
@@ -140,8 +163,12 @@ class PresenceService {
     String uid, {
     Duration staleAfter = const Duration(minutes: 2),
   }) {
-    if (uid.trim().isEmpty) return Stream<bool>.value(false);
+    final normalized = uid.trim();
+    if (normalized.isEmpty) return Stream<bool>.value(false);
     _ensureSocketSubscription();
-    return _controllerFor(uid).stream.distinct();
+    return _streams.putIfAbsent(
+      normalized,
+      () => _controllerFor(normalized).stream.distinct(),
+    );
   }
 }

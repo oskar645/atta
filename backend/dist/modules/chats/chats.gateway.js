@@ -353,7 +353,8 @@ __decorate([
 exports.ChatsGateway = ChatsGateway = ChatsGateway_1 = __decorate([
     (0, websockets_1.WebSocketGateway)({
         cors: {
-            origin: '*',
+            origin: (0, env_1.parseCorsOrigins)(),
+            credentials: true,
         },
     }),
     __metadata("design:paramtypes", [presence_service_1.PresenceService,

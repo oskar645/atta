@@ -44,35 +44,39 @@ class InAppNotificationsApi {
 
   Future<Map<String, dynamic>> sendUser({
     required String userId,
-    required String title,
-    required String body,
+    String? title,
+    String? body,
     String type = 'update',
+    Map<String, dynamic>? payload,
   }) async {
     final response = await _client.post(
       '/admin/notifications/send-user',
       authorized: true,
       body: {
         'user_id': userId,
-        'title': title,
-        'body': body,
+        if (title != null) 'title': title,
+        if (body != null) 'body': body,
         'type': type,
+        if (payload != null) 'payload': payload,
       },
     );
     return Map<String, dynamic>.from(response as Map);
   }
 
   Future<Map<String, dynamic>> sendAll({
-    required String title,
-    required String body,
+    String? title,
+    String? body,
     String type = 'update',
+    Map<String, dynamic>? payload,
   }) async {
     final response = await _client.post(
       '/admin/notifications/send-all',
       authorized: true,
       body: {
-        'title': title,
-        'body': body,
+        if (title != null) 'title': title,
+        if (body != null) 'body': body,
         'type': type,
+        if (payload != null) 'payload': payload,
       },
     );
     return Map<String, dynamic>.from(response as Map);

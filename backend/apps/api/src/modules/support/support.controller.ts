@@ -156,6 +156,25 @@ export class AdminSupportController {
     );
   }
 
+  @Post('contact-user')
+  contactUser(
+    @Body()
+    body: {
+      user_id?: string;
+      userId?: string;
+      name?: string;
+      subject?: string;
+      text?: string;
+    },
+  ) {
+    return this.supportService.openTicketForAdminContact({
+      userId: body.user_id ?? body.userId,
+      name: body.name,
+      subject: body.subject,
+      text: body.text,
+    });
+  }
+
   @Patch(':id/close')
   closeTicket(@Param('id', new ParseUUIDPipe()) ticketId: string) {
     return this.supportService.closeTicketForAdmin(ticketId);

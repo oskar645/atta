@@ -5,6 +5,7 @@ import { hashSync } from 'bcryptjs';
 import { HttpException } from '@nestjs/common';
 import { UserStatus } from '@prisma/client';
 
+import { buildReferralCode } from '../../common/referral-code';
 import { AuthService } from './auth.service';
 
 function createService(
@@ -13,6 +14,16 @@ function createService(
     walletService?: {
       ensureWalletAndBonuses?: (userId: string) => Promise<unknown>;
       ensureWalletAndBonusesSafely?: (userId: string) => Promise<unknown>;
+      accrueManualBonusIfNeeded?: (
+        userId: string,
+        params: {
+          amount: number;
+          reference: string;
+          description: string;
+          source?: string;
+          metadata?: Record<string, unknown>;
+        },
+      ) => Promise<unknown>;
     };
   },
 ) {
@@ -27,10 +38,32 @@ function createService(
     {
       ensureWalletAndBonuses: async () => undefined,
       ensureWalletAndBonusesSafely: async () => undefined,
+      accrueManualBonusIfNeeded: async () => undefined,
       ...overrides?.walletService,
     } as never,
   );
 }
+
+const baseActiveUser = (overrides?: Partial<Record<string, unknown>>) => ({
+  id: 'user-1',
+  email: null,
+  phone: '79281234567',
+  phoneVerified: true,
+  displayName: 'ATTA User',
+  name: 'ATTA User',
+  avatarUrl: null,
+  photoUrl: null,
+  status: UserStatus.ACTIVE,
+  blockedAt: null,
+  blockReason: null,
+  lastLoginAt: null,
+  createdAt: new Date('2026-06-18T10:00:00.000Z'),
+  updatedAt: new Date('2026-06-18T10:00:00.000Z'),
+  deletedAt: null,
+  passwordHash: hashSync('12345678', 10),
+  adminProfile: null,
+  ...overrides,
+});
 
 test('loginPhone works with phone and password without phone verification', async () => {
   const service = createService({
@@ -270,4 +303,179 @@ test('getMe does not crash if wallet has issue', async () => {
   });
 
   assert.equal(response.user.id, 'user-1');
+});
+
+test('signupPhone accrues inviter bonus once for valid referral after successful registration', async () => {
+  const inviter = baseActiveUser({
+    id: 'inviter-1',
+    phone: '79281230000',
+    displayName: 'Inviter',
+    name: 'Inviter',
+  });
+  const createdUser = baseActiveUser({
+    id: 'new-user-1',
+    phone: '79281234567',
+    displayName: 'New User',
+    name: 'New User',
+  });
+  const bonusCalls: Array<{ userId: string; params: Record<string, unknown> }> =
+    [];
+
+  const service = createService(
+    {
+      phoneVerification: {
+        findUnique: async () => ({
+          id: 'verification-1',
+          phone: '79281234567',
+          purpose: 'SIGNUP',
+          status: 'CONFIRMED',
+        }),
+        update: async () => undefined,
+        findFirst: async () => null,
+      },
+      user: {
+        findUnique: async ({ where }: { where: { phone?: string; id?: string } }) => {
+          if (where.phone) return null;
+          if (where.id === inviter.id) return inviter;
+          return null;
+        },
+        create: async () => createdUser,
+      },
+      userSession: {
+        create: async () => undefined,
+      },
+    },
+    {
+      walletService: {
+        ensureWalletAndBonuses: async () => undefined,
+        accrueManualBonusIfNeeded: async (userId, params) => {
+          bonusCalls.push({ userId, params: params as Record<string, unknown> });
+          return { applied: true };
+        },
+      },
+    },
+  );
+
+  await service.signupPhone({
+    phone: '+79281234567',
+    password: '12345678',
+    displayName: 'New User',
+    verificationCheckId: 'verification-1',
+    referralCode: buildReferralCode(inviter.id),
+  });
+
+  assert.equal(bonusCalls.length, 1);
+  assert.equal(bonusCalls[0]?.userId, inviter.id);
+  assert.equal(bonusCalls[0]?.params.amount, 100);
+  assert.equal(
+    bonusCalls[0]?.params.description,
+    'Бонус за приглашение друга',
+  );
+  assert.equal(
+    bonusCalls[0]?.params.reference,
+    'REFERRAL_INVITER_BONUS:new-user-1',
+  );
+});
+
+test('signupPhone ignores invalid referral code and still completes registration', async () => {
+  const createdUser = baseActiveUser({
+    id: 'new-user-2',
+    phone: '79281234568',
+    displayName: 'New User 2',
+    name: 'New User 2',
+  });
+  let bonusCallCount = 0;
+
+  const service = createService(
+    {
+      phoneVerification: {
+        findUnique: async () => ({
+          id: 'verification-2',
+          phone: '79281234568',
+          purpose: 'SIGNUP',
+          status: 'CONFIRMED',
+        }),
+        update: async () => undefined,
+        findFirst: async () => null,
+      },
+      user: {
+        findUnique: async () => null,
+        create: async () => createdUser,
+      },
+      userSession: {
+        create: async () => undefined,
+      },
+    },
+    {
+      walletService: {
+        ensureWalletAndBonuses: async () => undefined,
+        accrueManualBonusIfNeeded: async () => {
+          bonusCallCount += 1;
+          return { applied: true };
+        },
+      },
+    },
+  );
+
+  const response = await service.signupPhone({
+    phone: '+79281234568',
+    password: '12345678',
+    displayName: 'New User 2',
+    verificationCheckId: 'verification-2',
+    referralCode: 'broken-referral-code',
+  });
+
+  assert.equal(response.user.id, 'new-user-2');
+  assert.equal(bonusCallCount, 0);
+});
+
+test('signupPhone blocks self-referral bonus by matching inviter user id', async () => {
+  const createdUser = baseActiveUser({
+    id: 'same-user-1',
+    phone: '79281234569',
+    displayName: 'Same User',
+    name: 'Same User',
+  });
+  let bonusCallCount = 0;
+
+  const service = createService(
+    {
+      phoneVerification: {
+        findUnique: async () => ({
+          id: 'verification-3',
+          phone: '79281234569',
+          purpose: 'SIGNUP',
+          status: 'CONFIRMED',
+        }),
+        update: async () => undefined,
+        findFirst: async () => null,
+      },
+      user: {
+        findUnique: async () => null,
+        create: async () => createdUser,
+      },
+      userSession: {
+        create: async () => undefined,
+      },
+    },
+    {
+      walletService: {
+        ensureWalletAndBonuses: async () => undefined,
+        accrueManualBonusIfNeeded: async () => {
+          bonusCallCount += 1;
+          return { applied: true };
+        },
+      },
+    },
+  );
+
+  await service.signupPhone({
+    phone: '+79281234569',
+    password: '12345678',
+    displayName: 'Same User',
+    verificationCheckId: 'verification-3',
+    referralCode: buildReferralCode('same-user-1'),
+  });
+
+  assert.equal(bonusCallCount, 0);
 });

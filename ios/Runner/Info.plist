@@ -53,20 +53,6 @@
 	<string>Нужно, чтобы приложение корректно работало с фотографиями пользователя</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Нужно, чтобы выбирать фото из галереи и отправлять их в сообщениях</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<key>5.42.125.179</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<false/>
-			</dict>
-		</dict>
-	</dict>
-	<!-- TODO: replace temporary HTTP ATS exception for 5.42.125.179 with HTTPS before App Store release. -->
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

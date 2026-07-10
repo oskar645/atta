@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/features/admin/admin_listings_screen.dart';
+import 'package:atta/src/features/admin/admin_online_users_screen.dart';
 import 'package:atta/src/features/admin/admin_promotions_screen.dart';
 import 'package:atta/src/features/admin/admin_reports_screen.dart';
 import 'package:atta/src/features/admin/admin_users_screen.dart';
@@ -22,7 +25,14 @@ import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 
 class AdminScreen extends StatefulWidget {
-  const AdminScreen({super.key});
+  const AdminScreen({
+    super.key,
+    this.initialTabIndex = 0,
+    this.initialReportId = '',
+  });
+
+  final int initialTabIndex;
+  final String initialReportId;
 
   @override
   State<AdminScreen> createState() => _AdminScreenState();
@@ -31,8 +41,32 @@ class AdminScreen extends StatefulWidget {
 class _AdminScreenState extends State<AdminScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
+  Stream<bool>? _isAdminStream;
+  Stream<int>? _pendingModerationCountStream;
+  Stream<int>? _unreadSupportCountStream;
+  Stream<int>? _openReportsCountStream;
+  String? _streamUid;
+  bool _didMarkInitialSection = false;
 
-  Widget _tabWithAlert(String text, bool hasAlert) {
+  void _ensureAdminStreams(String uid) {
+    if (_streamUid == uid &&
+        _isAdminStream != null &&
+        _pendingModerationCountStream != null &&
+        _unreadSupportCountStream != null &&
+        _openReportsCountStream != null) {
+      return;
+    }
+    final admin = context.read<AdminService>();
+    admin.bindAdminUser(uid);
+    _streamUid = uid;
+    _isAdminStream = admin.streamIsAdmin(uid);
+    _pendingModerationCountStream = admin.streamPendingModerationCount();
+    _unreadSupportCountStream = admin.streamUnreadSupportForAdminCount();
+    _openReportsCountStream = admin.streamOpenReportsCount();
+  }
+
+  Widget _tabWithAlert(String text, int unreadCount) {
+    final hasAlert = unreadCount > 0;
     return Tab(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -43,11 +77,22 @@ class _AdminScreenState extends State<AdminScreen>
             if (hasAlert) ...[
               const SizedBox(width: 6),
               Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
+                key: ValueKey('admin-tab-badge:$text'),
+                padding: EdgeInsets.symmetric(
+                  horizontal: unreadCount > 9 ? 5 : 4,
+                  vertical: 1,
+                ),
+                decoration: BoxDecoration(
                   color: Colors.red,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  unreadCount > 99 ? '99+' : '$unreadCount',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -60,26 +105,54 @@ class _AdminScreenState extends State<AdminScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 8, vsync: this);
+    _tab = TabController(
+      length: 8,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, 7),
+    );
+    _tab.addListener(_handleTabChanged);
   }
 
   @override
   void dispose() {
+    _tab.removeListener(_handleTabChanged);
     _tab.dispose();
     super.dispose();
   }
 
+  void _handleTabChanged() {
+    if (_tab.indexIsChanging) {
+      return;
+    }
+    _markCurrentSectionSeen();
+  }
+
+  void _markCurrentSectionSeen() {
+    final admin = context.read<AdminService>();
+    switch (_tab.index) {
+      case 1:
+        unawaited(admin.markSectionSeen(AdminService.moderationSection));
+        break;
+      case 2:
+        unawaited(admin.markSectionSeen(AdminService.supportSection));
+        break;
+      case 3:
+        unawaited(admin.markSectionSeen(AdminService.reportsSection));
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final admin = context.read<AdminService>();
     final me = context.read<AuthService>().currentUser;
     final uid = me?.uid ?? '';
     if (uid.isEmpty) {
       return const Scaffold(body: Center(child: Text('Нужно войти')));
     }
+    _ensureAdminStreams(uid);
 
     return StreamBuilder<bool>(
-      stream: admin.streamIsAdmin(uid),
+      stream: _isAdminStream,
       initialData: false,
       builder: (context, adminSnap) {
         if (adminSnap.connectionState == ConnectionState.waiting) {
@@ -115,6 +188,14 @@ class _AdminScreenState extends State<AdminScreen>
           );
         }
 
+        if (!_didMarkInitialSection) {
+          _didMarkInitialSection = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _markCurrentSectionSeen();
+          });
+        }
+
         return Scaffold(
           appBar: AppBar(
             title: const Text('Админ-Панель'),
@@ -122,40 +203,40 @@ class _AdminScreenState extends State<AdminScreen>
               controller: _tab,
               isScrollable: true,
               tabs: [
-                _tabWithAlert('Дашборд', false),
+                _tabWithAlert('Дашборд', 0),
                 StreamBuilder<int>(
-                  stream: admin.streamPendingModerationCount(),
+                  stream: _pendingModerationCountStream,
                   builder: (context, snap) =>
-                      _tabWithAlert('Модерация', (snap.data ?? 0) > 0),
+                      _tabWithAlert('Модерация', snap.data ?? 0),
                 ),
                 StreamBuilder<int>(
-                  stream: admin.streamUnreadSupportForAdminCount(),
+                  stream: _unreadSupportCountStream,
                   builder: (context, snap) =>
-                      _tabWithAlert('Поддержка', (snap.data ?? 0) > 0),
+                      _tabWithAlert('Поддержка', snap.data ?? 0),
                 ),
                 StreamBuilder<int>(
-                  stream: admin.streamOpenReportsCount(),
+                  stream: _openReportsCountStream,
                   builder: (context, snap) =>
-                      _tabWithAlert('Жалобы', (snap.data ?? 0) > 0),
+                      _tabWithAlert('Жалобы', snap.data ?? 0),
                 ),
-                _tabWithAlert('Реклама', false),
-                _tabWithAlert('Продвижения', false),
-                _tabWithAlert('Бонусы', false),
-                _tabWithAlert('Уведомления', false),
+                _tabWithAlert('Реклама', 0),
+                _tabWithAlert('Продвижения', 0),
+                _tabWithAlert('Бонусы', 0),
+                _tabWithAlert('Уведомления', 0),
               ],
             ),
           ),
           body: TabBarView(
             controller: _tab,
-            children: const [
-              _DashboardTab(),
-              _TimewebAdminListingsModerationTab(),
-              AdminSupportTab(),
-              AdminReportsScreen(),
-              AdminAdsTab(),
-              AdminPromotionsScreen(),
-              AdminWalletAnalyticsScreen(),
-              AdminNotificationsTab(),
+            children: [
+              const _DashboardTab(),
+              const _TimewebAdminListingsModerationTab(),
+              const AdminSupportTab(),
+              AdminReportsScreen(initialReportId: widget.initialReportId),
+              const AdminAdsTab(),
+              const AdminPromotionsScreen(),
+              const AdminWalletAnalyticsScreen(),
+              const AdminNotificationsTab(),
             ],
           ),
         );
@@ -181,22 +262,14 @@ class _TimewebAdminListingsModerationTabState
   String? _errorText;
   bool _loading = true;
   bool _loadedOnce = false;
-  Timer? _autoRefreshTimer;
-
-  static const Duration _autoRefreshInterval = Duration(seconds: 15);
-
   @override
   void initState() {
     super.initState();
     _future = _load();
-    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
-      unawaited(_refreshSilently());
-    });
   }
 
   @override
   void dispose() {
-    _autoRefreshTimer?.cancel();
     super.dispose();
   }
 
@@ -271,15 +344,6 @@ class _TimewebAdminListingsModerationTabState
       _future = _load();
     });
     await _future;
-  }
-
-  Future<void> _refreshSilently() async {
-    if (!mounted || _busy) return;
-    setState(() {
-      _loading = true;
-      _errorText = null;
-    });
-    await _load();
   }
 
   Future<void> _setStatus(String status) async {
@@ -880,7 +944,16 @@ class _DashboardTab extends StatelessWidget {
                   MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
                 ),
               ),
-              card('Сейчас онлайн', '${read('onlineUsers')}', Icons.circle),
+              card(
+                'Сейчас онлайн',
+                '${read('onlineUsers')}',
+                Icons.circle,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AdminOnlineUsersScreen(),
+                  ),
+                ),
+              ),
               card(
                 'Объявлений всего',
                 '${read('listings')}',
@@ -1069,21 +1142,23 @@ class _ModerationTab extends StatefulWidget {
 
 class _ModerationTabState extends State<_ModerationTab> {
   final Set<String> _handledIds = <String>{};
+  Stream<List<Map<String, dynamic>>>? _pendingListingsStream;
 
   Stream<List<Map<String, dynamic>>> _getPendingListings() {
-    final adminService = context.read<AdminService>();
-    return Stream<int>.periodic(
-      const Duration(seconds: 6),
-      (tick) => tick,
-    ).asyncMap((_) async {
-      final response = await adminService.listings(status: 'pending');
+    return _pendingListingsStream ??=
+        Stream<List<Map<String, dynamic>>>.fromFuture((() async {
+      final response = await context.read<AdminService>().listings(
+            status: 'pending',
+            forceRefresh: true,
+          );
       final raw = response['items'];
       if (raw is! List) return const <Map<String, dynamic>>[];
       return raw
           .whereType<Map>()
           .map((item) => Map<String, dynamic>.from(item))
-          .toList();
-    }).startWith(const <Map<String, dynamic>>[]);
+          .toList(growable: false);
+    })())
+            .startWith(const <Map<String, dynamic>>[]);
   }
 
   @override
@@ -2063,10 +2138,16 @@ class AdminNotificationsTab extends StatefulWidget {
 class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
   final _titleCtrl = TextEditingController();
   final _bodyCtrl = TextEditingController();
+  final _descriptionCtrl = TextEditingController();
+  final _actionUrlCtrl = TextEditingController();
   final _userIdCtrl = TextEditingController();
+  final ImagePicker _imagePicker = ImagePicker();
 
   bool _sendingGlobal = false;
   bool _sendingPersonal = false;
+  bool _uploadingGlobalImage = false;
+  String _globalImageUrl = '';
+  XFile? _selectedGlobalImage;
 
   final List<Map<String, String>> _quickTemplates = const [
     {
@@ -2095,26 +2176,143 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
   void dispose() {
     _titleCtrl.dispose();
     _bodyCtrl.dispose();
+    _descriptionCtrl.dispose();
+    _actionUrlCtrl.dispose();
     _userIdCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickGlobalImage() async {
+    final image = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+      maxWidth: 2200,
+      maxHeight: 2200,
+    );
+    if (image == null || !mounted) return;
+    setState(() {
+      _selectedGlobalImage = image;
+      _uploadingGlobalImage = true;
+    });
+    try {
+      final url = await context
+          .read<NotificationsService>()
+          .uploadNotificationImage(File(image.path));
+      if (!mounted) return;
+      setState(() {
+        _globalImageUrl = url;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(
+        context,
+        error is ApiException
+            ? error.message
+            : 'Не удалось загрузить фото для уведомления. Попробуйте другое фото.',
+        isError: true,
+      );
+      setState(() {
+        _selectedGlobalImage = null;
+        _globalImageUrl = '';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingGlobalImage = false);
+      }
+    }
+  }
+
+  void _clearGlobalImage() {
+    setState(() {
+      _selectedGlobalImage = null;
+      _globalImageUrl = '';
+      _uploadingGlobalImage = false;
+    });
+  }
+
+  String? _validateActionUrl(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return null;
+    final uri = Uri.tryParse(value);
+    if (uri == null || !uri.hasScheme || uri.host.trim().isEmpty) {
+      return 'Укажите корректную ссылку.';
+    }
+    if (uri.scheme.toLowerCase() != 'https') {
+      return 'Используйте ссылку формата https://';
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _buildNotificationPayload() {
+    final description = _descriptionCtrl.text.trim();
+    final actionUrl = _actionUrlCtrl.text.trim();
+    final payload = <String, dynamic>{};
+    if (_globalImageUrl.trim().isNotEmpty) {
+      payload['imageUrl'] = _globalImageUrl.trim();
+    }
+    if (description.isNotEmpty) {
+      payload['description'] = description;
+    }
+    if (actionUrl.isNotEmpty) {
+      payload['actionUrl'] = actionUrl;
+    }
+    return payload.isEmpty ? null : payload;
+  }
+
+  bool _hasNotificationContent({
+    required String title,
+    required String body,
+    required Map<String, dynamic>? payload,
+  }) {
+    final description = (payload?['description'] ?? '').toString().trim();
+    final imageUrl = (payload?['imageUrl'] ?? '').toString().trim();
+    return title.isNotEmpty ||
+        body.isNotEmpty ||
+        description.isNotEmpty ||
+        imageUrl.isNotEmpty;
   }
 
   Future<void> _sendGlobal() async {
     final title = _titleCtrl.text.trim();
     final body = _bodyCtrl.text.trim();
-    if (title.isEmpty || body.isEmpty) {
-      showAppSnack(context, 'Заполните заголовок и текст', isError: true);
+    final payload = _buildNotificationPayload();
+    if (!_hasNotificationContent(title: title, body: body, payload: payload)) {
+      showAppSnack(
+        context,
+        'Добавьте текст, описание или фото.',
+        isError: true,
+      );
+      return;
+    }
+    final actionUrlError = _validateActionUrl(_actionUrlCtrl.text);
+    if (actionUrlError != null) {
+      showAppSnack(context, actionUrlError, isError: true);
+      return;
+    }
+    if (_uploadingGlobalImage) {
+      showAppSnack(
+        context,
+        'Дождитесь завершения загрузки фото.',
+        isError: true,
+      );
       return;
     }
 
     final service = context.read<NotificationsService>();
     setState(() => _sendingGlobal = true);
     try {
-      await service.sendGlobal(title: title, body: body);
+      await service.sendGlobal(
+        title: title.isEmpty ? null : title,
+        body: body.isEmpty ? null : body,
+        payload: payload,
+      );
       if (!mounted) return;
       showAppSnack(context, 'Общее уведомление отправлено');
       _titleCtrl.clear();
       _bodyCtrl.clear();
+      _descriptionCtrl.clear();
+      _actionUrlCtrl.clear();
+      _clearGlobalImage();
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Ошибка: $e', isError: true);
@@ -2127,8 +2325,30 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
     final userId = _userIdCtrl.text.trim();
     final title = _titleCtrl.text.trim();
     final body = _bodyCtrl.text.trim();
-    if (userId.isEmpty || title.isEmpty || body.isEmpty) {
-      showAppSnack(context, 'Укажи user_id, заголовок и текст', isError: true);
+    final payload = _buildNotificationPayload();
+    if (userId.isEmpty) {
+      showAppSnack(context, 'Укажите ID пользователя.', isError: true);
+      return;
+    }
+    if (!_hasNotificationContent(title: title, body: body, payload: payload)) {
+      showAppSnack(
+        context,
+        'Добавьте текст, описание или фото.',
+        isError: true,
+      );
+      return;
+    }
+    final actionUrlError = _validateActionUrl(_actionUrlCtrl.text);
+    if (actionUrlError != null) {
+      showAppSnack(context, actionUrlError, isError: true);
+      return;
+    }
+    if (_uploadingGlobalImage) {
+      showAppSnack(
+        context,
+        'Дождитесь завершения загрузки фото.',
+        isError: true,
+      );
       return;
     }
 
@@ -2137,14 +2357,18 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
     try {
       await service.sendPersonal(
         userId: userId,
-        title: title,
-        body: body,
+        title: title.isEmpty ? null : title,
+        body: body.isEmpty ? null : body,
+        payload: payload,
       );
       if (!mounted) return;
       showAppSnack(context, 'Личное уведомление отправлено');
       _userIdCtrl.clear();
       _titleCtrl.clear();
       _bodyCtrl.clear();
+      _descriptionCtrl.clear();
+      _actionUrlCtrl.clear();
+      _clearGlobalImage();
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Ошибка: $e', isError: true);
@@ -2180,6 +2404,101 @@ class _AdminNotificationsTabState extends State<AdminNotificationsTab> {
           decoration: const InputDecoration(
             labelText: 'Текст уведомления',
             border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _descriptionCtrl,
+          minLines: 2,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Описание',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _actionUrlCtrl,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: 'Ссылка (необязательно)',
+            hintText: 'https://example.com',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_selectedGlobalImage != null || _globalImageUrl.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: SizedBox(
+                    height: 160,
+                    width: double.infinity,
+                    child: _globalImageUrl.isNotEmpty
+                        ? MediaPreviewBox(
+                            imageUrl: _globalImageUrl,
+                            categoryHint: 'misc',
+                            borderRadius: 0,
+                          )
+                        : Image.file(
+                            File(_selectedGlobalImage!.path),
+                            fit: BoxFit.cover,
+                          ),
+                  ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Material(
+                    color: Colors.black54,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: (_uploadingGlobalImage || _sendingGlobal)
+                          ? null
+                          : _clearGlobalImage,
+                      child: const Padding(
+                        padding: EdgeInsets.all(6),
+                        child: Icon(Icons.close, color: Colors.white, size: 16),
+                      ),
+                    ),
+                  ),
+                ),
+                if (_uploadingGlobalImage)
+                  const Positioned.fill(
+                    child: ColoredBox(
+                      color: Color(0x55000000),
+                      child: Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: (_uploadingGlobalImage || _sendingGlobal)
+                ? null
+                : _pickGlobalImage,
+            icon: _uploadingGlobalImage
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.photo_library_outlined),
+            label: Text(
+              _globalImageUrl.isNotEmpty ? 'Фото загружено' : 'Выбрать фото',
+            ),
           ),
         ),
         const SizedBox(height: 8),

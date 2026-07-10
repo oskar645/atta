@@ -253,5 +253,9 @@ class ReviewsService {
     _cache.clear();
     _cachedAt.clear();
     _inFlight.clear();
+    for (final controller in _controllers.values) {
+      unawaited(controller.close());
+    }
+    _controllers.clear();
   }
 }

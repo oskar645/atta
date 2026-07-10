@@ -9,6 +9,7 @@ import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/app_badge_service.dart';
 import 'package:atta/src/services/deep_link_service.dart';
+import 'package:atta/src/services/api/api_exception.dart';
 
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
@@ -18,6 +19,7 @@ import 'package:atta/src/services/feed_ads_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
+import 'package:atta/src/services/notification_navigation_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/theme_service.dart';
@@ -30,10 +32,13 @@ import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/promotions_service.dart';
 import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 
 final RouteObserver<ModalRoute<void>> attaRouteObserver =
     RouteObserver<ModalRoute<void>>();
 final GlobalKey<NavigatorState> attaNavigatorKey = GlobalKey<NavigatorState>();
+@visibleForTesting
+Widget Function(String listingId)? debugDeepLinkListingScreenBuilder;
 const Locale attaDefaultLocale = Locale('ru', 'RU');
 const List<Locale> attaSupportedLocales = <Locale>[
   attaDefaultLocale,
@@ -162,102 +167,132 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     with WidgetsBindingObserver {
   StreamSubscription<AuthSessionEvent>? _authSub;
   StreamSubscription<ChatSocketEvent>? _socketSub;
-  StreamSubscription<bool>? _socketConnectionSub;
   StreamSubscription<AttaDeepLink>? _deepLinkSub;
   Future<void>? _resumeSyncInFlight;
-  Future<void>? _socketRestoreInFlight;
+  Future<bool>? _deepLinkOpenInFlight;
+  String? _deepLinkOpenListingId;
   String? _activeUid;
   DateTime? _lastResumeSyncAt;
-  DateTime? _lastSocketRestoreAt;
+  bool _consumePendingListingAfterAuth = false;
   String? _lastOpenedListingId;
   DateTime? _lastOpenedListingAt;
+  late final AuthService _auth;
+  late final AppBadgeService _badge;
+  late final ChatSocketService _socket;
+  late final DeepLinkService _deepLinks;
+  late final NotificationsService _notifications;
+  late final AdminService _admin;
+  late final SupportService _support;
+  late final PresenceService _presence;
+  late final ChatService _chats;
+  late final FollowService _follow;
+  late final FavoritesService _favorites;
+  late final ListingHistoryService _listingHistory;
+  late final ListingsService _listings;
+  late final ProfileService _profile;
+  late final ReviewsService _reviews;
+  late final WalletService _walletService;
 
   static const Duration _resumeSyncCooldown = Duration(seconds: 45);
-  static const Duration _socketRestoreCooldown = Duration(seconds: 30);
   static const Duration _deepLinkOpenCooldown = Duration(seconds: 2);
+
+  void _runSoftStartupTask(Future<void> Function() task) {
+    unawaited(
+      task().catchError((_) {
+        // Keep bootstrap resilient when secondary startup work fails.
+      }),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _auth = context.read<AuthService>();
+    _badge = context.read<AppBadgeService>();
+    _socket = context.read<ChatSocketService>();
+    _deepLinks = context.read<DeepLinkService>();
+    _notifications = context.read<NotificationsService>();
+    _admin = context.read<AdminService>();
+    _support = context.read<SupportService>();
+    _presence = context.read<PresenceService>();
+    _chats = context.read<ChatService>();
+    _follow = context.read<FollowService>();
+    _favorites = context.read<FavoritesService>();
+    _listingHistory = context.read<ListingHistoryService>();
+    _listings = context.read<ListingsService>();
+    _profile = context.read<ProfileService>();
+    _reviews = context.read<ReviewsService>();
+    _walletService = context.read<WalletService>();
     _setOnline(true);
     _syncBadge();
-    final auth = context.read<AuthService>();
-    final badge = context.read<AppBadgeService>();
-    final socket = context.read<ChatSocketService>();
-    final deepLinks = context.read<DeepLinkService>();
-    final notifications = context.read<NotificationsService>();
-    final admin = context.read<AdminService>();
-    final support = context.read<SupportService>();
-    final presence = context.read<PresenceService>();
-    final chats = context.read<ChatService>();
-    final follow = context.read<FollowService>();
-    final favorites = context.read<FavoritesService>();
-    final listingHistory = context.read<ListingHistoryService>();
-    final listings = context.read<ListingsService>();
-    final profile = context.read<ProfileService>();
-    final reviews = context.read<ReviewsService>();
-    final walletService = context.read<WalletService>();
-    _authSub = auth.onAuthStateChange.listen((_) async {
-      final uid = auth.currentUser?.uid;
+    _authSub = _auth.onAuthStateChange.listen((_) async {
+      final uid = _auth.currentUser?.uid;
       final didChangeUser = _activeUid != null && _activeUid != uid;
       if (uid == null || uid.isEmpty) {
         _activeUid = null;
-        walletService.resetSession();
-        notifications.resetSession();
-        admin.resetSession();
-        support.resetSession();
-        await presence.resetSession();
-        await chats.resetSession();
-        follow.resetSession();
-        favorites.resetSession();
-        listings.resetSession();
-        profile.resetSession();
-        await listingHistory.resetSession();
-        reviews.resetSession();
-        await badge.clear();
+        _walletService.resetSession();
+        _notifications.resetSession();
+        _admin.resetSession();
+        _support.resetSession();
+        await _presence.resetSession();
+        await _chats.resetSession();
+        _follow.resetSession();
+        _favorites.resetSession();
+        _listings.resetSession();
+        _profile.resetSession();
+        await _listingHistory.resetSession();
+        _reviews.resetSession();
+        await _badge.clear();
         return;
       }
       if (didChangeUser) {
-        favorites.resetSession();
-        listings.resetSession();
-        profile.resetSession();
-        await listingHistory.resetSession();
+        _favorites.resetSession();
+        _listings.resetSession();
+        _profile.resetSession();
+        await _listingHistory.resetSession();
       }
       _activeUid = uid;
-      walletService.activateSession(uid);
-      notifications.activateSession(uid);
-      admin.activateSession();
-      support.activateAdminSession(isAdmin: auth.currentUser?.isAdmin == true);
-      await listingHistory.activateSession();
-      await _setOnline(true);
-      await _syncBadge();
-      final pendingListingId = await deepLinks.consumePendingListingId();
-      if (pendingListingId != null && pendingListingId.isNotEmpty) {
-        await _openListingFromDeepLink(pendingListingId);
+      final isAdminUser = _auth.currentUser?.isAdmin == true;
+      _walletService.activateSession(uid);
+      _notifications.activateSession(uid);
+      if (isAdminUser) {
+        _admin.activateSession();
+        _admin.bindAdminUser(uid);
+      } else {
+        _admin.resetSession();
       }
+      _support.activateAdminSession(isAdmin: isAdminUser);
+      _runSoftStartupTask(() => _listingHistory.activateSession());
+      _runSoftStartupTask(() => _setOnline(true));
+      _runSoftStartupTask(_syncBadge);
+      _runSoftStartupTask(() async {
+        if (_consumePendingListingAfterAuth) {
+          final pendingListingId = await _deepLinks.readPendingListingId();
+          if (pendingListingId != null && pendingListingId.isNotEmpty) {
+            await _openListingFromDeepLink(
+              pendingListingId,
+              clearPendingOnSuccess: true,
+            );
+          }
+          _consumePendingListingAfterAuth = false;
+        }
+        if (!mounted) return;
+        await NotificationNavigationService.consumePendingIfPossible(context);
+      });
     });
-    _socketSub = socket.events.listen(_handleSocketEvent);
-    _socketConnectionSub = socket.connectionChanges.listen(
-      _handleSocketConnectionChanged,
-    );
-    _deepLinkSub = deepLinks.links.listen(_handleDeepLink);
-    unawaited(deepLinks.initialize());
+    _socketSub = _socket.events.listen(_handleSocketEvent);
+    _deepLinkSub = _deepLinks.links.listen(_handleDeepLink);
+    unawaited(_deepLinks.initialize());
   }
 
   @override
   void dispose() {
     _authSub?.cancel();
     _socketSub?.cancel();
-    _socketConnectionSub?.cancel();
     _deepLinkSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
-  }
-
-  void _handleSocketConnectionChanged(bool connected) {
-    if (!connected) return;
-    unawaited(_handleSocketRestored());
   }
 
   Future<void> _handleDeepLink(AttaDeepLink deepLink) async {
@@ -265,50 +300,125 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       case AttaDeepLinkType.listing:
         final listingId = deepLink.listingId ?? '';
         if (listingId.isEmpty) return;
-        if (!context.read<AuthService>().isAuthenticated) {
-          await context.read<DeepLinkService>().savePendingListingId(listingId);
+        if (!_auth.isAuthenticated) {
+          _consumePendingListingAfterAuth = true;
+          await _deepLinks.savePendingListingId(listingId);
+          return;
         }
-        await _openListingFromDeepLink(listingId);
+        await _openListingFromDeepLink(
+          listingId,
+          clearPendingOnSuccess: true,
+        );
         break;
       case AttaDeepLinkType.invite:
         final referrerId = deepLink.referrerId ?? '';
         if (referrerId.isEmpty) return;
-        await context.read<DeepLinkService>().savePendingInviteReferrerId(
-              referrerId,
-            );
+        await _deepLinks.savePendingInviteReferrerId(
+          referrerId,
+        );
         break;
     }
   }
 
-  Future<void> _openListingFromDeepLink(String listingId) async {
+  Future<bool> _openListingFromDeepLink(
+    String listingId, {
+    bool clearPendingOnSuccess = false,
+  }) async {
     final normalizedListingId = listingId.trim();
-    if (normalizedListingId.isEmpty) return;
+    if (normalizedListingId.isEmpty) return false;
     final now = DateTime.now();
     final lastOpenedId = _lastOpenedListingId;
     final lastOpenedAt = _lastOpenedListingAt;
     if (lastOpenedId == normalizedListingId &&
         lastOpenedAt != null &&
         now.difference(lastOpenedAt) < _deepLinkOpenCooldown) {
-      return;
+      return true;
     }
+    if (_deepLinkOpenListingId == normalizedListingId &&
+        _deepLinkOpenInFlight != null) {
+      return _deepLinkOpenInFlight!;
+    }
+
+    final future = _openListingFromDeepLinkImpl(
+      normalizedListingId,
+      clearPendingOnSuccess: clearPendingOnSuccess,
+    );
+    _deepLinkOpenListingId = normalizedListingId;
+    _deepLinkOpenInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_deepLinkOpenInFlight, future)) {
+        _deepLinkOpenInFlight = null;
+        _deepLinkOpenListingId = null;
+      }
+    }
+  }
+
+  Future<bool> _openListingFromDeepLinkImpl(
+    String listingId, {
+    required bool clearPendingOnSuccess,
+  }) async {
     final navigator = attaNavigatorKey.currentState;
     final navContext = attaNavigatorKey.currentContext;
     if (navigator == null || navContext == null) {
-      return;
+      return false;
     }
-    _lastOpenedListingId = normalizedListingId;
+
+    try {
+      final listing = await _listings.getListingById(listingId);
+      if (!mounted) return false;
+      if (listing == null) {
+        if (clearPendingOnSuccess) {
+          await _deepLinks.clearPendingListingIdIfMatches(listingId);
+        }
+        showAppSnack(
+          navContext,
+          'Объявление недоступно',
+          isError: true,
+        );
+        return false;
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return false;
+      if (error.isNotFound && clearPendingOnSuccess) {
+        await _deepLinks.clearPendingListingIdIfMatches(listingId);
+      }
+      showAppSnack(
+        navContext,
+        'Объявление недоступно',
+        isError: true,
+      );
+      return false;
+    } catch (_) {
+      if (!mounted) return false;
+      showAppSnack(
+        navContext,
+        'Объявление недоступно',
+        isError: true,
+      );
+      return false;
+    }
+
+    final now = DateTime.now();
+    _lastOpenedListingId = listingId;
     _lastOpenedListingAt = now;
-    await navigator.push(
+    navigator.push(
       MaterialPageRoute<void>(
-        builder: (_) => ListingDetailScreen(listingId: normalizedListingId),
+        builder: (_) =>
+            debugDeepLinkListingScreenBuilder?.call(listingId) ??
+            ListingDetailScreen(listingId: listingId),
       ),
     );
+    if (clearPendingOnSuccess) {
+      await _deepLinks.clearPendingListingIdIfMatches(listingId);
+    }
+    return true;
   }
 
   void _handleSocketEvent(ChatSocketEvent event) {
     if (event.name != 'notification.new') return;
-    final auth = context.read<AuthService>();
-    if (auth.currentUser == null || !mounted) return;
+    if (_auth.currentUser == null || !mounted) return;
 
     final rawNotification = event.payload['notification'];
     final notification = rawNotification is Map
@@ -319,19 +429,19 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     if (notificationType == 'chat_message' ||
         notificationType == 'message' ||
         notificationType == 'chat') {
-      context.read<ChatService>().ingestMessageNotification(
-            currentUserId: auth.currentUser!.uid,
-            notification: notification,
-          );
+      _chats.ingestMessageNotification(
+        currentUserId: _auth.currentUser!.uid,
+        notification: notification,
+      );
       return;
     }
     if (notificationType == 'moderation') {
       _handleModerationNotification(notification);
     }
-    context.read<NotificationsService>().ingestRealtimeNotification(
-          userId: auth.currentUser!.uid,
-          notification: notification,
-        );
+    _notifications.ingestRealtimeNotification(
+      userId: _auth.currentUser!.uid,
+      notification: notification,
+    );
   }
 
   void _handleModerationNotification(Map<String, dynamic> notification) {
@@ -350,54 +460,51 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       return;
     }
     unawaited(
-      context.read<ListingsService>().refreshListingById(listingId),
+      _listings.refreshListingById(listingId),
     );
   }
 
   Future<void> _setOnline(bool online) async {
-    final auth = context.read<AuthService>();
-    final presence = context.read<PresenceService>();
-    final uid = auth.currentUser?.uid;
+    final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) return;
-    await presence.setOnline(uid: uid, isOnline: online);
+    await _presence.setOnline(uid: uid, isOnline: online);
   }
 
   Future<void> _syncBadge() async {
-    final auth = context.read<AuthService>();
-    final uid = auth.currentUser?.uid;
-    final badge = context.read<AppBadgeService>();
-    final walletService = context.read<WalletService>();
-    final notifications = context.read<NotificationsService>();
-    final support = context.read<SupportService>();
-    final admin = context.read<AdminService>();
-    final listingHistory = context.read<ListingHistoryService>();
-    final chatService = context.read<ChatService>();
+    final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
       _activeUid = null;
-      walletService.resetSession();
-      notifications.resetSession();
-      support.resetSession();
-      context.read<FavoritesService>().resetSession();
-      context.read<ListingsService>().resetSession();
-      context.read<ProfileService>().resetSession();
-      await listingHistory.resetSession();
-      await badge.clear();
+      _walletService.resetSession();
+      _notifications.resetSession();
+      _support.resetSession();
+      _favorites.resetSession();
+      _listings.resetSession();
+      _profile.resetSession();
+      await _listingHistory.resetSession();
+      await _badge.clear();
       return;
     }
 
     _activeUid = uid;
-    walletService.activateSession(uid);
-    notifications.activateSession(uid);
-    admin.activateSession();
-    support.activateAdminSession(isAdmin: auth.currentUser?.isAdmin == true);
-    await listingHistory.activateSession();
-    await badge.bindForUser(
+    final isAdminUser = _auth.currentUser?.isAdmin == true;
+    _walletService.activateSession(uid);
+    _notifications.activateSession(uid);
+    if (isAdminUser) {
+      _admin.activateSession();
+      _admin.bindAdminUser(uid);
+    } else {
+      _admin.resetSession();
+    }
+    _support.activateAdminSession(isAdmin: isAdminUser);
+    _runSoftStartupTask(() => _listingHistory.activateSession());
+    await _badge.bindForUser(
       userId: uid,
-      chatService: chatService,
-      notificationsService: notifications,
+      chatService: _chats,
+      notificationsService: _notifications,
     );
-
-    await walletService.maybeCheckAccrualOncePerSession();
+    _runSoftStartupTask(() async {
+      await _walletService.maybeCheckAccrualOncePerSession();
+    });
   }
 
   @override
@@ -425,18 +532,21 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     }
 
     final future = () async {
-      await _setOnline(true);
-      final auth = context.read<AuthService>();
-      final restoredUser = await auth.restoreSessionOnResume(force: true);
-      final uid = restoredUser?.uid ?? auth.currentUser?.uid;
+      _runSoftStartupTask(() => _setOnline(true));
+      final restoredUser = await _auth.restoreSessionOnResume(force: true);
+      if (!mounted) return;
+      final uid = restoredUser?.uid ?? _auth.currentUser?.uid;
       if (uid == null || uid.isEmpty) {
+        _lastResumeSyncAt = DateTime.now();
         return;
       }
-      await context.read<ChatService>().handleAppResumed(uid);
-      await context.read<NotificationsService>().refreshActiveSession(
-            force: true,
-          );
-      await _syncBadge();
+      _runSoftStartupTask(() => _chats.handleAppResumed(uid));
+      _runSoftStartupTask(
+        () => _notifications.refreshActiveSession(
+          force: true,
+        ),
+      );
+      _runSoftStartupTask(_syncBadge);
       _lastResumeSyncAt = DateTime.now();
     }();
     _resumeSyncInFlight = future;
@@ -447,42 +557,6 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     } finally {
       if (identical(_resumeSyncInFlight, future)) {
         _resumeSyncInFlight = null;
-      }
-    }
-  }
-
-  Future<void> _handleSocketRestored() async {
-    final existing = _socketRestoreInFlight;
-    if (existing != null) {
-      return existing;
-    }
-    final auth = context.read<AuthService>();
-    final uid = auth.currentUser?.uid;
-    if (uid == null || uid.isEmpty) {
-      return;
-    }
-    final now = DateTime.now();
-    final lastRestoreAt = _lastSocketRestoreAt;
-    if (lastRestoreAt != null &&
-        now.difference(lastRestoreAt) < _socketRestoreCooldown) {
-      return;
-    }
-    final future = () async {
-      _lastSocketRestoreAt = DateTime.now();
-      await _setOnline(true);
-      await context.read<ChatService>().handleAppResumed(uid);
-      await context.read<NotificationsService>().refreshActiveSession(
-            force: false,
-          );
-    }();
-    _socketRestoreInFlight = future;
-    try {
-      await future;
-    } catch (_) {
-      // Soft-fail to preserve active session across temporary network changes.
-    } finally {
-      if (identical(_socketRestoreInFlight, future)) {
-        _socketRestoreInFlight = null;
       }
     }
   }

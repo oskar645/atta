@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:atta/src/app.dart';
+import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
 
 Future<void> main() async {
@@ -23,6 +24,9 @@ Future<void> main() async {
       runApp(const AttaApp());
     },
     (error, stackTrace) {
+      if (ChatSocketService.isExpectedSocketCloseError(error)) {
+        return;
+      }
       FlutterError.reportError(
         FlutterErrorDetails(
           exception: error,

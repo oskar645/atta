@@ -24,8 +24,33 @@ void main() {
 
     expect(find.text('225 бонусов'), findsOneWidget);
     expect(find.text('Ежедневный бонус: +25 бонусов'), findsOneWidget);
+    expect(
+      find.text(
+        'Приглашение друга: получите 100 бонусов, когда приглашённый пользователь зарегистрируется в ATTA.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Сегодняшний бонус уже начислен'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
+  });
+
+  testWidgets('wallet screen shows cached balance immediately while refreshing',
+      (tester) async {
+    final walletService = _CachedThenRefreshingWalletService();
+
+    await tester.pumpWidget(
+      Provider<WalletService>.value(
+        value: walletService,
+        child: const MaterialApp(home: WalletScreen()),
+      ),
+    );
+
+    expect(find.text('225 бонусов'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('325 бонусов'), findsOneWidget);
   });
 
   testWidgets('wallet screen shows retry state on error', (tester) async {
@@ -35,12 +60,11 @@ void main() {
         child: const MaterialApp(home: WalletScreen()),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
 
-    expect(find.text('Кошелёк недоступен'), findsOneWidget);
-    expect(find.text('Проверьте интернет-соединение и попробуйте снова.'),
+    expect(find.text('Не удалось обновить кошелёк. Попробуйте позже.'),
         findsOneWidget);
-    expect(find.text('Повторить'), findsOneWidget);
+    expect(find.text('Повторить'), findsNothing);
   });
 
   testWidgets('wallet screen shows preview and opens full history',
@@ -81,16 +105,15 @@ void main() {
         child: const MaterialApp(home: WalletScreen()),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
 
     expect(find.text('225 бонусов'), findsOneWidget);
     expect(
-      find.text(
-        'Проверьте интернет-соединение и попробуйте снова.',
-      ),
+      find.text('Не удалось обновить кошелёк. Попробуйте позже.'),
       findsOneWidget,
     );
-    expect(find.text('Операций пока нет'), findsOneWidget);
+    expect(find.text('Повторить'), findsNothing);
     expect(find.text('Кошелёк недоступен'), findsNothing);
   });
 
@@ -115,7 +138,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('5225 бонусов'), findsOneWidget);
-    expect(find.text('Тестовое пополнение администратора'), findsOneWidget);
+    expect(
+      find.text('Тестовые бонусы от администрации ATTA'),
+      findsOneWidget,
+    );
   });
 }
 
@@ -185,6 +211,15 @@ class _FailingWalletService extends WalletService {
 
 class _TransactionsFailingWalletService extends _FakeWalletService {
   @override
+  Wallet? get cachedWallet => Wallet.fromMap({
+        'balance': 225,
+        'maxBalance': 1000,
+        'welcomeBonus': 200,
+        'dailyBonusAmount': 25,
+        'canClaimDailyBonus': false,
+      });
+
+  @override
   Future<List<WalletTransaction>> getTransactions(
       {bool forceRefresh = false}) async {
     throw const ApiException(
@@ -229,11 +264,40 @@ class _RefreshingWalletService extends WalletService {
         'amount': 5000,
         'reason': 'recurring_bonus',
         'metadata': {
-          'description': 'Тестовое пополнение администратора',
-          'reference': 'ADMIN_TEST_BONUS_5000_V1',
+          'description': 'Тестовые бонусы от администрации ATTA',
+          'reference': 'ADMIN_TEST_BONUS_5000_2026_07',
         },
         'created_at': '2026-07-02T10:00:00.000Z',
       }),
     ];
+  }
+}
+
+class _CachedThenRefreshingWalletService extends WalletService {
+  @override
+  Wallet? get cachedWallet => Wallet.fromMap({
+        'balance': 225,
+        'maxBalance': 1000,
+        'welcomeBonus': 200,
+        'dailyBonusAmount': 25,
+        'canClaimDailyBonus': false,
+      });
+
+  @override
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    return Wallet.fromMap({
+      'balance': 325,
+      'maxBalance': 1000,
+      'welcomeBonus': 200,
+      'dailyBonusAmount': 25,
+      'canClaimDailyBonus': false,
+    });
+  }
+
+  @override
+  Future<List<WalletTransaction>> getTransactions(
+      {bool forceRefresh = false}) async {
+    return _singleTransaction();
   }
 }

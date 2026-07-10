@@ -18,6 +18,34 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('ordinary profile does not show technical user id',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Пригласить друга'));
+
+    expect(find.text('ID'), findsNothing);
+    expect(find.textContaining('user-1'), findsNothing);
+  });
+
+  testWidgets('profile shows cached auth user immediately without skeleton',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _DelayedProfileService(),
+      ),
+    );
+
+    expect(find.byType(SkeletonProfileHeader), findsNothing);
+    expect(find.text('ATTA User'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 150));
+  });
+
   testWidgets('profile shows wallet balance when loaded', (tester) async {
     await tester.pumpWidget(
       _wrapProfile(
@@ -25,14 +53,13 @@ void main() {
         profileService: _DelayedProfileService(),
       ),
     );
-    expect(find.byType(SkeletonProfileHeader), findsOneWidget);
-    await _pumpUntilFound(tester, find.text('ATTA Кошелёк'));
+    await _pumpUntilFound(tester, find.text('150 бонусов'));
 
     expect(find.text('ATTA Кошелёк'), findsOneWidget);
     expect(find.text('150 бонусов'), findsOneWidget);
     expect(find.text('Загрузка бонусов...'), findsNothing);
     expect(find.text('0 бонусов'), findsNothing);
-  }, skip: true);
+  });
 
   testWidgets('profile shows retry state when wallet failed', (tester) async {
     await tester.pumpWidget(
@@ -41,13 +68,56 @@ void main() {
         profileService: _DelayedProfileService(),
       ),
     );
-    await _pumpUntilFound(tester, find.text('ATTA Кошелёк'));
+    await _pumpUntilFound(tester, find.text('Бонусы для продвижения'));
 
     expect(find.text('ATTA Кошелёк'), findsOneWidget);
-    expect(find.text('Кошелёк временно недоступен'), findsOneWidget);
-    expect(find.text('Повторить'), findsOneWidget);
+    expect(find.text('Бонусы для продвижения'), findsOneWidget);
+    expect(
+      find.text('Не удалось обновить кошелёк. Попробуйте позже.'),
+      findsNothing,
+    );
+    expect(find.text('Повторить'), findsNothing);
     expect(find.text('0 бонусов'), findsNothing);
-  }, skip: true);
+  });
+
+  testWidgets('profile keeps cached wallet balance visible during refresh',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletCachedRefreshService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+
+    await tester.pump();
+    expect(find.text('150 бонусов'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(find.text('175 бонусов'), findsOneWidget);
+  });
+
+  testWidgets('profile wallet opens even while balance is loading',
+      (tester) async {
+    final walletService = _ProfileWalletSlowService();
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: walletService,
+        profileService: _FakeProfileService(),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.text('ATTA Кошелёк'));
+    await tester.tap(find.text('ATTA Кошелёк'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('ATTA Кошелёк'), findsWidgets);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    walletService.maybeCheckCompleter.complete(_wallet(balance: 150));
+    walletService.checkAccrualCompleter.complete(_wallet(balance: 150));
+    await tester.pump();
+  });
 
   testWidgets('selected avatar local preview appears immediately',
       (tester) async {
@@ -292,9 +362,11 @@ void main() {
     precacheCompleter.complete();
     await _pumpUntil(
       tester,
-      () => tester
-          .widget<RemoteAvatar>(find.byType(RemoteAvatar).first)
-          .imageProvider == null,
+      () =>
+          tester
+              .widget<RemoteAvatar>(find.byType(RemoteAvatar).first)
+              .imageProvider ==
+          null,
     );
 
     avatar = tester.widget<RemoteAvatar>(find.byType(RemoteAvatar).first);
@@ -503,6 +575,35 @@ class _ProfileWalletSuccessService extends WalletService {
   }
 }
 
+class _ProfileWalletCachedRefreshService extends WalletService {
+  @override
+  Wallet? get cachedWallet => _wallet(balance: 150);
+
+  @override
+  Future<Wallet?> maybeCheckAccrualOncePerSession() async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    return _wallet(balance: 175);
+  }
+
+  @override
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
+    return _wallet(balance: 175);
+  }
+}
+
+class _ProfileWalletSlowService extends WalletService {
+  final Completer<Wallet?> maybeCheckCompleter = Completer<Wallet?>();
+  final Completer<Wallet> checkAccrualCompleter = Completer<Wallet>();
+
+  @override
+  Future<Wallet?> maybeCheckAccrualOncePerSession() =>
+      maybeCheckCompleter.future;
+
+  @override
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) =>
+      checkAccrualCompleter.future;
+}
+
 class _ProfileWalletFailingService extends WalletService {
   @override
   Future<Wallet?> maybeCheckAccrualOncePerSession() async {
@@ -518,3 +619,13 @@ class _ProfileWalletFailingService extends WalletService {
 final Uint8List _tinyPngBytes = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP+KobjigAAAABJRU5ErkJggg==',
 );
+
+Wallet _wallet({required int balance}) {
+  return Wallet.fromMap({
+    'balance': balance,
+    'maxBalance': 1000,
+    'welcomeBonus': 200,
+    'dailyBonusAmount': 25,
+    'canClaimDailyBonus': false,
+  });
+}

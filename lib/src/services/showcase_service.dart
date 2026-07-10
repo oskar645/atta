@@ -31,27 +31,95 @@ class ShowcaseService {
   }
 
   Future<List<ShowcaseItem>> getHomeShowcase() async {
-    final items = await getShowcase();
-    if (items.length <= 1) {
-      _homeLoadCount += 1;
-      return items;
-    }
-
-    if (_homeLoadCount > 0) {
-      _homeRotationOffset = (_homeRotationOffset + 3) % items.length;
-    } else {
-      _homeRotationOffset = _homeRotationOffset % items.length;
-    }
+    final prepared = prepareHomeShowcase(
+      await getShowcase(),
+      homeLoadCount: _homeLoadCount,
+      rotationOffset: _homeRotationOffset,
+    );
+    _homeRotationOffset = prepared.nextRotationOffset;
     _homeLoadCount += 1;
+    return prepared.items;
+  }
 
-    if (_homeRotationOffset == 0) {
-      return items;
+  static PreparedHomeShowcase prepareHomeShowcase(
+    List<ShowcaseItem> items, {
+    required int homeLoadCount,
+    required int rotationOffset,
+  }) {
+    final deduplicated = _deduplicateItems(items);
+    if (deduplicated.length <= 1) {
+      return PreparedHomeShowcase(
+        items: deduplicated,
+        nextRotationOffset: rotationOffset,
+      );
     }
 
-    return <ShowcaseItem>[
-      ...items.skip(_homeRotationOffset),
-      ...items.take(_homeRotationOffset),
+    deduplicated.sort(_compareShowcaseItemsByFreshness);
+
+    final pinnedCount = deduplicated.length >= 3 ? 2 : 1;
+    final pinned = deduplicated.take(pinnedCount).toList(growable: false);
+    final rotatable = deduplicated.skip(pinnedCount).toList(growable: false);
+
+    if (rotatable.isEmpty) {
+      return PreparedHomeShowcase(
+        items: deduplicated,
+        nextRotationOffset: rotationOffset,
+      );
+    }
+
+    final nextRotationOffset = homeLoadCount > 0
+        ? (rotationOffset + 1) % rotatable.length
+        : rotationOffset % rotatable.length;
+
+    final rotated = <ShowcaseItem>[
+      ...rotatable.skip(nextRotationOffset),
+      ...rotatable.take(nextRotationOffset),
     ];
+
+    return PreparedHomeShowcase(
+      items: <ShowcaseItem>[
+        ...pinned,
+        ...rotated,
+      ],
+      nextRotationOffset: nextRotationOffset,
+    );
+  }
+
+  static List<ShowcaseItem> _deduplicateItems(List<ShowcaseItem> items) {
+    final seenKeys = <String>{};
+    final result = <ShowcaseItem>[];
+    for (final item in items) {
+      final listingId = item.listingId.trim();
+      final promotionId = item.promotionId.trim();
+      final dedupeKey = listingId.isNotEmpty
+          ? 'listing:$listingId'
+          : 'promotion:$promotionId';
+      if (dedupeKey.trim().isEmpty || !seenKeys.add(dedupeKey)) {
+        continue;
+      }
+      result.add(item);
+    }
+    return result;
+  }
+
+  static int _compareShowcaseItemsByFreshness(
+    ShowcaseItem a,
+    ShowcaseItem b,
+  ) {
+    final startsCompare = _compareNullableDateDesc(a.startsAt, b.startsAt);
+    if (startsCompare != 0) return startsCompare;
+
+    final endsCompare = _compareNullableDateDesc(a.endsAt, b.endsAt);
+    if (endsCompare != 0) return endsCompare;
+
+    return b.promotionId.compareTo(a.promotionId);
+  }
+
+  static int _compareNullableDateDesc(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return b.compareTo(a);
   }
 
   Future<void> recordImpression(String promotionId) async {
@@ -73,4 +141,14 @@ class ShowcaseService {
     if (id.isEmpty) return;
     await _api.recordClick(id);
   }
+}
+
+class PreparedHomeShowcase {
+  const PreparedHomeShowcase({
+    required this.items,
+    required this.nextRotationOffset,
+  });
+
+  final List<ShowcaseItem> items;
+  final int nextRotationOffset;
 }

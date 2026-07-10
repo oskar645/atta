@@ -108,7 +108,10 @@ let WalletService = class WalletService {
                     type: client_1.WalletTransactionType.ACCRUAL,
                     amount: accruedAmount,
                     reason: client_1.WalletTransactionReason.WELCOME_BONUS,
-                    metadata: this.buildTransactionMetadata(),
+                    metadata: this.buildTransactionMetadata({
+                        description: 'Бонус за регистрацию',
+                        source: 'welcome_bonus',
+                    }),
                 },
             });
             return updatedWallet;
@@ -263,6 +266,76 @@ let WalletService = class WalletService {
                 },
             });
             return updatedWallet;
+        }, tx);
+    }
+    async accrueManualBonusIfNeeded(userId, { amount, reference, description, source, metadata, }, tx) {
+        if (amount <= 0) {
+            throw new common_1.BadRequestException('Bonus amount must be positive');
+        }
+        const normalizedReference = reference.trim();
+        const normalizedDescription = description.trim();
+        if (!normalizedReference) {
+            throw new common_1.BadRequestException('Bonus reference is required');
+        }
+        return this.runInTransaction(async (transaction) => {
+            const wallet = await this.ensureWalletForUser(userId, transaction);
+            await this.lockWalletRow(transaction, userId);
+            const currentWallet = await transaction.wallet.findUniqueOrThrow({
+                where: {
+                    userId,
+                },
+            });
+            const existingTransactions = await transaction.walletTransaction.findMany({
+                where: {
+                    userId,
+                    reason: client_1.WalletTransactionReason.RECURRING_BONUS,
+                },
+            });
+            const alreadyApplied = existingTransactions.some((item) => {
+                if (!item.metadata || typeof item.metadata !== 'object' || Array.isArray(item.metadata)) {
+                    return false;
+                }
+                return item.metadata.reference === normalizedReference;
+            });
+            if (alreadyApplied) {
+                return {
+                    applied: false,
+                    wallet: currentWallet,
+                };
+            }
+            const updatedWallet = await transaction.wallet.update({
+                where: {
+                    id: wallet.id,
+                },
+                data: {
+                    bonusBalance: {
+                        increment: amount,
+                    },
+                },
+            });
+            await transaction.walletTransaction.create({
+                data: {
+                    userId,
+                    walletId: wallet.id,
+                    type: client_1.WalletTransactionType.ACCRUAL,
+                    amount,
+                    reason: client_1.WalletTransactionReason.RECURRING_BONUS,
+                    metadata: this.buildTransactionMetadata({
+                        reference: normalizedReference,
+                        description: normalizedDescription,
+                        source: source?.trim().length
+                            ? source.trim()
+                            : 'manual_bonus',
+                        ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+                            ? metadata
+                            : {}),
+                    }),
+                },
+            });
+            return {
+                applied: true,
+                wallet: updatedWallet,
+            };
         }, tx);
     }
     async ensureWalletAndBonuses(userId) {

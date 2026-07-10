@@ -59,6 +59,91 @@ void main() {
   );
 
   testWidgets(
+    'moderation loads listings on open and does not auto-refresh in background',
+    (tester) async {
+      final adminService = _FakeAdminService();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<AdminService>.value(value: adminService),
+            Provider<NotificationsService>.value(
+              value: _FakeNotificationsService(),
+            ),
+            Provider<SavedSearchService>.value(
+              value: _FakeSavedSearchService(),
+            ),
+          ],
+          child: const MaterialApp(home: AdminScreen()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Модерация'));
+      await tester.pumpAndSettle();
+
+      final callsAfterOpen = adminService.listingsCalls;
+      await tester.pump(const Duration(seconds: 7));
+      await tester.pumpAndSettle();
+
+      expect(callsAfterOpen, greaterThanOrEqualTo(1));
+      expect(adminService.listingsCalls, callsAfterOpen);
+    },
+  );
+
+  testWidgets(
+    'admin header streams are not recreated on rebuild',
+    (tester) async {
+      final adminService = _FakeAdminService();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<AdminService>.value(value: adminService),
+            Provider<NotificationsService>.value(
+              value: _FakeNotificationsService(),
+            ),
+            Provider<SavedSearchService>.value(
+              value: _FakeSavedSearchService(),
+            ),
+          ],
+          child: const MaterialApp(home: AdminScreen()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+      final isAdminCallsAfterFirstBuild = adminService.isAdminStreamCalls;
+      final pendingCallsAfterFirstBuild =
+          adminService.pendingModerationStreamCalls;
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<AdminService>.value(value: adminService),
+            Provider<NotificationsService>.value(
+              value: _FakeNotificationsService(),
+            ),
+            Provider<SavedSearchService>.value(
+              value: _FakeSavedSearchService(),
+            ),
+          ],
+          child: const MaterialApp(home: AdminScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(adminService.isAdminStreamCalls, isAdminCallsAfterFirstBuild);
+      expect(
+        adminService.pendingModerationStreamCalls,
+        pendingCallsAfterFirstBuild,
+      );
+    },
+  );
+
+  testWidgets(
     'moderation listing opens detailed preview with description and extra fields',
     (tester) async {
       final adminService = _FakeAdminService();
@@ -169,6 +254,60 @@ void main() {
     expect(find.text('Pending listing'), findsNothing);
     expect(adminService.rejectedIds, <String>['listing-pending']);
   });
+
+  testWidgets('opening one admin section clears only its badge', (tester) async {
+    final adminService = _FakeAdminService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<SavedSearchService>.value(
+            value: _FakeSavedSearchService(),
+          ),
+        ],
+        child: const MaterialApp(home: AdminScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-tab-badge:Модерация')),
+        matching: find.text('2'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-tab-badge:Жалобы')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Модерация'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('admin-tab-badge:Модерация')), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-tab-badge:Жалобы')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
+    expect(adminService.markedSections, contains(AdminService.moderationSection));
+    expect(
+      adminService.markedSections,
+      isNot(contains(AdminService.reportsSection)),
+    );
+  });
 }
 
 class _FakeAuthService extends AuthService {
@@ -184,19 +323,86 @@ class _FakeAuthService extends AuthService {
 class _FakeAdminService extends AdminService {
   final List<String> approvedIds = <String>[];
   final List<String> rejectedIds = <String>[];
+  final List<String> markedSections = <String>[];
   bool _showPending = true;
+  int listingsCalls = 0;
+  int isAdminStreamCalls = 0;
+  int pendingModerationStreamCalls = 0;
+  int unreadSupportStreamCalls = 0;
+  int openReportsStreamCalls = 0;
+  int _moderationBadgeCount = 2;
+  int _supportBadgeCount = 0;
+  int _reportsBadgeCount = 1;
+  final StreamController<int> _moderationBadges =
+      StreamController<int>.broadcast();
+  final StreamController<int> _supportBadges =
+      StreamController<int>.broadcast();
+  final StreamController<int> _reportsBadges =
+      StreamController<int>.broadcast();
+
+  _FakeAdminService() {
+    _moderationBadges.add(2);
+    _supportBadges.add(0);
+    _reportsBadges.add(1);
+  }
 
   @override
-  Stream<bool> streamIsAdmin(String uid) => Stream<bool>.value(true);
+  void bindAdminUser(String uid) {}
 
   @override
-  Stream<int> streamPendingModerationCount() => Stream<int>.value(1);
+  Stream<bool> streamIsAdmin(String uid) {
+    isAdminStreamCalls += 1;
+    return Stream<bool>.value(true);
+  }
 
   @override
-  Stream<int> streamUnreadSupportForAdminCount() => Stream<int>.value(0);
+  Stream<int> streamPendingModerationCount() {
+    pendingModerationStreamCalls += 1;
+    return Stream<int>.multi((controller) {
+      controller.add(_moderationBadgeCount);
+      final sub = _moderationBadges.stream.listen(controller.add);
+      controller.onCancel = () async => sub.cancel();
+    });
+  }
 
   @override
-  Stream<int> streamOpenReportsCount() => Stream<int>.value(0);
+  Stream<int> streamUnreadSupportForAdminCount() {
+    unreadSupportStreamCalls += 1;
+    return Stream<int>.multi((controller) {
+      controller.add(_supportBadgeCount);
+      final sub = _supportBadges.stream.listen(controller.add);
+      controller.onCancel = () async => sub.cancel();
+    });
+  }
+
+  @override
+  Stream<int> streamOpenReportsCount() {
+    openReportsStreamCalls += 1;
+    return Stream<int>.multi((controller) {
+      controller.add(_reportsBadgeCount);
+      final sub = _reportsBadges.stream.listen(controller.add);
+      controller.onCancel = () async => sub.cancel();
+    });
+  }
+
+  @override
+  Future<void> markSectionSeen(String section) async {
+    markedSections.add(section);
+    switch (section) {
+      case AdminService.moderationSection:
+        _moderationBadgeCount = 0;
+        _moderationBadges.add(0);
+        break;
+      case AdminService.supportSection:
+        _supportBadgeCount = 0;
+        _supportBadges.add(0);
+        break;
+      case AdminService.reportsSection:
+        _reportsBadgeCount = 0;
+        _reportsBadges.add(0);
+        break;
+    }
+  }
 
   @override
   Future<Map<String, dynamic>> dashboardStats(
@@ -231,6 +437,7 @@ class _FakeAdminService extends AdminService {
     String? status,
     bool forceRefresh = false,
   }) async {
+    listingsCalls += 1;
     if (status == 'all') {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       return <String, dynamic>{

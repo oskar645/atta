@@ -146,6 +146,14 @@ let AdminSupportController = class AdminSupportController {
         });
         return this.supportService.sendMessageAsAdmin(ticketId, body.text, body.imageUrl ?? body.image_url);
     }
+    contactUser(body) {
+        return this.supportService.openTicketForAdminContact({
+            userId: body.user_id ?? body.userId,
+            name: body.name,
+            subject: body.subject,
+            text: body.text,
+        });
+    }
     closeTicket(ticketId) {
         return this.supportService.closeTicketForAdmin(ticketId);
     }
@@ -172,6 +180,13 @@ __decorate([
     __metadata("design:paramtypes", [String, send_support_message_dto_1.SendSupportMessageDto]),
     __metadata("design:returntype", void 0)
 ], AdminSupportController.prototype, "sendMessage", null);
+__decorate([
+    (0, common_1.Post)('contact-user'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AdminSupportController.prototype, "contactUser", null);
 __decorate([
     (0, common_1.Patch)(':id/close'),
     __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),

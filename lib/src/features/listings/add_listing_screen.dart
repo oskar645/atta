@@ -104,13 +104,14 @@ class _AddListingScreenState extends State<AddListingScreen> {
   String _clothesType = 'Верхняя одежда';
 
   // ✅ доп. селекты для авто
-  String _carBody = 'Седан';
-  String _carFuel = 'Бензин';
-  String _carTransmission = 'Автомат';
-  String _carDrive = 'Передний';
-  String _carCondition = 'Все';
-  String _carColor = 'Чёрный';
+  String? _carBody;
+  String? _carFuel;
+  String? _carTransmission;
+  String? _carDrive;
+  String? _carCondition;
+  String? _carColor;
   bool? _carCleared; // растаможен (null = не указано)
+  String? _carPts;
 
   final Map<String, String> _deliveryNames = const {
     'cdek': 'СДЭК',
@@ -135,6 +136,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool get _isElectronics => _category == 'Электроника';
   bool get _isRealEstate => _category == 'Недвижимость';
   bool get _isClothes => _category == 'Одежда';
+  String _categoryLabel(String value) => value == 'Авто' ? 'Транспорт' : value;
   bool get _isUploadingPhotos => _photoItems.any(
         (item) =>
             item.state == _ListingDraftPhotoState.preparing ||
@@ -193,6 +195,13 @@ class _AddListingScreenState extends State<AddListingScreen> {
     'Все',
     'Битые',
     'Не битый',
+  ];
+
+  static const _ptsTypes = <String>[
+    'Оригинал',
+    'Дубликат',
+    'Электронный',
+    'Нет',
   ];
 
   static const _engineVolumes = <String>[
@@ -778,13 +787,14 @@ class _AddListingScreenState extends State<AddListingScreen> {
     _carVin.clear();
     _carNote.clear();
 
-    _carBody = 'Седан';
-    _carFuel = 'Бензин';
-    _carTransmission = 'Автомат';
-    _carDrive = 'Передний';
-    _carCondition = 'Все';
-    _carColor = 'Чёрный';
+    _carBody = null;
+    _carFuel = null;
+    _carTransmission = null;
+    _carDrive = null;
+    _carCondition = null;
+    _carColor = null;
     _carCleared = null;
+    _carPts = null;
 
     // ✅ сброс недвижимость/одежда
     _dealType = 'Продажа';
@@ -888,14 +898,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
               if (step == 0) return kAutoBrandsPopular;
               if (step == 1) {
                 if (brand == null) return const [];
-                final models = kAutoModels[brand!];
-                if (models == null || models.isEmpty) {
-                  return const [kAutoCustomModelLabel];
-                }
-                return models;
+                return autoModelsForBrand(brand);
               }
-              final key = '${brand ?? ''}|${model ?? ''}';
-              final gens = kAutoGenerations[key] ?? const [];
+              final gens = autoGenerationsForBrandModel(brand, model);
               return [
                 kAutoSkipGenerationLabel,
                 ...gens,
@@ -905,9 +910,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
             final items = currentItems()
                 .where(
-                  (x) => q.trim().isEmpty
-                      ? true
-                      : x.toLowerCase().contains(q.trim().toLowerCase()),
+                  (x) => step == 0
+                      ? autoBrandMatchesQuery(x, q)
+                      : q.trim().isEmpty
+                          ? true
+                          : x.toLowerCase().contains(q.trim().toLowerCase()),
                 )
                 .toList();
 
@@ -926,7 +933,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   v = custom;
                 }
                 setM(() {
-                  brand = v;
+                  brand = canonicalAutoBrand(v);
                   model = null;
                   gen = null;
                   step = 1;
@@ -1208,8 +1215,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   // ================== СОХРАНЕНИЕ ==================
   bool _validInt(String s) => int.tryParse(s.trim()) != null;
-  bool _validDouble(String s) =>
-      double.tryParse(s.trim().replaceAll(',', '.')) != null;
 
   List<String> _itemsWithCurrentValue(List<String> items, String current) {
     final normalized = current.trim().replaceAll(',', '.');
@@ -1328,13 +1333,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
     final phone = _phone.text.trim();
     final price = parseFormattedPrice(_price.text);
 
-    if (_isPassengerCar && (_autoBrand == null || _autoModel == null)) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Выберите марку и модель')));
-      return;
-    }
-
     if (title.isEmpty || desc.isEmpty || price <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Заполните название, описание и цену')),
@@ -1375,19 +1373,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
     // ✅ обязательные авто поля
     CarSpecs? car;
     if (_isAuto) {
-      if (!_validInt(_carYear.text) || !_validInt(_carMileage.text)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Заполните авто: год и пробег',
-            ),
-          ),
-        );
-        return;
-      }
-
-      final year = int.parse(_carYear.text.trim());
-      final mileage = int.parse(_carMileage.text.trim());
+      final year =
+          _validInt(_carYear.text) ? int.parse(_carYear.text.trim()) : null;
+      final mileage = _validInt(_carMileage.text)
+          ? int.parse(_carMileage.text.trim())
+          : null;
       final engine = _carEngine.text.trim().isEmpty
           ? null
           : parseEngineVolumeInput(_carEngine.text);
@@ -1422,6 +1412,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
         condition: _carCondition,
         color: _carColor,
         isCleared: _carCleared,
+        pts: _carPts,
         owners: owners,
         vin: vin,
         note: note,
@@ -1580,7 +1571,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   Widget _drop({
     required String label,
-    required String value,
+    required String? value,
     required List<String> items,
     required ValueChanged<String?> onChanged,
   }) {
@@ -1628,7 +1619,12 @@ class _AddListingScreenState extends State<AddListingScreen> {
           DropdownButtonFormField<String>(
             initialValue: _category,
             items: categories
-                .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                .map(
+                  (c) => DropdownMenuItem(
+                    value: c,
+                    child: Text(_categoryLabel(c)),
+                  ),
+                )
                 .toList(),
             onChanged: (v) {
               setState(() {
@@ -1795,25 +1791,26 @@ class _AddListingScreenState extends State<AddListingScreen> {
             TextField(
               controller: _carMileage,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Пробег (км)'),
+              decoration:
+                  const InputDecoration(labelText: 'Пробег (необязательно)'),
             ),
             const SizedBox(height: 12),
             _drop(
-              label: 'Кузов',
+              label: 'Кузов (необязательно)',
               value: _carBody,
               items: _bodyTypes,
-              onChanged: (v) => setState(() => _carBody = v ?? _carBody),
+              onChanged: (v) => setState(() => _carBody = v),
             ),
             const SizedBox(height: 12),
             _drop(
-              label: 'Топливо',
+              label: 'Топливо (необязательно)',
               value: _carFuel,
               items: _fuelTypes,
-              onChanged: (v) => setState(() => _carFuel = v ?? _carFuel),
+              onChanged: (v) => setState(() => _carFuel = v),
             ),
             const SizedBox(height: 12),
             _selectTile(
-              title: 'Объём двигателя',
+              title: 'Объём двигателя (необязательно)',
               value: _carEngine.text.trim().isEmpty
                   ? ''
                   : formatEngineVolume(parseEngineVolumeInput(_carEngine.text)),
@@ -1844,33 +1841,38 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ),
             const SizedBox(height: 12),
             _drop(
-              label: 'Коробка передач',
+              label: 'Коробка (необязательно)',
               value: _carTransmission,
               items: _transmissions,
-              onChanged: (v) =>
-                  setState(() => _carTransmission = v ?? _carTransmission),
+              onChanged: (v) => setState(() => _carTransmission = v),
             ),
             const SizedBox(height: 12),
             _drop(
-              label: 'Привод',
+              label: 'Привод (необязательно)',
               value: _carDrive,
               items: _drives,
-              onChanged: (v) => setState(() => _carDrive = v ?? _carDrive),
+              onChanged: (v) => setState(() => _carDrive = v),
             ),
             const SizedBox(height: 12),
             _drop(
-              label: 'Состояние',
+              label: 'Состояние (необязательно)',
               value: _carCondition,
               items: _conditions,
-              onChanged: (v) =>
-                  setState(() => _carCondition = v ?? _carCondition),
+              onChanged: (v) => setState(() => _carCondition = v),
             ),
             const SizedBox(height: 12),
             _drop(
-              label: 'Цвет',
+              label: 'Цвет (необязательно)',
               value: _carColor,
               items: _colors,
-              onChanged: (v) => setState(() => _carColor = v ?? _carColor),
+              onChanged: (v) => setState(() => _carColor = v),
+            ),
+            const SizedBox(height: 12),
+            _drop(
+              label: 'ПТС (необязательно)',
+              value: _carPts,
+              items: _ptsTypes,
+              onChanged: (v) => setState(() => _carPts = v),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(

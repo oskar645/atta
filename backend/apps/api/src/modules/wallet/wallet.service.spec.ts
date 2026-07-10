@@ -279,13 +279,13 @@ test('manual admin test bonus credits only once and stores russian description',
 
   const first = await service.accrueManualBonusIfNeeded('user-1', {
     amount: 5000,
-    reference: 'ADMIN_TEST_BONUS_5000_V1',
-    description: 'Тестовое пополнение администратора',
+    reference: 'ADMIN_TEST_BONUS_5000_2026_07',
+    description: 'Тестовые бонусы от администрации ATTA',
   });
   const second = await service.accrueManualBonusIfNeeded('user-1', {
     amount: 5000,
-    reference: 'ADMIN_TEST_BONUS_5000_V1',
-    description: 'Тестовое пополнение администратора',
+    reference: 'ADMIN_TEST_BONUS_5000_2026_07',
+    description: 'Тестовые бонусы от администрации ATTA',
   });
 
   assert.equal(first.applied, true);
@@ -296,15 +296,15 @@ test('manual admin test bonus credits only once and stores russian description',
     state.transactions.filter(
       (item) =>
         item.reason === WalletTransactionReason.RECURRING_BONUS &&
-        item.metadata.reference === 'ADMIN_TEST_BONUS_5000_V1',
+        item.metadata.reference === 'ADMIN_TEST_BONUS_5000_2026_07',
     ).length,
     1,
   );
   assert.equal(
     state.transactions.find(
-      (item) => item.metadata.reference === 'ADMIN_TEST_BONUS_5000_V1',
+      (item) => item.metadata.reference === 'ADMIN_TEST_BONUS_5000_2026_07',
     )?.metadata.description,
-    'Тестовое пополнение администратора',
+    'Тестовые бонусы от администрации ATTA',
   );
 });
 

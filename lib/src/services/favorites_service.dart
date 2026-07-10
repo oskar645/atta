@@ -8,17 +8,23 @@ import 'package:atta/src/services/auth/token_storage.dart';
 class FavoritesService {
   FavoritesService({
     FavoritesApi? api,
-  }) : _api = api ?? FavoritesApi(_apiClient);
+    Duration requestTimeout = const Duration(seconds: 12),
+  })  : _api = api ?? FavoritesApi(_apiClient),
+        _requestTimeout = requestTimeout;
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
 
   final FavoritesApi _api;
+  final Duration _requestTimeout;
   final Map<String, Set<String>> _cache = <String, Set<String>>{};
   final Map<String, StreamController<Set<String>>> _controllers =
       <String, StreamController<Set<String>>>{};
+  final Map<String, StreamController<bool>> _listingControllers =
+      <String, StreamController<bool>>{};
   final Map<String, Future<Set<String>>> _refreshInFlight =
       <String, Future<Set<String>>>{};
+  final Map<String, Object> _lastRefreshErrorByUser = <String, Object>{};
   final Map<String, bool> _confirmedStateByKey = <String, bool>{};
   final Map<String, bool> _desiredStateByKey = <String, bool>{};
   final Map<String, Future<void>> _toggleSyncInFlight =
@@ -26,6 +32,21 @@ class FavoritesService {
 
   Set<String> peekFavoriteIds(String uid) {
     return Set<String>.from(_cache[uid] ?? const <String>{});
+  }
+
+  bool isFavorite(String uid, String listingId) {
+    final normalizedUid = uid.trim();
+    final normalizedListingId = listingId.trim();
+    if (normalizedUid.isEmpty || normalizedListingId.isEmpty) return false;
+    return (_cache[normalizedUid] ?? const <String>{}).contains(
+      normalizedListingId,
+    );
+  }
+
+  Object? lastRefreshErrorForUser(String uid) {
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) return null;
+    return _lastRefreshErrorByUser[normalizedUid];
   }
 
   Future<Set<String>> getFavoriteIds(String uid) async {
@@ -42,8 +63,49 @@ class FavoritesService {
     if (cached != null) {
       yield Set<String>.from(cached);
     } else {
-      final fresh = await refreshFavoriteIds(uid);
-      yield Set<String>.from(fresh);
+      try {
+        final fresh = await refreshFavoriteIds(uid);
+        yield Set<String>.from(fresh);
+      } catch (error) {
+        _lastRefreshErrorByUser[uid.trim()] = error;
+        yield Set<String>.from(_cache[uid.trim()] ?? const <String>{});
+      }
+    }
+    yield* controller.stream;
+  }
+
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    final normalizedUid = uid.trim();
+    return Stream<Set<String>>.multi(
+      (controller) {
+        controller
+            .add(Set<String>.from(_cache[normalizedUid] ?? const <String>{}));
+        final sub = _controllerFor(normalizedUid).stream.listen(
+              controller.add,
+              onError: controller.addError,
+            );
+        controller.onCancel = () async {
+          await sub.cancel();
+        };
+      },
+      isBroadcast: true,
+    );
+  }
+
+  Stream<bool> streamIsFavorite(String uid, String listingId) async* {
+    final normalizedUid = uid.trim();
+    final normalizedListingId = listingId.trim();
+    if (normalizedUid.isEmpty || normalizedListingId.isEmpty) {
+      yield false;
+      return;
+    }
+    final controller =
+        _listingControllerFor(normalizedUid, normalizedListingId);
+    if (_cache.containsKey(normalizedUid)) {
+      yield isFavorite(normalizedUid, normalizedListingId);
+    } else {
+      await refreshFavoriteIds(normalizedUid);
+      yield isFavorite(normalizedUid, normalizedListingId);
     }
     yield* controller.stream;
   }
@@ -57,13 +119,17 @@ class FavoritesService {
     final normalizedListingId = listingId.trim();
     if (normalizedUid.isEmpty || normalizedListingId.isEmpty) return;
     final previous = Set<String>.from(_cache[uid] ?? const <String>{});
-    final next = Set<String>.from(previous);
     if (makeFavorite) {
-      next.add(normalizedListingId);
+      final next = <String>{
+        normalizedListingId,
+        ...previous.where((id) => id != normalizedListingId),
+      };
+      _publish(uid, next);
     } else {
+      final next = Set<String>.from(previous);
       next.remove(normalizedListingId);
+      _publish(uid, next);
     }
-    _publish(uid, next);
     final key = _favoriteKey(normalizedUid, normalizedListingId);
     _confirmedStateByKey.putIfAbsent(
       key,
@@ -92,33 +158,74 @@ class FavoritesService {
 
   Future<Set<String>> refreshFavoriteIds(String uid) async {
     final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) {
+      _debug('Favorites load skipped reason=no_user');
+      return const <String>{};
+    }
     final existing = _refreshInFlight[normalizedUid];
     if (existing != null) {
+      _debug('Favorites load skipped reason=in_flight user=$normalizedUid');
       return existing;
     }
-    final future = _fetchFavoriteIds();
+    _debug('Favorites load start user=$normalizedUid');
+    final future = _refreshFavoriteIdsSafe(normalizedUid);
     _refreshInFlight[normalizedUid] = future;
-    final fresh = await future.whenComplete(() {
+    try {
+      return await future;
+    } finally {
       if (identical(_refreshInFlight[normalizedUid], future)) {
         _refreshInFlight.remove(normalizedUid);
+        _debug('Favorites inFlight cleared user=$normalizedUid');
       }
-    });
-    final previous = Set<String>.from(_cache[normalizedUid] ?? const <String>{});
+    }
+  }
+
+  Future<Set<String>> forceRefreshFavoriteIds(String uid) {
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isNotEmpty) {
+      _refreshInFlight.remove(normalizedUid);
+    }
+    return refreshFavoriteIds(normalizedUid);
+  }
+
+  Future<Set<String>> _refreshFavoriteIdsSafe(String normalizedUid) async {
+    late final Set<String> fresh;
+    try {
+      fresh = await _fetchFavoriteIds(normalizedUid);
+      _lastRefreshErrorByUser.remove(normalizedUid);
+    } catch (error) {
+      _lastRefreshErrorByUser[normalizedUid] = error;
+      return Set<String>.from(_cache[normalizedUid] ?? const <String>{});
+    }
+    final previous =
+        Set<String>.from(_cache[normalizedUid] ?? const <String>{});
     for (final listingId in {...previous, ...fresh}) {
       _confirmedStateByKey[_favoriteKey(normalizedUid, listingId)] =
           fresh.contains(listingId);
     }
-    _publish(uid, fresh);
+    _publish(normalizedUid, fresh);
+    _debug(
+      fresh.isEmpty
+          ? 'Favorites load empty'
+          : 'Favorites load success count=${fresh.length}',
+    );
     return Set<String>.from(fresh);
   }
 
-  Future<Set<String>> _fetchFavoriteIds() async {
-    final response = await _api.list();
-    final raw = response['favorite_ids'];
-    if (raw is List) {
-      return raw.map((item) => item.toString()).toSet();
+  Future<Set<String>> _fetchFavoriteIds(String uid) async {
+    try {
+      final response = await _api.list().timeout(_requestTimeout);
+      final raw = response['favorite_ids'];
+      if (raw is List) {
+        return raw.map((item) => item.toString()).toSet();
+      }
+      return <String>{};
+    } catch (error) {
+      _debug('Favorites load error message=$error user=$uid');
+      rethrow;
+    } finally {
+      _debug('Favorites load finally loading=false user=$uid');
     }
-    return <String>{};
   }
 
   StreamController<Set<String>> _controllerFor(String uid) {
@@ -128,10 +235,24 @@ class FavoritesService {
     );
   }
 
+  StreamController<bool> _listingControllerFor(String uid, String listingId) {
+    return _listingControllers.putIfAbsent(
+      _favoriteKey(uid, listingId),
+      () => StreamController<bool>.broadcast(),
+    );
+  }
+
   void _publish(String uid, Set<String> value) {
+    final previous = Set<String>.from(_cache[uid] ?? const <String>{});
     final next = Set<String>.from(value);
     _cache[uid] = next;
     _controllerFor(uid).add(Set<String>.from(next));
+    for (final listingId in {...previous, ...next}) {
+      final wasFavorite = previous.contains(listingId);
+      final isFavoriteNow = next.contains(listingId);
+      if (wasFavorite == isFavoriteNow) continue;
+      _listingControllerFor(uid, listingId).add(isFavoriteNow);
+    }
   }
 
   String _favoriteKey(String uid, String listingId) => '$uid::$listingId';
@@ -159,8 +280,8 @@ class FavoritesService {
         _confirmedStateByKey[key] = desired;
         lastError = null;
       } on ApiException catch (error) {
-        final alreadyApplied =
-            (desired && error.statusCode == 409) || (!desired && error.statusCode == 404);
+        final alreadyApplied = (desired && error.statusCode == 409) ||
+            (!desired && error.statusCode == 404);
         if (alreadyApplied) {
           _confirmedStateByKey[key] = desired;
           continue;
@@ -201,11 +322,24 @@ class FavoritesService {
   void resetSession() {
     _cache.clear();
     _refreshInFlight.clear();
+    _lastRefreshErrorByUser.clear();
     _confirmedStateByKey.clear();
     _desiredStateByKey.clear();
     _toggleSyncInFlight.clear();
     for (final entry in _controllers.entries) {
       entry.value.add(const <String>{});
     }
+    for (final entry in _listingControllers.entries) {
+      entry.value.add(false);
+    }
+  }
+
+  void _debug(String message) {
+    assert(() {
+      // Debug-only diagnostics for stuck private tabs.
+      // ignore: avoid_print
+      print(message);
+      return true;
+    }());
   }
 }

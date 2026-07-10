@@ -68,12 +68,36 @@ function createApprovedListing(
   };
 }
 
+function createPromotion(
+  type: PromotionType,
+  createdAt: string,
+  endsAt = '2099-06-20T00:00:00.000Z',
+  status = PromotionStatus.ACTIVE,
+) {
+  const created = new Date(createdAt);
+  return {
+    id: `promotion-${type}-${created.getTime()}`,
+    listingId: 'listing-id',
+    userId: ownerUser.userId,
+    type,
+    costBonus: type === PromotionType.VIP ? 150 : 35,
+    startsAt: created,
+    endsAt: new Date(endsAt),
+    status,
+    impressionsCount: 0,
+    clicksCount: 0,
+    createdAt: created,
+    updatedAt: created,
+  };
+}
+
 function createService(overrides?: {
   findOwnerById?: () => Promise<unknown>;
   create?: (args: Record<string, unknown>) => Promise<unknown>;
   findUnique?: () => Promise<unknown>;
   update?: (args: Record<string, unknown>) => Promise<unknown>;
   findMany?: (args?: Record<string, unknown>) => Promise<unknown>;
+  findFavorites?: (args?: Record<string, unknown>) => Promise<unknown>;
 }) {
   const prisma = {
     user: {
@@ -175,6 +199,9 @@ function createService(overrides?: {
           promotions: [],
           ...args,
         })),
+    },
+    favorite: {
+      findMany: overrides?.findFavorites ?? (async () => []),
     },
     $transaction: async <T>(handler: () => Promise<T>) => handler(),
   };
@@ -528,6 +555,27 @@ test('public feed filters out blocked and deleted owners at query level', async 
   });
 });
 
+test('my listings include favorites count without exposing favorite users', async () => {
+  const service = createService({
+    findMany: async () => [
+      createApprovedListing('listing-1', '2026-06-19T10:00:05.000Z'),
+      createApprovedListing('listing-2', '2026-06-19T10:00:10.000Z'),
+    ],
+    findFavorites: async () => [
+      { listingId: 'listing-1' },
+      { listingId: 'listing-1' },
+      { listingId: 'listing-2' },
+    ],
+  });
+
+  const response = await service.findMy(ownerUser);
+
+  assert.equal(response.items[0]?.favorites_count, 1);
+  assert.equal(response.items[1]?.favorites_count, 2);
+  assert.equal('user_id' in response.items[0]!, false);
+  assert.equal('favorite_users' in response.items[0]!, false);
+});
+
 test('public listing with blocked owner is hidden from strangers', async () => {
   const service = createService({
     findUnique: async () => ({
@@ -710,100 +758,86 @@ test('public feed does not crash when listing promotions are missing', async () 
   );
 });
 
-test('active bump sorts listing above normal without crashing', async () => {
+test('public feed keeps first 8 regular listings before paid block', async () => {
+  const ordinary = Array.from({ length: 10 }, (_, index) =>
+    createApprovedListing(
+      `listing-${10 - index}`,
+      `2026-06-19T10:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+    ),
+  );
+  const boosted = {
+    ...createApprovedListing('listing-boosted', '2026-06-19T09:10:00.000Z'),
+    promotions: [createPromotion(PromotionType.BUMP, '2026-06-19T11:00:00.000Z')],
+  };
+  const service = createService({
+    findMany: async () => [...ordinary, boosted],
+  });
+
+  const response = await service.findAll();
+
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    [
+      'listing-10',
+      'listing-9',
+      'listing-8',
+      'listing-7',
+      'listing-6',
+      'listing-5',
+      'listing-4',
+      'listing-3',
+      'listing-boosted',
+      'listing-2',
+      'listing-1',
+    ],
+  );
+});
+
+test('paid block sorts vip above bump and newer activations first', async () => {
   const service = createService({
     findMany: async () => [
+      ...Array.from({ length: 8 }, (_, index) =>
+        createApprovedListing(
+          `listing-head-${index + 1}`,
+          `2026-06-19T10:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+        ),
+      ),
       {
-        id: 'listing-normal',
-        ownerId: ownerUser.userId,
-        ownerEmail: 'owner@example.com',
-        ownerName: 'Owner',
-        title: 'Normal',
-        description: '',
-        category: 'misc',
-        subcategory: '',
-        price: BigInt(0),
-        phone: '',
-        phoneHidden: false,
-        city: '',
-        address: '',
-        locationJson: {},
-        delivery: {},
-        car: null,
-        status: ListingStatus.APPROVED,
-        rejectionReason: '',
-        moderationNote: null,
-        moderatedBy: null,
-        moderatedAt: null,
-        publishedAt: new Date('2026-06-19T10:00:10.000Z'),
-        archivedAt: null,
-        deletedAt: null,
-        viewCount: 0,
-        createdAt: new Date('2026-06-19T09:00:00.000Z'),
-        updatedAt: new Date('2026-06-19T12:00:00.000Z'),
-        owner: null,
-        photos: [],
-        promotions: [],
+        ...createApprovedListing('listing-bump', '2026-06-19T08:00:00.000Z'),
+        promotions: [createPromotion(PromotionType.BUMP, '2026-06-19T11:00:00.000Z')],
       },
       {
-        id: 'listing-bump',
-        ownerId: ownerUser.userId,
-        ownerEmail: 'owner@example.com',
-        ownerName: 'Owner',
-        title: 'Boosted',
-        description: '',
-        category: 'misc',
-        subcategory: '',
-        price: BigInt(0),
-        phone: '',
-        phoneHidden: false,
-        city: '',
-        address: '',
-        locationJson: {},
-        delivery: {},
-        car: null,
-        status: ListingStatus.APPROVED,
-        rejectionReason: '',
-        moderationNote: null,
-        moderatedBy: null,
-        moderatedAt: null,
-        publishedAt: new Date('2026-06-19T09:00:10.000Z'),
-        archivedAt: null,
-        deletedAt: null,
-        viewCount: 0,
-        createdAt: new Date('2026-06-19T08:00:00.000Z'),
-        updatedAt: new Date('2026-06-19T08:30:00.000Z'),
-        owner: null,
-        photos: [],
+        ...createApprovedListing('listing-vip-new', '2026-06-19T07:00:00.000Z'),
+        promotions: [createPromotion(PromotionType.VIP, '2026-06-19T12:00:00.000Z')],
+      },
+      {
+        ...createApprovedListing('listing-vip-old', '2026-06-19T06:00:00.000Z'),
+        promotions: [createPromotion(PromotionType.VIP, '2026-06-19T10:30:00.000Z')],
+      },
+    ],
+  });
+
+  const response = await service.findAll();
+
+  assert.deepEqual(response.items.slice(8, 11).map((item: { id: string }) => item.id), [
+    'listing-vip-new',
+    'listing-vip-old',
+    'listing-bump',
+  ]);
+});
+
+test('expired paid promotions do not affect public feed order', async () => {
+  const service = createService({
+    findMany: async () => [
+      createApprovedListing('listing-fresh', '2026-06-19T10:10:00.000Z'),
+      {
+        ...createApprovedListing('listing-expired', '2026-06-19T09:10:00.000Z'),
         promotions: [
-          {
-            id: 'promotion-1',
-            listingId: 'listing-bump',
-            userId: ownerUser.userId,
-            type: PromotionType.BUMP,
-            costBonus: 25,
-            startsAt: new Date('2026-06-19T10:00:00.000Z'),
-            endsAt: new Date('2099-06-19T10:00:00.000Z'),
-            status: PromotionStatus.ACTIVE,
-            impressionsCount: 0,
-            clicksCount: 0,
-            createdAt: new Date('2026-06-19T11:00:00.000Z'),
-            updatedAt: new Date('2026-06-19T11:00:00.000Z'),
-          },
-          {
-            id: 'promotion-vip',
-            listingId: 'listing-bump',
-            userId: ownerUser.userId,
-            type: PromotionType.VIP,
-            costBonus: 60,
-            startsAt: new Date('2026-06-19T10:00:00.000Z'),
-            endsAt: new Date('2099-06-19T10:00:00.000Z'),
-            status: PromotionStatus.ACTIVE,
-            impressionsCount: 0,
-            clicksCount: 0,
-            createdAt: new Date('2026-06-19T10:30:00.000Z'),
-            updatedAt: new Date('2026-06-19T10:30:00.000Z'),
-          },
+          createPromotion(
+            PromotionType.VIP,
+            '2026-06-19T11:00:00.000Z',
+            '2026-06-19T11:30:00.000Z',
+          ),
         ],
       },
     ],
@@ -813,7 +847,62 @@ test('active bump sorts listing above normal without crashing', async () => {
 
   assert.deepEqual(
     response.items.map((item: { id: string }) => item.id),
-    ['listing-bump', 'listing-normal'],
+    ['listing-fresh', 'listing-expired'],
+  );
+});
+
+test('public feed keeps paid block stable across pagination without duplicates', async () => {
+  const ordinary = Array.from({ length: 10 }, (_, index) =>
+    createApprovedListing(
+      `listing-${10 - index}`,
+      `2026-06-19T10:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+    ),
+  );
+  const paid = [
+    {
+      ...createApprovedListing('listing-vip', '2026-06-19T06:00:00.000Z'),
+      promotions: [createPromotion(PromotionType.VIP, '2026-06-19T12:00:00.000Z')],
+    },
+    {
+      ...createApprovedListing('listing-bump', '2026-06-19T05:00:00.000Z'),
+      promotions: [createPromotion(PromotionType.BUMP, '2026-06-19T11:00:00.000Z')],
+    },
+  ];
+  const service = createService({
+    findMany: async () => [...ordinary, ...paid],
+  });
+
+  const firstPage = await service.findAll({ limit: 10 });
+  const secondPage = await service.findAll({
+    limit: 10,
+    cursor: firstPage.nextCursor ?? undefined,
+  });
+
+  assert.deepEqual(
+    firstPage.items.map((item: { id: string }) => item.id),
+    [
+      'listing-10',
+      'listing-9',
+      'listing-8',
+      'listing-7',
+      'listing-6',
+      'listing-5',
+      'listing-4',
+      'listing-3',
+      'listing-vip',
+      'listing-bump',
+    ],
+  );
+  assert.deepEqual(
+    secondPage.items.map((item: { id: string }) => item.id),
+    ['listing-2', 'listing-1'],
+  );
+  assert.equal(
+    new Set([
+      ...firstPage.items.map((item: { id: string }) => item.id),
+      ...secondPage.items.map((item: { id: string }) => item.id),
+    ]).size,
+    12,
   );
 });
 

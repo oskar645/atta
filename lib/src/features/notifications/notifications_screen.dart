@@ -2,6 +2,7 @@ import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/network_resilience.dart';
+import 'package:atta/src/services/notification_navigation_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
@@ -10,6 +11,33 @@ import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
+import 'package:url_launcher/url_launcher.dart';
+
+typedef NotificationUrlOpener = Future<bool> Function(Uri uri);
+
+@visibleForTesting
+NotificationUrlOpener? debugNotificationUrlOpener;
+
+String notificationActionLabelForUrl(String rawUrl) {
+  final uri = Uri.tryParse(rawUrl.trim());
+  final host = (uri?.host ?? '').trim().toLowerCase();
+  final normalizedHost = host.startsWith('www.') ? host.substring(4) : host;
+  if (normalizedHost == 'instagram.com' ||
+      normalizedHost.endsWith('.instagram.com')) {
+    return 'Открыть в Instagram';
+  }
+  if (normalizedHost == 't.me' ||
+      normalizedHost == 'telegram.me' ||
+      normalizedHost.endsWith('.telegram.me')) {
+    return 'Открыть в Telegram';
+  }
+  if (normalizedHost == 'wa.me' ||
+      normalizedHost == 'whatsapp.com' ||
+      normalizedHost.endsWith('.whatsapp.com')) {
+    return 'Открыть в WhatsApp';
+  }
+  return 'Открыть ссылку';
+}
 
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
@@ -111,126 +139,17 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (_, i) {
         final n = items[i];
-        final id = (n['id'] ?? '').toString();
-        final title = (n['title'] ?? '').toString();
-        final body = (n['body'] ?? '').toString();
-        final scope = (n['scope'] ?? '').toString();
-        final isRead = n['is_read'] == true;
-        final notificationType =
-            (n['type'] ?? '').toString().trim().toLowerCase();
-        final chatId = (n['chatId'] ?? n['chat_id'] ?? '').toString().trim();
-        final senderName =
-            (n['senderName'] ?? n['sender_name'] ?? '').toString().trim();
-        final senderAvatar =
-            (n['senderAvatarUrl'] ?? n['sender_avatar_url'] ?? '')
-                .toString()
-                .trim();
-        final createdRaw = n['created_at'];
-        DateTime? created;
-        if (createdRaw is String) created = DateTime.tryParse(createdRaw);
-        if (createdRaw is DateTime) created = createdRaw;
-
-        final isPersonal = scope == 'personal';
-        final unreadPersonal = isPersonal && !isRead;
-
-        return Card(
-          child: ListTile(
-            leading: Icon(
-              unreadPersonal
-                  ? Icons.mark_email_unread
-                  : Icons.notifications_none,
-              color: unreadPersonal
-                  ? Colors.red
-                  : Theme.of(context).colorScheme.outline,
-            ),
-            title: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                  ),
-                ),
-                if (showScopeTag)
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isPersonal
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      isPersonal ? 'Личное' : 'Общее',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 4),
-                Text(body),
-                if (created != null) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    timeago.format(created, locale: 'ru'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.outline,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            trailing: isAdmin
-                ? IconButton(
-                    tooltip: 'Удалить уведомление',
-                    icon: const Icon(
-                      Icons.delete_outline,
-                      color: Colors.red,
-                      size: 22,
-                    ),
-                    onPressed: () => _confirmDeleteNotification(
-                      notifications: notifications,
-                      id: id,
-                      title: title,
-                    ),
-                  )
-                : null,
-            onTap: notificationType == 'chat_message'
-                ? () async {
-                    if (allowMarkRead && unreadPersonal) {
-                      await notifications.markPersonalReadById(id);
-                      if (!mounted) return;
-                    }
-                    if (chatId.isNotEmpty) {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => ChatScreen(
-                            chatId: chatId,
-                            initialOtherUserName: senderName,
-                            initialOtherUserAvatar: senderAvatar,
-                          ),
-                        ),
-                      );
-                      return;
-                    }
-                    context.read<MainShellController>().selectTab(3);
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                  }
-                : null,
+        return _NotificationListItem(
+          notification: n,
+          notifications: notifications,
+          allowMarkRead: allowMarkRead,
+          isAdmin: isAdmin,
+          showScopeTag: showScopeTag,
+          onDelete: ({required id, required title}) =>
+              _confirmDeleteNotification(
+            notifications: notifications,
+            id: id,
+            title: title,
           ),
         );
       },
@@ -432,6 +351,256 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           ),
         );
       },
+    );
+  }
+}
+
+class _NotificationListItem extends StatefulWidget {
+  const _NotificationListItem({
+    required this.notification,
+    required this.notifications,
+    required this.allowMarkRead,
+    required this.isAdmin,
+    required this.showScopeTag,
+    required this.onDelete,
+  });
+
+  final Map<String, dynamic> notification;
+  final NotificationsService notifications;
+  final bool allowMarkRead;
+  final bool isAdmin;
+  final bool showScopeTag;
+  final Future<void> Function({
+    required String id,
+    required String title,
+  }) onDelete;
+
+  @override
+  State<_NotificationListItem> createState() => _NotificationListItemState();
+}
+
+class _NotificationListItemState extends State<_NotificationListItem> {
+  bool _openingUrl = false;
+
+  Map<String, dynamic> get _payload =>
+      NotificationNavigationService.payloadForNotification(widget.notification);
+
+  Future<void> _handleTap() async {
+    final n = widget.notification;
+    final id = (n['id'] ?? '').toString();
+    final scope = (n['scope'] ?? '').toString();
+    final isRead = n['is_read'] == true;
+    final notificationType = (n['type'] ?? '').toString().trim().toLowerCase();
+    final chatId = (n['chatId'] ?? n['chat_id'] ?? '').toString().trim();
+    final senderName =
+        (n['senderName'] ?? n['sender_name'] ?? '').toString().trim();
+    final senderAvatar = (n['senderAvatarUrl'] ?? n['sender_avatar_url'] ?? '')
+        .toString()
+        .trim();
+    final isPersonal = scope == 'personal';
+    final unreadPersonal = isPersonal && !isRead;
+
+    if (notificationType == 'chat_message') {
+      if (widget.allowMarkRead && unreadPersonal) {
+        await widget.notifications.markPersonalReadById(id);
+        if (!mounted) return;
+      }
+      if (chatId.isNotEmpty) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(
+              chatId: chatId,
+              initialOtherUserName: senderName,
+              initialOtherUserAvatar: senderAvatar,
+            ),
+          ),
+        );
+        return;
+      }
+      context.read<MainShellController>().selectTab(3);
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      return;
+    }
+    await NotificationNavigationService.handleNotificationTap(
+      context,
+      widget.notification,
+    );
+  }
+
+  Future<void> _openActionUrl() async {
+    final url = (_payload['actionUrl'] ?? _payload['action_url'] ?? '')
+        .toString()
+        .trim();
+    if (url.isEmpty || _openingUrl) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || uri.host.trim().isEmpty) {
+      showAppSnack(context, 'Не удалось открыть ссылку.', isError: true);
+      return;
+    }
+    setState(() => _openingUrl = true);
+    try {
+      final opener = debugNotificationUrlOpener;
+      final opened = opener != null
+          ? await opener(uri)
+          : await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        showAppSnack(context, 'Не удалось открыть ссылку.', isError: true);
+      }
+    } catch (_) {
+      if (mounted) {
+        showAppSnack(context, 'Не удалось открыть ссылку.', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _openingUrl = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final n = widget.notification;
+    final title = (n['title'] ?? '').toString();
+    final body = (n['body'] ?? '').toString().trim();
+    final scope = (n['scope'] ?? '').toString();
+    final isRead = n['is_read'] == true;
+    final createdRaw = n['created_at'];
+    final imageUrl =
+        (_payload['imageUrl'] ?? _payload['image_url'] ?? '').toString().trim();
+    final description = (_payload['description'] ?? '').toString().trim();
+    final actionUrl = (_payload['actionUrl'] ?? _payload['action_url'] ?? '')
+        .toString()
+        .trim();
+    DateTime? created;
+    if (createdRaw is String) created = DateTime.tryParse(createdRaw);
+    if (createdRaw is DateTime) created = createdRaw;
+
+    final isPersonal = scope == 'personal';
+    final unreadPersonal = isPersonal && !isRead;
+
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _handleTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Icon(
+                      unreadPersonal
+                          ? Icons.mark_email_unread
+                          : Icons.notifications_none,
+                      color: unreadPersonal
+                          ? Colors.red
+                          : Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                  if (widget.showScopeTag)
+                    Container(
+                      margin: const EdgeInsets.only(left: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isPersonal
+                            ? Theme.of(context).colorScheme.primaryContainer
+                            : Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        isPersonal ? 'Личное' : 'Общее',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                  if (widget.isAdmin)
+                    IconButton(
+                      tooltip: 'Удалить уведомление',
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.red,
+                        size: 22,
+                      ),
+                      onPressed: () => widget.onDelete(
+                        id: (n['id'] ?? '').toString(),
+                        title: title,
+                      ),
+                    ),
+                ],
+              ),
+              if (body.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(body),
+              ],
+              if (imageUrl.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: SizedBox(
+                    height: 180,
+                    width: double.infinity,
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              if (description.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(description),
+              ],
+              if (actionUrl.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonal(
+                    onPressed: _openingUrl ? null : _openActionUrl,
+                    child: Text(notificationActionLabelForUrl(actionUrl)),
+                  ),
+                ),
+              ],
+              if (created != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  timeago.format(created, locale: 'ru'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

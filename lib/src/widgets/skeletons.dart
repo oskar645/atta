@@ -155,7 +155,7 @@ class SkeletonListingCard extends StatelessWidget {
       ),
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
+        children: [
           AspectRatio(
             aspectRatio: 4 / 3,
             child: SkeletonBox(radius: 12),
@@ -176,6 +176,55 @@ class SkeletonListingCard extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SkeletonMyListingTile extends StatelessWidget {
+  const SkeletonMyListingTile({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: const Column(
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SkeletonBox(width: 92, height: 69, radius: 12),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SkeletonLine(height: 14),
+                    SizedBox(height: 8),
+                    SkeletonLine(width: 92, height: 18),
+                    SizedBox(height: 8),
+                    SkeletonLine(width: 84, height: 12),
+                    SizedBox(height: 6),
+                    SkeletonLine(width: 118, height: 12),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: SkeletonLine(height: 38, radius: 12)),
+              SizedBox(width: 8),
+              Expanded(child: SkeletonLine(height: 38, radius: 12)),
+            ],
           ),
         ],
       ),
@@ -362,10 +411,10 @@ class SkeletonNotificationRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return const Card(
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: EdgeInsets.all(14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             SkeletonCircle(size: 22),
             SizedBox(width: 12),
             Expanded(
@@ -393,12 +442,12 @@ class SkeletonAdminModerationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: EdgeInsets.only(bottom: 10),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             SkeletonLine(width: 180, height: 16),
             SizedBox(height: 8),
             SkeletonLine(width: 120, height: 12),

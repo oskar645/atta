@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:atta/src/app.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -63,8 +64,9 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   static const int _feedPageSize = 20;
+  static const Duration _showcaseStaleAfter = Duration(minutes: 5);
   String _category = 'Все';
   String _subcategory = 'Все';
   String _search = '';
@@ -74,6 +76,9 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ShowcaseItem> _showcaseItems = const <ShowcaseItem>[];
   bool _showcaseLoading = true;
   bool _showcaseLoadedOnce = false;
+  DateTime? _showcaseRefreshedAt;
+  Future<void>? _showcaseRefreshFuture;
+  ModalRoute<dynamic>? _route;
 
   // Avito-like location filter.
   String _location = ''; // "Москва", "Чеченская Республика" и т.п.
@@ -114,9 +119,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    attaRouteObserver.unsubscribe(this);
     widget.controller?.detach();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null && !identical(route, _route)) {
+      if (_route != null) {
+        attaRouteObserver.unsubscribe(this);
+      }
+      _route = route;
+      if (route is PageRoute<dynamic>) {
+        attaRouteObserver.subscribe(this, route);
+      }
+    }
+  }
+
+  @override
+  void didPopNext() {
+    if (_showcaseNeedsRefresh) {
+      unawaited(_refreshShowcase());
+    }
   }
 
   ListingFeedFilters get _currentFeedFilters => ListingFeedFilters(
@@ -192,18 +220,43 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _refreshShowcase() async {
+    final inFlight = _showcaseRefreshFuture;
+    if (inFlight != null) return inFlight;
+
     if (mounted) {
       setState(() {
         _showcaseLoading = true;
       });
     }
-    final items = await context.read<ShowcaseService>().getHomeShowcase();
-    if (!mounted) return;
-    setState(() {
-      _showcaseItems = items;
-      _showcaseLoading = false;
-      _showcaseLoadedOnce = true;
-    });
+    final future = _loadShowcase();
+    _showcaseRefreshFuture = future;
+    await future;
+  }
+
+  bool get _showcaseNeedsRefresh {
+    final refreshedAt = _showcaseRefreshedAt;
+    if (refreshedAt == null) return true;
+    return DateTime.now().difference(refreshedAt) >= _showcaseStaleAfter;
+  }
+
+  Future<void> _loadShowcase() async {
+    try {
+      final items = await context.read<ShowcaseService>().getHomeShowcase();
+      if (!mounted) return;
+      setState(() {
+        _showcaseItems = items;
+        _showcaseLoading = false;
+        _showcaseLoadedOnce = true;
+        _showcaseRefreshedAt = DateTime.now();
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _showcaseLoading = false;
+      });
+    } finally {
+      _showcaseRefreshFuture = null;
+    }
   }
 
   void _selectCategory(String c) {
@@ -446,10 +499,8 @@ class _HomeScreenState extends State<HomeScreen> {
             child: RefreshIndicator(
               onRefresh: _handleRefresh,
               edgeOffset: 8,
-              child: StreamBuilder<Set<String>>(
-                stream: favs.streamFavoriteIds(user.uid),
-                builder: (context, favSnap) {
-                  final favIds = favSnap.data ?? <String>{};
+              child: Builder(
+                builder: (context) {
                   if (_isInitialLoading && _feedItems.isEmpty) {
                     return const SkeletonListingGrid(
                       physics: AlwaysScrollableScrollPhysics(),
@@ -483,7 +534,6 @@ class _HomeScreenState extends State<HomeScreen> {
                         showcaseItems: _showcaseItems,
                         showcaseLoading:
                             _showcaseLoading && !_showcaseLoadedOnce,
-                        favIds: favIds,
                         history: history,
                         reviews: reviews,
                         favs: favs,
@@ -509,7 +559,6 @@ class _HomeFeedView extends StatefulWidget {
   final FeedAd? ad;
   final List<ShowcaseItem> showcaseItems;
   final bool showcaseLoading;
-  final Set<String> favIds;
   final ListingHistoryService history;
   final ReviewsService reviews;
   final FavoritesService favs;
@@ -524,7 +573,6 @@ class _HomeFeedView extends StatefulWidget {
     required this.ad,
     required this.showcaseItems,
     required this.showcaseLoading,
-    required this.favIds,
     required this.history,
     required this.reviews,
     required this.favs,
@@ -651,25 +699,17 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   }
 
   Widget _buildCard(BuildContext context, Listing item) {
-    return ListingCard(
+    return FavoriteListingCard(
       listing: item,
-      isFav: widget.favIds.contains(item.id),
+      favoritesService: widget.favs,
+      userId: widget.userId,
       isSeen: widget.history.hasViewed(item.id),
       reviews: widget.reviews,
-      onToggleFav: (makeFav) async {
-        try {
-          await widget.favs.toggleFavorite(
-            uid: widget.userId,
-            listingId: item.id,
-            makeFavorite: makeFav,
-          );
-        } catch (e) {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Не удалось изменить избранное: $e')),
-            );
-          }
-        }
+      onError: (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось изменить избранное: $error')),
+        );
       },
       onOpen: () => Navigator.of(context).push(
         MaterialPageRoute(
@@ -681,6 +721,8 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
 
   @override
   Widget build(BuildContext context) {
+    final visibleAd = widget.ad != null && widget.ad!.isVisibleNow;
+
     if (widget.items.isEmpty) {
       final showcaseItems = widget.showcaseItems;
       return CustomScrollView(
@@ -690,6 +732,17 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
           parent: BouncingScrollPhysics(),
         ),
         slivers: [
+          if (visibleAd)
+            SliverToBoxAdapter(
+              child: Padding(
+                key: _adKey,
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 2),
+                child: FeedAdBanner(
+                  ad: widget.ad!,
+                  onTap: widget.ad!.hasLink ? () => _openAd(widget.ad!) : null,
+                ),
+              ),
+            ),
           if (widget.showcaseLoading)
             const SliverToBoxAdapter(
               child: _ShowcaseSectionSkeleton(),
@@ -718,10 +771,6 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
       );
     }
 
-    final visibleAd = widget.ad != null && widget.ad!.isVisibleNow;
-    final firstChunk = visibleAd ? widget.items.take(2).toList() : widget.items;
-    final restChunk =
-        visibleAd ? widget.items.skip(2).toList() : const <Listing>[];
     final showcaseItems = widget.showcaseItems;
 
     return CustomScrollView(
@@ -731,6 +780,17 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         parent: BouncingScrollPhysics(),
       ),
       slivers: [
+        if (visibleAd)
+          SliverToBoxAdapter(
+            child: Padding(
+              key: _adKey,
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 2),
+              child: FeedAdBanner(
+                ad: widget.ad!,
+                onTap: widget.ad!.hasLink ? () => _openAd(widget.ad!) : null,
+              ),
+            ),
+          ),
         if (widget.showcaseLoading)
           const SliverToBoxAdapter(
             child: _ShowcaseSectionSkeleton(),
@@ -754,33 +814,11 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
           sliver: SliverGrid(
             gridDelegate: _gridDelegate,
             delegate: SliverChildBuilderDelegate(
-              (context, index) => _buildCard(context, firstChunk[index]),
-              childCount: firstChunk.length,
+              (context, index) => _buildCard(context, widget.items[index]),
+              childCount: widget.items.length,
             ),
           ),
         ),
-        if (visibleAd)
-          SliverToBoxAdapter(
-            child: Padding(
-              key: _adKey,
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-              child: FeedAdBanner(
-                ad: widget.ad!,
-                onTap: widget.ad!.hasLink ? () => _openAd(widget.ad!) : null,
-              ),
-            ),
-          ),
-        if (restChunk.isNotEmpty)
-          SliverPadding(
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-            sliver: SliverGrid(
-              gridDelegate: _gridDelegate,
-              delegate: SliverChildBuilderDelegate(
-                (context, index) => _buildCard(context, restChunk[index]),
-                childCount: restChunk.length,
-              ),
-            ),
-          ),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(10, 0, 10, 18),
@@ -823,28 +861,34 @@ class _ShowcaseSectionSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SkeletonBox(height: 28, width: 160, radius: 8),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 108,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: 3,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (_, __) => const SizedBox(
-                width: 164,
-                child: SkeletonBox(radius: 16),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = _homeShowcaseCardWidth(constraints.maxWidth - 24);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SkeletonBox(height: 28, width: 160, radius: 8),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: _homeShowcaseCardHeight(cardWidth),
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  physics: const NeverScrollableScrollPhysics(),
+                  padding: EdgeInsets.zero,
+                  itemCount: 3,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, __) => SizedBox(
+                    width: cardWidth,
+                    child: const SkeletonBox(radius: 16),
+                  ),
+                ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -876,53 +920,65 @@ class _ShowcaseSectionState extends State<_ShowcaseSection> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = _homeShowcaseCardWidth(constraints.maxWidth - 24);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Expanded(
-                child: Text(
-                  'Витрина ATTA',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-                ),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Витрина ATTA',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: widget.onOpenAll,
+                    child: const Text('Смотреть все'),
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: widget.onOpenAll,
-                child: const Text('Смотреть все'),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: _homeShowcaseCardHeight(cardWidth),
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.zero,
+                  itemCount: widget.items.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final item = widget.items[index];
+                    return _ShowcaseCard(
+                      key: ValueKey('home_showcase_card:$index'),
+                      width: cardWidth,
+                      item: item,
+                      onTap: () => widget.onOpenItem(item),
+                    );
+                  },
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 108,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: widget.items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (context, index) {
-                final item = widget.items[index];
-                return _ShowcaseCard(
-                  item: item,
-                  onTap: () => widget.onOpenItem(item),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
 
 class _ShowcaseCard extends StatelessWidget {
   const _ShowcaseCard({
+    super.key,
+    required this.width,
     required this.item,
     required this.onTap,
   });
 
+  final double width;
   final ShowcaseItem item;
   final VoidCallback onTap;
 
@@ -931,7 +987,7 @@ class _ShowcaseCard extends StatelessWidget {
     final photo = item.firstPhotoUrl?.trim() ?? '';
     final scheme = Theme.of(context).colorScheme;
     return SizedBox(
-      width: 136,
+      width: width,
       child: Material(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
@@ -1004,7 +1060,7 @@ class _ShowcaseCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 12,
+                          fontSize: 13,
                           fontWeight: FontWeight.w900,
                           shadows: [
                             Shadow(
@@ -1025,6 +1081,16 @@ class _ShowcaseCard extends StatelessWidget {
       ),
     );
   }
+}
+
+double _homeShowcaseCardWidth(double availableWidth) {
+  final visibleCards = availableWidth < 340 ? 2.86 : 2.72;
+  final width = (availableWidth - 16) / visibleCards;
+  return width.clamp(104.0, 138.0).toDouble();
+}
+
+double _homeShowcaseCardHeight(double width) {
+  return (width * 0.96).clamp(112.0, 128.0).toDouble();
 }
 
 class _CategoryRow extends StatelessWidget {
@@ -1284,7 +1350,6 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final listings = context.read<ListingsService>();
     final favs = context.read<FavoritesService>();
     final feedAds = context.read<FeedAdsService>();
     final history = context.watch<ListingHistoryService>();
@@ -1382,11 +1447,8 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: () => _reload(reset: true),
-              child: StreamBuilder<Set<String>>(
-                stream: favs.streamFavoriteIds(user.uid),
-                builder: (context, favSnap) {
-                  final favIds = favSnap.data ?? <String>{};
-
+              child: Builder(
+                builder: (context) {
                   if (_isInitialLoading && _items.isEmpty) {
                     return const SkeletonListingGrid(
                       physics: AlwaysScrollableScrollPhysics(),
@@ -1431,7 +1493,6 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
                         ad: adSnap.data,
                         showcaseItems: const <ShowcaseItem>[],
                         showcaseLoading: false,
-                        favIds: favIds,
                         history: history,
                         reviews: reviews,
                         favs: favs,

@@ -73,6 +73,11 @@ type FeedListingLike = {
   promotions?: PromotionLike[] | null;
 };
 
+type PaidFeedRank = {
+  tier: 'turbo' | 'vip' | 'bump' | 'none';
+  activatedAt: Date | null;
+};
+
 type FeedCursorPayload = {
   bumpAt: string | null;
   publishedAt: string | null;
@@ -80,67 +85,20 @@ type FeedCursorPayload = {
   id: string;
 };
 
-const getLatestActiveBumpAt = (promotions?: PromotionLike[] | null): Date | null => {
-  let latest: Date | null = null;
+const DEFAULT_FEED_HEAD_SIZE = 8;
 
-  for (const promotion of promotions ?? []) {
-    if (!promotion || typeof promotion !== 'object') {
-      continue;
-    }
-
-    if (promotion.type !== PromotionType.BUMP) {
-      continue;
-    }
-
-    if (promotion.status !== PromotionStatus.ACTIVE) {
-      continue;
-    }
-
-    const endsAt = promotion.endsAt instanceof Date
-      ? promotion.endsAt
-      : promotion.endsAt == null
-        ? null
-        : new Date(promotion.endsAt);
-    if (!(endsAt instanceof Date) || Number.isNaN(endsAt.getTime())) {
-      continue;
-    }
-    if (endsAt.getTime() <= Date.now()) {
-      continue;
-    }
-
-    const createdAt = promotion.createdAt instanceof Date
-      ? promotion.createdAt
-      : promotion.createdAt == null
-        ? null
-        : new Date(promotion.createdAt);
-    if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) {
-      continue;
-    }
-
-    if (latest == null || createdAt.getTime() > latest.getTime()) {
-      latest = createdAt;
-    }
+const parsePromotionDate = (value: Date | string | null | undefined) => {
+  const parsed = value instanceof Date ? value : value == null ? null : new Date(value);
+  if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+    return null;
   }
-
-  return latest;
+  return parsed;
 };
 
-const compareFeedListingsSafe = (
-  a: FeedListingLike,
-  b: FeedListingLike,
+const compareFeedByFreshness = (
+  a: Pick<FeedListingLike, 'publishedAt' | 'createdAt' | 'id'>,
+  b: Pick<FeedListingLike, 'publishedAt' | 'createdAt' | 'id'>,
 ) => {
-  const aBumpAt = getLatestActiveBumpAt(a.promotions);
-  const bBumpAt = getLatestActiveBumpAt(b.promotions);
-
-  if (aBumpAt != null || bBumpAt != null) {
-    if (aBumpAt == null) return 1;
-    if (bBumpAt == null) return -1;
-    const bumpDiff = bBumpAt.getTime() - aBumpAt.getTime();
-    if (bumpDiff !== 0) {
-      return bumpDiff;
-    }
-  }
-
   const aPublished = a.publishedAt?.getTime() ?? 0;
   const bPublished = b.publishedAt?.getTime() ?? 0;
   if (aPublished !== bPublished) {
@@ -155,8 +113,113 @@ const compareFeedListingsSafe = (
   return b.id.localeCompare(a.id);
 };
 
+const getPaidFeedRank = (promotions?: PromotionLike[] | null): PaidFeedRank => {
+  const latestByTier = new Map<PaidFeedRank['tier'], Date>();
+  const now = Date.now();
+
+  for (const promotion of promotions ?? []) {
+    if (!promotion || typeof promotion !== 'object') {
+      continue;
+    }
+
+    if (promotion.status !== PromotionStatus.ACTIVE) {
+      continue;
+    }
+
+    const endsAt = parsePromotionDate(promotion.endsAt);
+    if (endsAt == null || endsAt.getTime() <= now) {
+      continue;
+    }
+
+    const createdAt = parsePromotionDate(promotion.createdAt);
+    if (createdAt == null) {
+      continue;
+    }
+
+    const tier =
+      promotion.type === PromotionType.TURBO
+        ? 'turbo'
+        : promotion.type === PromotionType.VIP
+          ? 'vip'
+          : promotion.type === PromotionType.BUMP
+            ? 'bump'
+            : 'none';
+
+    if (tier === 'none') {
+      continue;
+    }
+
+    const current = latestByTier.get(tier);
+    if (current == null || createdAt.getTime() > current.getTime()) {
+      latestByTier.set(tier, createdAt);
+    }
+  }
+
+  if (latestByTier.has('turbo')) {
+    return { tier: 'turbo', activatedAt: latestByTier.get('turbo') ?? null };
+  }
+  if (latestByTier.has('vip')) {
+    return { tier: 'vip', activatedAt: latestByTier.get('vip') ?? null };
+  }
+  if (latestByTier.has('bump')) {
+    return { tier: 'bump', activatedAt: latestByTier.get('bump') ?? null };
+  }
+
+  return { tier: 'none', activatedAt: null };
+};
+
+const comparePaidFeedListings = (a: FeedListingLike, b: FeedListingLike) => {
+  const aRank = getPaidFeedRank(a.promotions);
+  const bRank = getPaidFeedRank(b.promotions);
+  const tierWeight = {
+    turbo: 0,
+    vip: 1,
+    bump: 2,
+    none: 3,
+  } satisfies Record<PaidFeedRank['tier'], number>;
+
+  const tierDiff = tierWeight[aRank.tier] - tierWeight[bRank.tier];
+  if (tierDiff !== 0) {
+    return tierDiff;
+  }
+
+  const activatedDiff =
+    (bRank.activatedAt?.getTime() ?? 0) - (aRank.activatedAt?.getTime() ?? 0);
+  if (activatedDiff !== 0) {
+    return activatedDiff;
+  }
+
+  return compareFeedByFreshness(a, b);
+};
+
+const buildPublicFeedOrder = <T extends FeedListingLike>(
+  listings: T[],
+  headSize = DEFAULT_FEED_HEAD_SIZE,
+) => {
+  const freshnessSorted = [...listings].sort(compareFeedByFreshness);
+  const regular: T[] = [];
+  const paid: T[] = [];
+
+  for (const listing of freshnessSorted) {
+    const rank = getPaidFeedRank(listing.promotions);
+    if (rank.tier === 'none') {
+      regular.push(listing);
+    } else {
+      paid.push(listing);
+    }
+  }
+
+  paid.sort(comparePaidFeedListings);
+
+  return [
+    ...regular.slice(0, headSize),
+    ...paid,
+    ...regular.slice(headSize),
+  ];
+};
+
 const toFeedCursorPayload = (listing: FeedListingLike): FeedCursorPayload => ({
-  bumpAt: getLatestActiveBumpAt(listing.promotions)?.toISOString() ?? null,
+  bumpAt: getPaidFeedRank(listing.promotions).activatedAt?.toISOString() ?? null,
   publishedAt: listing.publishedAt?.toISOString() ?? null,
   createdAt: listing.createdAt.toISOString(),
   id: listing.id,
@@ -200,39 +263,6 @@ const parseFeedCursor = (rawCursor?: string): FeedCursorPayload | null => {
   } catch {
     return null;
   }
-};
-
-const compareFeedListingToCursor = (
-  listing: FeedListingLike,
-  cursor: FeedCursorPayload,
-) => {
-  const bumpAt = getLatestActiveBumpAt(listing.promotions);
-  const cursorBumpAt = cursor.bumpAt ? new Date(cursor.bumpAt) : null;
-
-  if (bumpAt != null || cursorBumpAt != null) {
-    if (bumpAt == null) return 1;
-    if (cursorBumpAt == null) return -1;
-    const bumpDiff = cursorBumpAt.getTime() - bumpAt.getTime();
-    if (bumpDiff !== 0) {
-      return bumpDiff;
-    }
-  }
-
-  const listingPublishedAt = listing.publishedAt?.getTime() ?? 0;
-  const cursorPublishedAt = cursor.publishedAt
-    ? new Date(cursor.publishedAt).getTime()
-    : 0;
-  if (listingPublishedAt !== cursorPublishedAt) {
-    return cursorPublishedAt - listingPublishedAt;
-  }
-
-  const listingCreatedAt = listing.createdAt.getTime();
-  const cursorCreatedAt = new Date(cursor.createdAt).getTime();
-  if (listingCreatedAt !== cursorCreatedAt) {
-    return cursorCreatedAt - listingCreatedAt;
-  }
-
-  return cursor.id.localeCompare(listing.id);
 };
 
 @Injectable()
@@ -458,35 +488,15 @@ export class ListingsService {
       ],
     });
 
-    try {
-      listings.sort(compareFeedListingsSafe);
-    } catch (error) {
-      console.warn('[ListingsService] compareFeedListings fallback applied', error);
-      listings.sort((a, b) => {
-        const publishedDiff =
-          (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0);
-        if (publishedDiff !== 0) {
-          return publishedDiff;
-        }
-
-        const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
-        if (createdDiff !== 0) {
-          return createdDiff;
-        }
-
-        return b.id.localeCompare(a.id);
-      });
-    }
+    const orderedListings = buildPublicFeedOrder(listings);
 
     const startIndex =
       cursor == null
         ? 0
-        : listings.findIndex(
-            (listing) => compareFeedListingToCursor(listing, cursor) > 0,
-          );
-    const safeStartIndex = startIndex < 0 ? listings.length : startIndex;
-    const pageItems = listings.slice(safeStartIndex, safeStartIndex + limit);
-    const hasMore = safeStartIndex + limit < listings.length;
+        : orderedListings.findIndex((listing) => listing.id === cursor.id) + 1;
+    const safeStartIndex = startIndex < 0 ? 0 : startIndex;
+    const pageItems = orderedListings.slice(safeStartIndex, safeStartIndex + limit);
+    const hasMore = safeStartIndex + limit < orderedListings.length;
     const nextCursor =
       hasMore && pageItems.length > 0
         ? encodeFeedCursor(pageItems[pageItems.length - 1]!)
@@ -755,9 +765,60 @@ export class ListingsService {
   }
 
   async findMy(authUser: AuthenticatedUser) {
-    return this.findAll({
-      ownerMe: authUser.userId,
+    const listings = await this.prisma.listing.findMany({
+      where: {
+        deletedAt: null,
+        ownerId: authUser.userId,
+      },
+      include: listingInclude,
+      orderBy: [
+        {
+          publishedAt: 'desc',
+        },
+        {
+          createdAt: 'desc',
+        },
+        {
+          id: 'desc',
+        },
+      ],
     });
+
+    listings.sort(compareFeedByFreshness);
+
+    const listingIds = listings.map((listing) => listing.id);
+    const favorites = listingIds.length === 0
+      ? []
+      : await this.prisma.favorite.findMany({
+          where: {
+            listingId: {
+              in: listingIds,
+            },
+            userId: {
+              not: authUser.userId,
+            },
+          },
+          select: {
+            listingId: true,
+          },
+        });
+
+    const favoriteCountByListingId = new Map<string, number>();
+    for (const favorite of favorites) {
+      favoriteCountByListingId.set(
+        favorite.listingId,
+        (favoriteCountByListingId.get(favorite.listingId) ?? 0) + 1,
+      );
+    }
+
+    return {
+      items: listings.map((listing) =>
+        serializeListing(listing, {
+          favoriteCount: favoriteCountByListingId.get(listing.id) ?? 0,
+        }),
+      ),
+      allowed_statuses: LISTING_STATUSES,
+    };
   }
 
   async uploadPhoto(

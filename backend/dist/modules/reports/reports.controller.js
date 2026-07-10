@@ -17,13 +17,15 @@ const common_1 = require("@nestjs/common");
 const admin_guard_1 = require("../auth/admin.guard");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
+const chats_gateway_1 = require("../chats/chats.gateway");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_report_dto_1 = require("./dto/create-report.dto");
 const moderate_report_dto_1 = require("./dto/moderate-report.dto");
 const reports_service_1 = require("./reports.service");
 let ReportsController = class ReportsController {
-    constructor(reportsService, rateLimitService) {
+    constructor(reportsService, chatsGateway, rateLimitService) {
         this.reportsService = reportsService;
+        this.chatsGateway = chatsGateway;
         this.rateLimitService = rateLimitService;
     }
     create(request, authUser, body) {
@@ -31,7 +33,23 @@ let ReportsController = class ReportsController {
             limit: 10,
             windowMs: 60 * 1000,
         });
-        return this.reportsService.create(authUser, body);
+        return this.reportsService.create(authUser, body).then((result) => {
+            const notifications = result['admin_notifications'];
+            if (Array.isArray(notifications)) {
+                for (const item of notifications) {
+                    if (!item || typeof item !== 'object') {
+                        continue;
+                    }
+                    const notification = item;
+                    const userId = `${notification['user_id'] ?? ''}`.trim();
+                    if (userId.length === 0) {
+                        continue;
+                    }
+                    this.chatsGateway.emitNotificationNew(notification, userId);
+                }
+            }
+            return result;
+        });
     }
 };
 exports.ReportsController = ReportsController;
@@ -48,6 +66,7 @@ exports.ReportsController = ReportsController = __decorate([
     (0, common_1.Controller)('reports'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     __metadata("design:paramtypes", [reports_service_1.ReportsService,
+        chats_gateway_1.ChatsGateway,
         rate_limit_service_1.RateLimitService])
 ], ReportsController);
 let AdminReportsController = class AdminReportsController {
@@ -62,6 +81,12 @@ let AdminReportsController = class AdminReportsController {
     }
     reject(reportId, authUser, body) {
         return this.reportsService.reject(reportId, authUser, body.comment);
+    }
+    reopen(reportId, authUser) {
+        return this.reportsService.reopen(reportId, authUser);
+    }
+    hide(reportId, authUser) {
+        return this.reportsService.hide(reportId, authUser);
     }
 };
 exports.AdminReportsController = AdminReportsController;
@@ -89,6 +114,22 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, moderate_report_dto_1.ModerateReportDto]),
     __metadata("design:returntype", void 0)
 ], AdminReportsController.prototype, "reject", null);
+__decorate([
+    (0, common_1.Patch)(':id/reopen'),
+    __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], AdminReportsController.prototype, "reopen", null);
+__decorate([
+    (0, common_1.Delete)(':id'),
+    __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], AdminReportsController.prototype, "hide", null);
 exports.AdminReportsController = AdminReportsController = __decorate([
     (0, common_1.Controller)('admin/reports'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),

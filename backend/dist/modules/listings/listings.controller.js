@@ -35,13 +35,15 @@ let ListingsController = class ListingsController {
         });
         return this.listingsService.create(authUser, dto);
     }
-    findAll(search, category, city, minPrice, maxPrice, ownerId, status) {
+    findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status) {
         return this.listingsService.findAll({
             search,
             category,
             city,
             ownerId,
             status,
+            limit: limit == null ? undefined : Number(limit),
+            cursor,
             minPrice: minPrice == null ? undefined : Number(minPrice),
             maxPrice: maxPrice == null ? undefined : Number(maxPrice),
         });
@@ -86,10 +88,12 @@ __decorate([
     __param(2, (0, common_1.Query)('city')),
     __param(3, (0, common_1.Query)('minPrice')),
     __param(4, (0, common_1.Query)('maxPrice')),
-    __param(5, (0, common_1.Query)('ownerId')),
-    __param(6, (0, common_1.Query)('status')),
+    __param(5, (0, common_1.Query)('limit')),
+    __param(6, (0, common_1.Query)('cursor')),
+    __param(7, (0, common_1.Query)('ownerId')),
+    __param(8, (0, common_1.Query)('status')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "findAll", null);
 __decorate([

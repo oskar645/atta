@@ -8,19 +8,33 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var ReportsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportsService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
+const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
-let ReportsService = class ReportsService {
-    constructor(prisma) {
+let ReportsService = ReportsService_1 = class ReportsService {
+    constructor(prisma, notificationsService) {
         this.prisma = prisma;
+        this.notificationsService = notificationsService;
     }
     serialize(report) {
+        const listingPhotos = report.listing?.photos?.map((photo) => ({
+            id: photo.id ?? null,
+            url: photo.url ?? photo.publicUrl ?? null,
+            publicUrl: photo.publicUrl ?? photo.url ?? null,
+            storageKey: photo.storageKey ?? null,
+            sortOrder: photo.sortOrder ?? null,
+        })) ?? [];
+        const targetType = report.listingId ? 'listing' : 'user';
+        const listingPhotoUrl = listingPhotos[0]?.url ?? null;
         return {
             id: report.id,
             listing_id: report.listingId,
             listing_owner_id: report.listingOwnerId,
+            reported_user_id: report.listingOwnerId,
             reporter_id: report.reporterId,
             reason: report.reason,
             comment: report.comment,
@@ -29,10 +43,54 @@ let ReportsService = class ReportsService {
             admin_uid: report.adminUid,
             admin_comment: report.adminComment,
             created_at: report.createdAt.toISOString(),
+            handled_at: report.handledAt?.toISOString() ?? null,
+            closed_at: report.closedAt?.toISOString() ?? null,
+            target_type: targetType,
+            listing_title: report.listing?.title ?? null,
+            listing_photo_url: listingPhotoUrl,
+            listing_photos: listingPhotos,
+            listing_seller_id: report.listing?.ownerId ?? report.listingOwnerId,
+            listing_seller_name: report.listing?.owner?.displayName?.trim() ||
+                report.listing?.owner?.name?.trim() ||
+                report.listingOwner?.displayName?.trim() ||
+                report.listingOwner?.name?.trim() ||
+                null,
+            reporter_name: report.reporter?.displayName?.trim() ||
+                report.reporter?.name?.trim() ||
+                null,
+            reporter_avatar_url: report.reporter?.avatarUrl?.trim() ||
+                report.reporter?.photoUrl?.trim() ||
+                null,
+            reported_user_name: report.listingOwner?.displayName?.trim() ||
+                report.listingOwner?.name?.trim() ||
+                null,
+            reported_user_avatar_url: report.listingOwner?.avatarUrl?.trim() ||
+                report.listingOwner?.photoUrl?.trim() ||
+                null,
         };
     }
     async listForAdmin() {
         const items = await this.prisma.report.findMany({
+            where: {
+                status: {
+                    notIn: [...ReportsService_1.hiddenStatuses],
+                },
+            },
+            include: {
+                listing: {
+                    include: {
+                        owner: true,
+                        photos: {
+                            orderBy: {
+                                sortOrder: 'asc',
+                            },
+                            take: 1,
+                        },
+                    },
+                },
+                listingOwner: true,
+                reporter: true,
+            },
             orderBy: {
                 createdAt: 'desc',
             },
@@ -43,19 +101,57 @@ let ReportsService = class ReportsService {
         };
     }
     async create(authUser, body) {
+        const listingId = body.listingId?.trim() || null;
+        const reportedUserId = body.reportedUserId?.trim() || body.listingOwnerId?.trim() || null;
+        if (!listingId && !reportedUserId) {
+            throw new common_1.BadRequestException('Нужно указать объявление или пользователя для жалобы');
+        }
         const report = await this.prisma.report.create({
             data: {
-                listingId: body.listingId?.trim() || null,
-                listingOwnerId: body.listingOwnerId?.trim() || null,
+                listingId,
+                listingOwnerId: reportedUserId,
                 reporterId: authUser.userId,
                 reason: body.reason?.trim() || 'Жалоба',
                 comment: body.comment?.trim() || '',
                 status: 'open',
             },
+            include: {
+                listing: {
+                    include: {
+                        owner: true,
+                        photos: {
+                            orderBy: {
+                                sortOrder: 'asc',
+                            },
+                            take: 1,
+                        },
+                    },
+                },
+                listingOwner: true,
+                reporter: true,
+            },
         });
+        const admins = await this.prisma.adminUser.findMany({
+            select: {
+                userId: true,
+            },
+        });
+        const adminNotifications = await Promise.all(admins.map(({ userId }) => this.notificationsService.createSystemNotification({
+            userId,
+            title: 'Новая жалоба',
+            body: report.reason.trim().length > 0
+                ? `Поступила новая жалоба: ${report.reason.trim()}.`
+                : 'Поступила новая жалоба.',
+            type: client_1.NotificationType.GENERIC,
+            payload: {
+                actionType: 'admin_report_new',
+                reportId: report.id,
+            },
+        })));
         return {
             source: 'timeweb',
             item: this.serialize(report),
+            admin_notifications: adminNotifications.map((item) => this.notificationsService.serializeNotification(item)),
         };
     }
     async resolve(reportId, authUser, comment) {
@@ -114,10 +210,98 @@ let ReportsService = class ReportsService {
             item: this.serialize(report),
         };
     }
+    async reopen(reportId, authUser) {
+        const exists = await this.prisma.report.findUnique({
+            where: {
+                id: reportId,
+            },
+            include: {
+                listing: {
+                    include: {
+                        owner: true,
+                        photos: {
+                            orderBy: {
+                                sortOrder: 'asc',
+                            },
+                            take: 1,
+                        },
+                    },
+                },
+                listingOwner: true,
+                reporter: true,
+            },
+        });
+        if (!exists) {
+            throw new common_1.NotFoundException('Report not found');
+        }
+        const report = await this.prisma.report.update({
+            where: {
+                id: reportId,
+            },
+            data: {
+                status: 'open',
+                decision: null,
+                adminUid: authUser.userId,
+                adminComment: null,
+                handledBy: authUser.userId,
+                handledAt: new Date(),
+                closedAt: null,
+            },
+            include: {
+                listing: {
+                    include: {
+                        owner: true,
+                        photos: {
+                            orderBy: {
+                                sortOrder: 'asc',
+                            },
+                            take: 1,
+                        },
+                    },
+                },
+                listingOwner: true,
+                reporter: true,
+            },
+        });
+        return {
+            source: 'timeweb',
+            item: this.serialize(report),
+        };
+    }
+    async hide(reportId, authUser) {
+        const exists = await this.prisma.report.findUnique({
+            where: {
+                id: reportId,
+            },
+        });
+        if (!exists) {
+            throw new common_1.NotFoundException('Жалоба не найдена');
+        }
+        const report = await this.prisma.report.update({
+            where: {
+                id: reportId,
+            },
+            data: {
+                status: 'hidden',
+                decision: exists.decision ?? 'hidden',
+                adminUid: authUser.userId,
+                handledBy: authUser.userId,
+                handledAt: exists.handledAt ?? new Date(),
+                closedAt: exists.closedAt ?? new Date(),
+            },
+        });
+        return {
+            source: 'timeweb',
+            hidden: true,
+            item: this.serialize(report),
+        };
+    }
 };
 exports.ReportsService = ReportsService;
-exports.ReportsService = ReportsService = __decorate([
+ReportsService.hiddenStatuses = ['hidden', 'deleted'];
+exports.ReportsService = ReportsService = ReportsService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        notifications_service_1.NotificationsService])
 ], ReportsService);
 //# sourceMappingURL=reports.service.js.map

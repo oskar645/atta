@@ -19,11 +19,15 @@ class ChatService {
     ChatSocketService? socketService,
     ChatsApi? api,
     MediaApi? mediaApi,
+    Duration requestTimeout = const Duration(seconds: 12),
+    Duration socketReadyTimeout = const Duration(seconds: 8),
   })  : _socketService = socketService,
         _api = api ?? ChatsApi(ApiClient(tokenStorage: _tokenStorage)),
         _mediaApi =
             mediaApi ?? MediaApi(ApiClient(tokenStorage: _tokenStorage)),
-        _imagePreparationService = ImagePreparationService() {
+        _imagePreparationService = ImagePreparationService(),
+        _requestTimeout = requestTimeout,
+        _socketReadyTimeout = socketReadyTimeout {
     _socketSub = _socketService?.events.listen(_handleSocketEvent);
   }
   final _uuid = const Uuid();
@@ -33,6 +37,8 @@ class ChatService {
   final ChatsApi _api;
   final MediaApi _mediaApi;
   final ImagePreparationService _imagePreparationService;
+  final Duration _requestTimeout;
+  final Duration _socketReadyTimeout;
 
   StreamSubscription<ChatSocketEvent>? _socketSub;
   String? _activeUserId;
@@ -52,14 +58,47 @@ class ChatService {
   final Map<String, Future<void>> _markReadInFlight = {};
   final Map<String, Future<void>> _messageSendInFlight = {};
   final Map<String, Future<void>> _imageSendInFlight = {};
+  Future<void>? _refreshChatsInFlight;
+  Object? _lastChatsLoadError;
   final Map<String, DateTime> _lastMarkReadAt = {};
   DateTime? _lastAppResumeRefreshAt;
   final Set<String> _activeChatIds = <String>{};
   String? _foregroundChatId;
   int _messageOrderSequence = 0;
+  Future<void>? _ensureReadyInFlight;
+  String? _ensureReadyUserId;
 
   static const Duration _markReadCooldown = Duration(seconds: 2);
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
+
+  Object? get lastChatsLoadError => _lastChatsLoadError;
+
+  void _ensureSocketConnectedInBackground([String? uid]) {
+    final normalizedUid = uid?.trim() ?? _activeUserId?.trim() ?? '';
+    if (normalizedUid.isNotEmpty) {
+      _activeUserId = normalizedUid;
+    }
+    final future = _socketService?.connect(reason: 'chat.backgroundReady');
+    if (future != null) {
+      unawaited(future.catchError((_) {}));
+    }
+  }
+
+  void _ensureChatsRefreshStarted([String? uid]) {
+    final normalizedUid = uid?.trim() ?? _activeUserId?.trim() ?? '';
+    if (normalizedUid.isNotEmpty) {
+      _activeUserId = normalizedUid;
+    }
+    if (_refreshChatsInFlight != null) {
+      return;
+    }
+    if (_loadedChats && _chatsById.isNotEmpty) {
+      return;
+    }
+    _loadedChats = true;
+    unawaited(refreshChats());
+  }
+
   Future<void> resetSession() async {
     _activeUserId = null;
     _loadedChats = false;
@@ -70,9 +109,13 @@ class ChatService {
     _markReadInFlight.clear();
     _messageSendInFlight.clear();
     _imageSendInFlight.clear();
+    _refreshChatsInFlight = null;
+    _lastChatsLoadError = null;
     _lastMarkReadAt.clear();
     _activeChatIds.clear();
     _foregroundChatId = null;
+    _ensureReadyInFlight = null;
+    _ensureReadyUserId = null;
     _chatsById.clear();
     _messagesByChat.clear();
     _messageOrderByKey.clear();
@@ -99,12 +142,57 @@ class ChatService {
 
   Future<void> _ensureTimewebReady([String? uid]) async {
     _debugSource('Chat source: Timeweb');
-    _activeUserId ??= uid;
-    await _socketService?.connect();
-    if (!_loadedChats) {
-      _loadedChats = true;
-      unawaited(_refreshChats());
+    final normalizedUid = uid?.trim() ?? '';
+    if (normalizedUid.isNotEmpty) {
+      _activeUserId = normalizedUid;
     }
+    final effectiveUid = _activeUserId?.trim() ?? '';
+    final existing = _ensureReadyInFlight;
+    if (existing != null && _ensureReadyUserId == effectiveUid) {
+      _debugSource('Chats load skipped reason=in_flight user=$effectiveUid');
+      return existing;
+    }
+    if ((_socketService?.isConnected == true) &&
+        _ensureReadyUserId == effectiveUid) {
+      _debugSource('Chats load skipped reason=cache_only user=$effectiveUid');
+      return;
+    }
+    final future = () async {
+      _debugSource('auth ready user=$effectiveUid');
+      try {
+        await _socketService
+            ?.connect(reason: 'chat.ensureReady')
+            .timeout(_socketReadyTimeout);
+        if (!_loadedChats) {
+          _loadedChats = true;
+          unawaited(refreshChats());
+        }
+      } catch (error) {
+        _debugSource('Chats load error message=$error user=$effectiveUid');
+      } finally {
+        _debugSource('Chats load finally loading=false user=$effectiveUid');
+      }
+    }();
+    _ensureReadyUserId = effectiveUid;
+    _ensureReadyInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_ensureReadyInFlight, future)) {
+        _ensureReadyInFlight = null;
+        _debugSource('Chats inFlight cleared user=$effectiveUid');
+      }
+    }
+  }
+
+  Future<void> _ensureReadyAndJoinChat(String chatId) async {
+    final normalizedChatId = chatId.trim();
+    if (normalizedChatId.isEmpty) return;
+    await _ensureTimewebReady();
+    await _socketService?.joinChat(
+      normalizedChatId,
+      reason: 'chat.joinAfterEnsureReady',
+    );
   }
 
   StreamController<Chat?> _chatControllerFor(String chatId) {
@@ -397,16 +485,49 @@ class ChatService {
     }
   }
 
-  Future<void> _refreshChats() async {
-    final response = await _api.listChats();
-    final items = (response['items'] as List? ?? const [])
-        .whereType<Map>()
-        .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
-        .toList();
-    _chatsById
-      ..clear()
-      ..addEntries(items.map((item) => MapEntry(item.id, item)));
-    _emitChats();
+  Future<void> refreshChats() async {
+    final existing = _refreshChatsInFlight;
+    if (existing != null) {
+      _debugSource('Chats load skipped reason=in_flight');
+      return existing;
+    }
+    final future = _refreshChatsInternal();
+    _refreshChatsInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_refreshChatsInFlight, future)) {
+        _refreshChatsInFlight = null;
+        _debugSource('Chats list inFlight cleared');
+      }
+    }
+  }
+
+  Future<void> _refreshChatsInternal() async {
+    final uid = _activeUserId?.trim() ?? '';
+    _debugSource('Chats list load start user=$uid');
+    try {
+      final response = await _api.listChats().timeout(_requestTimeout);
+      final items = (response['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
+          .toList();
+      _chatsById
+        ..clear()
+        ..addEntries(items.map((item) => MapEntry(item.id, item)));
+      _lastChatsLoadError = null;
+      _emitChats();
+      _debugSource(
+        items.isEmpty
+            ? 'Chats load empty'
+            : 'Chats load success count=${items.length}',
+      );
+    } catch (error) {
+      _lastChatsLoadError = error;
+      _debugSource('Chats load error message=$error user=$uid');
+    } finally {
+      _debugSource('Chats load finally loading=false user=$uid');
+    }
   }
 
   Future<void> _refreshChat(String chatId) async {
@@ -479,7 +600,9 @@ class ChatService {
   }
 
   Stream<List<Chat>> streamMyChats(String uid) {
-    unawaited(_ensureTimewebReady(uid));
+    _activeUserId = uid.trim();
+    _ensureChatsRefreshStarted(uid);
+    _ensureSocketConnectedInBackground(uid);
     return Stream<List<Chat>>.multi((controller) {
       controller.add(_sortedChats());
       final sub = _chatsController.stream.listen(
@@ -493,7 +616,9 @@ class ChatService {
   }
 
   Stream<int> streamUnreadTotal(String uid) {
-    unawaited(_ensureTimewebReady(uid));
+    _activeUserId = uid.trim();
+    _ensureChatsRefreshStarted(uid);
+    _ensureSocketConnectedInBackground(uid);
     return Stream<int>.multi((controller) {
       controller.add(
         _sortedChats().fold<int>(0, (sum, chat) => sum + chat.unreadFor(uid)),
@@ -533,22 +658,29 @@ class ChatService {
   }
 
   Future<void> refreshInbox(String uid) async {
-    _activeUserId = uid;
-    await _ensureTimewebReady(uid);
-    await _refreshChats();
+    _activeUserId = uid.trim();
+    _ensureSocketConnectedInBackground(uid);
+    await refreshChats();
   }
 
   Future<void> handleAppResumed(String uid) async {
-    _activeUserId = uid;
+    _activeUserId = uid.trim();
     if (_socketService?.isConnected != true) {
-      await _socketService?.reconnect();
+      final reconnectFuture =
+          _socketService?.reconnect(reason: 'chat.handleAppResumed');
+      if (reconnectFuture != null) {
+        unawaited(reconnectFuture.catchError((_) {}));
+      }
     }
     final now = DateTime.now();
     final lastRefreshAt = _lastAppResumeRefreshAt;
     if (lastRefreshAt != null &&
         now.difference(lastRefreshAt) < _resumeRefreshCooldown) {
       for (final chatId in _activeChatIds.toList()) {
-        await _socketService?.joinChat(chatId);
+        await _socketService?.joinChat(
+          chatId,
+          reason: 'chat.rejoinAfterResume',
+        );
       }
       final foregroundChatId = _foregroundChatId;
       if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
@@ -557,12 +689,13 @@ class ChatService {
       return;
     }
     _lastAppResumeRefreshAt = now;
-    await _ensureTimewebReady(uid);
-    await _refreshChats();
+    await refreshChats();
     for (final chatId in _activeChatIds.toList()) {
       await _refreshChat(chatId);
-      await _refreshMessages(chatId);
-      await _socketService?.joinChat(chatId);
+      await _socketService?.joinChat(
+        chatId,
+        reason: 'chat.rejoinAfterResume',
+      );
     }
     final foregroundChatId = _foregroundChatId;
     if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
@@ -571,9 +704,8 @@ class ChatService {
   }
 
   Stream<List<ChatMessage>> streamMessages(String chatId) {
-    unawaited(_ensureTimewebReady());
+    unawaited(_ensureReadyAndJoinChat(chatId));
     _activeChatIds.add(chatId);
-    unawaited(_socketService?.joinChat(chatId));
     if (!_loadedMessageChatIds.contains(chatId) &&
         !_messagesRefreshInFlight.containsKey(chatId)) {
       unawaited(_refreshMessages(chatId));
@@ -689,7 +821,7 @@ class ChatService {
       _activeUserId = uid;
       await _ensureTimewebReady(uid);
       if (!_messagesByChat.containsKey(chatId)) {
-        await _refreshMessages(chatId);
+        return;
       }
       final messages =
           List<ChatMessage>.from(_messagesByChat[chatId] ?? const []);

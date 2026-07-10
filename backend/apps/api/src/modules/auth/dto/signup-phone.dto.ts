@@ -25,4 +25,12 @@ export class SignupPhoneDto {
   @IsOptional()
   @IsString()
   verification_check_id?: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
+
+  @IsOptional()
+  @IsString()
+  referral_code?: string;
 }

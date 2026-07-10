@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:atta/src/models/feed_ad.dart';
 import 'package:atta/src/services/api/api_client.dart';

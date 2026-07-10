@@ -198,6 +198,97 @@ export class SupportService {
     };
   }
 
+  async openTicketForAdminContact(params: {
+    userId?: string;
+    name?: string;
+    subject?: string;
+    text?: string;
+  }) {
+    const userId = params.userId?.trim() ?? '';
+    const subject = params.subject?.trim() || 'Обращение в поддержку';
+    const text = params.text?.trim() ?? '';
+    if (!userId) {
+      throw new BadRequestException('Не указан пользователь');
+    }
+    if (!text) {
+      throw new BadRequestException('Сообщение обязательно');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+    if (!user) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    const existing = await this.prisma.supportTicket.findFirst({
+      where: {
+        userId,
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+    });
+    if (existing) {
+      await this.sendMessageAsAdmin(existing.id, text);
+      return this.getTicketForAdmin(existing.id);
+    }
+
+    const name =
+      params.name?.trim() ||
+      user.displayName?.trim() ||
+      user.name?.trim() ||
+      'Пользователь';
+    const encodedText = this.encodeContent({ text });
+    const preview = this.previewText(encodedText);
+
+    const ticket = await this.prisma.supportTicket.create({
+      data: {
+        userId,
+        name,
+        subject,
+        status: SupportTicketStatus.OPEN,
+        lastMessage: preview,
+        unreadForAdmin: false,
+        unreadForUser: true,
+        messages: {
+          create: [
+            {
+              sender: SupportSenderType.ADMIN,
+              text: encodedText,
+            },
+          ],
+        },
+      },
+      include: {
+        messages: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
+    });
+
+    await this.notificationsService.createSystemNotification({
+      userId,
+      title: 'Сообщение поддержки',
+      body: preview,
+      type: NotificationType.SUPPORT,
+      payload: {
+        actionType: 'support_reply',
+        ticketId: ticket.id,
+      },
+    });
+
+    return {
+      source: 'timeweb',
+      ticket: this.serializeTicket(ticket),
+      items: ticket.messages.map((message) => this.serializeMessage(message)),
+    };
+  }
+
   async getTicketForUser(authUser: AuthenticatedUser, ticketId: string) {
     const ticket = await this.prisma.supportTicket.findFirst({
       where: {
@@ -404,6 +495,7 @@ export class SupportService {
       body: previewText,
       type: NotificationType.SUPPORT,
       payload: {
+        actionType: 'support_reply',
         ticketId,
       },
     });

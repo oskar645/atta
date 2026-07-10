@@ -194,6 +194,7 @@ class Listing {
   final String? clothesType;
 
   final int viewCount;
+  final int favoriteCount;
   final String status;
   final String rejectionReason;
   final ActivePromotion? activeShowcase;
@@ -229,6 +230,7 @@ class Listing {
     required this.realEstateType,
     required this.clothesType,
     required this.viewCount,
+    required this.favoriteCount,
     required this.status,
     required this.rejectionReason,
     required this.activeShowcase,
@@ -455,6 +457,11 @@ class Listing {
       clothesType: row['clothes_type']?.toString(),
       viewCount:
           (row['view_count'] is num) ? (row['view_count'] as num).toInt() : 0,
+      favoriteCount: (row['favorites_count'] is num)
+          ? (row['favorites_count'] as num).toInt()
+          : (row['favorite_count'] is num)
+              ? (row['favorite_count'] as num).toInt()
+              : 0,
       status: (row['status'] ?? 'approved').toString(),
       rejectionReason: (row['rejection_reason'] ?? '').toString(),
       activeShowcase: _parsePromotion(promotions['activeShowcase']),
@@ -515,6 +522,7 @@ class Listing {
       'real_estate_type': realEstateType,
       'clothes_type': clothesType,
       'view_count': viewCount,
+      'favorites_count': favoriteCount,
       'status': status,
       'rejection_reason': rejectionReason,
       'promotions': {

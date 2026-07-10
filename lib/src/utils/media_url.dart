@@ -49,10 +49,12 @@ MediaUrlResolution resolveMediaUrl(
     );
   }
 
-  if (trimmed.startsWith('file:///media/') ||
-      trimmed.startsWith('file:///uploads/') ||
-      trimmed.startsWith('file:///api/')) {
-    final relativePath = trimmed.replaceFirst('file://', '');
+  final normalizedInput = ApiConfig.normalizeBackendUrl(trimmed);
+
+  if (normalizedInput.startsWith('file:///media/') ||
+      normalizedInput.startsWith('file:///uploads/') ||
+      normalizedInput.startsWith('file:///api/')) {
+    final relativePath = normalizedInput.replaceFirst('file://', '');
     final resolved = '${ApiConfig.baseUrl}$relativePath';
     _debugMediaFlow(
       originalUrl: trimmed,
@@ -68,10 +70,10 @@ MediaUrlResolution resolveMediaUrl(
     );
   }
 
-  if (trimmed.startsWith('file://')) {
+  if (normalizedInput.startsWith('file://')) {
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 'local-file',
       category: categoryHint?.trim().isNotEmpty == true
           ? categoryHint!.trim()
@@ -79,26 +81,26 @@ MediaUrlResolution resolveMediaUrl(
     );
   }
 
-  if (trimmed.startsWith('/media/') ||
-      trimmed.startsWith('/uploads/') ||
-      trimmed.startsWith('/api/')) {
-    final resolved = '${ApiConfig.baseUrl}$trimmed';
+  if (normalizedInput.startsWith('/media/') ||
+      normalizedInput.startsWith('/uploads/') ||
+      normalizedInput.startsWith('/api/')) {
+    final resolved = '${ApiConfig.baseUrl}$normalizedInput';
     _debugMediaFlow(
       originalUrl: trimmed,
       resolvedUrl: resolved,
-      provider: trimmed.startsWith('/uploads/') ? 'local' : 'proxy',
+      provider: normalizedInput.startsWith('/uploads/') ? 'local' : 'proxy',
       category: categoryHint,
     );
     return MediaUrlResolution(
       originalUrl: trimmed,
       resolvedUrl: resolved,
-      provider: trimmed.startsWith('/uploads/') ? 'local' : 'proxy',
-      category: _resolvedCategory(trimmed, categoryHint),
+      provider: normalizedInput.startsWith('/uploads/') ? 'local' : 'proxy',
+      category: _resolvedCategory(normalizedInput, categoryHint),
     );
   }
 
-  if (trimmed.startsWith('uploads/')) {
-    final resolved = '${ApiConfig.baseUrl}/$trimmed';
+  if (normalizedInput.startsWith('uploads/')) {
+    final resolved = '${ApiConfig.baseUrl}/$normalizedInput';
     _debugMediaFlow(
       originalUrl: trimmed,
       resolvedUrl: resolved,
@@ -109,12 +111,12 @@ MediaUrlResolution resolveMediaUrl(
       originalUrl: trimmed,
       resolvedUrl: resolved,
       provider: 'local',
-      category: _resolvedCategory(trimmed, categoryHint),
+      category: _resolvedCategory(normalizedInput, categoryHint),
     );
   }
 
-  if (!trimmed.contains('://') && trimmed.contains('/')) {
-    final key = _normalizeS3Key(trimmed);
+  if (!normalizedInput.contains('://') && normalizedInput.contains('/')) {
+    final key = _normalizeS3Key(normalizedInput);
     final category = _resolveCategory(key, categoryHint: categoryHint);
     if (category != null) {
       final resolved = _buildProxyUrl(category, key);
@@ -133,33 +135,33 @@ MediaUrlResolution resolveMediaUrl(
     }
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 'unknown',
-      category: _resolvedCategory(trimmed, categoryHint),
+      category: _resolvedCategory(normalizedInput, categoryHint),
     );
   }
 
-  final parsed = Uri.tryParse(trimmed);
+  final parsed = Uri.tryParse(normalizedInput);
   if (parsed == null) {
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 'unknown',
-      category: _resolvedCategory(trimmed, categoryHint),
+      category: _resolvedCategory(normalizedInput, categoryHint),
     );
   }
 
-  final baseUri = Uri.parse(ApiConfig.baseUrl);
-  if (parsed.host == baseUri.host) {
+  if (ApiConfig.isKnownBackendHost(parsed.host)) {
+    final resolved = ApiConfig.normalizeBackendUrl(normalizedInput);
     _debugMediaFlow(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: resolved,
       provider: parsed.path.startsWith('/uploads/') ? 'local' : 'proxy',
       category: categoryHint,
     );
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: resolved,
       provider: parsed.path.startsWith('/uploads/') ? 'local' : 'proxy',
       category: _resolvedCategory(parsed.path, categoryHint),
     );
@@ -168,7 +170,7 @@ MediaUrlResolution resolveMediaUrl(
   if (parsed.host != 's3.twcstorage.ru') {
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 'remote',
       category: _resolvedCategory(parsed.path, categoryHint),
     );
@@ -181,7 +183,7 @@ MediaUrlResolution resolveMediaUrl(
   if (segments.length < 2) {
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 'remote',
       category: _resolvedCategory(parsed.path, categoryHint),
     );
@@ -193,7 +195,7 @@ MediaUrlResolution resolveMediaUrl(
   if (segments.length < 2) {
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 'remote',
       category: _resolvedCategory(parsed.path, categoryHint),
     );
@@ -204,7 +206,7 @@ MediaUrlResolution resolveMediaUrl(
   if (category == null) {
     return MediaUrlResolution(
       originalUrl: trimmed,
-      resolvedUrl: trimmed,
+      resolvedUrl: normalizedInput,
       provider: 's3',
       category: _resolvedCategory(key, categoryHint),
     );
@@ -280,7 +282,9 @@ String? _resolveCategory(
 
 String _resolvedCategory(String value, String? categoryHint) {
   return _resolveCategory(value, categoryHint: categoryHint) ??
-      (categoryHint?.trim().isNotEmpty == true ? categoryHint!.trim() : 'unknown');
+      (categoryHint?.trim().isNotEmpty == true
+          ? categoryHint!.trim()
+          : 'unknown');
 }
 
 void _debugMediaFlow({

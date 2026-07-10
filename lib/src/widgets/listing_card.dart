@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/listing.dart';
+import '../services/favorites_service.dart';
 import '../services/reviews_service.dart';
 import '../utils/price_formatter.dart';
 import 'listing_promotion_badges.dart';
@@ -209,6 +210,7 @@ class ListingCard extends StatelessWidget {
                               (rSnap.data?['count'] as num?)?.toInt() ?? 0;
 
                           return Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               const Icon(Icons.star,
                                   size: 14, color: Colors.amber),
@@ -285,6 +287,101 @@ class ListingCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class FavoriteToggleButton extends StatelessWidget {
+  const FavoriteToggleButton({
+    super.key,
+    required this.favoritesService,
+    required this.userId,
+    required this.listingId,
+    this.activeColor = Colors.red,
+    this.onError,
+  });
+
+  final FavoritesService favoritesService;
+  final String userId;
+  final String listingId;
+  final Color activeColor;
+  final ValueChanged<Object>? onError;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: favoritesService.streamIsFavorite(userId, listingId),
+      initialData: favoritesService.isFavorite(userId, listingId),
+      builder: (context, snapshot) {
+        final isFav = snapshot.data ?? false;
+        return IconButton(
+          onPressed: () async {
+            try {
+              await favoritesService.toggleFavorite(
+                uid: userId,
+                listingId: listingId,
+                makeFavorite: !isFav,
+              );
+            } catch (error) {
+              onError?.call(error);
+            }
+          },
+          icon: Icon(
+            isFav ? Icons.favorite : Icons.favorite_border,
+            color: isFav ? activeColor : Theme.of(context).colorScheme.outline,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class FavoriteListingCard extends StatelessWidget {
+  const FavoriteListingCard({
+    super.key,
+    required this.listing,
+    required this.favoritesService,
+    required this.userId,
+    required this.isSeen,
+    required this.reviews,
+    required this.onOpen,
+    this.onError,
+  });
+
+  final Listing listing;
+  final FavoritesService favoritesService;
+  final String userId;
+  final bool isSeen;
+  final ReviewsService reviews;
+  final VoidCallback onOpen;
+  final ValueChanged<Object>? onError;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<bool>(
+      stream: favoritesService.streamIsFavorite(userId, listing.id),
+      initialData: favoritesService.isFavorite(userId, listing.id),
+      builder: (context, snapshot) {
+        final isFav = snapshot.data ?? false;
+        return ListingCard(
+          listing: listing,
+          isFav: isFav,
+          isSeen: isSeen,
+          reviews: reviews,
+          onToggleFav: (makeFav) async {
+            try {
+              await favoritesService.toggleFavorite(
+                uid: userId,
+                listingId: listing.id,
+                makeFavorite: makeFav,
+              );
+            } catch (error) {
+              onError?.call(error);
+            }
+          },
+          onOpen: onOpen,
+        );
+      },
     );
   }
 }

@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { env } from '../config/env';
 import { normalizeRussianPhone } from './phone';
+import { buildReferralCode } from './referral-code';
 
 type SerializedUser = {
   id: string;
@@ -30,6 +31,8 @@ type SerializedUser = {
   avatarUrl: string | null;
   photo_url: string | null;
   avatar_updated_at: string | null;
+  referral_code: string;
+  referralCode: string;
   status: string;
   blocked_at: string | null;
   block_reason: string | null;
@@ -216,6 +219,7 @@ export const serializeUser = (
 ): SerializedUser | Omit<SerializedUser, 'email' | 'phone' | 'blocked_at' | 'block_reason' | 'deleted_at'> => {
   const isAdmin = user.adminProfile?.isAdmin === true;
   const role: 'user' | 'admin' = isAdmin ? 'admin' : 'user';
+  const referralCode = buildReferralCode(user.id);
 
   const base = {
     id: user.id,
@@ -247,6 +251,8 @@ export const serializeUser = (
     is_admin: isAdmin,
     isAdmin,
     role,
+    referral_code: referralCode,
+    referralCode,
     status: user.status.toLowerCase(),
     last_login_at: toIsoString(user.lastLoginAt),
     avatar_updated_at: toIsoString(user.updatedAt),
@@ -305,6 +311,9 @@ export const serializeListing = (
     photos?: ListingPhoto[];
     owner?: User | null;
     promotions?: Promotion[];
+  },
+  options?: {
+    favoriteCount?: number | null;
   },
 ) => ({
   ...(() => {
@@ -397,6 +406,11 @@ export const serializeListing = (
       sort_order: photo.sortOrder,
     })) ?? [],
   view_count: listing.viewCount,
+  ...(options?.favoriteCount != null
+    ? {
+        favorites_count: Math.max(0, Number(options.favoriteCount) || 0),
+      }
+    : {}),
   status: listingStatusToResponse(listing.status),
   rejection_reason: listing.rejectionReason ?? '',
   moderation_note: listing.moderationNote,

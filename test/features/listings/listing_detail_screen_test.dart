@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/wallet.dart';
@@ -13,6 +15,7 @@ import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -94,6 +97,23 @@ void main() {
     expect(listingsService.getListingRequests, 1);
   });
 
+  testWidgets('cached listing is shown immediately while detail refreshes',
+      (tester) async {
+    final listingsService = _CachedDetailListingsService();
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: listingsService,
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('Test listing'), findsOneWidget);
+    expect(find.byType(SkeletonBox), findsNothing);
+    expect(listingsService.refreshRequests, 1);
+  });
+
   testWidgets('owner can open sell faster even when listing cannot be promoted',
       (tester) async {
     await tester.pumpWidget(
@@ -124,12 +144,90 @@ void main() {
 
     expect(find.textContaining('+7 999 000 00 00'), findsWidgets);
   });
+
+  testWidgets('listing detail hides empty optional transport fields',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: Listing.fromMap(<String, dynamic>{
+            ..._listingFixture().toMap(),
+            'car': <String, dynamic>{
+              'brand': 'Changan',
+              'model': 'UNI-Z',
+              'generation': 'I',
+            },
+          }),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Пробег'), findsNothing);
+    expect(find.text('Кузов'), findsNothing);
+    expect(find.text('Топливо'), findsNothing);
+    expect(find.text('Коробка'), findsNothing);
+    expect(find.text('Привод'), findsNothing);
+    expect(find.text('Состояние'), findsNothing);
+    expect(find.text('Цвет'), findsNothing);
+    expect(find.text('ПТС'), findsNothing);
+  });
+
+  testWidgets('favorite toggle in detail does not reload listing', (
+    tester,
+  ) async {
+    final listingsService = _FakeListingsService();
+    final favoritesService = _FakeFavoritesService();
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: listingsService,
+        favoritesService: favoritesService,
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(listingsService.getListingRequests, 1);
+    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.favorite_border).first);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(favoritesService.toggleCalls, 1);
+    expect(listingsService.getListingRequests, 1);
+    expect(find.text('Test listing'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('detail screen labels seller reviews explicitly', (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        reviewsService: _FakeReviewsService(
+          rows: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'review-1',
+              'rating': 5,
+              'seller_id': 'seller-1',
+            },
+          ],
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Отзывы продавца'), findsOneWidget);
+  });
 }
 
 Widget _buildTestApp({
   ListingsService? listingsService,
   ReviewsService? reviewsService,
   ProfileService? profileService,
+  FavoritesService? favoritesService,
 }) {
   return MultiProvider(
     providers: [
@@ -138,7 +236,9 @@ Widget _buildTestApp({
       Provider<ListingsService>.value(
         value: listingsService ?? _FakeListingsService(),
       ),
-      Provider<FavoritesService>.value(value: _FakeFavoritesService()),
+      Provider<FavoritesService>.value(
+        value: favoritesService ?? _FakeFavoritesService(),
+      ),
       Provider<ChatService>.value(value: ChatService()),
       ChangeNotifierProvider<ListingHistoryService>.value(
         value: ListingHistoryService(),
@@ -252,10 +352,75 @@ class _FakeListingsService extends ListingsService {
   Future<void> incrementView(String listingId) async {}
 }
 
-class _FakeFavoritesService extends FavoritesService {
+class _CachedDetailListingsService extends ListingsService {
+  _CachedDetailListingsService() : _listing = _listingFixture();
+
+  final Listing _listing;
+  final Completer<Listing?> _refreshCompleter = Completer<Listing?>();
+  int refreshRequests = 0;
+
   @override
-  Stream<Set<String>> streamFavoriteIds(String uid) {
-    return Stream<Set<String>>.value(<String>{});
+  Listing? peekListingById(String id) => _listing;
+
+  @override
+  Future<Listing?> refreshListingById(String listingId) async {
+    refreshRequests += 1;
+    return _refreshCompleter.future;
+  }
+
+  @override
+  Future<Listing?> getListingById(String id) async {
+    return _listing;
+  }
+
+  @override
+  Future<List<Listing>> getSimilarListings(
+    Listing base, {
+    int limit = 10,
+  }) async {
+    return const <Listing>[];
+  }
+
+  @override
+  Future<void> incrementView(String listingId) async {}
+}
+
+class _FakeFavoritesService extends FavoritesService {
+  final StreamController<Set<String>> _controller =
+      StreamController<Set<String>>.broadcast();
+  final Set<String> _favoriteIds = <String>{};
+  int toggleCalls = 0;
+
+  @override
+  Stream<Set<String>> streamFavoriteIds(String uid) async* {
+    yield Set<String>.from(_favoriteIds);
+    yield* _controller.stream;
+  }
+
+  @override
+  bool isFavorite(String uid, String listingId) {
+    return _favoriteIds.contains(listingId);
+  }
+
+  @override
+  Stream<bool> streamIsFavorite(String uid, String listingId) async* {
+    yield isFavorite(uid, listingId);
+    yield* _controller.stream.map((ids) => ids.contains(listingId));
+  }
+
+  @override
+  Future<void> toggleFavorite({
+    required String uid,
+    required String listingId,
+    required bool makeFavorite,
+  }) async {
+    toggleCalls += 1;
+    if (makeFavorite) {
+      _favoriteIds.add(listingId);
+    } else {
+      _favoriteIds.remove(listingId);
+    }
+    _controller.add(Set<String>.from(_favoriteIds));
   }
 }
 
@@ -282,13 +447,15 @@ class _FakeProfileService extends ProfileService {
 class _FakeReviewsService extends ReviewsService {
   _FakeReviewsService({
     this.refreshError,
+    this.rows = const <Map<String, dynamic>>[],
   });
 
   final Object? refreshError;
+  final List<Map<String, dynamic>> rows;
 
   @override
   List<Map<String, dynamic>> peekSellerReviews(String sellerId) {
-    return const <Map<String, dynamic>>[];
+    return List<Map<String, dynamic>>.from(rows);
   }
 
   @override
@@ -298,7 +465,7 @@ class _FakeReviewsService extends ReviewsService {
     if (refreshError != null) {
       throw refreshError!;
     }
-    return const <Map<String, dynamic>>[];
+    return List<Map<String, dynamic>>.from(rows);
   }
 }
 

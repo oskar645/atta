@@ -78,28 +78,95 @@ void main() {
     expect(lateItems.first['id'], 'review-1');
     expect(api.listCalls, 1);
   });
+
+  test('reviews cache stays isolated by sellerId', () async {
+    final api = _FakeReviewsApi(
+      initialItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'review-1',
+          'seller_id': 'seller-1',
+          'reviewer_id': 'buyer-1',
+          'reviewer_name': 'First buyer',
+          'rating': 5,
+          'comment': 'Great',
+          'created_at': '2026-06-18T10:00:00.000Z',
+        },
+      ],
+    );
+    final service = ReviewsService(api: api);
+
+    await service.refreshSellerReviews('seller-1');
+    api.itemsBySeller['seller-2'] = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': 'review-2',
+        'seller_id': 'seller-2',
+        'reviewer_id': 'buyer-2',
+        'reviewer_name': 'Second buyer',
+        'rating': 4,
+        'comment': 'Nice',
+        'created_at': '2026-06-18T11:00:00.000Z',
+      },
+    ];
+    await service.refreshSellerReviews('seller-2');
+
+    expect(
+      service.peekSellerReviews('seller-1').map((row) => row['id']).toList(),
+      <String>['review-1'],
+    );
+    expect(
+      service.peekSellerReviews('seller-2').map((row) => row['id']).toList(),
+      <String>['review-2'],
+    );
+  });
+
+  test('resetSession clears cached reviews between auth sessions', () async {
+    final api = _FakeReviewsApi(
+      initialItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'review-1',
+          'seller_id': 'seller-1',
+          'reviewer_id': 'buyer-1',
+          'reviewer_name': 'First buyer',
+          'rating': 5,
+          'comment': 'Great',
+          'created_at': '2026-06-18T10:00:00.000Z',
+        },
+      ],
+    );
+    final service = ReviewsService(api: api);
+
+    await service.refreshSellerReviews('seller-1');
+    service.resetSession();
+
+    expect(service.peekSellerReviews('seller-1'), isEmpty);
+    expect(await service.streamSellerReviews('seller-1').first, isEmpty);
+  });
 }
 
 class _FakeReviewsApi extends ReviewsApi {
   _FakeReviewsApi({
     required List<Map<String, dynamic>> initialItems,
-  })  : _items = initialItems
-            .map((item) => Map<String, dynamic>.from(item))
-            .toList(growable: true),
+  })  : itemsBySeller = <String, List<Map<String, dynamic>>>{
+          if (initialItems.isNotEmpty)
+            (initialItems.first['seller_id'] ?? '').toString(): initialItems
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(growable: true),
+        },
         super(
           ApiClient(
             tokenStorage: TokenStorage(),
           ),
         );
 
-  final List<Map<String, dynamic>> _items;
+  final Map<String, List<Map<String, dynamic>>> itemsBySeller;
   int listCalls = 0;
 
   @override
   Future<Map<String, dynamic>> listSellerReviews(String sellerId) async {
     listCalls += 1;
+    final items = itemsBySeller[sellerId] ?? const <Map<String, dynamic>>[];
     return <String, dynamic>{
-      'items': _items
+      'items': items
           .map((item) => Map<String, dynamic>.from(item))
           .toList(growable: false),
     };
@@ -128,7 +195,10 @@ class _FakeReviewsApi extends ReviewsApi {
         'avatar_url': 'https://cdn.example.com/second.jpg',
       },
     };
-    _items.insert(0, item);
+    itemsBySeller.putIfAbsent(sellerId, () => <Map<String, dynamic>>[]).insert(
+          0,
+          item,
+        );
     return <String, dynamic>{'item': item};
   }
 }

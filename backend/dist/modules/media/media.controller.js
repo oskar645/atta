@@ -29,6 +29,7 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const storage_service_1 = require("../storage/storage.service");
 const users_service_1 = require("../users/users.service");
+const serializers_1 = require("../../common/serializers");
 const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
     storage: require('multer').memoryStorage(),
 });
@@ -134,6 +135,30 @@ let MediaController = MediaController_1 = class MediaController {
     }
     uploadFeedAdImage(authUser, feedAdId, file) {
         return this.feedAdsService.attachImage(authUser, feedAdId, this.requireImage(file, 5 * 1024 * 1024));
+    }
+    async uploadNotificationImage(authUser, file) {
+        this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
+            limit: 20,
+            windowMs: 60 * 1000,
+        });
+        const requiredFile = this.requireImage(file, 5 * 1024 * 1024);
+        const uploaded = await this.storageService.saveUploadedFile({
+            buffer: requiredFile.buffer,
+            category: 'misc',
+            contentType: requiredFile.mimetype,
+            context: {
+                userId: authUser.userId,
+            },
+            originalName: requiredFile.originalname,
+        });
+        return {
+            source: 'timeweb',
+            url: (0, serializers_1.normalizeStoredMediaUrl)(uploaded.url, {
+                category: 'misc',
+                providerHint: uploaded.provider,
+                storageKey: uploaded.key,
+            }),
+        };
     }
     deleteMedia(authUser, id) {
         if (authUser.role !== 'admin') {
@@ -340,6 +365,16 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", void 0)
 ], MediaController.prototype, "uploadFeedAdImage", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
+    (0, common_1.Post)('notifications/image'),
+    (0, common_1.UseInterceptors)(memoryImageUpload),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.UploadedFile)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], MediaController.prototype, "uploadNotificationImage", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Delete)(':id'),

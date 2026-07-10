@@ -16,8 +16,24 @@ import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'dart:async';
 
+void _debugMyListingsLog(String message) {
+  assert(() {
+    debugPrint(message);
+    return true;
+  }());
+}
+
 class MyListingsScreen extends StatefulWidget {
-  const MyListingsScreen({super.key});
+  const MyListingsScreen({
+    super.key,
+    this.initialTabIndex = 0,
+    this.initialListingId = '',
+    this.autoOpenInitialListing = false,
+  });
+
+  final int initialTabIndex;
+  final String initialListingId;
+  final bool autoOpenInitialListing;
 
   @override
   State<MyListingsScreen> createState() => _MyListingsScreenState();
@@ -58,7 +74,12 @@ class _MyListingsScreenState extends State<MyListingsScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: _tabs.length, vsync: this);
+    _debugMyListingsLog('MyListings open');
+    _tab = TabController(
+      length: _tabs.length,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, _tabs.length - 1),
+    );
   }
 
   @override
@@ -101,17 +122,26 @@ class _MyListingsScreenState extends State<MyListingsScreen>
       body: TabBarView(
         controller: _tab,
         children: _tabs
+            .asMap()
+            .entries
             .map(
-              (tab) => ApiConfig.useTimewebBackend
+              (entry) => ApiConfig.useTimewebBackend
                   ? _TimewebMyListingsTab(
                       userId: uid,
-                      statuses: tab.statuses,
-                      emptyText: tab.emptyText,
+                      statuses: entry.value.statuses,
+                      emptyText: entry.value.emptyText,
+                      initialListingId: widget.initialListingId.isNotEmpty &&
+                              widget.initialTabIndex == entry.key
+                          ? widget.initialListingId
+                          : '',
+                      autoOpenInitialListing: widget.autoOpenInitialListing &&
+                          widget.initialListingId.isNotEmpty &&
+                          widget.initialTabIndex == entry.key,
                     )
                   : _ListingsTab(
                       stream: svc.streamMyListingsByStatuses(
                         uid,
-                        statuses: tab.statuses,
+                        statuses: entry.value.statuses,
                       ),
                     ),
             )
@@ -138,28 +168,46 @@ class _TimewebMyListingsTab extends StatefulWidget {
     required this.userId,
     required this.statuses,
     required this.emptyText,
+    this.initialListingId = '',
+    this.autoOpenInitialListing = false,
   });
 
   final String userId;
   final Set<String> statuses;
   final String emptyText;
+  final String initialListingId;
+  final bool autoOpenInitialListing;
 
   @override
   State<_TimewebMyListingsTab> createState() => _TimewebMyListingsTabState();
 }
 
 class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
+  static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
   late Future<List<Listing>> _future;
   StreamSubscription<void>? _refreshSub;
   List<Listing>? _items;
   bool _loadedOnce = false;
   String? _errorText;
   bool _loading = true;
+  bool _didAutoOpenInitialListing = false;
+  DateTime? _lastRefreshAt;
+
+  void _showLoadErrorSnack() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Не удалось обновить объявления. Попробуйте ещё раз.'),
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _debugMyListingsLog('auth ready user=${widget.userId}');
     final cached = context.read<ListingsService>().peekMyListingsByStatuses(
           statuses: widget.statuses,
         );
@@ -177,54 +225,166 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
         _loadedOnce = true;
         _loading = false;
       });
+      _lastRefreshAt = DateTime.now();
+      _maybeAutoOpenListing(_items ?? const <Listing>[]);
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _refreshSub?.cancel();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final lastRefreshAt = _lastRefreshAt;
+    if (lastRefreshAt != null &&
+        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
+      return;
+    }
+    unawaited(_refresh());
+  }
+
   Future<List<Listing>> _load() {
+    final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
+    _debugMyListingsLog(
+      'MyListings load start user=${widget.userId} statuses=${widget.statuses.join(",")}',
+    );
     return context
         .read<ListingsService>()
         .getMyListingsByStatuses(
           widget.userId,
           statuses: widget.statuses,
+          forceRefresh: hadItems,
         )
         .then((items) {
+      final loadError = context
+          .read<ListingsService>()
+          .lastMyListingsErrorForUser(widget.userId);
       if (mounted) {
         setState(() {
           _items = items;
-          _errorText = null;
+          _errorText = !hadItems && loadError != null
+              ? 'Не удалось загрузить объявления. Попробуйте снова.'
+              : null;
           _loading = false;
           _loadedOnce = true;
         });
       }
+      _lastRefreshAt = DateTime.now();
+      _debugMyListingsLog(
+        items.isEmpty
+            ? 'MyListings load empty'
+            : 'MyListings load success count=${items.length}',
+      );
+      _maybeAutoOpenListing(items);
       return items;
     }).catchError((error) {
       if (mounted) {
         setState(() {
-          _errorText = 'Не удалось загрузить объявления. Попробуйте снова.';
           _loading = false;
-          _loadedOnce = true;
+          if (hadItems) {
+            _errorText = null;
+          } else {
+            _errorText = 'Не удалось загрузить объявления. Попробуйте снова.';
+            _loadedOnce = true;
+          }
         });
+        if (hadItems) {
+          _showLoadErrorSnack();
+        }
       }
-      throw error;
+      _debugMyListingsLog('MyListings load error message=$error');
+      return List<Listing>.from(_items ?? const <Listing>[]);
+    }).whenComplete(() {
+      _debugMyListingsLog('MyListings load finally loading=false');
     });
   }
 
   Future<void> _refresh() async {
-    final next = _load();
+    _debugMyListingsLog(
+      'MyListings refresh start user=${widget.userId} statuses=${widget.statuses.join(",")}',
+    );
+    final next = context.read<ListingsService>().getMyListingsByStatuses(
+          widget.userId,
+          statuses: widget.statuses,
+          forceRefresh: true,
+        );
     setState(() {
       _future = next;
       _errorText = null;
       _loading = _items == null;
     });
     try {
-      await next;
-    } catch (_) {}
+      final items = await next;
+      if (!mounted) return;
+      final loadError = context
+          .read<ListingsService>()
+          .lastMyListingsErrorForUser(widget.userId);
+      final hasItems = items.isNotEmpty;
+      setState(() {
+        _items = items;
+        _errorText = !hasItems && loadError != null
+            ? 'Не удалось загрузить объявления. Попробуйте снова.'
+            : null;
+        _loading = false;
+        _loadedOnce = true;
+      });
+      _lastRefreshAt = DateTime.now();
+      _maybeAutoOpenListing(items);
+      if (loadError != null && hasItems) {
+        _showLoadErrorSnack();
+      }
+    } catch (error) {
+      _debugMyListingsLog('MyListings refresh error message=$error');
+      if (!mounted) return;
+      setState(() {
+        if ((_items ?? const <Listing>[]).isEmpty) {
+          _errorText = 'Не удалось загрузить объявления. Попробуйте снова.';
+        }
+        _loading = false;
+      });
+      if ((_items ?? const <Listing>[]).isNotEmpty) {
+        _showLoadErrorSnack();
+      } else {
+        setState(() {
+          _loadedOnce = true;
+        });
+      }
+    } finally {
+      _debugMyListingsLog('MyListings refresh finally loading=false');
+    }
+  }
+
+  void _maybeAutoOpenListing(List<Listing> items) {
+    if (_didAutoOpenInitialListing ||
+        !widget.autoOpenInitialListing ||
+        widget.initialListingId.trim().isEmpty) {
+      return;
+    }
+    Listing? listing;
+    for (final item in items) {
+      if (item.id == widget.initialListingId.trim()) {
+        listing = item;
+        break;
+      }
+    }
+    if (listing == null || !mounted) {
+      return;
+    }
+    final resolvedListing = listing;
+    _didAutoOpenInitialListing = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ListingDetailScreen(listingId: resolvedListing.id),
+        ),
+      );
+    });
   }
 
   @override
@@ -243,9 +403,11 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(12),
             children: const [
-              SkeletonAdminModerationCard(),
-              SkeletonAdminModerationCard(),
-              SkeletonAdminModerationCard(),
+              SkeletonMyListingTile(),
+              SizedBox(height: 10),
+              SkeletonMyListingTile(),
+              SizedBox(height: 10),
+              SkeletonMyListingTile(),
             ],
           );
         }
@@ -267,7 +429,11 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
               children: [
                 ...items.map((item) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: _MyListingTile(listing: item),
+                      child: _MyListingTile(
+                        listing: item,
+                        showFavoriteCount: widget.statuses.length == 1 &&
+                            widget.statuses.contains('approved'),
+                      ),
                     )),
                 Text(
                   _errorText!,
@@ -300,7 +466,11 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
             padding: const EdgeInsets.all(12),
             itemCount: items.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _MyListingTile(listing: items[i]),
+            itemBuilder: (_, i) => _MyListingTile(
+              listing: items[i],
+              showFavoriteCount: widget.statuses.length == 1 &&
+                  widget.statuses.contains('approved'),
+            ),
           ),
         );
       },
@@ -322,9 +492,11 @@ class _ListingsTab extends StatelessWidget {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(12),
             children: const [
-              SkeletonAdminModerationCard(),
-              SkeletonAdminModerationCard(),
-              SkeletonAdminModerationCard(),
+              SkeletonMyListingTile(),
+              SizedBox(height: 10),
+              SkeletonMyListingTile(),
+              SizedBox(height: 10),
+              SkeletonMyListingTile(),
             ],
           );
         }
@@ -380,7 +552,11 @@ class _AsyncStateView extends StatelessWidget {
 
 class _MyListingTile extends StatelessWidget {
   final Listing listing;
-  const _MyListingTile({required this.listing});
+  final bool showFavoriteCount;
+  const _MyListingTile({
+    required this.listing,
+    this.showFavoriteCount = false,
+  });
 
   bool get _canSellFaster =>
       listing.status == 'approved' && !listing.isArchivedStatus;
@@ -467,7 +643,26 @@ class _MyListingTile extends StatelessWidget {
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 6),
-                      Text('Просмотров: ${listing.viewCount}'),
+                      Row(
+                        children: [
+                          Text('Просмотров: ${listing.viewCount}'),
+                          if (showFavoriteCount) ...[
+                            const SizedBox(width: 10),
+                            Icon(
+                              Icons.favorite_border,
+                              size: 14,
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${listing.favoriteCount}',
+                              key: ValueKey(
+                                'my_listing_favorite_count:${listing.id}',
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                       const SizedBox(height: 4),
                       Text(
                         'Статус: ${_statusLabel(listing.status)}',
