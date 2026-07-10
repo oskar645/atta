@@ -1,6 +1,8 @@
-import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
+import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/models/showcase_item.dart';
 import 'package:atta/src/services/showcase_service.dart';
+import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
@@ -8,21 +10,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class ShowcaseAllScreen extends StatefulWidget {
-  const ShowcaseAllScreen({super.key});
+  const ShowcaseAllScreen({
+    super.key,
+    this.onOpenListing,
+  });
+
+  final Future<void> Function(BuildContext context, ShowcaseItem item)?
+      onOpenListing;
 
   @override
   State<ShowcaseAllScreen> createState() => _ShowcaseAllScreenState();
 }
 
 class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
-  static const List<String> _filters = <String>[
-    'Все',
-    'Авто',
-    'Недвижимость',
-    'Электроника',
-    'Услуги',
-  ];
-
   late Future<List<ShowcaseItem>> _future;
   String _selectedFilter = 'Все';
 
@@ -57,18 +57,23 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                   scrollDirection: Axis.horizontal,
                   itemBuilder: (context, index) {
-                    final filter = _filters[index];
+                    final filter = kCategories[index];
                     final selected = filter == _selectedFilter;
                     return ChoiceChip(
                       label: Text(filter),
                       selected: selected,
                       onSelected: (_) {
+                        if (selected) {
+                          return;
+                        }
                         setState(() => _selectedFilter = filter);
                       },
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      visualDensity: VisualDensity.compact,
                     );
                   },
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemCount: _filters.length,
+                  itemCount: kCategories.length,
                 ),
               ),
               Expanded(
@@ -91,7 +96,10 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
                             itemCount: items.length,
                             itemBuilder: (context, index) {
                               final item = items[index];
-                              return _ShowcaseGridCard(item: item);
+                              return _ShowcaseGridCard(
+                                item: item,
+                                onOpenListing: widget.onOpenListing,
+                              );
                             },
                           ),
               ),
@@ -104,9 +112,32 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
 }
 
 class _ShowcaseGridCard extends StatelessWidget {
-  const _ShowcaseGridCard({required this.item});
+  const _ShowcaseGridCard({
+    required this.item,
+    this.onOpenListing,
+  });
 
   final ShowcaseItem item;
+  final Future<void> Function(BuildContext context, ShowcaseItem item)?
+      onOpenListing;
+
+  Future<void> _openListing(BuildContext context) async {
+    final customOpen = onOpenListing;
+    if (customOpen != null) {
+      await customOpen(context, item);
+      return;
+    }
+    final listingId = item.listingId.trim();
+    if (listingId.isEmpty) {
+      showAppSnack(context, 'Объявление недоступно', isError: true);
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ListingDetailScreen(listingId: listingId),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,13 +147,7 @@ class _ShowcaseGridCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => ShowcasePreviewScreen(item: item),
-            ),
-          );
-        },
+        onTap: () => _openListing(context),
         child: Ink(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
