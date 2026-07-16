@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
@@ -47,7 +49,7 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late final TabController _tab;
   Stream<List<Map<String, dynamic>>>? _globalStream;
   Stream<List<Map<String, dynamic>>>? _personalStream;
@@ -57,6 +59,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tab = TabController(length: 2, vsync: this);
     timeago.setLocaleMessages('ru', timeago.RuMessages());
 
@@ -75,8 +78,22 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tab.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final user = context.read<AuthService>().currentUser;
+    if (user == null) return;
+    unawaited(
+      context
+          .read<NotificationsService>()
+          .refreshActiveSession(force: true)
+          .catchError((_) {}),
+    );
   }
 
   Future<void> _confirmDeleteNotification({

@@ -90,6 +90,8 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
   }
 
   Future<void> _cancelPromotion(String promotionId) async {
+    final admin = context.read<AdminService>();
+    final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -111,9 +113,8 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
     );
     if (confirmed != true) return;
 
-    await context.read<AdminService>().cancelPromotion(promotionId);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
+    await admin.cancelPromotion(promotionId);
+    messenger.showSnackBar(
       const SnackBar(content: Text('Продвижение отменено')),
     );
     await _refresh();

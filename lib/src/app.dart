@@ -28,6 +28,7 @@ import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/network_recovery_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/promotions_service.dart';
 import 'package:atta/src/services/showcase_service.dart';
@@ -91,6 +92,10 @@ class AttaApp extends StatelessWidget {
         Provider<ChatSocketService>(
           create: (_) => ChatSocketService(),
           dispose: (_, service) => service.disconnect(),
+        ),
+        Provider<NetworkRecoveryService>(
+          create: (_) => NetworkRecoveryService(),
+          dispose: (_, service) => unawaited(service.dispose()),
         ),
         Provider<ChatService>(
           create: (context) =>
@@ -167,12 +172,13 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     with WidgetsBindingObserver {
   StreamSubscription<AuthSessionEvent>? _authSub;
   StreamSubscription<ChatSocketEvent>? _socketSub;
+  StreamSubscription<void>? _networkRecoverySub;
   StreamSubscription<AttaDeepLink>? _deepLinkSub;
   Future<void>? _resumeSyncInFlight;
   Future<bool>? _deepLinkOpenInFlight;
   String? _deepLinkOpenListingId;
+  String? _activeDeepLinkedListingId;
   String? _activeUid;
-  DateTime? _lastResumeSyncAt;
   bool _consumePendingListingAfterAuth = false;
   String? _lastOpenedListingId;
   DateTime? _lastOpenedListingAt;
@@ -192,8 +198,8 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   late final ProfileService _profile;
   late final ReviewsService _reviews;
   late final WalletService _walletService;
+  late final NetworkRecoveryService _networkRecovery;
 
-  static const Duration _resumeSyncCooldown = Duration(seconds: 45);
   static const Duration _deepLinkOpenCooldown = Duration(seconds: 2);
 
   void _runSoftStartupTask(Future<void> Function() task) {
@@ -224,6 +230,12 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     _profile = context.read<ProfileService>();
     _reviews = context.read<ReviewsService>();
     _walletService = context.read<WalletService>();
+    // Some focused widget tests provide the legacy service graph. Recovery is
+    // optional there, while production AttaApp always provides the shared
+    // instance above.
+    _networkRecovery =
+        Provider.of<NetworkRecoveryService?>(context, listen: false) ??
+            NetworkRecoveryService();
     _setOnline(true);
     _syncBadge();
     _authSub = _auth.onAuthStateChange.listen((_) async {
@@ -259,6 +271,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       if (isAdminUser) {
         _admin.activateSession();
         _admin.bindAdminUser(uid);
+        _runSoftStartupTask(() => _admin.refreshAdminAttention(force: false));
       } else {
         _admin.resetSession();
       }
@@ -282,6 +295,10 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       });
     });
     _socketSub = _socket.events.listen(_handleSocketEvent);
+    _networkRecoverySub = _networkRecovery.recoveries.listen((_) {
+      unawaited(_handleNetworkRecovered());
+    });
+    unawaited(_networkRecovery.start());
     _deepLinkSub = _deepLinks.links.listen(_handleDeepLink);
     unawaited(_deepLinks.initialize());
   }
@@ -290,6 +307,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   void dispose() {
     _authSub?.cancel();
     _socketSub?.cancel();
+    _networkRecoverySub?.cancel();
     _deepLinkSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -326,6 +344,9 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   }) async {
     final normalizedListingId = listingId.trim();
     if (normalizedListingId.isEmpty) return false;
+    if (_activeDeepLinkedListingId == normalizedListingId) {
+      return true;
+    }
     final now = DateTime.now();
     final lastOpenedId = _lastOpenedListingId;
     final lastOpenedAt = _lastOpenedListingAt;
@@ -367,11 +388,12 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
 
     try {
       final listing = await _listings.getListingById(listingId);
-      if (!mounted) return false;
+      if (!mounted || !navContext.mounted) return false;
       if (listing == null) {
         if (clearPendingOnSuccess) {
           await _deepLinks.clearPendingListingIdIfMatches(listingId);
         }
+        if (!navContext.mounted) return false;
         showAppSnack(
           navContext,
           'Объявление недоступно',
@@ -380,10 +402,11 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         return false;
       }
     } on ApiException catch (error) {
-      if (!mounted) return false;
+      if (!mounted || !navContext.mounted) return false;
       if (error.isNotFound && clearPendingOnSuccess) {
         await _deepLinks.clearPendingListingIdIfMatches(listingId);
       }
+      if (!navContext.mounted) return false;
       showAppSnack(
         navContext,
         'Объявление недоступно',
@@ -391,7 +414,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       );
       return false;
     } catch (_) {
-      if (!mounted) return false;
+      if (!mounted || !navContext.mounted) return false;
       showAppSnack(
         navContext,
         'Объявление недоступно',
@@ -403,13 +426,21 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     final now = DateTime.now();
     _lastOpenedListingId = listingId;
     _lastOpenedListingAt = now;
-    navigator.push(
+    _activeDeepLinkedListingId = listingId;
+    navigator
+        .push(
       MaterialPageRoute<void>(
+        settings: RouteSettings(name: 'deep-link-listing:$listingId'),
         builder: (_) =>
             debugDeepLinkListingScreenBuilder?.call(listingId) ??
             ListingDetailScreen(listingId: listingId),
       ),
-    );
+    )
+        .then((_) {
+      if (_activeDeepLinkedListingId == listingId) {
+        _activeDeepLinkedListingId = null;
+      }
+    });
     if (clearPendingOnSuccess) {
       await _deepLinks.clearPendingListingIdIfMatches(listingId);
     }
@@ -492,6 +523,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     if (isAdminUser) {
       _admin.activateSession();
       _admin.bindAdminUser(uid);
+      _runSoftStartupTask(() => _admin.refreshAdminAttention(force: false));
     } else {
       _admin.resetSession();
     }
@@ -524,20 +556,12 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       return existing;
     }
 
-    final now = DateTime.now();
-    final lastResumeAt = _lastResumeSyncAt;
-    if (lastResumeAt != null &&
-        now.difference(lastResumeAt) < _resumeSyncCooldown) {
-      return;
-    }
-
     final future = () async {
       _runSoftStartupTask(() => _setOnline(true));
       final restoredUser = await _auth.restoreSessionOnResume(force: true);
       if (!mounted) return;
       final uid = restoredUser?.uid ?? _auth.currentUser?.uid;
       if (uid == null || uid.isEmpty) {
-        _lastResumeSyncAt = DateTime.now();
         return;
       }
       _runSoftStartupTask(() => _chats.handleAppResumed(uid));
@@ -546,8 +570,12 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
           force: true,
         ),
       );
+      if ((_auth.currentUser?.isAdmin ?? restoredUser?.isAdmin) == true) {
+        _admin.activateSession();
+        _admin.bindAdminUser(uid);
+        _runSoftStartupTask(() => _admin.refreshAdminAttention(force: true));
+      }
       _runSoftStartupTask(_syncBadge);
-      _lastResumeSyncAt = DateTime.now();
     }();
     _resumeSyncInFlight = future;
     try {
@@ -559,6 +587,22 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         _resumeSyncInFlight = null;
       }
     }
+  }
+
+  Future<void> _handleNetworkRecovered() async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+
+    // A route change can leave a TCP socket marked as connected even though it
+    // belongs to the old network. Recreate it before reloading chat data.
+    _runSoftStartupTask(() => _chats.handleNetworkChanged(uid));
+    _runSoftStartupTask(() => _notifications.refreshActiveSession(force: true));
+    if (_auth.currentUser?.isAdmin == true) {
+      _admin.activateSession();
+      _admin.bindAdminUser(uid);
+      _runSoftStartupTask(() => _admin.refreshAdminAttention(force: true));
+    }
+    _runSoftStartupTask(_syncBadge);
   }
 
   @override

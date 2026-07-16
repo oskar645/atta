@@ -94,7 +94,8 @@ class MediaPreviewBox extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final compact = constraints.maxHeight <= 60 || constraints.maxWidth <= 72;
+          final compact =
+              constraints.maxHeight <= 60 || constraints.maxWidth <= 72;
           return Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

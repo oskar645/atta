@@ -22,4 +22,3 @@ void main() {
     expect(chat.listingPhotoUrl, 'https://cdn.example.com/exeed.jpg');
   });
 }
-

@@ -93,7 +93,7 @@ void main() {
         value: auth,
         child: MaterialApp(
           home: AuthGate(
-            bootstrapTimeout: Duration(milliseconds: 1),
+            bootstrapTimeout: const Duration(milliseconds: 1),
             authenticatedBuilder: (_) => const Scaffold(
               body: Text('AUTH_HOME'),
             ),

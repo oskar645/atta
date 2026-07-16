@@ -54,6 +54,41 @@ void main() {
     expect(factory.createdSockets.single.connectCalls, 1);
   });
 
+  test('force reconnect recreates a socket after a network change', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    await service.forceReconnect(reason: 'network_changed');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connectCalls, 1);
+  });
+
+  test('explicit network recovery can retry a server-disconnected socket',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    factory.createdSockets.single.emitDisconnect('io server disconnect');
+
+    await service.forceReconnect(reason: 'network_changed');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connectCalls, 1);
+  });
+
   test('same skipped connected log is throttled', () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -80,8 +115,7 @@ void main() {
     );
   });
 
-  test('ping when socket connected does not call connect repeatedly',
-      () async {
+  test('ping when socket connected does not call connect repeatedly', () async {
     final storage = TokenStorage();
     await _saveSession(storage);
     final factory = _FakeSocketFactory(autoConnect: true);
@@ -192,8 +226,7 @@ void main() {
     expect(service.debugHistory.last, contains('reason=chat.ensureReady'));
   });
 
-  test(
-      'server disconnect cooldown blocks presence heartbeat reconnect attempts',
+  test('server disconnect blocks presence heartbeat reconnect attempts',
       () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -217,7 +250,7 @@ void main() {
     expect(
       service.debugHistory.any(
         (entry) =>
-            entry.contains('cooldown after server disconnect') &&
+            entry.contains('server disconnect requires explicit recovery') &&
             entry.contains('reason=presence.heartbeat'),
       ),
       isTrue,
@@ -242,10 +275,9 @@ void main() {
     expect(factory.createdSockets, hasLength(1));
     expect(
       service.debugHistory.any(
-        (entry) =>
-            entry.contains(
-              'Socket[1] connect start reason=presence.heartbeat',
-            ),
+        (entry) => entry.contains(
+          'Socket[1] connect start reason=presence.heartbeat',
+        ),
       ),
       isTrue,
     );
@@ -448,8 +480,7 @@ class _FakeChatSocketClient implements ChatSocketClient {
 
   void emitConnect() {
     _connected = true;
-    for (final handler
-        in List<void Function(dynamic)>.from(_connectHandlers)) {
+    for (final handler in List<void Function(dynamic)>.from(_connectHandlers)) {
       handler(null);
     }
   }

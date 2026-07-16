@@ -17,7 +17,7 @@ class AdminReportsScreen extends StatefulWidget {
 
   final String initialReportId;
 
-  static const List<_DecisionTemplate> noViolationTemplates = [
+  static const List<_DecisionTemplate> _noViolationTemplates = [
     _DecisionTemplate(
       label: 'Нарушений не найдено',
       title: 'Проверка жалобы завершена',
@@ -25,7 +25,7 @@ class AdminReportsScreen extends StatefulWidget {
     ),
   ];
 
-  static const List<_DecisionTemplate> warnTemplates = [
+  static const List<_DecisionTemplate> _warnTemplates = [
     _DecisionTemplate(
       label: 'Предупреждение',
       title: 'Предупреждение по жалобе',
@@ -34,7 +34,7 @@ class AdminReportsScreen extends StatefulWidget {
     ),
   ];
 
-  static const List<_DecisionTemplate> removeTemplates = [
+  static const List<_DecisionTemplate> _removeTemplates = [
     _DecisionTemplate(
       label: 'Удаление объявления',
       title: 'Объявление удалено',
@@ -649,7 +649,7 @@ class _ReportCard extends StatelessWidget {
                     context,
                     decision: 'no_violation',
                     deleteListing: false,
-                    templates: AdminReportsScreen.noViolationTemplates,
+                    templates: AdminReportsScreen._noViolationTemplates,
                   ),
                   child: const Text('Нарушений нет'),
                 ),
@@ -658,7 +658,7 @@ class _ReportCard extends StatelessWidget {
                     context,
                     decision: 'warned',
                     deleteListing: false,
-                    templates: AdminReportsScreen.warnTemplates,
+                    templates: AdminReportsScreen._warnTemplates,
                   ),
                   child: const Text('Пометить обработанной'),
                 ),
@@ -669,7 +669,7 @@ class _ReportCard extends StatelessWidget {
                             context,
                             decision: 'removed',
                             deleteListing: true,
-                            templates: AdminReportsScreen.removeTemplates,
+                            templates: AdminReportsScreen._removeTemplates,
                           ),
                   child: const Text('Удалить объявление'),
                 ),

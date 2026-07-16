@@ -34,6 +34,8 @@ class ListingCard extends StatelessWidget {
     final borderColor = hasVipPromotion
         ? vipBorderColor(context)
         : Theme.of(context).colorScheme.outlineVariant;
+    final compactTextScaler =
+        MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.1);
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(12),
@@ -123,163 +125,187 @@ class ListingCard extends StatelessWidget {
                 ),
               ),
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 6),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              listing.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                height: 1.05,
+                child: MediaQuery(
+                  data: MediaQuery.of(context)
+                      .copyWith(textScaler: compactTextScaler),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 3, 8, 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                listing.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          SizedBox(
-                            height: 28,
-                            width: 28,
-                            child: IconButton(
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints.tightFor(
-                                width: 28,
-                                height: 28,
-                              ),
-                              onPressed: () => onToggleFav(!isFav),
-                              icon: Icon(
-                                isFav ? Icons.favorite : Icons.favorite_border,
-                                color: isFav
-                                    ? Colors.red
-                                    : Theme.of(context).colorScheme.outline,
-                                size: 20,
+                            const SizedBox(width: 4),
+                            SizedBox(
+                              width: 26,
+                              height: 26,
+                              child: IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints.tightFor(
+                                  width: 26,
+                                  height: 26,
+                                ),
+                                onPressed: () => onToggleFav(!isFav),
+                                icon: Icon(
+                                  isFav
+                                      ? Icons.favorite
+                                      : Icons.favorite_border,
+                                  color: isFav
+                                      ? Colors.red
+                                      : Theme.of(context).colorScheme.outline,
+                                  size: 20,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            border: hasVipPromotion
-                                ? Border.all(
-                                    color: vipBorderColor(context),
-                                    width: 1.1,
-                                  )
-                                : null,
-                            color: hasVipPromotion
-                                ? vipAccentColor(context)
-                                    .withValues(alpha: 0.08)
-                                : Colors.transparent,
-                          ),
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: hasVipPromotion ? 8 : 0,
-                              vertical: hasVipPromotion ? 4 : 0,
-                            ),
-                            child: Text(
-                              '${formatPrice(listing.price)} ₽',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                color: hasVipPromotion
-                                    ? vipBorderColor(context)
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                border: hasVipPromotion
+                                    ? Border.all(
+                                        color: vipBorderColor(context),
+                                        width: 1.1,
+                                      )
                                     : null,
+                                color: hasVipPromotion
+                                    ? vipAccentColor(context)
+                                        .withValues(alpha: 0.08)
+                                    : Colors.transparent,
+                              ),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: hasVipPromotion ? 7 : 0,
+                                  vertical: hasVipPromotion ? 2 : 0,
+                                ),
+                                child: Text(
+                                  '${formatPrice(listing.price)} ₽',
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    color: hasVipPromotion
+                                        ? vipBorderColor(context)
+                                        : null,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      StreamBuilder<Map<String, dynamic>>(
-                        stream: reviews.streamSellerRating(listing.ownerId),
-                        builder: (context, rSnap) {
-                          final avg =
-                              (rSnap.data?['avg'] as num?)?.toDouble() ?? 0.0;
-                          final cnt =
-                              (rSnap.data?['count'] as num?)?.toInt() ?? 0;
-
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.star,
-                                  size: 14, color: Colors.amber),
-                              const SizedBox(width: 4),
-                              Text(
-                                avg.toStringAsFixed(1),
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '($cnt)',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Theme.of(context).colorScheme.outline,
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              cityShort.isEmpty ? 'Город не указан' : cityShort,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.outline,
-                              ),
-                            ),
-                          ),
-                          if (hasVipPromotion) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(999),
-                                color: vipAccentColor(context),
-                              ),
+                        const SizedBox(height: 2),
+                        StreamBuilder<Map<String, dynamic>>(
+                          stream: reviews.streamSellerRating(listing.ownerId),
+                          builder: (context, rSnap) {
+                            final avg =
+                                (rSnap.data?['avg'] as num?)?.toDouble() ?? 0.0;
+                            final cnt =
+                                (rSnap.data?['count'] as num?)?.toInt() ?? 0;
+                            return FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
-                                children: const [
-                                  Icon(
-                                    Icons.workspace_premium_rounded,
-                                    size: 11,
-                                    color: Colors.white,
-                                  ),
-                                  SizedBox(width: 4),
+                                children: [
+                                  const Icon(Icons.star,
+                                      size: 14, color: Colors.amber),
+                                  const SizedBox(width: 4),
                                   Text(
-                                    'VIP',
+                                    avg.toStringAsFixed(1),
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '($cnt)',
                                     style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                      color: Colors.white,
+                                      fontSize: 12,
+                                      color:
+                                          Theme.of(context).colorScheme.outline,
                                     ),
                                   ),
                                 ],
                               ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
+                            );
+                          },
+                        ),
+                        const Spacer(),
+                        const SizedBox(height: 2),
+                        Transform.translate(
+                          offset: const Offset(0, -3),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  cityShort.isEmpty
+                                      ? 'Город не указан'
+                                      : cityShort,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color:
+                                        Theme.of(context).colorScheme.outline,
+                                  ),
+                                ),
+                              ),
+                              if (hasVipPromotion) ...[
+                                const SizedBox(width: 6),
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(999),
+                                      color: vipAccentColor(context),
+                                    ),
+                                    child: const Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.workspace_premium_rounded,
+                                          size: 10,
+                                          color: Colors.white,
+                                        ),
+                                        SizedBox(width: 4),
+                                        Text(
+                                          'VIP',
+                                          style: TextStyle(
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

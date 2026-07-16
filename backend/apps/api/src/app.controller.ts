@@ -10,6 +10,8 @@ import { StorageService } from './modules/storage/storage.service';
 export class AppController {
   private static readonly appStoreFallbackUrl =
     'https://apps.apple.com/us/app/atta/id6762604298?l=ru';
+  private static readonly googlePlayFallbackUrl =
+    'https://play.google.com/store/apps/details?id=com.example.atta';
   private static readonly appLandingUrl = 'https://attamarket.online/app';
   private static readonly appOgImageUrl =
     'https://attamarket.online/meta/app-icon.png';
@@ -164,9 +166,7 @@ export class AppController {
     const pageUrl = normalizedListingId
       ? `https://attamarket.online/listing/${encodeURIComponent(normalizedListingId)}`
       : 'https://attamarket.online/listing';
-    const buttonText = params.available
-      ? 'Открыть в App Store'
-      : 'Открыть ATTA в App Store';
+    const buttonText = params.available ? 'Открыть в приложении' : 'Установить ATTA';
 
     return `<!doctype html>
 <html lang="ru">
@@ -216,6 +216,12 @@ export class AppController {
         margin: 0 0 18px;
         line-height: 1.5;
       }
+      .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 20px;
+      }
       a.button {
         display: inline-block;
         padding: 12px 18px;
@@ -225,6 +231,11 @@ export class AppController {
         text-decoration: none;
         font-weight: 600;
       }
+      a.button.secondary {
+        background: #ffffff;
+        color: #1f1f1f;
+        border: 1px solid rgba(31, 31, 31, 0.14);
+      }
     </style>
   </head>
   <body>
@@ -232,7 +243,12 @@ export class AppController {
       <section class="card">
         <h1>ATTA</h1>
         <p>${this.escapeHtml(params.description)}</p>
-        <a class="button" href="${AppController.appStoreFallbackUrl}">${buttonText}</a>
+        <p>Если приложение уже установлено, после открытия объявления дополнительные переходы не выполняются.</p>
+        <div class="actions">
+          <a class="button" href="${pageUrl}">${buttonText}</a>
+          <a class="button secondary" href="${AppController.appStoreFallbackUrl}">App Store</a>
+          <a class="button secondary" href="${AppController.googlePlayFallbackUrl}">Google Play</a>
+        </div>
       </section>
     </main>
   </body>

@@ -282,84 +282,6 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     );
   }
 
-  Widget _messageImage(ChatService chatSvc, String rawImageUrl) {
-    const maxWidth = 248.0;
-    const maxHeight = 300.0;
-
-    Widget imageFallback([String message = 'Фото недоступно']) {
-      return Container(
-        width: maxWidth,
-        height: 180,
-        color: Colors.black12,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
-
-    final localPath = rawImageUrl.startsWith('file://')
-        ? rawImageUrl.replaceFirst('file://', '')
-        : null;
-    if (localPath != null && localPath.isNotEmpty) {
-      return GestureDetector(
-        onTap: () => _openImageFullScreen(localPath),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: maxWidth,
-            maxHeight: maxHeight,
-          ),
-          child: AspectRatio(
-            aspectRatio: 1,
-            child: Image.file(
-              File(localPath),
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => imageFallback(),
-            ),
-          ),
-        ),
-      );
-    }
-    return FutureBuilder<String>(
-      future: chatSvc.resolveMessageImageUrl(rawImageUrl),
-      builder: (context, snap) {
-        if (snap.hasError) {
-          return imageFallback();
-        }
-        final resolvedUrl = (snap.data ?? '').trim();
-
-        if (snap.connectionState != ConnectionState.done) {
-          return imageFallback('Загрузка фото...');
-        }
-
-        if (resolvedUrl.isEmpty) {
-          return imageFallback();
-        }
-
-        return GestureDetector(
-          onTap: () => _openImageFullScreen(resolvedUrl),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: maxWidth,
-              maxHeight: maxHeight,
-            ),
-            child: AspectRatio(
-              aspectRatio: 1,
-              child: CachedNetworkImage(
-                imageUrl: resolvedUrl,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => imageFallback('Загрузка фото...'),
-                errorWidget: (_, __, ___) => imageFallback(),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _confirmDeleteMessage(ChatMessage m) async {
     final uid = _uid(context);
     if (uid.isEmpty) return;
@@ -493,44 +415,6 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _messageMeta(ChatMessage message, bool mine) {
-    final timeStyle = TextStyle(
-      fontSize: 11,
-      color: Theme.of(context).colorScheme.onSurfaceVariant,
-    );
-
-    final time = Text(_formatMessageTime(message.createdAt), style: timeStyle);
-    if (!mine) return time;
-
-    final isRead = message.status == 'read' || message.readAt != null;
-    final isDelivered =
-        message.status == 'delivered' || message.deliveredAt != null;
-    final isSending =
-        message.status == 'pending' || message.status == 'sending';
-    final isFailed = message.status == 'failed';
-    final iconColor =
-        isRead ? Colors.blue : Theme.of(context).colorScheme.onSurfaceVariant;
-
-    final statusIcon = isFailed
-        ? const Icon(Icons.error_outline_rounded, size: 15, color: Colors.red)
-        : isSending
-            ? Icon(Icons.schedule_rounded, size: 14, color: iconColor)
-            : isRead
-                ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
-                : isDelivered
-                    ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
-                    : Icon(Icons.done_rounded, size: 15, color: iconColor);
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        time,
-        const SizedBox(width: 4),
-        statusIcon,
-      ],
     );
   }
 
@@ -966,6 +850,7 @@ class _ChatMessageListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const avatarSlotWidth = 30.0;
     final avatar = RemoteAvatar(
       key: ValueKey<String>(
         'avatar-${mine ? 'mine' : 'other'}-${message.stableKey}',
@@ -979,56 +864,73 @@ class _ChatMessageListItem extends StatelessWidget {
     return Column(
       children: [
         if (showDayDivider && dayDivider != null) dayDivider!,
-        Align(
-          alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-          child: GestureDetector(
-            onLongPress: onDeleteMessage,
-            child: Row(
-              key: ValueKey<String>('row-${message.stableKey}'),
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (!mine) ...[
-                  avatar,
-                  const SizedBox(width: 6),
-                ],
-                Column(
-                  crossAxisAlignment:
-                      mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final availableBubbleWidth = constraints.maxWidth - avatarSlotWidth;
+            final preferredBubbleWidth = constraints.maxWidth * 0.76;
+            final maxBubbleWidth = preferredBubbleWidth > availableBubbleWidth
+                ? availableBubbleWidth
+                : preferredBubbleWidth.clamp(180.0, 300.0);
+
+            return Align(
+              alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+              child: GestureDetector(
+                onLongPress: onDeleteMessage,
+                child: Row(
+                  key: ValueKey<String>('row-${message.stableKey}'),
+                  mainAxisAlignment:
+                      mine ? MainAxisAlignment.end : MainAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    _ChatMessageBubble(
-                      key: ValueKey<String>('bubble-${message.stableKey}'),
-                      message: message,
-                      mine: mine,
-                      chatSvc: chatSvc,
-                      onOpenImage: onOpenImage,
-                      formatMessageTime: formatMessageTime,
-                    ),
-                    if (mine &&
-                        message.type == 'image' &&
-                        message.status == 'failed')
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
+                    if (!mine) ...[
+                      avatar,
+                      const SizedBox(width: 6),
+                    ],
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: mine
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
                         children: [
-                          TextButton(
-                            onPressed: onRetryImage,
-                            child: const Text('Повторить'),
+                          _ChatMessageBubble(
+                            key: ValueKey<String>(
+                              'bubble-${message.stableKey}',
+                            ),
+                            message: message,
+                            mine: mine,
+                            chatSvc: chatSvc,
+                            maxWidth: maxBubbleWidth,
+                            onOpenImage: onOpenImage,
+                            formatMessageTime: formatMessageTime,
                           ),
-                          TextButton(
-                            onPressed: onRemoveFailedImage,
-                            child: const Text('Удалить'),
-                          ),
+                          if (mine &&
+                              message.type == 'image' &&
+                              message.status == 'failed')
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TextButton(
+                                  onPressed: onRetryImage,
+                                  child: const Text('Повторить'),
+                                ),
+                                TextButton(
+                                  onPressed: onRemoveFailedImage,
+                                  child: const Text('Удалить'),
+                                ),
+                              ],
+                            ),
                         ],
                       ),
+                    ),
+                    if (mine) ...[
+                      const SizedBox(width: 6),
+                      avatar,
+                    ],
                   ],
                 ),
-                if (mine) ...[
-                  const SizedBox(width: 6),
-                  avatar,
-                ],
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ],
     );
@@ -1041,6 +943,7 @@ class _ChatMessageBubble extends StatelessWidget {
     required this.message,
     required this.mine,
     required this.chatSvc,
+    required this.maxWidth,
     required this.onOpenImage,
     required this.formatMessageTime,
   });
@@ -1048,6 +951,7 @@ class _ChatMessageBubble extends StatelessWidget {
   final ChatMessage message;
   final bool mine;
   final ChatService chatSvc;
+  final double maxWidth;
   final ValueChanged<String> onOpenImage;
   final String Function(DateTime value) formatMessageTime;
 
@@ -1070,6 +974,7 @@ class _ChatMessageBubble extends StatelessWidget {
         children: [
           Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
+            constraints: BoxConstraints(maxWidth: maxWidth),
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               color: bubbleColor,
@@ -1093,50 +998,54 @@ class _ChatMessageBubble extends StatelessWidget {
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(10),
-      constraints: const BoxConstraints(maxWidth: 300),
-      decoration: BoxDecoration(
-        color: bubbleColor,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (hasImg)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: _ResolvedMessageImage(
-                key: ValueKey<String>('image-${message.stableKey}'),
-                chatSvc: chatSvc,
-                rawImageUrl: message.imageUrl!,
-                onOpenImage: onOpenImage,
-              ),
-            ),
-          if (text.isNotEmpty) ...[
-            if (hasImg) const SizedBox(height: 8),
-            Text(
-              text,
-              style: message.hasVisibleContent
-                  ? null
-                  : TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontStyle: FontStyle.italic,
-                    ),
-            ),
-          ],
-          const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerRight,
-            child: _MessageMeta(
-              key: ValueKey<String>('meta-${message.stableKey}'),
-              message: message,
-              mine: mine,
-              formatMessageTime: formatMessageTime,
-            ),
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: IntrinsicWidth(
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: bubbleColor,
+            borderRadius: BorderRadius.circular(14),
           ),
-        ],
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (hasImg)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: _ResolvedMessageImage(
+                    key: ValueKey<String>('image-${message.stableKey}'),
+                    chatSvc: chatSvc,
+                    rawImageUrl: message.imageUrl!,
+                    onOpenImage: onOpenImage,
+                  ),
+                ),
+              if (text.isNotEmpty) ...[
+                if (hasImg) const SizedBox(height: 8),
+                Text(
+                  text,
+                  style: message.hasVisibleContent
+                      ? null
+                      : TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontStyle: FontStyle.italic,
+                        ),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: _MessageMeta(
+                  key: ValueKey<String>('meta-${message.stableKey}'),
+                  message: message,
+                  mine: mine,
+                  formatMessageTime: formatMessageTime,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

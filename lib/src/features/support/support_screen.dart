@@ -459,17 +459,22 @@ class _SupportScreenState extends State<SupportScreen> {
                         await _retryDraftMessage(m);
                         return;
                       }
+                      final support = context.read<SupportService>();
+                      final messenger = ScaffoldMessenger.of(context);
+                      final ticketId = _ticketId!;
+                      final messageId = (m['id'] ?? '').toString();
                       try {
-                        await context.read<SupportService>().retryMessage(
-                              ticketId: _ticketId!,
-                              messageId: (m['id'] ?? '').toString(),
-                            );
+                        await support.retryMessage(
+                          ticketId: ticketId,
+                          messageId: messageId,
+                        );
                       } catch (error) {
-                        if (!context.mounted) return;
-                        showAppSnack(
-                          context,
-                          _supportErrorText(error),
-                          isError: true,
+                        messenger.showSnackBar(
+                          SnackBar(
+                            content: Text(_supportErrorText(error)),
+                            behavior: SnackBarBehavior.floating,
+                            backgroundColor: Colors.red.shade700,
+                          ),
                         );
                       }
                     }

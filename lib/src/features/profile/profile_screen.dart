@@ -176,12 +176,14 @@ class _ProfileScreenState extends State<ProfileScreen>
     } finally {
       _debugProfileLog('profile finally loading=false user=${user.uid}');
     }
-    unawaited(
-      profile.getProfile(user.uid).catchError((error) {
-        _debugProfileLog('Profile load error message=$error user=${user.uid}');
-        return <String, dynamic>{};
-      }),
-    );
+    try {
+      await profile.getProfile(user.uid, forceRefresh: true);
+      if (mounted) {
+        setState(() => _profileStream = null);
+      }
+    } catch (error) {
+      _debugProfileLog('Profile load error message=$error user=${user.uid}');
+    }
   }
 
   Future<void> _shareProfileInvite(
@@ -318,6 +320,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _pickAndUploadAvatar(BuildContext context, String uid) async {
     final picker = ImagePicker();
     final profile = context.read<ProfileService>();
+    final auth = context.read<AuthService>();
 
     Future<void> doPick(ImageSource src) async {
       final x = await (widget.pickImage?.call(src) ??
@@ -325,7 +328,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       if (x == null) return;
       final previousAvatarUrl = _currentAvatarUrl(
         profile,
-        context.read<AuthService>().currentUser!,
+        auth.currentUser!,
         profile.getCachedProfile(uid),
       );
 
@@ -360,6 +363,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             avatarResolution.resolvedUrl.trim().isEmpty) {
           throw Exception('backend_empty_avatar_url');
         }
+        if (!context.mounted) return;
         await _precacheAvatar(context, avatarResolution.resolvedUrl.trim());
         if (!mounted) return;
         setState(() {
@@ -490,14 +494,16 @@ class _ProfileScreenState extends State<ProfileScreen>
         stream: _ensureProfileStream(profile, user),
         builder: (context, snap) {
           if (!snap.hasData) {
-            return ListView(
-              children: const [
-                SkeletonProfileHeader(),
-                Padding(
-                  padding: EdgeInsets.all(16),
-                  child: SkeletonWalletCard(),
-                ),
-              ],
+            return RepaintBoundary(
+              child: ListView(
+                children: const [
+                  SkeletonProfileHeader(),
+                  Padding(
+                    padding: EdgeInsets.all(16),
+                    child: SkeletonWalletCard(),
+                  ),
+                ],
+              ),
             );
           }
           final data = snap.data ?? const <String, dynamic>{};
@@ -520,240 +526,252 @@ class _ProfileScreenState extends State<ProfileScreen>
 
           final avatar = _currentAvatarUrl(profile, user, data);
 
-          return ListView(
-            children: [
-              Container(
-                padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      key: const Key('profile_avatar_tap_target'),
-                      onTap: _isAvatarUploading
-                          ? null
-                          : () => _pickAndUploadAvatar(context, user.uid),
-                      child: _Avatar(
-                        photoUrl: avatar,
-                        fallbackText: name,
-                        previewBytes: _avatarPreviewBytes,
-                        isLoading: _isAvatarUploading,
+          return RepaintBoundary(
+            child: ListView(
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+                  decoration: BoxDecoration(
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        key: const Key('profile_avatar_tap_target'),
+                        onTap: _isAvatarUploading
+                            ? null
+                            : () => _pickAndUploadAvatar(context, user.uid),
+                        child: _Avatar(
+                          photoUrl: avatar,
+                          fallbackText: name,
+                          previewBytes: _avatarPreviewBytes,
+                          isLoading: _isAvatarUploading,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () => _editName(context, user.uid, name),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      name,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontSize: 22,
-                                          fontWeight: FontWeight.w800),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: () => _editName(context, user.uid, name),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 2),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w800),
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Icon(Icons.edit,
-                                      size: 18,
+                                    const SizedBox(width: 6),
+                                    Icon(Icons.edit,
+                                        size: 18,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: () => _editPhone(context, user.uid, phone),
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 2),
+                                child: Text(
+                                  phoneDisplay.isEmpty
+                                      ? 'Добавить телефон'
+                                      : phoneDisplay,
+                                  style: TextStyle(
                                       color: Theme.of(context)
                                           .colorScheme
                                           .outline),
-                                ],
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(height: 6),
-                          InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () => _editPhone(context, user.uid, phone),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Text(
-                                phoneDisplay.isEmpty
-                                    ? 'Добавить телефон'
-                                    : phoneDisplay,
+                            const SizedBox(height: 4),
+                            if (phone.isNotEmpty)
+                              Text(
+                                phoneVerified
+                                    ? 'Номер подтвержден'
+                                    : 'Номер не подтвержден',
                                 style: TextStyle(
-                                    color:
-                                        Theme.of(context).colorScheme.outline),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          if (phone.isNotEmpty)
-                            Text(
-                              phoneVerified
-                                  ? 'Номер подтвержден'
-                                  : 'Номер не подтвержден',
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.outline,
-                              ),
-                            ),
-                          const SizedBox(height: 14),
-                          _CompactStatsRow(
-                            ratingAvgStream:
-                                profile.streamMyRatingAvg(user.uid),
-                            reviewsCountStream:
-                                profile.streamMyReviewsCount(user.uid),
-                            listingsStream:
-                                profile.streamMyListingsCount(user.uid),
-                            followersStream:
-                                follows.streamFollowersCount(user.uid),
-                            onOpenReviews: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => SellerReviewsScreen(
-                                    sellerId: user.uid,
-                                    sellerName: name,
-                                    listingId: '',
-                                  ),
+                                  color: Theme.of(context).colorScheme.outline,
                                 ),
-                              );
-                            },
-                          ),
-                        ],
+                              ),
+                            const SizedBox(height: 14),
+                            _CompactStatsRow(
+                              ratingAvgStream:
+                                  profile.streamMyRatingAvg(user.uid),
+                              reviewsCountStream:
+                                  profile.streamMyReviewsCount(user.uid),
+                              listingsStream:
+                                  profile.streamMyListingsCount(user.uid),
+                              followersStream:
+                                  follows.streamFollowersCount(user.uid),
+                              onOpenReviews: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => SellerReviewsScreen(
+                                      sellerId: user.uid,
+                                      sellerName: name,
+                                      listingId: '',
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 14),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  children: [
-                    const _ProfileWalletTile(),
-                    const SizedBox(height: 10),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      leading: const Icon(Icons.settings_outlined),
-                      title: const Text('Настройки'),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                              builder: (_) => const SettingsScreen()),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 10),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      leading: const Icon(Icons.person_add_alt_1_outlined),
-                      title: const Text('Пригласить друга'),
-                      subtitle: const Text('Поделиться ссылкой на мой профиль'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _shareProfileInvite(
-                        context,
-                        referralCode: user.referralCode ?? '',
-                        name: name,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      leading: const Icon(Icons.dark_mode_outlined),
-                      title: const Text('Тёмная тема'),
-                      trailing: Switch(
-                        value: context.watch<ThemeService>().mode ==
-                            ThemeMode.dark,
-                        onChanged: (v) =>
-                            context.read<ThemeService>().toggle(v),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (user.isAdmin) ...[
-                      StreamBuilder<bool>(
-                        stream: admin.streamNeedsAttention(),
-                        initialData: false,
-                        builder: (context, attSnap) {
-                          final hasAlert = attSnap.data == true;
-
-                          return ListTile(
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            tileColor: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            leading: Stack(
-                              clipBehavior: Clip.none,
-                              children: [
-                                const Icon(Icons.admin_panel_settings_outlined),
-                                if (hasAlert)
-                                  const Positioned(
-                                    right: -2,
-                                    top: -2,
-                                    child: Icon(Icons.brightness_1,
-                                        size: 10, color: Colors.red),
-                                  ),
-                              ],
-                            ),
-                            title: Row(
-                              children: [
-                                const Expanded(
-                                  child: Text(
-                                    'Админ-панель',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                if (hasAlert) ...[
-                                  const SizedBox(width: 6),
-                                  const Icon(Icons.brightness_1,
-                                      size: 8, color: Colors.red),
-                                ],
-                              ],
-                            ),
-                            subtitle: Text(
-                              hasAlert
-                                  ? 'Есть новые задачи: проверьте разделы'
-                                  : 'Управление приложением',
-                            ),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                    builder: (_) => const AdminScreen()),
-                              );
-                            },
+                const SizedBox(height: 14),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Column(
+                    children: [
+                      const _ProfileWalletTile(),
+                      const SizedBox(height: 10),
+                      ListTile(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        tileColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        leading: const Icon(Icons.settings_outlined),
+                        title: const Text('Настройки'),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const SettingsScreen()),
                           );
                         },
                       ),
                       const SizedBox(height: 10),
+                      ListTile(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        tileColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        leading: const Icon(Icons.person_add_alt_1_outlined),
+                        title: const Text('Пригласить друга'),
+                        subtitle:
+                            const Text('Поделиться ссылкой на мой профиль'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _shareProfileInvite(
+                          context,
+                          referralCode: user.referralCode ?? '',
+                          name: name,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ListTile(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        tileColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        leading: const Icon(Icons.dark_mode_outlined),
+                        title: const Text('Тёмная тема'),
+                        trailing: Switch(
+                          value: context.watch<ThemeService>().mode ==
+                              ThemeMode.dark,
+                          onChanged: (v) =>
+                              context.read<ThemeService>().toggle(v),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (user.isAdmin) ...[
+                        StreamBuilder<bool>(
+                          stream: admin.streamNeedsAttention(),
+                          initialData: false,
+                          builder: (context, attSnap) {
+                            final hasAlert = attSnap.data == true;
+
+                            return ListTile(
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14)),
+                              tileColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              leading: Stack(
+                                clipBehavior: Clip.none,
+                                children: [
+                                  const Icon(
+                                      Icons.admin_panel_settings_outlined),
+                                  if (hasAlert)
+                                    const Positioned(
+                                      right: -2,
+                                      top: -2,
+                                      child: Icon(Icons.brightness_1,
+                                          size: 10, color: Colors.red),
+                                    ),
+                                ],
+                              ),
+                              title: Row(
+                                children: [
+                                  const Expanded(
+                                    child: Text(
+                                      'Админ-панель',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (hasAlert) ...[
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.brightness_1,
+                                        size: 8, color: Colors.red),
+                                  ],
+                                ],
+                              ),
+                              subtitle: Text(
+                                hasAlert
+                                    ? 'Есть новые задачи: проверьте разделы'
+                                    : 'Управление приложением',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (_) => const AdminScreen()),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      ListTile(
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        tileColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        leading: const Icon(Icons.logout, color: Colors.red),
+                        title: const Text('Выйти',
+                            style: TextStyle(color: Colors.red)),
+                        onTap: () => _confirmLogout(context),
+                      ),
                     ],
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
-                      leading: const Icon(Icons.logout, color: Colors.red),
-                      title: const Text('Выйти',
-                          style: TextStyle(color: Colors.red)),
-                      onTap: () => _confirmLogout(context),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -1105,5 +1123,4 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile>
       },
     );
   }
-
 }

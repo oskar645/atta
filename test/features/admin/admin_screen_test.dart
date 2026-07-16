@@ -255,7 +255,8 @@ void main() {
     expect(adminService.rejectedIds, <String>['listing-pending']);
   });
 
-  testWidgets('opening one admin section clears only its badge', (tester) async {
+  testWidgets('opening one admin section clears only its badge',
+      (tester) async {
     final adminService = _FakeAdminService();
 
     await tester.pumpWidget(
@@ -294,7 +295,8 @@ void main() {
     await tester.tap(find.text('Модерация'));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('admin-tab-badge:Модерация')), findsNothing);
+    expect(
+        find.byKey(const ValueKey('admin-tab-badge:Модерация')), findsNothing);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('admin-tab-badge:Жалобы')),
@@ -302,7 +304,8 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(adminService.markedSections, contains(AdminService.moderationSection));
+    expect(
+        adminService.markedSections, contains(AdminService.moderationSection));
     expect(
       adminService.markedSections,
       isNot(contains(AdminService.reportsSection)),

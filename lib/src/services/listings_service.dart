@@ -121,11 +121,9 @@ class ListingsService {
   ListingsService({
     ListingsApi? api,
     MediaApi? mediaApi,
-    Duration privateRequestTimeout = const Duration(seconds: 12),
   })  : _api = api ?? ListingsApi(_apiClient),
         _mediaApi = mediaApi ?? MediaApi(_apiClient),
-        _imagePreparationService = ImagePreparationService(),
-        _privateRequestTimeout = privateRequestTimeout;
+        _imagePreparationService = ImagePreparationService();
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -133,7 +131,6 @@ class ListingsService {
   final ListingsApi _api;
   final MediaApi _mediaApi;
   final ImagePreparationService _imagePreparationService;
-  final Duration _privateRequestTimeout;
   final StreamController<void> _refreshController =
       StreamController<void>.broadcast();
   final Map<String, Listing> _listingById = <String, Listing>{};
@@ -388,6 +385,11 @@ class ListingsService {
       forceRefresh: forceRefresh,
     );
     return items.where((item) => statuses.contains(item.status)).toList();
+  }
+
+  /// Reloads the shared source for every "My listings" tab in one request.
+  Future<List<Listing>> refreshMyListings(String uid) {
+    return _fetchMyListings(uid, forceRefresh: true);
   }
 
   List<Listing> peekMyListingsByStatuses({
@@ -1101,8 +1103,9 @@ class ListingsService {
     final future = () async {
       _debugPrivateTab('MyListings load start user=$uid');
       try {
-        final response =
-            await _api.myListings().timeout(_privateRequestTimeout);
+        // ApiClient owns the transport timeout and starts it only after
+        // auth-gate recovery and the actual HTTP send.
+        final response = await _api.myListings();
         final items = _sanitizeMyListings(
           _extractItems(response),
           currentUserId: uid,

@@ -253,6 +253,65 @@ void main() {
         findsOneWidget);
   });
 
+  testWidgets('chat message bubbles align by sender and keep compact width',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(320, 760));
+    final chatService = _InboxFakeChatService(
+      chat: _chatFixture(),
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'long-out',
+          chatId: 'chat-1',
+          senderId: 'user-1',
+          text:
+              'Длинное сообщение должно переноситься на несколько строк и не занимать всю ширину экрана.',
+          createdAt: DateTime.parse('2026-06-30T10:02:00.000Z'),
+        ),
+        ChatMessage(
+          id: 'short-out',
+          chatId: 'chat-1',
+          senderId: 'user-1',
+          text: 'Да',
+          createdAt: DateTime.parse('2026-06-30T10:01:00.000Z'),
+        ),
+        ChatMessage(
+          id: 'incoming',
+          chatId: 'chat-1',
+          senderId: 'user-2',
+          text: 'Привет',
+          createdAt: DateTime.parse('2026-06-30T10:00:00.000Z'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildInboxApp(
+        chatService: chatService,
+        child: const ChatScreen(chatId: 'chat-1'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+
+    final incomingRect = tester.getRect(
+      find.byKey(const ValueKey<String>('bubble-incoming')),
+    );
+    final shortOutgoingRect = tester.getRect(
+      find.byKey(const ValueKey<String>('bubble-short-out')),
+    );
+    final longOutgoingRect = tester.getRect(
+      find.byKey(const ValueKey<String>('bubble-long-out')),
+    );
+
+    expect(shortOutgoingRect.left, greaterThan(incomingRect.left));
+    expect(shortOutgoingRect.right, greaterThan(incomingRect.right));
+    expect(shortOutgoingRect.width, lessThan(160));
+    expect(longOutgoingRect.width, lessThanOrEqualTo(244));
+    expect(longOutgoingRect.right, lessThanOrEqualTo(290));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('tap outside input closes keyboard', (tester) async {
     final focusNode = FocusNode();
 
@@ -261,8 +320,8 @@ void main() {
         home: Scaffold(
           body: Stack(
             children: [
-              AppKeyboardDismissOnTap(
-                child: const SizedBox.expand(),
+              const AppKeyboardDismissOnTap(
+                child: SizedBox.expand(),
               ),
               TextField(focusNode: focusNode),
             ],
@@ -423,7 +482,7 @@ class _InboxFakeChatService extends ChatService {
   Future<void> refreshInbox(String uid) async {
     refreshInboxCalls += 1;
     if (_refreshInboxError != null) {
-      throw _refreshInboxError!;
+      throw _refreshInboxError;
     }
     final completer = _refreshInboxCompleter;
     if (completer != null) {

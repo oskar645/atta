@@ -132,6 +132,44 @@ void main() {
     expect(observer.pushCount, 1);
   });
 
+  testWidgets(
+    'same listing deep link does not push a second screen while it is already open',
+    (tester) async {
+      final deepLinks = _FakeDeepLinkService();
+      final listings = _FakeListingsService();
+      final auth = _FakeAuthService(
+        currentUser: const AuthUser(uid: 'user-1'),
+      );
+      final observer = _TestNavigatorObserver();
+      debugDeepLinkListingScreenBuilder =
+          (listingId) => Text('listing:$listingId');
+
+      await tester.pumpWidget(
+        _buildTestApp(
+          auth: auth,
+          deepLinks: deepLinks,
+          listings: listings,
+          navigatorObserver: observer,
+        ),
+      );
+
+      deepLinks.emitListing('listing-42');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(seconds: 3));
+
+      deepLinks.emitListing('listing-42');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+
+      expect(
+        listings.getListingByIdCalls.where((id) => id == 'listing-42').length,
+        1,
+      );
+      expect(observer.pushCount, 1);
+    },
+  );
+
   testWidgets('rapid resume is debounced to one restore cycle', (tester) async {
     final auth = _FakeAuthService(
       currentUser: const AuthUser(uid: 'user-1'),

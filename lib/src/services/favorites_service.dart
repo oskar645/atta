@@ -8,15 +8,12 @@ import 'package:atta/src/services/auth/token_storage.dart';
 class FavoritesService {
   FavoritesService({
     FavoritesApi? api,
-    Duration requestTimeout = const Duration(seconds: 12),
-  })  : _api = api ?? FavoritesApi(_apiClient),
-        _requestTimeout = requestTimeout;
+  }) : _api = api ?? FavoritesApi(_apiClient);
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
 
   final FavoritesApi _api;
-  final Duration _requestTimeout;
   final Map<String, Set<String>> _cache = <String, Set<String>>{};
   final Map<String, StreamController<Set<String>>> _controllers =
       <String, StreamController<Set<String>>>{};
@@ -156,7 +153,10 @@ class FavoritesService {
     }
   }
 
-  Future<Set<String>> refreshFavoriteIds(String uid) async {
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     final normalizedUid = uid.trim();
     if (normalizedUid.isEmpty) {
       _debug('Favorites load skipped reason=no_user');
@@ -167,9 +167,17 @@ class FavoritesService {
       _debug('Favorites load skipped reason=in_flight user=$normalizedUid');
       return existing;
     }
-    _debug('Favorites load start user=$normalizedUid');
-    final future = _refreshFavoriteIdsSafe(normalizedUid);
+    final completer = Completer<Set<String>>();
+    final future = completer.future;
     _refreshInFlight[normalizedUid] = future;
+    _debug('Favorites load start reason=$reason user=$normalizedUid');
+    () async {
+      try {
+        completer.complete(await _refreshFavoriteIdsSafe(normalizedUid));
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    }();
     try {
       return await future;
     } finally {
@@ -180,12 +188,11 @@ class FavoritesService {
     }
   }
 
-  Future<Set<String>> forceRefreshFavoriteIds(String uid) {
-    final normalizedUid = uid.trim();
-    if (normalizedUid.isNotEmpty) {
-      _refreshInFlight.remove(normalizedUid);
-    }
-    return refreshFavoriteIds(normalizedUid);
+  Future<Set<String>> forceRefreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) {
+    return refreshFavoriteIds(uid, reason: reason);
   }
 
   Future<Set<String>> _refreshFavoriteIdsSafe(String normalizedUid) async {
@@ -214,7 +221,8 @@ class FavoritesService {
 
   Future<Set<String>> _fetchFavoriteIds(String uid) async {
     try {
-      final response = await _api.list().timeout(_requestTimeout);
+      // ApiClient starts the transport timeout only after the HTTP send.
+      final response = await _api.list();
       final raw = response['favorite_ids'];
       if (raw is List) {
         return raw.map((item) => item.toString()).toSet();

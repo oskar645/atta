@@ -7,6 +7,7 @@ import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
@@ -111,14 +112,141 @@ void main() {
     expect(find.byType(SkeletonAdminModerationCard), findsNothing);
     expect(find.text('Не удалось загрузить избранное.'), findsNothing);
   });
+
+  testWidgets('multiple VPN events trigger one refresh', (tester) async {
+    final favorites = _CountingFavoritesService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: favorites,
+        listingsService: _CachedListingsService(),
+        shellController: MainShellController(initialIndex: 1),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(favorites.refreshCalls, 1);
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.runtimeType.toString() == '_TimewebFavoriteListingsTab',
+      ),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(seconds: 6));
+    });
+    state.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await tester.pump();
+    state.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(favorites.refreshCalls, 2);
+  });
+
+  testWidgets('6 IDs / 5 resolved listings do not start another refresh',
+      (tester) async {
+    final favorites = _RepeatingFavoritesService(
+      initialIds: <String>{
+        'listing-1',
+        'listing-2',
+        'listing-3',
+        'listing-4',
+        'listing-5',
+        'listing-6',
+      },
+    );
+    final listings = _MissingOneListingsService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: favorites,
+        listingsService: listings,
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(favorites.refreshCalls, 1);
+    expect(listings.getListingByIdCalls, 1);
+    expect(find.text('Объявление 1'), findsOneWidget);
+    expect(find.text('Объявление 5'), findsOneWidget);
+    expect(find.text('Объявление 6'), findsNothing);
+  });
+
+  testWidgets('hidden Favorites screen ignores connectivity refresh',
+      (tester) async {
+    final favorites = _CountingFavoritesService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: favorites,
+        listingsService: _CachedListingsService(),
+        shellController: MainShellController(initialIndex: 0),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(favorites.refreshCalls, 1);
+
+    final dynamic state = tester.state(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.runtimeType.toString() == '_TimewebFavoriteListingsTab',
+      ),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(seconds: 6));
+    });
+    state.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(favorites.refreshCalls, 1);
+  });
+
+  testWidgets('cached data remains visible', (tester) async {
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: _CachedFavoritesService(),
+        listingsService: _CachedListingsService(),
+      ),
+    );
+
+    expect(find.text('Тестовое объявление'), findsOneWidget);
+    expect(find.byType(SkeletonAdminModerationCard), findsNothing);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('dispose cancels subscriptions', (tester) async {
+    final favorites = _SubscriptionTrackingFavoritesService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: favorites,
+        listingsService: _CachedListingsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(favorites.activeListeners, 1);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpAndSettle();
+
+    expect(favorites.activeListeners, 0);
+  });
 }
 
 Widget _wrapFavorites({
   FavoritesService? favoritesService,
   ListingsService? listingsService,
+  MainShellController? shellController,
 }) {
   return MultiProvider(
     providers: [
+      ChangeNotifierProvider<MainShellController>.value(
+        value: shellController ?? MainShellController(initialIndex: 1),
+      ),
       Provider<AuthService>.value(value: _FakeAuthService()),
       Provider<FavoritesService>.value(
         value: favoritesService ?? _FakeFavoritesService(),
@@ -156,7 +284,10 @@ class _FakeFavoritesService extends FavoritesService {
   }
 
   @override
-  Future<Set<String>> refreshFavoriteIds(String uid) async {
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     await Future<void>.delayed(const Duration(milliseconds: 100));
     return Set<String>.from(_ids);
   }
@@ -182,7 +313,10 @@ class _FailingFavoritesService extends FavoritesService {
   }
 
   @override
-  Future<Set<String>> refreshFavoriteIds(String uid) async {
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     throw Exception('favorites failed');
   }
 
@@ -211,7 +345,10 @@ class _InteractiveFavoritesService extends FavoritesService {
   }
 
   @override
-  Future<Set<String>> refreshFavoriteIds(String uid) async {
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     return Set<String>.from(_ids);
   }
 
@@ -283,16 +420,112 @@ class _CountingFavoritesService extends FavoritesService {
   }
 
   @override
-  Future<Set<String>> refreshFavoriteIds(String uid) async {
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     refreshCalls += 1;
     _controller.add(Set<String>.from(_ids));
     return Set<String>.from(_ids);
   }
 
   @override
-  Future<Set<String>> forceRefreshFavoriteIds(String uid) async {
+  Future<Set<String>> forceRefreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
+    return refreshFavoriteIds(uid, reason: reason);
+  }
+}
+
+class _RepeatingFavoritesService extends FavoritesService {
+  _RepeatingFavoritesService({required Set<String> initialIds})
+      : _ids = Set<String>.from(initialIds);
+
+  final StreamController<Set<String>> _controller =
+      StreamController<Set<String>>.broadcast();
+  final Set<String> _ids;
+  int refreshCalls = 0;
+
+  @override
+  Set<String> peekFavoriteIds(String uid) => const <String>{};
+
+  @override
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    return Stream<Set<String>>.multi(
+      (controller) {
+        controller.add(const <String>{});
+        final sub = _controller.stream.listen(controller.add);
+        controller.onCancel = () async {
+          await sub.cancel();
+        };
+      },
+      isBroadcast: true,
+    );
+  }
+
+  @override
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     refreshCalls += 1;
-    _controller.add(Set<String>.from(_ids));
+    final ids = Set<String>.from(_ids);
+    _controller.add(ids);
+    scheduleMicrotask(() {
+      _controller.add(Set<String>.from(ids));
+    });
+    return ids;
+  }
+}
+
+class _CachedFavoritesService extends FavoritesService {
+  final Set<String> _ids = <String>{'listing-1'};
+
+  @override
+  Set<String> peekFavoriteIds(String uid) => Set<String>.from(_ids);
+
+  @override
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    return Stream<Set<String>>.value(Set<String>.from(_ids));
+  }
+
+  @override
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    return Set<String>.from(_ids);
+  }
+}
+
+class _SubscriptionTrackingFavoritesService extends FavoritesService {
+  final Set<String> _ids = <String>{'listing-1'};
+  int activeListeners = 0;
+
+  @override
+  Set<String> peekFavoriteIds(String uid) => Set<String>.from(_ids);
+
+  @override
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    return Stream<Set<String>>.multi(
+      (controller) {
+        activeListeners += 1;
+        controller.add(Set<String>.from(_ids));
+        controller.onCancel = () async {
+          activeListeners -= 1;
+        };
+      },
+      isBroadcast: true,
+    );
+  }
+
+  @override
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
     return Set<String>.from(_ids);
   }
 }
@@ -408,6 +641,43 @@ class _CachedListingsService extends ListingsService {
   }
 }
 
+class _MissingOneListingsService extends ListingsService {
+  int getListingByIdCalls = 0;
+
+  @override
+  List<Listing> peekListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) {
+    return <Listing>[
+      for (var i = 1; i <= 5; i++)
+        _listingFixture(id: 'listing-$i', title: 'Объявление $i'),
+    ];
+  }
+
+  @override
+  Future<List<Listing>> getListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) async {
+    return peekListings(category: category, search: search, filters: filters);
+  }
+
+  @override
+  Future<Listing?> getListingById(String id) async {
+    getListingByIdCalls += 1;
+    if (id == 'listing-6') {
+      return null;
+    }
+    return _listingFixture(
+      id: id,
+      title: 'Объявление ${id.split('-').last}',
+    );
+  }
+}
+
 class _FakeNotificationsService extends NotificationsService {
   @override
   Stream<int> streamUnreadSavedSearchCount(String userId) {
@@ -435,13 +705,16 @@ class _FakeSavedSearchService extends SavedSearchService {
 
 class _FakeReviewsService extends ReviewsService {}
 
-Listing _listingFixture() {
+Listing _listingFixture({
+  String id = 'listing-1',
+  String title = 'Тестовое объявление',
+}) {
   return Listing.fromMap(<String, dynamic>{
-    'id': 'listing-1',
+    'id': id,
     'owner_id': 'seller-1',
     'owner_email': 'seller@example.com',
     'owner_name': 'Seller',
-    'title': 'Тестовое объявление',
+    'title': title,
     'description': 'Описание',
     'category': 'Авто',
     'subcategory': 'Седан',

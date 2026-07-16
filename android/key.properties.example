@@ -1,5 +1,6 @@
 # Copy this file to android/key.properties and fill in your real values.
-# Keep android/key.properties and your keystore file private.
+# Keep android/key.properties and android/upload-keystore.jks private.
+# The storeFile path is resolved from the android/app module.
 
 storePassword=CHANGE_ME
 keyPassword=CHANGE_ME

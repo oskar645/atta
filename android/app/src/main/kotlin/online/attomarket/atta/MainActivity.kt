@@ -1,4 +1,4 @@
-package com.example.atta
+package online.attomarket.atta
 
 import io.flutter.embedding.android.FlutterActivity
 

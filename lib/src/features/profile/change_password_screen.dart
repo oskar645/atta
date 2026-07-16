@@ -10,7 +10,7 @@ class ChangePasswordScreen extends StatefulWidget {
 
 class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final _newPass = TextEditingController();
-  bool _saving = false;
+  final bool _saving = false;
   bool _obscurePassword = true;
 
   @override

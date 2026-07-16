@@ -122,7 +122,10 @@ class _FakeSellerListingsService extends ListingsService {
 
 class _FakeProfileService extends ProfileService {
   @override
-  Future<Map<String, dynamic>> getProfile(String uid) async {
+  Future<Map<String, dynamic>> getProfile(
+    String uid, {
+    bool forceRefresh = false,
+  }) async {
     return <String, dynamic>{
       'id': uid,
       'display_name': 'Продавец',

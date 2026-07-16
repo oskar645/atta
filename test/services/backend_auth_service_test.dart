@@ -398,10 +398,13 @@ void main() {
     await service.awaitPrivateAuthReady();
 
     expect(authApi.refreshCalls, 1);
-    expect(authApi.meCalls, 1);
+    // Refresh itself supplies and persists the current user. Calling /auth/me
+    // while this bootstrap gate is active would wait for itself forever.
+    expect(authApi.meCalls, 0);
   });
 
-  test('refreshSession revalidates admin profile via /auth/me', () async {
+  test('refreshSession uses the user returned by refresh without /auth/me',
+      () async {
     final authApi = _FakeAuthApi()
       ..meResponse = <String, dynamic>{
         'user': <String, dynamic>{
@@ -425,7 +428,9 @@ void main() {
     final refreshed = await service.refreshSession();
 
     expect(refreshed, isTrue);
-    expect(authApi.meCalls, greaterThanOrEqualTo(1));
+    // signIn already hydrated the user once. Refresh must not add another
+    // /auth/me request while it is the private-auth gate.
+    expect(authApi.meCalls, 1);
     expect(service.currentUser?.isAdmin, isTrue);
   });
 

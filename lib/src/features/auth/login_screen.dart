@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -21,6 +22,10 @@ const String _passwordTooShortMessage =
     'Пароль должен быть не короче 8 символов';
 const String _emailAuthDisabledMessage =
     'Вход по email временно недоступен. Используйте номер телефона.';
+
+void _selectHomeAfterAuthentication(BuildContext context) {
+  context.read<MainShellController>().selectTab(0);
+}
 
 String _maskPhone(String input) {
   final digits = input.replaceAll(RegExp(r'\D'), '');
@@ -376,6 +381,7 @@ class _LoginScreenState extends State<LoginScreen> {
         phone: phone,
       );
       if (!mounted) return;
+      _selectHomeAfterAuthentication(context);
       Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
       _snack(_niceAuthError(e, isPhoneContext: false));
@@ -659,6 +665,8 @@ class _LoginScreenState extends State<LoginScreen> {
               (_authMethod == _AuthMethod.phone || !_showEmailSignup)) ...[
             TextField(
               controller: _nameCtrl,
+              keyboardType: TextInputType.name,
+              textCapitalization: TextCapitalization.words,
               textInputAction: TextInputAction.next,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(labelText: 'Имя пользователя'),
@@ -683,6 +691,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ] else if (_showEmailSignup) ...[
             TextField(
               controller: _nameCtrl,
+              keyboardType: TextInputType.name,
+              textCapitalization: TextCapitalization.words,
               textInputAction: TextInputAction.next,
               decoration: const InputDecoration(labelText: 'Имя'),
             ),
@@ -725,11 +735,27 @@ class _LoginScreenState extends State<LoginScreen> {
           const SizedBox(height: 10),
           TextButton(
             onPressed: _loading ? null : _toggleMode,
-            child: Text(
-              _isLogin
-                  ? 'Нет аккаунта? Создать аккаунт'
-                  : 'Уже есть аккаунт? Войти',
-            ),
+            child: _isLogin
+                ? const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text.rich(
+                      TextSpan(children: [
+                        TextSpan(
+                          text: 'Нет аккаунта? ',
+                          style: TextStyle(fontSize: 15),
+                        ),
+                        TextSpan(
+                          text: 'Создать аккаунт',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ]),
+                      maxLines: 1,
+                    ),
+                  )
+                : const Text('Уже есть аккаунт? Войти'),
           ),
         ],
       ),
@@ -800,6 +826,8 @@ class _PhoneRegistrationCredentialsScreenState
         children: [
           TextField(
             controller: _nameCtrl,
+            keyboardType: TextInputType.name,
+            textCapitalization: TextCapitalization.words,
             textInputAction: TextInputAction.next,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
@@ -1194,7 +1222,7 @@ class _PhoneRegistrationConfirmScreenState
         if (i < 29) {
           await Future<void>.delayed(const Duration(seconds: 2));
         } else {
-          final text =
+          const text =
               'Не удалось подтвердить звонок. Попробуйте ещё раз позже.';
           setState(() => _statusText = text);
           if (showTimeoutSnack) {
@@ -1265,6 +1293,7 @@ class _PhoneRegistrationConfirmScreenState
           .timeout(const Duration(seconds: 25));
 
       if (!mounted) return;
+      _selectHomeAfterAuthentication(context);
       Navigator.of(context).popUntil((route) => route.isFirst);
     } on TimeoutException {
       if (!mounted) return;
@@ -1614,7 +1643,7 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
         return true;
       }
 
-      final text = 'Проверяем звонок...';
+      const text = 'Проверяем звонок...';
       setState(() {
         _statusHint = text;
       });
@@ -1880,6 +1909,7 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
 
       if (!mounted) return;
       if (widget.authService.isAuthenticated) {
+        _selectHomeAfterAuthentication(context);
         Navigator.of(context).pop();
         return;
       }
@@ -1907,6 +1937,8 @@ class _PhoneProfileSetupScreenState extends State<_PhoneProfileSetupScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _nameCtrl,
+            keyboardType: TextInputType.name,
+            textCapitalization: TextCapitalization.words,
             textInputAction: TextInputAction.next,
             decoration: const InputDecoration(labelText: 'Имя'),
           ),
@@ -2107,6 +2139,7 @@ class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
       return;
     }
     _didCloseAfterAuth = true;
+    _selectHomeAfterAuthentication(context);
     Navigator.of(context).maybePop();
   }
 

@@ -80,7 +80,8 @@ class ImagePreparationService {
       minQuality: 74,
       maxQuality: 84,
       squareCrop: false,
-      tooLargeMessage: 'Фото для уведомления слишком большое. Попробуйте другое фото.',
+      tooLargeMessage:
+          'Фото для уведомления слишком большое. Попробуйте другое фото.',
       debugLabel: 'notification',
     );
   }

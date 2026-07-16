@@ -311,7 +311,8 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
               const SizedBox(height: 16),
               ...data.plans.map((plan) {
                 final active = _findPromotion(plan.type, data.activePromotions);
-                final enoughBalance = balance == null || balance >= plan.costBonus;
+                final enoughBalance =
+                    balance == null || balance >= plan.costBonus;
                 final isLoading = _activatingPlanType == plan.type;
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),

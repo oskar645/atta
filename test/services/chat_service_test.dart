@@ -1081,7 +1081,6 @@ class _FakeChatSocketService extends ChatSocketService {
 class _FakeChatsApi extends ChatsApi {
   _FakeChatsApi({
     this.sendMessageError,
-    this.listChatsError,
     this.listMessagesError,
     this.chats = const <Map<String, dynamic>>[],
     this.sendMessageDelay = Duration.zero,

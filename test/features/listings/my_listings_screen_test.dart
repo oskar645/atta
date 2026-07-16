@@ -304,9 +304,58 @@ void main() {
       find.widgetWithText(FilledButton, 'Продать быстрее'),
     );
     expect(button.onPressed, isNotNull);
+    expect(find.text('Снять с публикации'), findsOneWidget);
+    expect(find.text('В архив'), findsNothing);
+    final bottomButtons = find.byType(OutlinedButton);
+    expect(bottomButtons, findsNWidgets(2));
+    expect(
+      tester.getSize(bottomButtons.at(0)).height,
+      tester.getSize(bottomButtons.at(1)).height,
+    );
+  });
+
+  testWidgets('bottom actions stay single-line at compact and wide widths',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    for (final width in [320.0, 360.0, 390.0, 430.0]) {
+      await tester.binding.setSurfaceSize(Size(width, 800));
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<ListingsService>.value(value: _ListingsWithItemService()),
+          ],
+          child: const MaterialApp(home: MyListingsScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final editLabel = tester.widget<Text>(find.text('Редактировать'));
+      final archiveLabel = tester.widget<Text>(find.text('Снять с публикации'));
+      final bottomButtons = find.byType(OutlinedButton);
+
+      expect(editLabel.maxLines, 1);
+      expect(editLabel.overflow, TextOverflow.ellipsis);
+      expect(archiveLabel.maxLines, 1);
+      expect(archiveLabel.overflow, TextOverflow.ellipsis);
+      expect(
+        tester.getSize(bottomButtons.at(0)).height,
+        tester.getSize(bottomButtons.at(1)).height,
+      );
+      if (width < 430) {
+        expect(editLabel.style?.fontSize, 12);
+        expect(archiveLabel.style?.fontSize, 11);
+      } else {
+        expect(editLabel.style?.fontSize, 14);
+        expect(archiveLabel.style?.fontSize, 12);
+      }
+    }
   });
 
   testWidgets('active listing shows favorite count near views', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(320, 800));
     final listingsService = _ListingsWithFavoriteCountService();
 
     await tester.pumpWidget(
@@ -327,6 +376,18 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('2'), findsOneWidget);
+
+    final viewsRect = tester.getRect(find.text('Просмотров: 7'));
+    final favoriteIconRect = tester.getRect(
+      find.byKey(const ValueKey('my_listing_favorite_icon:listing-3')),
+    );
+    final favoriteCountRect = tester.getRect(
+      find.byKey(const ValueKey('my_listing_favorite_count:listing-3')),
+    );
+
+    expect(favoriteIconRect.left - viewsRect.right, lessThanOrEqualTo(8));
+    expect(favoriteCountRect.right, lessThanOrEqualTo(320));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('non-active tabs do not show favorite count', (tester) async {

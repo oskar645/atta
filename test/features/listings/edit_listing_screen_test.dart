@@ -37,7 +37,7 @@ void main() {
       find.byWidgetPredicate(
         (widget) =>
             widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Кузов (необязательно)',
+            widget.decoration.labelText == 'Кузов (необязательно)',
       ),
       findsOneWidget,
     );
@@ -45,7 +45,7 @@ void main() {
       find.byWidgetPredicate(
         (widget) =>
             widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Топливо (необязательно)',
+            widget.decoration.labelText == 'Топливо (необязательно)',
       ),
       findsOneWidget,
     );

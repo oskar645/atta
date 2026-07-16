@@ -8,6 +8,7 @@ import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
@@ -721,24 +722,24 @@ class _TimewebFavoriteListingsTabState
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
   late Future<List<Listing>> _listingsFuture;
-  late final Stream<Set<String>> _favoriteIdsStream;
   Future<List<Listing>>? _activeLoadFuture;
   StreamSubscription<Set<String>>? _favoritesSub;
   final Set<String> _missingListingIds = <String>{};
+  Set<String> _favoriteIds = const <String>{};
   List<Listing>? _items;
   bool _loading = true;
   bool _loadedOnce = false;
   String? _errorText;
   DateTime? _lastRefreshAt;
+  MainShellController? _shellController;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _debugFavoritesLog('Favorites listings open');
-    _favoriteIdsStream =
-        widget.favs.streamCachedFavoriteIds(widget.userId).asBroadcastStream();
     final cachedIds = widget.favs.peekFavoriteIds(widget.userId);
+    _favoriteIds = Set<String>.from(cachedIds);
     final cachedListings =
         widget.listings.peekListings(category: 'Все', search: '');
     if (cachedIds.isNotEmpty && cachedListings.isNotEmpty) {
@@ -750,14 +751,32 @@ class _TimewebFavoriteListingsTabState
       _loading = false;
     }
     _listingsFuture = _startListingsLoad();
-    _favoritesSub = _favoriteIdsStream.listen(
-      _handleFavoriteIdsChanged,
-    );
+    _favoritesSub = widget.favs.streamCachedFavoriteIds(widget.userId).listen(
+          _handleFavoriteIdsChanged,
+        );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    MainShellController? nextShellController;
+    try {
+      nextShellController = context.read<MainShellController>();
+    } on ProviderNotFoundException {
+      nextShellController = null;
+    }
+    if (identical(_shellController, nextShellController)) {
+      return;
+    }
+    _shellController?.removeListener(_handleShellVisibilityChanged);
+    _shellController = nextShellController;
+    _shellController?.addListener(_handleShellVisibilityChanged);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _shellController?.removeListener(_handleShellVisibilityChanged);
     _favoritesSub?.cancel();
     super.dispose();
   }
@@ -765,12 +784,25 @@ class _TimewebFavoriteListingsTabState
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
+    if (!_isScreenVisible) return;
     final lastRefreshAt = _lastRefreshAt;
     if (lastRefreshAt != null &&
         DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
       return;
     }
     unawaited(_refresh());
+  }
+
+  bool get _isScreenVisible {
+    final routeVisible = ModalRoute.of(context)?.isCurrent ?? true;
+    final shellVisible =
+        _shellController?.selectedIndex == 1 || _shellController == null;
+    return routeVisible && shellVisible;
+  }
+
+  void _handleShellVisibilityChanged() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<List<Listing>> _startListingsLoad({bool forceFavorites = false}) {
@@ -793,12 +825,19 @@ class _TimewebFavoriteListingsTabState
     _debugFavoritesLog('Favorites load start user=${widget.userId}');
     try {
       final favoriteIds = forceFavorites
-          ? await widget.favs.forceRefreshFavoriteIds(widget.userId)
-          : await widget.favs.refreshFavoriteIds(widget.userId);
+          ? await widget.favs.forceRefreshFavoriteIds(
+              widget.userId,
+              reason: 'app_resume',
+            )
+          : await widget.favs.refreshFavoriteIds(
+              widget.userId,
+              reason: 'screen_open',
+            );
       final items = await _resolveFavoriteListings(favoriteIds);
       final loadError = widget.favs.lastRefreshErrorForUser(widget.userId);
       if (!mounted) return items;
       setState(() {
+        _favoriteIds = Set<String>.from(favoriteIds);
         _items = items;
         _loading = false;
         _loadedOnce = true;
@@ -877,16 +916,52 @@ class _TimewebFavoriteListingsTabState
       for (final listing in _items ?? const <Listing>[]) listing.id: listing,
     };
     final filteredItems = _orderedListingsFromIds(favoriteIds, currentById);
-    final hasMissingListings = favoriteIds.any(
-      (id) => !currentById.containsKey(id),
-    );
+    final unresolvedIds = favoriteIds
+        .where(
+          (id) =>
+              !currentById.containsKey(id) && !_missingListingIds.contains(id),
+        )
+        .toSet();
     setState(() {
+      _favoriteIds = Set<String>.from(favoriteIds);
       _items = filteredItems;
       _loadedOnce = true;
     });
-    if (hasMissingListings && _activeLoadFuture == null) {
-      unawaited(_startListingsLoad().catchError((_) => const <Listing>[]));
+    if (unresolvedIds.isNotEmpty && _activeLoadFuture == null) {
+      unawaited(
+        _startResolveMissingListings(favoriteIds).catchError(
+          (_) => const <Listing>[],
+        ),
+      );
     }
+  }
+
+  Future<List<Listing>> _startResolveMissingListings(Set<String> favoriteIds) {
+    final inFlight = _activeLoadFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final future = _resolveMissingListingsForCurrentIds(favoriteIds);
+    _activeLoadFuture = future;
+    future.whenComplete(() {
+      if (identical(_activeLoadFuture, future)) {
+        _activeLoadFuture = null;
+      }
+    });
+    return future;
+  }
+
+  Future<List<Listing>> _resolveMissingListingsForCurrentIds(
+    Set<String> favoriteIds,
+  ) async {
+    final items = await _resolveFavoriteListings(favoriteIds);
+    if (!mounted) return items;
+    setState(() {
+      _favoriteIds = Set<String>.from(favoriteIds);
+      _items = items;
+      _loadedOnce = true;
+    });
+    return items;
   }
 
   Future<void> _refresh() async {
@@ -934,129 +1009,113 @@ class _TimewebFavoriteListingsTabState
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return StreamBuilder<Set<String>>(
-      stream: _favoriteIdsStream,
-      initialData: widget.favs.peekFavoriteIds(widget.userId),
-      builder: (context, favSnap) {
-        return FutureBuilder<List<Listing>>(
-          future: _listingsFuture,
-          builder: (context, snap) {
-            final items = _items ?? snap.data ?? const <Listing>[];
-            if (favSnap.hasError) {
-              return _FavoritesAsyncStateView(
-                message: 'Не удалось загрузить избранное.',
-                onRetry: _refresh,
-              );
-            }
-            if (snap.hasError) {
-              _errorText ??= 'Не удалось загрузить избранное.';
-            }
-            final favoriteIds = favSnap.data ?? const <String>{};
-            if (_loading && items.isEmpty) {
-              return const _FavoritesListingsSkeleton();
-            }
-            if (_errorText != null && items.isEmpty) {
-              return _FavoritesAsyncStateView(
-                message: _errorText!,
-                onRetry: _refresh,
-              );
-            }
+    return FutureBuilder<List<Listing>>(
+      future: _listingsFuture,
+      builder: (context, snap) {
+        final items = _items ?? snap.data ?? const <Listing>[];
+        if (snap.hasError) {
+          _errorText ??= 'Не удалось загрузить избранное.';
+        }
+        final favoriteIds = _favoriteIds;
+        if (_loading && items.isEmpty) {
+          return const _FavoritesListingsSkeleton();
+        }
+        if (_errorText != null && items.isEmpty) {
+          return _FavoritesAsyncStateView(
+            message: _errorText!,
+            onRetry: _refresh,
+          );
+        }
 
-            if (_loadedOnce && favoriteIds.isEmpty) {
-              return _RefreshableEmptyState(
-                message: 'Пока нет избранных объявлений',
-                onRefresh: _refresh,
-              );
-            }
-            if (_loadedOnce && items.isEmpty) {
-              return _RefreshableEmptyState(
-                message: 'Нет доступных объявлений в избранном',
-                onRefresh: _refresh,
-              );
-            }
+        if (_loadedOnce && favoriteIds.isEmpty) {
+          return _RefreshableEmptyState(
+            message: 'Пока нет избранных объявлений',
+            onRefresh: _refresh,
+          );
+        }
+        if (_loadedOnce && items.isEmpty) {
+          return _RefreshableEmptyState(
+            message: 'Нет доступных объявлений в избранном',
+            onRefresh: _refresh,
+          );
+        }
 
-            return RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView.separated(
-                padding: const EdgeInsets.all(12),
-                itemCount: items.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (_, i) {
-                  final listing = items[i];
-                  final photo = listing.photoUrls.isNotEmpty
-                      ? listing.photoUrls.first
-                      : null;
+        return RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView.separated(
+            padding: const EdgeInsets.all(12),
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (_, i) {
+              final listing = items[i];
+              final photo =
+                  listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
 
-                  return ListTile(
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            ListingDetailScreen(listingId: listing.id),
-                      ),
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    tileColor:
-                        Theme.of(context).colorScheme.surfaceContainerLowest,
-                    leading: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: SizedBox(
-                        width: 56,
-                        height: 56,
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Container(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                              child: photo == null
-                                  ? const Icon(
-                                      Icons.image_not_supported_outlined)
-                                  : CachedNetworkImage(
-                                      imageUrl: photo,
-                                      fit: BoxFit.cover,
-                                    ),
-                            ),
-                          ],
+              return ListTile(
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ListingDetailScreen(listingId: listing.id),
+                  ),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                tileColor: Theme.of(context).colorScheme.surfaceContainerLowest,
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Container(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          child: photo == null
+                              ? const Icon(Icons.image_not_supported_outlined)
+                              : CachedNetworkImage(
+                                  imageUrl: photo,
+                                  fit: BoxFit.cover,
+                                ),
                         ),
-                      ),
+                      ],
                     ),
-                    title: Text(
-                      listing.title,
+                  ),
+                ),
+                title: Text(
+                  listing.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${formatPrice(listing.price)} ₽ • ${listing.category}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${formatPrice(listing.price)} ₽ • ${listing.category}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (listing.hasVipPromotion ||
-                            listing.hasBumpPromotion) ...[
-                          const SizedBox(height: 4),
-                          _FavoritePromotionBadges(
-                            showVip: listing.hasVipPromotion,
-                            showBump: listing.hasBumpPromotion,
-                          ),
-                        ],
-                      ],
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'Убрать из избранного',
-                      icon: const Icon(Icons.favorite, color: Colors.red),
-                      onPressed: () => _removeFavorite(listing.id),
-                    ),
-                  );
-                },
-              ),
-            );
-          },
+                    if (listing.hasVipPromotion ||
+                        listing.hasBumpPromotion) ...[
+                      const SizedBox(height: 4),
+                      _FavoritePromotionBadges(
+                        showVip: listing.hasVipPromotion,
+                        showBump: listing.hasBumpPromotion,
+                      ),
+                    ],
+                  ],
+                ),
+                trailing: IconButton(
+                  tooltip: 'Убрать из избранного',
+                  icon: const Icon(Icons.favorite, color: Colors.red),
+                  onPressed: () => _removeFavorite(listing.id),
+                ),
+              );
+            },
+          ),
         );
       },
     );

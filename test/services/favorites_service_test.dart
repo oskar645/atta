@@ -202,6 +202,26 @@ void main() {
     expect(service.lastRefreshErrorForUser('user-1'), isA<TimeoutException>());
   });
 
+  test('simultaneous load calls create one request', () async {
+    final api = _FakeFavoritesApi(favoriteIds: <String>{'listing-1'});
+    final service = FavoritesService(api: api);
+    final listCompleter = Completer<Map<String, dynamic>>();
+    api.listCompleter = listCompleter;
+
+    final first = service.refreshFavoriteIds('user-1', reason: 'vpn_change');
+    final second = service.refreshFavoriteIds('user-1', reason: 'vpn_change');
+
+    expect(api.listCalls, 1);
+
+    listCompleter.complete(<String, dynamic>{
+      'favorite_ids': <String>['listing-1'],
+    });
+
+    expect(await first, <String>{'listing-1'});
+    expect(await second, <String>{'listing-1'});
+    expect(api.listCalls, 1);
+  });
+
   test('force refresh after timeout starts a new favorites request', () async {
     final api = _FakeFavoritesApi(favoriteIds: <String>{'listing-1'});
     final service = FavoritesService(api: api);

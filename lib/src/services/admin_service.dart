@@ -105,6 +105,7 @@ class AdminService {
     return _streamSectionBadgeCount(
       moderationSection,
       _moderationBadgeController,
+      refreshOnListen: true,
     );
   }
 
@@ -115,6 +116,7 @@ class AdminService {
     return _streamSectionBadgeCount(
       reportsSection,
       _reportsBadgeController,
+      refreshOnListen: true,
     );
   }
 
@@ -125,10 +127,11 @@ class AdminService {
     return _streamSectionBadgeCount(
       supportSection,
       _supportBadgeController,
+      refreshOnListen: true,
     );
   }
 
-  Stream<bool> streamNeedsAttention({bool refreshOnListen = false}) {
+  Stream<bool> streamNeedsAttention({bool refreshOnListen = true}) {
     if (!_sessionActive) {
       return Stream<bool>.value(false);
     }
@@ -200,7 +203,14 @@ class AdminService {
           forceRefresh: forceRefresh);
   Future<int> pendingModerationCount({bool forceRefresh = false}) async {
     final stats = await dashboardStats(forceRefresh: forceRefresh);
-    final raw = stats['pendingModeration'] ?? stats['pending_moderation'] ?? 0;
+    final nestedStats = stats['stats'];
+    final raw = stats['pendingModeration'] ??
+        stats['pending_moderation'] ??
+        (nestedStats is Map
+            ? nestedStats['pendingModeration'] ??
+                nestedStats['pending_moderation']
+            : null) ??
+        0;
     return (raw as num?)?.toInt() ?? int.tryParse('$raw') ?? 0;
   }
 
@@ -441,10 +451,8 @@ class AdminService {
   }
 
   Stream<int> _streamSectionBadgeCount(
-    String section,
-    StreamController<int> source,
-    {bool refreshOnListen = false}
-  ) {
+      String section, StreamController<int> source,
+      {bool refreshOnListen = false}) {
     return Stream<int>.multi((controller) {
       controller.add(_unreadCountFor(section));
       final sub = source.stream.listen(

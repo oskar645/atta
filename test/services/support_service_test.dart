@@ -386,7 +386,8 @@ void main() {
 
   test('admin reply plus refresh does not create duplicate sender message',
       () async {
-    final api = _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
+    final api =
+        _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
     final service = SupportService(api: api);
     final completer = Completer<void>();
     api.onAdminSend = () => completer.future;

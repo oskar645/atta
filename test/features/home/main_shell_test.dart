@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:atta/src/features/home/home_screen.dart';
 import 'package:atta/src/features/home/main_shell.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';

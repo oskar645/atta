@@ -59,14 +59,12 @@ ShareTextResult buildInviteShareText({
   final normalizedReferralCode = referralCode.trim();
   final inviteUrl = normalizedReferralCode.isEmpty
       ? resolvedInstallUrl
-      : Uri.parse(resolvedInstallUrl)
-          .replace(
-            queryParameters: <String, String>{
-              ...Uri.parse(resolvedInstallUrl).queryParameters,
-              'ref': normalizedReferralCode,
-            },
-          )
-          .toString();
+      : Uri.parse(resolvedInstallUrl).replace(
+          queryParameters: <String, String>{
+            ...Uri.parse(resolvedInstallUrl).queryParameters,
+            'ref': normalizedReferralCode,
+          },
+        ).toString();
 
   return ShareTextResult.ready(
     'Привет! Я пользуюсь ATTA — приложением для объявлений. Попробуй тоже:\n'

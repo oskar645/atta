@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 const kAutoCustomBrandLabel = 'Другая марка';
 const kAutoCustomModelLabel = 'Другая модель';
 const kAutoCustomGenerationLabel = 'Своё поколение';
@@ -383,7 +381,7 @@ const _kAutoBrandsRequiredTailRaw = <String>[
 ];
 
 List<String> _canonicalizeAutoBrands(Iterable<String> values) {
-  final unique = LinkedHashSet<String>();
+  final unique = <String>{};
   for (final value in values) {
     final canonical = canonicalAutoBrand(value);
     if (canonical.isEmpty || canonical == kAutoCustomBrandLabel) {

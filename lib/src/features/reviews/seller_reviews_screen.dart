@@ -216,6 +216,7 @@ class _ReviewTile extends StatelessWidget {
   Future<void> _deleteReview(BuildContext context) async {
     final reviewId = (review['id'] ?? '').toString().trim();
     if (reviewId.isEmpty) return;
+    final reviews = context.read<ReviewsService>();
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -238,7 +239,7 @@ class _ReviewTile extends StatelessWidget {
     if (confirmed != true) return;
 
     try {
-      await context.read<ReviewsService>().deleteReview(reviewId: reviewId);
+      await reviews.deleteReview(reviewId: reviewId);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Отзыв удалён')),
@@ -348,6 +349,7 @@ class _ReviewTile extends StatelessWidget {
               const SizedBox(height: 10),
               TextButton.icon(
                 onPressed: () async {
+                  final reviews = context.read<ReviewsService>();
                   final res = await showDialog<String>(
                     context: context,
                     builder: (_) => _ReplyDialog(initial: replyText),
@@ -355,11 +357,11 @@ class _ReviewTile extends StatelessWidget {
                   if (res == null || res.trim().isEmpty) return;
 
                   try {
-                    await context.read<ReviewsService>().replyToReview(
-                          sellerId: sellerId,
-                          reviewId: (review['id'] ?? '').toString(),
-                          replyText: res,
-                        );
+                    await reviews.replyToReview(
+                      sellerId: sellerId,
+                      reviewId: (review['id'] ?? '').toString(),
+                      replyText: res,
+                    );
                   } catch (e) {
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(

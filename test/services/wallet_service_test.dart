@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/wallet_api.dart';

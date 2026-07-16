@@ -56,14 +56,18 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
       if (perm == LocationPermission.always ||
           perm == LocationPermission.whileInUse) {
         final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
         );
         _picked = LatLng(pos.latitude, pos.longitude);
       }
     } catch (_) {
       // Keep the default point if location lookup fails.
     } finally {
-      if (mounted) setState(() => _loadingGeo = false);
+      if (mounted) {
+        setState(() => _loadingGeo = false);
+      }
     }
   }
 
@@ -114,8 +118,9 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
         _suggestions = const [];
       });
     } finally {
-      if (!mounted) return;
-      setState(() => _loadingSuggest = false);
+      if (mounted) {
+        setState(() => _loadingSuggest = false);
+      }
     }
   }
 

@@ -259,7 +259,8 @@ class ReportsService {
     }
     _reportsCache = _reportsCache
         .where(
-          (entry) => (entry['id'] ?? '').toString().trim() != normalizedReportId,
+          (entry) =>
+              (entry['id'] ?? '').toString().trim() != normalizedReportId,
         )
         .map(Map<String, dynamic>.from)
         .toList(growable: false);

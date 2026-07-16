@@ -41,12 +41,20 @@ test('listing fallback renders manual app store button without auto redirect', a
 
   assert.match(html, /Lada Vesta NG/);
   assert.match(html, /Откройте объявление в приложении ATTA/);
+  assert.match(html, /href="https:\/\/attamarket\.online\/listing\/listing-1"/);
+  assert.match(html, />App Store</);
   assert.match(
     html,
     /https:\/\/apps\.apple\.com\/us\/app\/atta\/id6762604298\?l=ru/,
   );
+  assert.match(
+    html,
+    /https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.example\.atta/,
+  );
   assert.doesNotMatch(html, /http-equiv="refresh"/);
+  assert.doesNotMatch(html, /setTimeout/);
   assert.doesNotMatch(html, /window\.location\.replace/);
+  assert.doesNotMatch(html, /atta:\/\//);
 });
 
 test('missing listing fallback renders unavailable state without auto redirect', async () => {
@@ -63,6 +71,11 @@ test('missing listing fallback renders unavailable state without auto redirect',
   const html = await controller.getListingLandingPage('missing-listing');
 
   assert.match(html, /Объявление недоступно/);
+  assert.match(
+    html,
+    /https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.example\.atta/,
+  );
   assert.doesNotMatch(html, /http-equiv="refresh"/);
+  assert.doesNotMatch(html, /setTimeout/);
   assert.doesNotMatch(html, /window\.location\.replace/);
 });

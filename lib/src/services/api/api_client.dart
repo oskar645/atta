@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/network_resilience.dart';
@@ -26,6 +27,7 @@ class ApiClient {
   static ApiSessionExpiredHandler? _sessionExpiredHandler;
   static ApiAuthorizedSessionWaiter? _authorizedSessionWaiter;
   static Future<bool>? _refreshInFlight;
+  int _requestSequence = 0;
 
   static void configureAuthHandlers({
     ApiRefreshHandler? onRefreshSession,
@@ -149,13 +151,23 @@ class ApiClient {
     }
     request.headers['Accept'] = 'application/json';
 
-    _logRequest('POST', uri, authorized: authorized);
+    _logRequest(
+      'POST',
+      uri,
+      authorized: authorized,
+      requestId: 'multipart-${++_requestSequence}',
+    );
 
     try {
       final streamed =
           await _httpClient.send(request).timeout(ApiConfig.requestTimeout);
       final response = await http.Response.fromStream(streamed);
-      _logResponse('POST', uri, response.statusCode);
+      _logResponse(
+        'POST',
+        uri,
+        response.statusCode,
+        requestId: 'multipart-$_requestSequence',
+      );
       if (authorized &&
           response.statusCode == 401 &&
           allowAuthRetry &&
@@ -193,40 +205,51 @@ class ApiClient {
     bool sendAuthIfAvailable = false,
     bool allowAuthRetry = true,
     int networkRetryAttempt = 0,
+    String? requestId,
   }) async {
-    if (authorized || sendAuthIfAvailable) {
-      await _awaitAuthorizedSessionReady();
+    final id = requestId ?? 'private-${++_requestSequence}';
+    final isPrivate = authorized || sendAuthIfAvailable;
+    if (isPrivate) {
+      _logPrivate('PrivateRequest start endpoint=$path requestId=$id');
     }
-    if (authorized || sendAuthIfAvailable) {
-      await _awaitActiveRefreshIfAny();
-    }
-    if (authorized) {
-      final token = await _tokenStorage.readAccessToken();
-      if (token == null || token.trim().isEmpty) {
-        throw const ApiException(
-          'Требуется авторизация',
-          statusCode: 401,
-          code: 'local_unauthorized',
-        );
-      }
-    }
-
-    final uri = ApiConfig.uri(path, queryParameters);
-    final headers = <String, String>{
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    };
-
-    if (authorized || sendAuthIfAvailable) {
-      final token = await _tokenStorage.readAccessToken();
-      if (token != null && token.trim().isNotEmpty) {
-        headers['Authorization'] = 'Bearer ${token.trim()}';
-      }
-    }
-
-    _logRequest(method, uri, authorized: authorized);
-
     try {
+      if (authorized || sendAuthIfAvailable) {
+        _logPrivate('AuthGate wait requestId=$id');
+        await _awaitAuthorizedSessionReady();
+        _logPrivate('AuthGate passed requestId=$id');
+      }
+      if (authorized || sendAuthIfAvailable) {
+        await _awaitActiveRefreshIfAny();
+      }
+      if (authorized) {
+        final token = await _tokenStorage.readAccessToken();
+        if (token == null || token.trim().isEmpty) {
+          throw const ApiException(
+            'Требуется авторизация',
+            statusCode: 401,
+            code: 'local_unauthorized',
+          );
+        }
+      }
+
+      final uri = ApiConfig.uri(path, queryParameters);
+      final headers = <String, String>{
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+
+      if (authorized || sendAuthIfAvailable) {
+        final token = await _tokenStorage.readAccessToken();
+        if (token != null && token.trim().isNotEmpty) {
+          headers['Authorization'] = 'Bearer ${token.trim()}';
+        }
+      }
+
+      _logRequest(method, uri, authorized: authorized, requestId: id);
+      if (isPrivate) {
+        _logPrivate('HTTP send requestId=$id endpoint=$path');
+      }
+
       final response = await _dispatch(
         method,
         uri,
@@ -234,7 +257,11 @@ class ApiClient {
         body,
       ).timeout(ApiConfig.requestTimeout);
 
-      _logResponse(method, uri, response.statusCode);
+      _logResponse(method, uri, response.statusCode, requestId: id);
+      if (isPrivate) {
+        _logPrivate(
+            'HTTP response requestId=$id status=${response.statusCode}');
+      }
       if ((authorized || sendAuthIfAvailable) &&
           response.statusCode == 401 &&
           allowAuthRetry &&
@@ -250,12 +277,19 @@ class ApiClient {
             sendAuthIfAvailable: sendAuthIfAvailable,
             allowAuthRetry: false,
             networkRetryAttempt: networkRetryAttempt,
+            requestId: id,
           );
         }
       }
-      return _decodeResponse(response);
+      final decoded = _decodeResponse(response);
+      if (isPrivate) {
+        _logPrivate('PrivateRequest complete requestId=$id');
+      }
+      return decoded;
     } on TimeoutException catch (error) {
-      if (_shouldRetryNetwork(method) && networkRetryAttempt == 0) {
+      if (_shouldRetryNetwork(method) &&
+          networkRetryAttempt < _networkRetryDelays.length) {
+        await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
         return _send(
           method,
           path,
@@ -264,13 +298,16 @@ class ApiClient {
           authorized: authorized,
           sendAuthIfAvailable: sendAuthIfAvailable,
           allowAuthRetry: allowAuthRetry,
-          networkRetryAttempt: 1,
+          networkRetryAttempt: networkRetryAttempt + 1,
+          requestId: id,
         );
       }
       throw ApiException(kNetworkVpnHintMessage,
           code: 'timeout', details: error);
-    } on http.ClientException catch (error) {
-      if (_shouldRetryNetwork(method) && networkRetryAttempt == 0) {
+    } on SocketException catch (error) {
+      if (_shouldRetryNetwork(method) &&
+          networkRetryAttempt < _networkRetryDelays.length) {
+        await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
         return _send(
           method,
           path,
@@ -279,11 +316,34 @@ class ApiClient {
           authorized: authorized,
           sendAuthIfAvailable: sendAuthIfAvailable,
           allowAuthRetry: allowAuthRetry,
-          networkRetryAttempt: 1,
+          networkRetryAttempt: networkRetryAttempt + 1,
+          requestId: id,
         );
       }
       throw ApiException(kNetworkVpnHintMessage,
           code: 'network', details: error);
+    } on http.ClientException catch (error) {
+      if (_shouldRetryNetwork(method) &&
+          networkRetryAttempt < _networkRetryDelays.length) {
+        await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
+        return _send(
+          method,
+          path,
+          queryParameters: queryParameters,
+          body: body,
+          authorized: authorized,
+          sendAuthIfAvailable: sendAuthIfAvailable,
+          allowAuthRetry: allowAuthRetry,
+          networkRetryAttempt: networkRetryAttempt + 1,
+          requestId: id,
+        );
+      }
+      throw ApiException(kNetworkVpnHintMessage,
+          code: 'network', details: error);
+    } finally {
+      if (isPrivate) {
+        _logPrivate('PrivateRequest finally requestId=$id');
+      }
     }
   }
 
@@ -362,17 +422,31 @@ class ApiClient {
     String method,
     Uri uri, {
     required bool authorized,
+    required String requestId,
   }) {
     if (!kDebugMode) return;
     debugPrint(
-      '[ApiClient] $method ${uri.path} auth=${authorized ? 'bearer' : 'none'}',
+      '[ApiClient] $method ${uri.path} auth=${authorized ? 'bearer' : 'none'} requestId=$requestId',
     );
   }
 
-  void _logResponse(String method, Uri uri, int statusCode) {
+  void _logResponse(String method, Uri uri, int statusCode,
+      {required String requestId}) {
     if (!kDebugMode) return;
-    debugPrint('[ApiClient] $method ${uri.path} -> $statusCode');
+    debugPrint(
+        '[ApiClient] $method ${uri.path} -> $statusCode requestId=$requestId');
   }
+
+  void _logPrivate(String message) {
+    if (kDebugMode) debugPrint('[ApiClient] $message');
+  }
+
+  // Retrying reads is safe and is enough for every screen refresh. Mutating
+  // requests are deliberately not retried here: after a network switch their
+  // result may have reached the server even when the response did not.
+  static const List<Duration> _networkRetryDelays = <Duration>[
+    Duration(milliseconds: 350),
+  ];
 
   bool _shouldRetryNetwork(String method) => method == 'GET';
 

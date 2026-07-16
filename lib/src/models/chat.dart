@@ -92,7 +92,8 @@ class Chat {
       }
     }
 
-    final photoUrls = listingPreview['photo_urls'] ?? listingPreview['photoUrls'];
+    final photoUrls =
+        listingPreview['photo_urls'] ?? listingPreview['photoUrls'];
     if (photoUrls is List) {
       for (final candidate in photoUrls) {
         final text = (candidate ?? '').toString().trim();

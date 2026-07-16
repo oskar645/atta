@@ -19,14 +19,12 @@ class ChatService {
     ChatSocketService? socketService,
     ChatsApi? api,
     MediaApi? mediaApi,
-    Duration requestTimeout = const Duration(seconds: 12),
     Duration socketReadyTimeout = const Duration(seconds: 8),
   })  : _socketService = socketService,
         _api = api ?? ChatsApi(ApiClient(tokenStorage: _tokenStorage)),
         _mediaApi =
             mediaApi ?? MediaApi(ApiClient(tokenStorage: _tokenStorage)),
         _imagePreparationService = ImagePreparationService(),
-        _requestTimeout = requestTimeout,
         _socketReadyTimeout = socketReadyTimeout {
     _socketSub = _socketService?.events.listen(_handleSocketEvent);
   }
@@ -37,7 +35,6 @@ class ChatService {
   final ChatsApi _api;
   final MediaApi _mediaApi;
   final ImagePreparationService _imagePreparationService;
-  final Duration _requestTimeout;
   final Duration _socketReadyTimeout;
 
   StreamSubscription<ChatSocketEvent>? _socketSub;
@@ -507,7 +504,8 @@ class ChatService {
     final uid = _activeUserId?.trim() ?? '';
     _debugSource('Chats list load start user=$uid');
     try {
-      final response = await _api.listChats().timeout(_requestTimeout);
+      // REST inbox loading must not inherit a pre-send auth/socket timeout.
+      final response = await _api.listChats();
       final items = (response['items'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
@@ -695,6 +693,28 @@ class ChatService {
       await _socketService?.joinChat(
         chatId,
         reason: 'chat.rejoinAfterResume',
+      );
+    }
+    final foregroundChatId = _foregroundChatId;
+    if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
+      await markChatRead(chatId: foregroundChatId, uid: uid);
+    }
+  }
+
+  Future<void> handleNetworkChanged(String uid) async {
+    _activeUserId = uid.trim();
+    final reconnect = _socketService?.forceReconnect(
+      reason: 'chat.networkChanged',
+    );
+    if (reconnect != null) {
+      unawaited(reconnect.catchError((_) {}));
+    }
+    await refreshChats();
+    for (final chatId in _activeChatIds.toList()) {
+      await _refreshChat(chatId);
+      await _socketService?.joinChat(
+        chatId,
+        reason: 'chat.rejoinAfterNetworkChange',
       );
     }
     final foregroundChatId = _foregroundChatId;

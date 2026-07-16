@@ -4,6 +4,7 @@ import 'package:atta/src/features/auth/login_screen.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/backend_auth_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -17,10 +18,7 @@ void main() {
       final auth = _FakeAuthService();
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       expect(find.text('Добро пожаловать'), findsOneWidget);
@@ -36,10 +34,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.enterText(
@@ -66,11 +61,13 @@ void main() {
       final auth = _FakeAuthService(
         registeredPhones: <String>{'79281234567'},
       );
+      final shellController = MainShellController(initialIndex: 3);
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
+        _buildLoginTestApp(
+          auth,
+          shellController: shellController,
+          authGate: true,
         ),
       );
 
@@ -94,7 +91,9 @@ void main() {
       expect(auth.loginPhoneCalls, 1);
       expect(auth.lastLoginPhone, '79281234567');
       expect(auth.lastLoginPassword, 'secret123');
-      expect(find.text('Добро пожаловать'), findsOneWidget);
+      expect(shellController.selectedIndex, 0);
+      expect(find.text('Главный экран'), findsOneWidget);
+      expect(find.text('Добро пожаловать'), findsNothing);
     },
   );
 
@@ -107,10 +106,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.enterText(
@@ -146,10 +142,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.enterText(
@@ -177,10 +170,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.enterText(
@@ -230,10 +220,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.enterText(
@@ -266,10 +253,7 @@ void main() {
       final auth = _FakeAuthService();
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.enterText(
@@ -293,10 +277,7 @@ void main() {
       final auth = _FakeAuthService();
 
       await tester.pumpWidget(
-        Provider<AuthService>.value(
-          value: auth,
-          child: const MaterialApp(home: LoginScreen()),
-        ),
+        _buildLoginTestApp(auth),
       );
 
       await tester.tap(find.text('Нет аккаунта? Создать аккаунт'));
@@ -330,6 +311,57 @@ void main() {
       expect(find.text('Подтвердите номер'), findsOneWidget);
     },
   );
+}
+
+Widget _buildLoginTestApp(
+  _FakeAuthService auth, {
+  MainShellController? shellController,
+  bool authGate = false,
+}) {
+  return MultiProvider(
+    providers: [
+      Provider<AuthService>.value(value: auth),
+      ChangeNotifierProvider<MainShellController>.value(
+        value: shellController ?? MainShellController(),
+      ),
+    ],
+    child: MaterialApp(
+      home: authGate ? const _AuthGateProbe() : const LoginScreen(),
+    ),
+  );
+}
+
+class _AuthGateProbe extends StatefulWidget {
+  const _AuthGateProbe();
+
+  @override
+  State<_AuthGateProbe> createState() => _AuthGateProbeState();
+}
+
+class _AuthGateProbeState extends State<_AuthGateProbe> {
+  StreamSubscription<AuthSessionEvent>? _sub;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _sub ??= context.read<AuthService>().onAuthStateChange.listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_sub?.cancel());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!context.read<AuthService>().isAuthenticated) {
+      return const LoginScreen();
+    }
+    return const Scaffold(body: Center(child: Text('Главный экран')));
+  }
 }
 
 class _FakeAuthService extends AuthService {

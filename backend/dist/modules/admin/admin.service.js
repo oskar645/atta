@@ -330,35 +330,56 @@ let AdminService = class AdminService {
     async listListings(status) {
         const normalizedStatus = (status ?? '').trim().toLowerCase();
         const isPending = normalizedStatus === 'pending' || normalizedStatus.length === 0;
-        const items = await this.prisma.listing.findMany({
-            where: {
-                deletedAt: null,
-                ...(isPending ? { archivedAt: null } : {}),
-                ...(normalizedStatus == 'all' || normalizedStatus.length === 0
-                    ? {}
-                    : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),
-            },
-            include: {
-                owner: {
-                    include: {
-                        adminProfile: true,
+        const where = {
+            deletedAt: null,
+            ...(isPending ? { archivedAt: null } : {}),
+            ...(normalizedStatus == 'all' || normalizedStatus.length === 0
+                ? {}
+                : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),
+        };
+        const [items, total, pendingModeration] = await Promise.all([
+            this.prisma.listing.findMany({
+                where,
+                include: {
+                    owner: {
+                        include: {
+                            adminProfile: true,
+                        },
+                    },
+                    photos: {
+                        orderBy: {
+                            sortOrder: 'asc',
+                        },
                     },
                 },
-                photos: {
-                    orderBy: {
-                        sortOrder: 'asc',
-                    },
+                orderBy: {
+                    createdAt: 'desc',
                 },
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
-            take: 100,
-        });
+                take: 100,
+            }),
+            this.prisma.listing.count({ where }),
+            this.prisma.listing.count({
+                where: {
+                    deletedAt: null,
+                    archivedAt: null,
+                    status: client_1.ListingStatus.PENDING,
+                },
+            }),
+        ]);
         return {
             source: 'timeweb',
             items: items.map((listing) => (0, serializers_1.serializeListing)(listing)),
-            statuses: ['pending', 'approved', 'rejected', 'sold', 'deleted', 'archived'],
+            total,
+            pendingModeration,
+            pending_moderation: pendingModeration,
+            statuses: [
+                'pending',
+                'approved',
+                'rejected',
+                'sold',
+                'deleted',
+                'archived',
+            ],
         };
     }
     async listPromotions(query) {

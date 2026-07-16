@@ -2,7 +2,6 @@ import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/models/wallet_transaction.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_config.dart';
-import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/wallet_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,12 +30,11 @@ class WalletService {
   final Map<String, Wallet> _walletCache = <String, Wallet>{};
   final Map<String, List<WalletTransaction>> _transactionsCache =
       <String, List<WalletTransaction>>{};
-  final Map<String, Future<Wallet>> _accrualFutures = <String, Future<Wallet>>{};
+  final Map<String, Future<Wallet>> _accrualFutures =
+      <String, Future<Wallet>>{};
   final Map<String, Future<Wallet>> _walletFutures = <String, Future<Wallet>>{};
   final Map<String, Future<List<WalletTransaction>>> _transactionsFutures =
       <String, Future<List<WalletTransaction>>>{};
-  static const Duration _walletTimeout = Duration(seconds: 10);
-
   Wallet? get cachedWallet {
     final userId = _currentUserId;
     if (userId == null) {
@@ -250,7 +248,7 @@ class WalletService {
   Future<Wallet> _fetchWallet(String userId) async {
     _debugWalletLog('Wallet refresh start user=$userId');
     try {
-      final response = await _withTimeout(_api.getWallet());
+      final response = await _api.getWallet();
       final wallet = Wallet.fromMap(response);
       _walletCache[userId] = wallet;
       _debugWalletLog(
@@ -266,7 +264,7 @@ class WalletService {
   }
 
   Future<List<WalletTransaction>> _fetchTransactions(String userId) async {
-    final response = await _withTimeout(_api.getTransactions());
+    final response = await _api.getTransactions();
     final walletMap = response['wallet'];
     if (walletMap is Map) {
       _walletCache[userId] = Wallet.fromMap(
@@ -290,7 +288,7 @@ class WalletService {
   Future<Wallet> _fetchAccrualWallet(String userId) async {
     _debugWalletLog('Wallet accrue check start user=$userId');
     try {
-      final response = await _withTimeout(_api.checkAccrual());
+      final response = await _api.checkAccrual();
       final walletMap = response['wallet'];
       final normalized = walletMap is Map
           ? walletMap.map((key, value) => MapEntry(key.toString(), value))
@@ -307,15 +305,5 @@ class WalletService {
     } finally {
       _debugWalletLog('Wallet finally loading=false user=$userId');
     }
-  }
-
-  Future<T> _withTimeout<T>(Future<T> future) {
-    return future.timeout(
-      _walletTimeout,
-      onTimeout: () => throw const ApiException(
-        'Проверьте интернет-соединение и попробуйте снова.',
-        code: 'timeout',
-      ),
-    );
   }
 }

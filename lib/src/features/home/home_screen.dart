@@ -1974,7 +1974,9 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
       if (perm == LocationPermission.always ||
           perm == LocationPermission.whileInUse) {
         final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
         );
         final point = LatLng(pos.latitude, pos.longitude);
         if (!mounted) return;

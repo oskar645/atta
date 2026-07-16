@@ -87,7 +87,32 @@ void main() {
     expect(api.supportCalls, 0);
   });
 
-  test('streamNeedsAttention does not auto-load admin endpoints on listen',
+  test('streamNeedsAttention refreshes admin attention on listen', () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(
+        uid: 'admin-1',
+        isAdmin: true,
+      ),
+    );
+    final api = _FakeAdminApi();
+    final service = AdminService(api: api);
+    service.activateSession();
+    service.bindAdminUser('admin-1');
+
+    final value = await service.streamNeedsAttention().firstWhere(
+          (value) => value,
+        );
+
+    expect(value, isTrue);
+    expect(api.listingsCalls, 1);
+    expect(api.reportsCalls, 1);
+    expect(api.supportCalls, 1);
+  });
+
+  test('new pending listing after seen lights moderation badge again',
       () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(
@@ -103,12 +128,23 @@ void main() {
     service.activateSession();
     service.bindAdminUser('admin-1');
 
-    final value = await service.streamNeedsAttention().first;
+    await service.refreshAdminAttention(force: true);
+    await service.markSectionSeen(AdminService.moderationSection);
+    expect(await service.streamPendingModerationCount().first, 0);
 
-    expect(value, isFalse);
-    expect(api.listingsCalls, 0);
-    expect(api.reportsCalls, 0);
-    expect(api.supportCalls, 0);
+    api.pendingItems = <Map<String, dynamic>>[
+      ...api.pendingItems,
+      <String, dynamic>{
+        'id': 'listing-3',
+        'status': 'pending',
+        'created_at': '2026-07-03T12:00:00.000Z',
+      },
+    ];
+    await service.refreshAdminAttention(force: true);
+
+    expect(await service.streamPendingModerationCount().first, 3);
+    expect(await service.streamOpenReportsCount().first, 0);
+    expect(await service.streamUnreadSupportForAdminCount().first, 0);
   });
 }
 
@@ -136,23 +172,26 @@ class _FakeAdminApi extends AdminApi {
   int listingsCalls = 0;
   int reportsCalls = 0;
   int supportCalls = 0;
+  List<Map<String, dynamic>> pendingItems = <Map<String, dynamic>>[
+    <String, dynamic>{
+      'id': 'listing-1',
+      'status': 'pending',
+      'updated_at': '2026-07-03T10:00:00.000Z',
+    },
+    <String, dynamic>{
+      'id': 'listing-2',
+      'status': 'pending',
+      'updated_at': '2026-07-03T11:00:00.000Z',
+    },
+  ];
 
   @override
   Future<Map<String, dynamic>> listings({String? status}) async {
     listingsCalls += 1;
     return <String, dynamic>{
-      'items': <Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': 'listing-1',
-          'status': 'pending',
-          'updated_at': '2026-07-03T10:00:00.000Z',
-        },
-        <String, dynamic>{
-          'id': 'listing-2',
-          'status': 'pending',
-          'updated_at': '2026-07-03T11:00:00.000Z',
-        },
-      ],
+      'items': pendingItems,
+      'total': pendingItems.length,
+      'pendingModeration': pendingItems.length,
     };
   }
 

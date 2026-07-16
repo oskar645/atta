@@ -90,7 +90,7 @@ class _AdminOnlineUsersScreenState extends State<AdminOnlineUsersScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
+                    const Text(
                       'Не удалось загрузить онлайн-пользователей.',
                       textAlign: TextAlign.center,
                     ),

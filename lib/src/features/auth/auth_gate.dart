@@ -72,10 +72,11 @@ class _AuthGateState extends State<AuthGate> {
         _initError = 'Не удалось восстановить сессию.';
       });
     } finally {
-      if (!mounted) return;
-      setState(() {
-        _ready = true;
-      });
+      if (mounted) {
+        setState(() {
+          _ready = true;
+        });
+      }
     }
   }
 

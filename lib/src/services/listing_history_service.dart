@@ -103,7 +103,8 @@ class ListingHistoryService extends ChangeNotifier {
 
   Future<void> _loadLocal({String? uid}) async {
     final prefs = await SharedPreferences.getInstance();
-    final resolvedUid = uid ?? (await _storage.readCurrentUser())?.uid.trim() ?? '';
+    final resolvedUid =
+        uid ?? (await _storage.readCurrentUser())?.uid.trim() ?? '';
     final stored = prefs.getStringList(await _prefsKeyForUid(resolvedUid)) ??
         const <String>[];
     final localIds = stored

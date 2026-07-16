@@ -104,7 +104,20 @@ class BackendAuthService {
     if (future == null) {
       return;
     }
-    await future;
+    try {
+      // This is an auth-recovery limit, not an HTTP request timeout. It makes
+      // a broken platform/storage future retryable instead of pinning every
+      // private screen in a permanent loading state.
+      await future.timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      if (identical(_privateAuthReadyInFlight, future)) {
+        _privateAuthReadyInFlight = null;
+      }
+      throw const ApiException(
+        'Восстановление авторизации заняло слишком много времени.',
+        code: 'auth_recovery_timeout',
+      );
+    }
   }
 
   Future<void> _ensurePrivateAuthReady() async {
@@ -404,10 +417,6 @@ class BackendAuthService {
     return 'Попробуйте позже';
   }
 
-  Future<bool> _tryRefreshSession() async {
-    return refreshSession();
-  }
-
   Future<bool> refreshSession() async {
     final existing = _refreshInFlight;
     if (existing != null) {
@@ -434,20 +443,11 @@ class BackendAuthService {
     try {
       final response = await _authApi.refresh(refreshToken: refreshToken);
       await _consumeAuthPayload(response);
-      try {
-        await me();
-      } on ApiException catch (error) {
-        if (error.isUnauthorized) {
-          await _clearSession();
-          return false;
-        }
-        if (error.isNetworkError ||
-            error.isTimeout ||
-            error.isServerUnavailable) {
-          return true;
-        }
-        rethrow;
-      }
+      // Do not call `me()` here. During cold start this refresh is itself the
+      // private-auth gate; `me()` is an authorized ApiClient request and would
+      // wait for this very gate, creating a self-await deadlock. The refresh
+      // payload is already persisted by _consumeAuthPayload, and profile data
+      // is revalidated later by the normal foreground/profile refresh path.
       return true;
     } on ApiException catch (error) {
       if (error.isNetworkError ||

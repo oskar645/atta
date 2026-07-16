@@ -250,20 +250,18 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
 
   Future<List<Listing>> _load() {
     final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
+    final listings = context.read<ListingsService>();
     _debugMyListingsLog(
       'MyListings load start user=${widget.userId} statuses=${widget.statuses.join(",")}',
     );
-    return context
-        .read<ListingsService>()
+    return listings
         .getMyListingsByStatuses(
-          widget.userId,
-          statuses: widget.statuses,
-          forceRefresh: hadItems,
-        )
+      widget.userId,
+      statuses: widget.statuses,
+      forceRefresh: hadItems,
+    )
         .then((items) {
-      final loadError = context
-          .read<ListingsService>()
-          .lastMyListingsErrorForUser(widget.userId);
+      final loadError = listings.lastMyListingsErrorForUser(widget.userId);
       if (mounted) {
         setState(() {
           _items = items;
@@ -645,11 +643,21 @@ class _MyListingTile extends StatelessWidget {
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          Text('Просмотров: ${listing.viewCount}'),
+                          Flexible(
+                            fit: FlexFit.loose,
+                            child: Text(
+                              'Просмотров: ${listing.viewCount}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                           if (showFavoriteCount) ...[
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 6),
                             Icon(
                               Icons.favorite_border,
+                              key: ValueKey(
+                                'my_listing_favorite_icon:${listing.id}',
+                              ),
                               size: 14,
                               color: Theme.of(context).colorScheme.outline,
                             ),
@@ -705,46 +713,80 @@ class _MyListingTile extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: canEdit
-                        ? () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    EditListingScreen(listingId: listing.id),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Each action receives half of the available row width.  At
+                // compact widths, reducing only the label size keeps both
+                // controls on one line without changing their height.
+                final isCompact = (constraints.maxWidth - 8) / 2 < 168;
+                final editFontSize = isCompact ? 12.0 : 14.0;
+                final archiveFontSize = isCompact ? 11.0 : 12.0;
+
+                return Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: canEdit
+                            ? () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => EditListingScreen(
+                                      listingId: listing.id,
+                                    ),
+                                  ),
+                                );
+                              }
+                            : null,
+                        style: isCompact
+                            ? OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                ),
+                              )
+                            : null,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.edit),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                'Редактировать',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: editFontSize),
                               ),
-                            );
-                          }
-                        : null,
-                    icon: const Icon(Icons.edit),
-                    label: const Text('Редактировать'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: isArchived
-                        ? null
-                        : () async {
-                            await runListingArchiveFlow(
-                              context,
-                              listingId: listing.id,
-                              listingsService: svc,
-                            );
-                          },
-                    icon: Icon(
-                      isArchived
-                          ? Icons.inventory_2_outlined
-                          : Icons.archive_outlined,
-                      color: isArchived ? null : Colors.red,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    label: Text(isArchived ? 'В архиве' : 'В архив'),
-                  ),
-                ),
-              ],
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: isArchived
+                            ? null
+                            : () async {
+                                await runListingArchiveFlow(
+                                  context,
+                                  listingId: listing.id,
+                                  listingsService: svc,
+                                );
+                              },
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                        ),
+                        child: Text(
+                          'Снять с публикации',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: archiveFontSize),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ],
         ),

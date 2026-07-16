@@ -73,8 +73,8 @@ class _MainShellState extends State<MainShell> {
     _shellController?.removeListener(_handleExternalTabSelection);
     final presence = _presence;
     final uid = _presenceUid;
-    if (uid != null && uid.isNotEmpty) {
-      presence?.setOnline(uid: uid, isOnline: false);
+    if (uid != null && uid.isNotEmpty && presence != null) {
+      presence.setOnline(uid: uid, isOnline: false);
     }
     super.dispose();
   }
@@ -83,7 +83,7 @@ class _MainShellState extends State<MainShell> {
     final auth = _auth;
     final presence = _presence;
     if (auth == null || presence == null) return;
-    final uid = auth.currentUser?.uid?.trim() ?? '';
+    final uid = auth.currentUser?.uid.trim() ?? '';
     if (uid.isEmpty) return;
     if (_presenceTimer != null && _presenceUid == uid) {
       return;

@@ -87,9 +87,10 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
       if (!mounted) return;
       setState(() => _items = []);
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      _syncOverlay();
+      if (mounted) {
+        setState(() => _loading = false);
+        _syncOverlay();
+      }
     }
   }
 

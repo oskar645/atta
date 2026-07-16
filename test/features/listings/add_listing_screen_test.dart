@@ -28,73 +28,82 @@ void main() {
     expect(find.text('Дополнительно (необязательно)'), findsNothing);
     expect(find.text('Опубликовать'), findsOneWidget);
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField &&
-            widget.decoration?.labelText == 'Пробег (необязательно)',
-      ),
+      _textFieldWithLabel('Пробег (необязательно)'),
       findsOneWidget,
     );
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Кузов (необязательно)',
-      ),
+      _dropdownWithLabel('Кузов (необязательно)'),
       findsOneWidget,
     );
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Топливо (необязательно)',
-      ),
+      _dropdownWithLabel('Топливо (необязательно)'),
       findsOneWidget,
     );
-    expect(find.text('Объём двигателя (необязательно)'), findsOneWidget);
+    expect(_textWithOptionalLabel('Объём двигателя (необязательно)'),
+        findsOneWidget);
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Коробка (необязательно)',
-      ),
+      _dropdownWithLabel('Коробка (необязательно)'),
       findsOneWidget,
     );
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Привод (необязательно)',
-      ),
+      _dropdownWithLabel('Привод (необязательно)'),
       findsOneWidget,
     );
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -250));
     await tester.pumpAndSettle();
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Состояние (необязательно)',
-      ),
+      _dropdownWithLabel('Состояние (необязательно)'),
       findsOneWidget,
     );
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'Цвет (необязательно)',
-      ),
+      _dropdownWithLabel('Цвет (необязательно)'),
       findsOneWidget,
     );
     expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration?.labelText == 'ПТС (необязательно)',
-      ),
+      _dropdownWithLabel('ПТС (необязательно)'),
       findsOneWidget,
     );
   });
+}
+
+Finder _textFieldWithLabel(String label) {
+  return find.byWidgetPredicate(
+    (widget) =>
+        widget is TextField && _decorationHasLabel(widget.decoration, label),
+  );
+}
+
+Finder _dropdownWithLabel(String label) {
+  return find.byWidgetPredicate(
+    (widget) =>
+        widget is DropdownButtonFormField<String> &&
+        _decorationHasLabel(widget.decoration, label),
+  );
+}
+
+Finder _textWithOptionalLabel(String label) {
+  return find.byWidgetPredicate(
+    (widget) =>
+        widget is Text &&
+        _normalizeLabel(widget.data ?? widget.textSpan?.toPlainText()) ==
+            _normalizeLabel(label),
+  );
+}
+
+bool _decorationHasLabel(InputDecoration? decoration, String expected) {
+  final actual = decoration?.labelText ?? _labelWidgetText(decoration?.label);
+  return _normalizeLabel(actual) == _normalizeLabel(expected);
+}
+
+String _labelWidgetText(Widget? widget) {
+  if (widget is Text) {
+    return widget.data ?? widget.textSpan?.toPlainText() ?? '';
+  }
+  return '';
+}
+
+String _normalizeLabel(String? text) {
+  return (text ?? '').replaceAll(RegExp(r'[\s()]'), '').toLowerCase();
 }
 
 class _FakeAuthService extends AuthService {

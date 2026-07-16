@@ -436,7 +436,10 @@ class _FakePresenceService extends PresenceService {
 
 class _FakeProfileService extends ProfileService {
   @override
-  Future<Map<String, dynamic>> getProfile(String uid) async {
+  Future<Map<String, dynamic>> getProfile(
+    String uid, {
+    bool forceRefresh = false,
+  }) async {
     return <String, dynamic>{
       'display_name': 'Seller',
       'avatar_url': '',

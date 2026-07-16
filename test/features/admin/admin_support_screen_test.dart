@@ -274,7 +274,10 @@ class _FakeProfileService extends ProfileService {
   int calls = 0;
 
   @override
-  Future<Map<String, dynamic>> getProfile(String uid) {
+  Future<Map<String, dynamic>> getProfile(
+    String uid, {
+    bool forceRefresh = false,
+  }) {
     calls += 1;
     return completer.future;
   }

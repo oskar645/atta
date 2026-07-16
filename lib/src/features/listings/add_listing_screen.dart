@@ -1551,11 +1551,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
           children: [
             if (leading != null) ...[leading, const SizedBox(width: 10)],
             Expanded(
-              child: Text(
+              child: _fieldText(
                 value.isEmpty ? title : value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
+                TextStyle(
                   color: value.isEmpty
                       ? Theme.of(context).colorScheme.outline
                       : Theme.of(context).colorScheme.onSurface,
@@ -1580,7 +1578,38 @@ class _AddListingScreenState extends State<AddListingScreen> {
       items:
           items.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
       onChanged: onChanged,
-      decoration: InputDecoration(labelText: label),
+      decoration: InputDecoration(label: _fieldLabel(label)),
+    );
+  }
+
+  Widget _fieldLabel(String label) => _fieldText(label, null);
+
+  /// Keeps the field name at the normal Material size and makes only the
+  /// optional suffix smaller. The price field never uses this helper.
+  Widget _fieldText(String text, TextStyle? style) {
+    const suffix = ' (необязательно)';
+    if (!text.endsWith(suffix)) {
+      return Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
+    final name = text.substring(0, text.length - suffix.length);
+    return Text.rich(
+      TextSpan(
+        text: '$name ',
+        style: style,
+        children: const [
+          TextSpan(
+            text: 'Необязательно',
+            style: TextStyle(fontSize: 8),
+          ),
+        ],
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -1791,8 +1820,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
             TextField(
               controller: _carMileage,
               keyboardType: TextInputType.number,
-              decoration:
-                  const InputDecoration(labelText: 'Пробег (необязательно)'),
+              decoration: InputDecoration(
+                label: _fieldLabel('Пробег (необязательно)'),
+              ),
             ),
             const SizedBox(height: 12),
             _drop(
@@ -1826,7 +1856,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ),
             const SizedBox(height: 12),
             _selectTile(
-              title: 'Мощность',
+              title: 'Мощность (необязательно)',
               value: _carPower.text.trim().isEmpty
                   ? ''
                   : '${_carPower.text.trim()} л.с.',
@@ -1898,23 +1928,23 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   }
                 });
               },
-              decoration: const InputDecoration(
-                labelText: 'Растаможен (необязательно)',
+              decoration: InputDecoration(
+                label: _fieldLabel('Растаможен (необязательно)'),
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _carOwners,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Владельцев (необязательно)',
+              decoration: InputDecoration(
+                label: _fieldLabel('Владельцев (необязательно)'),
               ),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _carVin,
-              decoration: const InputDecoration(
-                labelText: 'VIN (необязательно)',
+              decoration: InputDecoration(
+                label: _fieldLabel('VIN (необязательно)'),
               ),
             ),
           ],

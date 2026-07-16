@@ -952,7 +952,8 @@ class SupportService {
     if (!existingLocalOnly && candidateLocalOnly) {
       return <String, dynamic>{...candidate, ...existing};
     }
-    final existingFailed = (existing['local_status'] ?? '').toString() == 'failed';
+    final existingFailed =
+        (existing['local_status'] ?? '').toString() == 'failed';
     final candidateFailed =
         (candidate['local_status'] ?? '').toString() == 'failed';
     if (existingFailed && !candidateFailed) {

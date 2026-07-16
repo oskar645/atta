@@ -13,8 +13,31 @@ if (keystorePropertiesFile.exists()) {
     keystorePropertiesFile.inputStream().use(keystoreProperties::load)
 }
 
+val releaseKeystoreKeys =
+    listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+
+val isReleaseBuildRequested =
+    gradle.startParameter.taskNames.any { taskName ->
+        taskName.contains("Release", ignoreCase = true)
+    }
+
+if (isReleaseBuildRequested) {
+    require(keystorePropertiesFile.exists()) {
+        "Missing android/key.properties. Copy android/key.properties.example and fill it with your upload keystore settings before building release."
+    }
+
+    val missingReleaseKeys =
+        releaseKeystoreKeys.filter { key ->
+            (keystoreProperties.getProperty(key) ?: "").isBlank()
+        }
+
+    require(missingReleaseKeys.isEmpty()) {
+        "android/key.properties is missing required values: ${missingReleaseKeys.joinToString(", ")}"
+    }
+}
+
 android {
-    namespace = "com.example.atta"
+    namespace = "online.attomarket.atta"
     // Some AndroidX dependencies pulled in by geocoding_android now require API 34+ at compile time.
     compileSdk = maxOf(flutter.compileSdkVersion, 34)
     ndkVersion = flutter.ndkVersion
@@ -30,7 +53,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.atta"
+        applicationId = "online.attomarket.atta"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -40,7 +63,8 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (keystorePropertiesFile.exists() &&
+            releaseKeystoreKeys.all { !(keystoreProperties.getProperty(it) ?: "").isBlank() }) {
             create("release") {
                 keyAlias = keystoreProperties["keyAlias"] as String
                 keyPassword = keystoreProperties["keyPassword"] as String
@@ -52,11 +76,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 }

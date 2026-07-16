@@ -489,8 +489,11 @@ class NotificationNavigationService {
     if (me == null) {
       return;
     }
-    final isAdmin =
-        await context.read<AdminService>().streamIsAdmin(me.uid).first;
+    final admin = context.read<AdminService>();
+    final isAdmin = await admin.streamIsAdmin(me.uid).first;
+    if (!context.mounted) {
+      return;
+    }
     if (!isAdmin) {
       return;
     }
@@ -503,6 +506,9 @@ class NotificationNavigationService {
         (payload['reportId'] ?? payload['report_id'] ?? '').toString().trim();
     final actionKey = 'admin_report:$reportId';
     if (_shouldSkipDuplicateOpen(actionKey)) {
+      return;
+    }
+    if (!context.mounted) {
       return;
     }
     await Navigator.of(context).push(

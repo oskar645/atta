@@ -292,7 +292,8 @@ void main() {
 
       expect(find.text('Все'), findsOneWidget);
       expect(find.text(kCategories[1]), findsOneWidget);
-      final filtersListView = tester.widget<ListView>(find.byType(ListView).first);
+      final filtersListView =
+          tester.widget<ListView>(find.byType(ListView).first);
       expect(filtersListView.scrollDirection, Axis.horizontal);
       expect(filtersListView.semanticChildCount, kCategories.length);
 
@@ -919,7 +920,7 @@ Widget _buildHomeTestApp({
     ],
     child: MaterialApp(
       navigatorObservers: <NavigatorObserver>[attaRouteObserver],
-      home: HomeScreen(),
+      home: const HomeScreen(),
     ),
   );
 }
@@ -1031,9 +1032,7 @@ class _FakeFeedAdsService extends FeedAdsService {
 }
 
 class _DelayedFeedAdsService extends FeedAdsService {
-  _DelayedFeedAdsService({this.initialAd});
-
-  final FeedAd? initialAd;
+  _DelayedFeedAdsService();
   final StreamController<FeedAd?> _controller =
       StreamController<FeedAd?>.broadcast();
 
@@ -1070,7 +1069,6 @@ class _FakeShowcaseService extends ShowcaseService {
   _FakeShowcaseService({
     List<ShowcaseItem>? items,
     this.onGetHomeShowcase,
-    this.onGetShowcase,
   }) : _items = items ??
             <ShowcaseItem>[
               for (var index = 0; index < 3; index++)
@@ -1083,14 +1081,10 @@ class _FakeShowcaseService extends ShowcaseService {
 
   int homeShowcaseCalls = 0;
   final Future<List<ShowcaseItem>> Function(int callCount)? onGetHomeShowcase;
-  final Future<List<ShowcaseItem>> Function()? onGetShowcase;
   final List<ShowcaseItem> _items;
 
   @override
   Future<List<ShowcaseItem>> getShowcase() async {
-    if (onGetShowcase != null) {
-      return onGetShowcase!();
-    }
     return List<ShowcaseItem>.from(_items);
   }
 

@@ -93,7 +93,8 @@ void main() {
     expect(socket.lastPingReason, 'presence.heartbeat');
   });
 
-  test('presence heartbeat when socket connected does not call connect repeatedly',
+  test(
+      'presence heartbeat when socket connected does not call connect repeatedly',
       () async {
     final socket = _FakeChatSocketService()..connected = true;
     final service = PresenceService(
@@ -255,7 +256,8 @@ class _FakeChatSocketService extends ChatSocketService {
   }
 
   @override
-  Future<void> setPresence(bool isOnline, {String reason = 'presence.set'}) async {
+  Future<void> setPresence(bool isOnline,
+      {String reason = 'presence.set'}) async {
     lastSetPresence = isOnline;
     lastSetPresenceReason = reason;
   }

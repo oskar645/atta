@@ -30,7 +30,6 @@ class ProfileService {
     ReviewsApi? reviewsApi,
     ImagePreparationService? imagePreparationService,
     Future<void> Function(String url)? avatarCacheEvictor,
-    Duration requestTimeout = const Duration(seconds: 12),
   })  : _tokenStorage = tokenStorage ?? _sharedTokenStorage,
         _usersApi = usersApi ??
             UsersApi(_apiClientFor(tokenStorage ?? _sharedTokenStorage)),
@@ -42,8 +41,7 @@ class ProfileService {
             ReviewsApi(_apiClientFor(tokenStorage ?? _sharedTokenStorage)),
         _imagePreparationService =
             imagePreparationService ?? ImagePreparationService(),
-        _avatarCacheEvictor = avatarCacheEvictor,
-        _requestTimeout = requestTimeout;
+        _avatarCacheEvictor = avatarCacheEvictor;
 
   static final TokenStorage _sharedTokenStorage = TokenStorage();
   static ApiClient _apiClientFor(TokenStorage tokenStorage) =>
@@ -56,7 +54,6 @@ class ProfileService {
   final ReviewsApi _reviewsApi;
   final ImagePreparationService _imagePreparationService;
   final Future<void> Function(String url)? _avatarCacheEvictor;
-  final Duration _requestTimeout;
   final Map<String, Map<String, dynamic>> _profileCache = {};
   final Map<String, DateTime> _profileCachedAt = {};
   final Map<String, Future<Map<String, dynamic>>> _profileInFlight = {};
@@ -162,12 +159,16 @@ class ProfileService {
     }
   }
 
-  Future<Map<String, dynamic>> getProfile(String uid) async {
+  Future<Map<String, dynamic>> getProfile(
+    String uid, {
+    bool forceRefresh = false,
+  }) async {
     final id = uid.trim();
     if (id.isEmpty) return <String, dynamic>{};
     final cached = getCachedProfile(id);
     final cachedAt = _profileCachedAt[id];
-    if (cached.isNotEmpty &&
+    if (!forceRefresh &&
+        cached.isNotEmpty &&
         cachedAt != null &&
         DateTime.now().difference(cachedAt) < _profileCacheTtl) {
       return cached;
@@ -199,8 +200,8 @@ class ProfileService {
     try {
       final currentUser = await _tokenStorage.readCurrentUser();
       final response = currentUser?.uid == uid
-          ? await _usersApi.me().timeout(_requestTimeout)
-          : await _usersApi.publicProfile(uid).timeout(_requestTimeout);
+          ? await _usersApi.me()
+          : await _usersApi.publicProfile(uid);
       final normalized = _mergeRows(
         _currentUserFallback(uid, currentUser),
         _normalizeBackendProfile(response),

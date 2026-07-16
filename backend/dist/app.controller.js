@@ -143,9 +143,7 @@ let AppController = AppController_1 = class AppController {
         const pageUrl = normalizedListingId
             ? `https://attamarket.online/listing/${encodeURIComponent(normalizedListingId)}`
             : 'https://attamarket.online/listing';
-        const buttonText = params.available
-            ? 'Открыть в App Store'
-            : 'Открыть ATTA в App Store';
+        const buttonText = params.available ? 'Открыть в приложении' : 'Установить ATTA';
         return `<!doctype html>
 <html lang="ru">
   <head>
@@ -194,6 +192,12 @@ let AppController = AppController_1 = class AppController {
         margin: 0 0 18px;
         line-height: 1.5;
       }
+      .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 20px;
+      }
       a.button {
         display: inline-block;
         padding: 12px 18px;
@@ -203,6 +207,11 @@ let AppController = AppController_1 = class AppController {
         text-decoration: none;
         font-weight: 600;
       }
+      a.button.secondary {
+        background: #ffffff;
+        color: #1f1f1f;
+        border: 1px solid rgba(31, 31, 31, 0.14);
+      }
     </style>
   </head>
   <body>
@@ -210,7 +219,12 @@ let AppController = AppController_1 = class AppController {
       <section class="card">
         <h1>ATTA</h1>
         <p>${this.escapeHtml(params.description)}</p>
-        <a class="button" href="${AppController_1.appStoreFallbackUrl}">${buttonText}</a>
+        <p>Если приложение уже установлено, после открытия объявления дополнительные переходы не выполняются.</p>
+        <div class="actions">
+          <a class="button" href="${pageUrl}">${buttonText}</a>
+          <a class="button secondary" href="${AppController_1.appStoreFallbackUrl}">App Store</a>
+          <a class="button secondary" href="${AppController_1.googlePlayFallbackUrl}">Google Play</a>
+        </div>
       </section>
     </main>
   </body>
@@ -245,6 +259,7 @@ let AppController = AppController_1 = class AppController {
 };
 exports.AppController = AppController;
 AppController.appStoreFallbackUrl = 'https://apps.apple.com/us/app/atta/id6762604298?l=ru';
+AppController.googlePlayFallbackUrl = 'https://play.google.com/store/apps/details?id=com.example.atta';
 AppController.appLandingUrl = 'https://attamarket.online/app';
 AppController.appOgImageUrl = 'https://attamarket.online/meta/app-icon.png';
 AppController.appleTeamId = 'F5F8UG6LWD';

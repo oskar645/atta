@@ -116,7 +116,8 @@ void main() {
     );
   });
 
-  test('seeded fresh avatar is not overwritten by older backend avatar', () async {
+  test('seeded fresh avatar is not overwritten by older backend avatar',
+      () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(
       accessToken: 'access-token',
