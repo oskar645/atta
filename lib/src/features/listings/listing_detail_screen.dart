@@ -63,6 +63,8 @@ class ListingDetailScreen extends StatefulWidget {
 }
 
 class _ListingDetailScreenState extends State<ListingDetailScreen> {
+  final ScrollController _scrollController = ScrollController();
+
   bool _viewCounted = false;
   bool _loginRedirectScheduled = false;
   bool _openedInitialReviews = false;
@@ -77,6 +79,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   void initState() {
     super.initState();
     timeago.setLocaleMessages('ru', timeago.RuMessages());
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
@@ -900,6 +908,9 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 sellerAvatar: sellerAvatar,
               ),
               body: ListView(
+                controller: _scrollController,
+                physics:
+                    _listingDetailScrollPhysics(Theme.of(context).platform),
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
                 children: [
                   if (status != 'approved')
@@ -1168,10 +1179,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               const SizedBox(height: 12),
                               Text(
                                 balance != null
-                                    ? 'Доступно: $balance поинтов'
+                                    ? 'Доступно: $balance бонусов'
                                     : walletError
                                         ? 'Не удалось загрузить кошелёк'
-                                        : 'Загрузка поинтов...',
+                                        : 'Загрузка бонусов...',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
                                 ),
@@ -1211,7 +1222,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                         ),
                                       );
                                     },
-                                    child: const Text('Получить поинты'),
+                                    child: const Text('Получить бонусы'),
                                   ),
                                 ),
                               ],
@@ -1355,6 +1366,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     favs: favs,
                     history: history,
                     reviews: context.read<ReviewsService>(),
+                    scrollController: _scrollController,
+                    platform: Theme.of(context).platform,
                   ),
                   const SizedBox(height: 12),
                   if (listing.ownerId == me.uid)
@@ -1373,6 +1386,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       },
     );
   }
+}
+
+ScrollPhysics? _listingDetailScrollPhysics(TargetPlatform platform) {
+  if (platform == TargetPlatform.iOS) {
+    return const ClampingScrollPhysics();
+  }
+  return null;
 }
 
 String _adminDeleteErrorText(Object error) {
@@ -1799,6 +1819,8 @@ class _SimilarListingsSection extends StatefulWidget {
   final FavoritesService favs;
   final ListingHistoryService history;
   final ReviewsService reviews;
+  final ScrollController scrollController;
+  final TargetPlatform platform;
 
   const _SimilarListingsSection({
     required this.baseListing,
@@ -1807,6 +1829,8 @@ class _SimilarListingsSection extends StatefulWidget {
     required this.favs,
     required this.history,
     required this.reviews,
+    required this.scrollController,
+    required this.platform,
   });
 
   @override
@@ -1815,18 +1839,33 @@ class _SimilarListingsSection extends StatefulWidget {
 }
 
 class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
+  final GlobalKey _sectionKey = GlobalKey();
+
   List<Listing> _items = const <Listing>[];
   Object? _error;
   bool _isLoading = false;
+  bool _preserveEmptyExtentAtBottom = false;
+  bool _wasAtBottomWhenLoadingStarted = false;
+  double _preservedEmptyExtent = 0;
 
   @override
   void initState() {
     super.initState();
+    widget.scrollController.addListener(_releasePreservedExtentAfterScrollUp);
     _loadSimilar();
+  }
+
+  @override
+  void dispose() {
+    widget.scrollController
+        .removeListener(_releasePreservedExtentAfterScrollUp);
+    super.dispose();
   }
 
   Future<void> _loadSimilar() async {
     if (_isLoading) return;
+    _wasAtBottomWhenLoadingStarted = _isIosDetailBottomEdge();
+    _debugLogBottomState('setState loading');
     setState(() {
       _isLoading = true;
       _error = null;
@@ -1836,23 +1875,101 @@ class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
         widget.baseListing,
       );
       if (!mounted) return;
+      final preserveEmptyExtent =
+          items.isEmpty && _wasAtBottomWhenLoadingStarted;
+      final currentHeight = _sectionKey.currentContext?.size?.height ?? 300;
+      _debugLogBottomState('setState success count=${items.length}');
       setState(() {
         _items = items;
         _isLoading = false;
+        _preserveEmptyExtentAtBottom = preserveEmptyExtent;
+        _preservedEmptyExtent =
+            preserveEmptyExtent ? currentHeight : _preservedEmptyExtent;
       });
+      _debugLogAfterLayout('after success');
     } catch (error) {
       if (!mounted) return;
+      _debugLogBottomState('setState error');
       setState(() {
         _error = error;
         _isLoading = false;
+        _preserveEmptyExtentAtBottom = false;
       });
+      _debugLogAfterLayout('after error');
     }
+  }
+
+  bool _isIosDetailBottomEdge() {
+    if (widget.platform != TargetPlatform.iOS) {
+      return false;
+    }
+    final position = _scrollPositionOrNull();
+    if (position == null) return false;
+    return position.pixels >= position.maxScrollExtent - 0.5 ||
+        position.extentAfter <= 0.5;
+  }
+
+  void _releasePreservedExtentAfterScrollUp() {
+    if (!_preserveEmptyExtentAtBottom) {
+      return;
+    }
+    final position = _scrollPositionOrNull();
+    if (position == null || position.extentAfter <= 24) {
+      return;
+    }
+    setState(() {
+      _preserveEmptyExtentAtBottom = false;
+    });
+    _debugLogAfterLayout('released preserved empty extent');
+  }
+
+  ScrollPosition? _scrollPositionOrNull() {
+    if (!mounted || !widget.scrollController.hasClients) {
+      return null;
+    }
+    return widget.scrollController.position;
+  }
+
+  void _debugLogBottomState(String reason) {
+    assert(() {
+      final mediaQueryElement =
+          context.getElementForInheritedWidgetOfExactType<MediaQuery>();
+      final mediaQuery = mediaQueryElement?.widget is MediaQuery
+          ? mediaQueryElement!.widget as MediaQuery
+          : null;
+      final position = _scrollPositionOrNull();
+      final height = _sectionKey.currentContext?.size?.height;
+      debugPrint(
+        'ATTA listing detail bottom: $reason '
+        'pixels=${position?.pixels.toStringAsFixed(1)} '
+        'max=${position?.maxScrollExtent.toStringAsFixed(1)} '
+        'after=${position?.extentAfter.toStringAsFixed(1)} '
+        'safeBottom=${mediaQuery?.data.padding.bottom.toStringAsFixed(1)} '
+        'viewBottom=${mediaQuery?.data.viewPadding.bottom.toStringAsFixed(1)} '
+        'similarHeight=${height?.toStringAsFixed(1)} '
+        'similarCount=${_items.length} '
+        'loading=$_isLoading '
+        'preserveEmpty=$_preserveEmptyExtentAtBottom',
+      );
+      return true;
+    }());
+  }
+
+  void _debugLogAfterLayout(String reason) {
+    assert(() {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _debugLogBottomState(reason);
+      });
+      return true;
+    }());
   }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading && _items.isEmpty) {
       return Column(
+        key: _sectionKey,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
@@ -1898,17 +2015,30 @@ class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
     }
 
     if (_error != null && _items.isEmpty) {
-      return _InlineSectionError(
-        title: 'Не удалось загрузить похожие объявления',
-        onRetry: _loadSimilar,
+      return KeyedSubtree(
+        key: _sectionKey,
+        child: _InlineSectionError(
+          title: 'Не удалось загрузить похожие объявления',
+          onRetry: _loadSimilar,
+        ),
       );
     }
 
     if (_items.isEmpty) {
-      return const SizedBox.shrink();
+      if (_preserveEmptyExtentAtBottom && _preservedEmptyExtent > 0) {
+        return SizedBox(
+          key: _sectionKey,
+          height: _preservedEmptyExtent,
+        );
+      }
+      return KeyedSubtree(
+        key: _sectionKey,
+        child: const SizedBox.shrink(),
+      );
     }
 
     return Column(
+      key: _sectionKey,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(

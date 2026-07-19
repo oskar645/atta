@@ -304,6 +304,95 @@ void main() {
     expect(service.heartbeatTimerStartCount, 1);
   });
 
+  test('connect registers a single presence.changed listener', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+
+    final socket = factory.createdSockets.single;
+    expect(socket.listenerCount('presence.changed'), 1);
+    expect(socket.listenerCount('user.presence.changed'), 0);
+    expect(service.socketListenerCount('presence.changed'), 1);
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains(
+          'listener registered event=presence.changed count=1',
+        ),
+      ),
+      isTrue,
+    );
+  });
+
+  test('presence.changed duplicates with same online state are ignored',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+    final presence = <PresenceSnapshot>[];
+    final events = <ChatSocketEvent>[];
+    final presenceSub = service.presenceUpdates.listen(presence.add);
+    final eventsSub = service.events.listen(events.add);
+
+    await service.connect(reason: 'login');
+    final socket = factory.createdSockets.single;
+    socket.emitEvent('presence.changed', <String, dynamic>{
+      'userId': 'user-1',
+      'isOnline': true,
+    });
+    socket.emitEvent('presence.changed', <String, dynamic>{
+      'userId': 'user-1',
+      'isOnline': true,
+    });
+    socket.emitEvent('presence.changed', <String, dynamic>{
+      'userId': 'user-1',
+      'isOnline': true,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(presence, hasLength(1));
+    expect(events.where((event) => event.name == 'presence.changed'),
+        hasLength(1));
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains(
+          'Socket presence.changed duplicate ignored user=user-1 online=true',
+        ),
+      ),
+      isTrue,
+    );
+
+    await presenceSub.cancel();
+    await eventsSub.cancel();
+  });
+
+  test('force reconnect removes old presence listener before new one',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    final firstSocket = factory.createdSockets.single;
+    await service.forceReconnect(reason: 'presence.resume');
+
+    expect(firstSocket.listenerCount('presence.changed'), 0);
+    expect(factory.createdSockets.last.listenerCount('presence.changed'), 1);
+  });
+
   test('normal close during disconnect does not throw uncaught exception',
       () async {
     final storage = TokenStorage();
@@ -493,12 +582,26 @@ class _FakeChatSocketClient implements ChatSocketClient {
     }
   }
 
+  void emitEvent(String event, Object? payload) {
+    for (final handler in List<void Function(dynamic)>.from(
+        _eventHandlers[event] ?? const [])) {
+      handler(payload);
+    }
+  }
+
   @override
   void on(String event, void Function(dynamic payload) handler) {
     _eventHandlers.putIfAbsent(event, () => <void Function(dynamic)>[]).add(
           handler,
         );
   }
+
+  @override
+  void off(String event) {
+    _eventHandlers.remove(event);
+  }
+
+  int listenerCount(String event) => _eventHandlers[event]?.length ?? 0;
 
   @override
   void onConnect(void Function(dynamic payload) handler) {

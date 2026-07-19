@@ -1,5 +1,4 @@
 import 'package:atta/src/features/favorites/favorites_screen.dart';
-import 'package:atta/src/features/listings/add_listing_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
 import 'package:atta/src/features/listings/listing_archive_flow.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
@@ -13,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/add_listing_icon_button.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'dart:async';
 
@@ -110,13 +110,7 @@ class _MyListingsScreenState extends State<MyListingsScreen>
               MaterialPageRoute(builder: (_) => const FavoritesScreen()),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.add_circle, color: Colors.blue, size: 28),
-            tooltip: 'Добавить',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const AddListingScreen()),
-            ),
-          ),
+          const AddListingIconButton(),
         ],
       ),
       body: TabBarView(

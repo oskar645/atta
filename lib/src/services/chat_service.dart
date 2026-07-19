@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:atta/src/models/chat.dart';
@@ -12,6 +13,7 @@ import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/image_preparation_service.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 class ChatService {
@@ -55,6 +57,7 @@ class ChatService {
   final Map<String, Future<void>> _markReadInFlight = {};
   final Map<String, Future<void>> _messageSendInFlight = {};
   final Map<String, Future<void>> _imageSendInFlight = {};
+  final Set<String> _restoredCacheUserIds = <String>{};
   Future<void>? _refreshChatsInFlight;
   Object? _lastChatsLoadError;
   final Map<String, DateTime> _lastMarkReadAt = {};
@@ -106,6 +109,7 @@ class ChatService {
     _markReadInFlight.clear();
     _messageSendInFlight.clear();
     _imageSendInFlight.clear();
+    _restoredCacheUserIds.clear();
     _refreshChatsInFlight = null;
     _lastChatsLoadError = null;
     _lastMarkReadAt.clear();
@@ -218,6 +222,119 @@ class ChatService {
     }
   }
 
+  String _cacheKey(String uid) => 'atta.chat.cache.v1.${uid.trim()}';
+
+  Future<void> _restoreCachedState(String uid) async {
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty || !_restoredCacheUserIds.add(normalizedUid)) {
+      return;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_cacheKey(normalizedUid));
+      if (raw == null || raw.trim().isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final chats = (decoded['chats'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
+          .where((chat) => chat.id.trim().isNotEmpty)
+          .toList();
+      for (final chat in chats) {
+        _chatsById.putIfAbsent(chat.id, () => chat);
+      }
+      final messagesByChat = decoded['messagesByChat'];
+      if (messagesByChat is Map) {
+        for (final entry in messagesByChat.entries) {
+          final chatId = entry.key.toString().trim();
+          if (chatId.isEmpty || entry.value is! List) continue;
+          final items = _messagesByChat.putIfAbsent(
+            chatId,
+            () => <ChatMessage>[],
+          );
+          for (final rawMessage in entry.value as List) {
+            if (rawMessage is! Map) continue;
+            final message = ChatMessage.fromMap(
+              Map<String, dynamic>.from(rawMessage),
+            );
+            if (message.type != 'text' || message.hasImage) continue;
+            _upsertMessageIntoList(items, message);
+          }
+          _loadedMessageChatIds.add(chatId);
+        }
+      }
+      _emitChats();
+      for (final chatId in _messagesByChat.keys.toList()) {
+        _emitMessages(chatId);
+      }
+    } catch (error) {
+      _debugSource('Chat cache restore skipped: $error');
+    }
+  }
+
+  Future<void> _persistCachedState() async {
+    final uid = _activeUserId?.trim() ?? '';
+    if (uid.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = <String, dynamic>{
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        'chats': _sortedChats().map(_chatToCacheMap).toList(),
+        'messagesByChat': _messagesByChat.map(
+          (chatId, messages) => MapEntry(
+            chatId,
+            messages
+                .where((message) => message.type == 'text' && !message.hasImage)
+                .map(_messageToCacheMap)
+                .toList(),
+          ),
+        ),
+      };
+      await prefs.setString(_cacheKey(uid), jsonEncode(payload));
+    } catch (error) {
+      _debugSource('Chat cache persist skipped: $error');
+    }
+  }
+
+  Map<String, dynamic> _chatToCacheMap(Chat chat) {
+    return <String, dynamic>{
+      'id': chat.id,
+      'listingId': chat.listingId,
+      'listingTitle': chat.listingTitle,
+      'buyerId': chat.buyerId,
+      'sellerId': chat.sellerId,
+      'buyerPreview': <String, dynamic>{'displayName': chat.buyerName},
+      'sellerPreview': <String, dynamic>{'displayName': chat.sellerName},
+      'listingPreview': <String, dynamic>{
+        'id': chat.listingId,
+        'title': chat.listingTitle,
+      },
+      'lastMessage': chat.lastMessage,
+      'lastMessageAt': chat.lastMessageAt?.toUtc().toIso8601String(),
+      'createdAt': chat.createdAt.toUtc().toIso8601String(),
+      'updatedAt': chat.updatedAt.toUtc().toIso8601String(),
+      'unreadCount': chat.unreadCount,
+      'unread_for_buyer': chat.unreadForBuyer,
+      'unread_for_seller': chat.unreadForSeller,
+    };
+  }
+
+  Map<String, dynamic> _messageToCacheMap(ChatMessage message) {
+    return <String, dynamic>{
+      'id': message.id,
+      'chatId': message.chatId,
+      'senderId': message.senderId,
+      'text': message.text,
+      'type': 'text',
+      'status': message.status,
+      'createdAt': message.createdAt.toUtc().toIso8601String(),
+      'updatedAt': message.updatedAt?.toUtc().toIso8601String(),
+      'deliveredAt': message.deliveredAt?.toUtc().toIso8601String(),
+      'readAt': message.readAt?.toUtc().toIso8601String(),
+      'clientMessageId': message.clientMessageId,
+    };
+  }
+
   List<Chat> _sortedChats() {
     final items = _chatsById.values.toList()..sort(_compareChatsForList);
     return items;
@@ -250,6 +367,7 @@ class ChatService {
   void _upsertChat(Chat chat) {
     _chatsById[chat.id] = chat;
     _emitChats();
+    unawaited(_persistCachedState());
   }
 
   void setForegroundChat(String? chatId) {
@@ -266,6 +384,7 @@ class ChatService {
         _messagesByChat.putIfAbsent(message.chatId, () => <ChatMessage>[]);
     _upsertMessageIntoList(items, message);
     _emitMessages(message.chatId);
+    unawaited(_persistCachedState());
   }
 
   void _removeMessage(String chatId, String messageId) {
@@ -274,6 +393,7 @@ class ChatService {
     items.removeWhere((entry) => entry.id == messageId);
     _messageOrderByKey.remove(messageId);
     _emitMessages(chatId);
+    unawaited(_persistCachedState());
   }
 
   void _replaceLocalMessage(String chatId, ChatMessage message) {
@@ -285,6 +405,7 @@ class ChatService {
       items[index] = _mergeMessages(items[index], message);
     }
     _emitMessages(chatId);
+    unawaited(_persistCachedState());
   }
 
   ChatMessage _normalizeMessage(ChatMessage message) {
@@ -504,6 +625,7 @@ class ChatService {
     final uid = _activeUserId?.trim() ?? '';
     _debugSource('Chats list load start user=$uid');
     try {
+      await _restoreCachedState(uid);
       // REST inbox loading must not inherit a pre-send auth/socket timeout.
       final response = await _api.listChats();
       final items = (response['items'] as List? ?? const [])
@@ -515,6 +637,7 @@ class ChatService {
         ..addEntries(items.map((item) => MapEntry(item.id, item)));
       _lastChatsLoadError = null;
       _emitChats();
+      unawaited(_persistCachedState());
       _debugSource(
         items.isEmpty
             ? 'Chats load empty'
@@ -595,10 +718,12 @@ class ChatService {
     }
     _loadedMessageChatIds.add(chatId);
     _emitMessages(chatId);
+    unawaited(_persistCachedState());
   }
 
   Stream<List<Chat>> streamMyChats(String uid) {
     _activeUserId = uid.trim();
+    unawaited(_restoreCachedState(uid));
     _ensureChatsRefreshStarted(uid);
     _ensureSocketConnectedInBackground(uid);
     return Stream<List<Chat>>.multi((controller) {
@@ -615,6 +740,7 @@ class ChatService {
 
   Stream<int> streamUnreadTotal(String uid) {
     _activeUserId = uid.trim();
+    unawaited(_restoreCachedState(uid));
     _ensureChatsRefreshStarted(uid);
     _ensureSocketConnectedInBackground(uid);
     return Stream<int>.multi((controller) {
@@ -632,6 +758,10 @@ class ChatService {
   }
 
   Stream<Chat?> streamChat(String chatId) {
+    final uid = _activeUserId?.trim() ?? '';
+    if (uid.isNotEmpty) {
+      unawaited(_restoreCachedState(uid));
+    }
     unawaited(_ensureTimewebReady());
     if (!_loadedChatIds.contains(chatId) &&
         !_chatRefreshInFlight.containsKey(chatId)) {
@@ -650,13 +780,18 @@ class ChatService {
   }
 
   Future<void> preloadChat(String chatId, {String? uid}) async {
-    _activeUserId ??= uid;
+    final normalizedUid = uid?.trim() ?? _activeUserId?.trim() ?? '';
+    if (normalizedUid.isNotEmpty) {
+      _activeUserId = normalizedUid;
+      await _restoreCachedState(normalizedUid);
+    }
     await _ensureTimewebReady(uid);
     await _refreshChat(chatId);
   }
 
   Future<void> refreshInbox(String uid) async {
     _activeUserId = uid.trim();
+    await _restoreCachedState(uid);
     _ensureSocketConnectedInBackground(uid);
     await refreshChats();
   }
@@ -703,6 +838,7 @@ class ChatService {
 
   Future<void> handleNetworkChanged(String uid) async {
     _activeUserId = uid.trim();
+    await _restoreCachedState(uid);
     final reconnect = _socketService?.forceReconnect(
       reason: 'chat.networkChanged',
     );
@@ -721,9 +857,14 @@ class ChatService {
     if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
       await markChatRead(chatId: foregroundChatId, uid: uid);
     }
+    await retryFailedTextMessages(senderId: uid);
   }
 
   Stream<List<ChatMessage>> streamMessages(String chatId) {
+    final uid = _activeUserId?.trim() ?? '';
+    if (uid.isNotEmpty) {
+      unawaited(_restoreCachedState(uid));
+    }
     unawaited(_ensureReadyAndJoinChat(chatId));
     _activeChatIds.add(chatId);
     if (!_loadedMessageChatIds.contains(chatId) &&
@@ -905,25 +1046,90 @@ class ChatService {
     }
   }
 
+  Future<void> retryMessage({
+    required String chatId,
+    required String senderId,
+    required ChatMessage message,
+  }) async {
+    if (message.status != 'failed') return;
+    if (message.type != 'text' || message.hasImage) return;
+    final trimmed = message.text.trim();
+    if (trimmed.isEmpty) return;
+    _activeUserId = senderId;
+    final clientMessageId = message.clientMessageId?.trim().isNotEmpty == true
+        ? message.clientMessageId!.trim()
+        : message.id.trim().startsWith('temp-')
+            ? message.id.trim().replaceFirst('temp-', '')
+            : _uuid.v4();
+    final sendKey =
+        'retry|${chatId.trim()}|${senderId.trim()}|$clientMessageId';
+    final existing = _messageSendInFlight[sendKey];
+    if (existing != null) return existing;
+    final future = _sendMessageInternal(
+      chatId: chatId,
+      senderId: senderId,
+      text: trimmed,
+      clientMessageId: clientMessageId,
+      tempId: message.id,
+      createdAt: message.createdAt,
+    );
+    _messageSendInFlight[sendKey] = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_messageSendInFlight[sendKey], future)) {
+        _messageSendInFlight.remove(sendKey);
+      }
+    }
+  }
+
+  Future<void> retryFailedTextMessages({required String senderId}) async {
+    final failed = _messagesByChat.values
+        .expand((messages) => messages)
+        .where(
+          (message) =>
+              message.senderId == senderId &&
+              message.status == 'failed' &&
+              message.type == 'text' &&
+              !message.hasImage &&
+              message.text.trim().isNotEmpty,
+        )
+        .toList();
+    for (final message in failed) {
+      try {
+        await retryMessage(
+          chatId: message.chatId,
+          senderId: senderId,
+          message: message,
+        );
+      } catch (error) {
+        _debugSource('retry failed message skipped for ${message.id}: $error');
+      }
+    }
+  }
+
   Future<void> _sendMessageInternal({
     required String chatId,
     required String senderId,
     required String text,
+    String? clientMessageId,
+    String? tempId,
+    DateTime? createdAt,
   }) async {
     await _ensureTimewebReady(senderId);
     await _socketService?.joinChat(chatId);
-    final localClientMessageId = _uuid.v4();
-    final tempId = 'temp-$localClientMessageId';
-    final createdAt = DateTime.now();
+    final localClientMessageId = clientMessageId ?? _uuid.v4();
+    final localTempId = tempId ?? 'temp-$localClientMessageId';
+    final localCreatedAt = createdAt ?? DateTime.now();
     _upsertMessage(
       ChatMessage(
-        id: tempId,
+        id: localTempId,
         chatId: chatId,
         senderId: senderId,
         text: text,
         clientMessageId: localClientMessageId,
         status: 'pending',
-        createdAt: createdAt,
+        createdAt: localCreatedAt,
       ),
     );
 
@@ -953,13 +1159,13 @@ class ChatService {
       _replaceLocalMessage(
         chatId,
         ChatMessage(
-          id: tempId,
+          id: localTempId,
           chatId: chatId,
           senderId: senderId,
           text: text,
           clientMessageId: localClientMessageId,
           status: 'failed',
-          createdAt: createdAt,
+          createdAt: localCreatedAt,
         ),
       );
       rethrow;

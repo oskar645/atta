@@ -27,6 +27,7 @@ import { ChatsGateway } from '../chats/chats.gateway';
 import { ChatsService } from '../chats/chats.service';
 import { FeedAdsService } from '../feed-ads/feed-ads.service';
 import { ListingsService } from '../listings/listings.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { StorageService } from '../storage/storage.service';
@@ -52,6 +53,7 @@ export class MediaController {
     private readonly chatsService: ChatsService,
     private readonly feedAdsService: FeedAdsService,
     private readonly listingsService: ListingsService,
+    private readonly notificationsService: NotificationsService,
     private readonly storageService: StorageService,
     private readonly usersService: UsersService,
   ) {}
@@ -127,13 +129,18 @@ export class MediaController {
       authUser,
       chatId,
       this.requireImage(file, 2 * 1024 * 1024),
-    ).then((result) => {
+    ).then(async (result) => {
       this.chatsGateway.emitOutgoingMessage(
         result.chat,
         result.recipientChat,
         result.message,
         result.recipientId,
       );
+      await this.notificationsService.sendChatMessagePush({
+        recipientId: result.recipientId,
+        message: result.message,
+        chat: result.recipientChat,
+      });
       return result;
     });
   }

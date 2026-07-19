@@ -93,6 +93,63 @@ void main() {
     expect(socket.lastPingReason, 'presence.heartbeat');
   });
 
+  test('recoverAfterResume force reconnects, sends online, then heartbeat',
+      () async {
+    final socket = _FakeChatSocketService()..connected = true;
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': false,
+          };
+        },
+      ),
+    );
+
+    await service.recoverAfterResume('user-1');
+
+    expect(socket.forceReconnectCalls, 1);
+    expect(socket.lastForceReconnectReason, 'presence.resume');
+    expect(socket.lastSetPresence, true);
+    expect(socket.lastSetPresenceReason, 'presence.setOnline');
+    expect(socket.pingCalls, 1);
+    expect(socket.lastPingReason, 'presence.heartbeat');
+    expect(service.peekIsOnline('user-1'), true);
+  });
+
+  test('recoverAfterResume ignores blank user id', () async {
+    final socket = _FakeChatSocketService();
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': false,
+          };
+        },
+      ),
+    );
+
+    await service.recoverAfterResume(' ');
+
+    expect(socket.forceReconnectCalls, 0);
+    expect(socket.lastSetPresence, isNull);
+    expect(socket.pingCalls, 0);
+  });
+
   test(
       'presence heartbeat when socket connected does not call connect repeatedly',
       () async {
@@ -120,6 +177,64 @@ void main() {
 
     expect(socket.connectCalls, 0);
     expect(socket.pingCalls, 3);
+  });
+
+  test('presence stream ignores unchanged online state', () async {
+    final socket = _FakeChatSocketService();
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': false,
+          };
+        },
+      ),
+    );
+
+    final values = <bool>[];
+    final sub = service.streamIsOnline('user-1').listen(values.add);
+    await Future<void>.delayed(Duration.zero);
+
+    socket.addPresence(userId: 'user-1', isOnline: true);
+    socket.addPresence(userId: 'user-1', isOnline: true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(values, <bool>[false, true]);
+    await sub.cancel();
+  });
+
+  test('presence service keeps a single socket subscription', () async {
+    final socket = _FakeChatSocketService();
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': false,
+          };
+        },
+      ),
+    );
+
+    final sub = service.streamIsOnline('user-1').listen((_) {});
+    await service.heartbeat('user-1');
+    await service.recoverAfterResume('user-1');
+
+    expect(socket.presenceListenerCount, 1);
+    await sub.cancel();
   });
 
   test('streamIsOnline returns cached stream for same user', () {
@@ -238,14 +353,18 @@ class _FakeChatSocketService extends ChatSocketService {
   final StreamController<PresenceSnapshot> _presenceController =
       StreamController<PresenceSnapshot>.broadcast();
   int connectCalls = 0;
+  int forceReconnectCalls = 0;
   int pingCalls = 0;
   bool connected = false;
   bool? lastSetPresence;
   String? lastSetPresenceReason;
+  String? lastForceReconnectReason;
   String? lastPingReason;
 
   @override
   Stream<PresenceSnapshot> get presenceUpdates => _presenceController.stream;
+
+  int get presenceListenerCount => _presenceController.hasListener ? 1 : 0;
 
   @override
   bool get isConnected => connected;
@@ -253,6 +372,12 @@ class _FakeChatSocketService extends ChatSocketService {
   @override
   Future<void> connect({String reason = 'unspecified'}) async {
     connectCalls++;
+  }
+
+  @override
+  Future<void> forceReconnect({String reason = 'manual'}) async {
+    forceReconnectCalls++;
+    lastForceReconnectReason = reason;
   }
 
   @override
@@ -266,5 +391,14 @@ class _FakeChatSocketService extends ChatSocketService {
   Future<void> ping({String reason = 'presence.ping'}) async {
     pingCalls++;
     lastPingReason = reason;
+  }
+
+  void addPresence({
+    required String userId,
+    required bool isOnline,
+  }) {
+    _presenceController.add(
+      PresenceSnapshot(userId: userId, isOnline: isOnline),
+    );
   }
 }

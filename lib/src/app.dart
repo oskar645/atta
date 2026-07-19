@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
@@ -31,6 +32,7 @@ import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/network_recovery_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/promotions_service.dart';
+import 'package:atta/src/services/push_notification_service.dart';
 import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
@@ -117,6 +119,10 @@ class AttaApp extends StatelessWidget {
           dispose: (_, service) => service.dispose(),
         ),
         Provider<NotificationsService>(create: (_) => NotificationsService()),
+        Provider<PushNotificationService>(
+          create: (_) => PushNotificationService(),
+          dispose: (_, service) => unawaited(service.dispose()),
+        ),
       ],
       child: Consumer<ThemeService>(
         builder: (_, theme, __) {
@@ -187,6 +193,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   late final ChatSocketService _socket;
   late final DeepLinkService _deepLinks;
   late final NotificationsService _notifications;
+  late final PushNotificationService _pushNotifications;
   late final AdminService _admin;
   late final SupportService _support;
   late final PresenceService _presence;
@@ -219,6 +226,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     _socket = context.read<ChatSocketService>();
     _deepLinks = context.read<DeepLinkService>();
     _notifications = context.read<NotificationsService>();
+    _pushNotifications = context.read<PushNotificationService>();
     _admin = context.read<AdminService>();
     _support = context.read<SupportService>();
     _presence = context.read<PresenceService>();
@@ -245,6 +253,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         _activeUid = null;
         _walletService.resetSession();
         _notifications.resetSession();
+        await _pushNotifications.unbind(api: _auth.notificationsApi);
         _admin.resetSession();
         _support.resetSession();
         await _presence.resetSession();
@@ -268,6 +277,12 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       final isAdminUser = _auth.currentUser?.isAdmin == true;
       _walletService.activateSession(uid);
       _notifications.activateSession(uid);
+      _runSoftStartupTask(
+        () => _pushNotifications.bindForUser(
+          api: _auth.notificationsApi,
+          userId: uid,
+        ),
+      );
       if (isAdminUser) {
         _admin.activateSession();
         _admin.bindAdminUser(uid);
@@ -507,6 +522,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       _activeUid = null;
       _walletService.resetSession();
       _notifications.resetSession();
+      await _pushNotifications.unbind(api: _auth.notificationsApi);
       _support.resetSession();
       _favorites.resetSession();
       _listings.resetSession();
@@ -520,6 +536,12 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     final isAdminUser = _auth.currentUser?.isAdmin == true;
     _walletService.activateSession(uid);
     _notifications.activateSession(uid);
+    _runSoftStartupTask(
+      () => _pushNotifications.bindForUser(
+        api: _auth.notificationsApi,
+        userId: uid,
+      ),
+    );
     if (isAdminUser) {
       _admin.activateSession();
       _admin.bindAdminUser(uid);
@@ -541,6 +563,9 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (kDebugMode) {
+      debugPrint('AppLifecycleState: $state');
+    }
     if (state == AppLifecycleState.resumed) {
       unawaited(_handleAppResumed());
     } else if (state == AppLifecycleState.paused ||
@@ -557,17 +582,23 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     }
 
     final future = () async {
-      _runSoftStartupTask(() => _setOnline(true));
       final restoredUser = await _auth.restoreSessionOnResume(force: true);
       if (!mounted) return;
       final uid = restoredUser?.uid ?? _auth.currentUser?.uid;
       if (uid == null || uid.isEmpty) {
         return;
       }
+      _runSoftStartupTask(() => _presence.recoverAfterResume(uid));
       _runSoftStartupTask(() => _chats.handleAppResumed(uid));
       _runSoftStartupTask(
         () => _notifications.refreshActiveSession(
           force: true,
+        ),
+      );
+      _runSoftStartupTask(
+        () => _pushNotifications.bindForUser(
+          api: _auth.notificationsApi,
+          userId: uid,
         ),
       );
       if ((_auth.currentUser?.isAdmin ?? restoredUser?.isAdmin) == true) {

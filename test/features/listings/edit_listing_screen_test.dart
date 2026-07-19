@@ -25,19 +25,25 @@ void main() {
     await tester.drag(find.byType(Scrollable).first, const Offset(0, -500));
     await tester.pumpAndSettle();
 
+    expect(find.text('Параметры авто'), findsOneWidget);
+    expect(find.text('Необязательно'), findsOneWidget);
     expect(
       find.byWidgetPredicate(
         (widget) =>
             widget is TextField &&
             widget.decoration?.labelText == 'Пробег (необязательно)',
       ),
-      findsOneWidget,
+      findsNothing,
     );
+
+    await tester.tap(find.text('Параметры авто'));
+    await tester.pumpAndSettle();
+
     expect(
       find.byWidgetPredicate(
         (widget) =>
-            widget is DropdownButtonFormField<String> &&
-            widget.decoration.labelText == 'Кузов (необязательно)',
+            widget is TextField &&
+            _decorationHasLabel(widget.decoration, 'Пробег (необязательно)'),
       ),
       findsOneWidget,
     );
@@ -45,7 +51,15 @@ void main() {
       find.byWidgetPredicate(
         (widget) =>
             widget is DropdownButtonFormField<String> &&
-            widget.decoration.labelText == 'Топливо (необязательно)',
+            _decorationHasLabel(widget.decoration, 'Кузов (необязательно)'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is DropdownButtonFormField<String> &&
+            _decorationHasLabel(widget.decoration, 'Топливо (необязательно)'),
       ),
       findsOneWidget,
     );
@@ -53,12 +67,30 @@ void main() {
       find.byWidgetPredicate(
         (widget) =>
             widget is TextField &&
-            widget.decoration?.labelText ==
-                'Объём двигателя (необязательно), например: 2.2 или 300 куб. см',
+            _decorationHasLabel(
+              widget.decoration,
+              'Объём двигателя (необязательно)',
+            ),
       ),
       findsOneWidget,
     );
   });
+}
+
+bool _decorationHasLabel(InputDecoration? decoration, String expected) {
+  final actual = decoration?.labelText ?? _labelWidgetText(decoration?.label);
+  return _normalizeLabel(actual) == _normalizeLabel(expected);
+}
+
+String _labelWidgetText(Widget? widget) {
+  if (widget is Text) {
+    return widget.data ?? widget.textSpan?.toPlainText() ?? '';
+  }
+  return '';
+}
+
+String _normalizeLabel(String? text) {
+  return (text ?? '').replaceAll(RegExp(r'[\s()]'), '').toLowerCase();
 }
 
 class _FakeAuthService extends AuthService {

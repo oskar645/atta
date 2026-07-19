@@ -232,6 +232,140 @@ void main() {
     expect(api.ticketCalls['ticket-admin'] ?? 0, 0);
   });
 
+  test('reopening admin ticket keeps history and refreshes again', () async {
+    final api = _FakeSupportApi(
+      initialMessages: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'admin-msg-1',
+          'ticket_id': 'ticket-1',
+          'sender': 'user',
+          'text': 'История обращения',
+          'created_at': '2026-06-13T09:00:00.000Z',
+        },
+      ],
+    );
+    final service = SupportService(api: api);
+
+    final firstStates = <List<Map<String, dynamic>>>[];
+    final firstSub = service.streamAdminMessages('ticket-1').listen(
+          firstStates.add,
+        );
+    await Future<void>.delayed(Duration.zero);
+    await firstSub.cancel();
+
+    expect(firstStates.last.map((item) => item['text']),
+        contains('История обращения'));
+
+    final secondStates = <List<Map<String, dynamic>>>[];
+    final secondSub = service.streamAdminMessages('ticket-1').listen(
+          secondStates.add,
+        );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(secondStates.first.map((item) => item['text']),
+        contains('История обращения'));
+    expect(api.adminTicketCalls.where((id) => id == 'ticket-1'), hasLength(2));
+
+    await secondSub.cancel();
+  });
+
+  test('empty admin refresh does not replace existing messages', () async {
+    final api = _FakeSupportApi(
+      initialMessages: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'admin-msg-1',
+          'ticket_id': 'ticket-1',
+          'sender': 'user',
+          'text': 'Не исчезает',
+          'created_at': '2026-06-13T09:00:00.000Z',
+        },
+      ],
+    );
+    final service = SupportService(api: api);
+
+    await service.refreshAdminMessages('ticket-1');
+    api._messages.clear();
+    await service.refreshAdminMessages('ticket-1');
+
+    expect(service.peekMessages('ticket-1').map((item) => item['text']),
+        contains('Не исчезает'));
+  });
+
+  test('different admin support ids keep separate histories', () async {
+    final api = _FakeSupportApi(
+      initialMessages: const <Map<String, dynamic>>[],
+      messagesByTicket: <String, List<Map<String, dynamic>>>{
+        'ticket-1': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'msg-1',
+            'ticket_id': 'ticket-1',
+            'sender': 'user',
+            'text': 'Первое обращение',
+            'created_at': '2026-06-13T09:00:00.000Z',
+          },
+        ],
+        'ticket-2': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': 'msg-2',
+            'ticket_id': 'ticket-2',
+            'sender': 'user',
+            'text': 'Второе обращение',
+            'created_at': '2026-06-13T09:01:00.000Z',
+          },
+        ],
+      },
+    );
+    final service = SupportService(api: api);
+
+    await service.refreshAdminMessages('ticket-1');
+    await service.refreshAdminMessages('ticket-2');
+
+    expect(service.peekMessages('ticket-1').map((item) => item['text']),
+        contains('Первое обращение'));
+    expect(service.peekMessages('ticket-1').map((item) => item['text']),
+        isNot(contains('Второе обращение')));
+    expect(service.peekMessages('ticket-2').map((item) => item['text']),
+        contains('Второе обращение'));
+  });
+
+  test('admin reply remains visible after reopening ticket stream', () async {
+    final api =
+        _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
+    final service = SupportService(api: api);
+
+    await service.adminReply(ticketId: 'ticket-1', text: 'Ответ сохранён');
+
+    final states = <List<Map<String, dynamic>>>[];
+    final sub = service.streamAdminMessages('ticket-1').listen(states.add);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+        states.first.map((item) => item['text']), contains('Ответ сохранён'));
+
+    await sub.cancel();
+  });
+
+  test('stale empty admin refresh does not overwrite newer reply', () async {
+    final api =
+        _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
+    final service = SupportService(api: api);
+    final staleRefresh = Completer<void>();
+    api.onAdminTicket = () => staleRefresh.future;
+
+    final sub = service.streamAdminMessages('ticket-1').listen((_) {});
+    await Future<void>.delayed(Duration.zero);
+
+    await service.adminReply(ticketId: 'ticket-1', text: 'Свежий ответ');
+    staleRefresh.complete();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.peekMessages('ticket-1').map((item) => item['text']),
+        contains('Свежий ответ'));
+
+    await sub.cancel();
+  });
+
   test('hideAdminTicket removes ticket and keeps it hidden until new update',
       () async {
     final api = _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[])
@@ -429,7 +563,15 @@ Future<void> _seedAdminSession() async {
 class _FakeSupportApi extends SupportApi {
   _FakeSupportApi({
     required List<Map<String, dynamic>> initialMessages,
+    Map<String, List<Map<String, dynamic>>>? messagesByTicket,
   })  : _messages = List<Map<String, dynamic>>.from(initialMessages),
+        _messagesByTicket = messagesByTicket?.map(
+              (key, value) => MapEntry(
+                key,
+                List<Map<String, dynamic>>.from(value),
+              ),
+            ) ??
+            <String, List<Map<String, dynamic>>>{},
         super(
           ApiClient(
             tokenStorage: TokenStorage(),
@@ -437,6 +579,7 @@ class _FakeSupportApi extends SupportApi {
         );
 
   final List<Map<String, dynamic>> _messages;
+  final Map<String, List<Map<String, dynamic>>> _messagesByTicket;
   Future<void> Function()? onSend;
   Object? adminListError;
   Object? sendError;
@@ -447,6 +590,7 @@ class _FakeSupportApi extends SupportApi {
   final Map<String, int> ticketCalls = <String, int>{};
   final List<String> adminTicketCalls = <String>[];
   Future<void> Function()? onAdminSend;
+  Future<void> Function()? onAdminTicket;
 
   @override
   Future<Map<String, dynamic>> getTicket(String ticketId) async {
@@ -458,7 +602,7 @@ class _FakeSupportApi extends SupportApi {
       );
     }
     return <String, dynamic>{
-      'items': _messages,
+      'items': _messagesFor(ticketId),
     };
   }
 
@@ -481,6 +625,7 @@ class _FakeSupportApi extends SupportApi {
       'created_at': '2026-06-13T10:00:00.000Z',
     };
     _messages.insert(0, item);
+    _messagesByTicket[ticketId]?.insert(0, item);
     return <String, dynamic>{
       'item': item,
     };
@@ -512,9 +657,10 @@ class _FakeSupportApi extends SupportApi {
 
   @override
   Future<Map<String, dynamic>> adminTicket(String ticketId) async {
+    await onAdminTicket?.call();
     adminTicketCalls.add(ticketId);
     return <String, dynamic>{
-      'items': _messages,
+      'items': _messagesFor(ticketId),
     };
   }
 
@@ -534,8 +680,13 @@ class _FakeSupportApi extends SupportApi {
       'created_at': '2026-06-13T10:00:00.000Z',
     };
     _messages.insert(0, item);
+    _messagesByTicket[ticketId]?.insert(0, item);
     return <String, dynamic>{
       'item': item,
     };
+  }
+
+  List<Map<String, dynamic>> _messagesFor(String ticketId) {
+    return _messagesByTicket[ticketId] ?? _messages;
   }
 }

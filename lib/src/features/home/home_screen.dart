@@ -11,7 +11,6 @@ import 'package:latlong2/latlong.dart';
 
 import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/data/auto_catalog.dart';
-import 'package:atta/src/features/listings/add_listing_screen.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/models/feed_ad.dart';
@@ -32,6 +31,7 @@ import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/add_listing_icon_button.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:atta/src/features/showcase/showcase_all_screen.dart';
 import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
@@ -440,12 +440,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
               return icon;
             },
           ),
-          IconButton(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const AddListingScreen()),
-            ),
-            icon: const Icon(Icons.add_circle, color: Colors.blue, size: 28),
-          ),
+          const AddListingIconButton(),
         ],
       ),
       body: Column(

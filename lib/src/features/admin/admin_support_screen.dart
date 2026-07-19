@@ -5,6 +5,7 @@ import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 
 String _ticketUserId(Map<String, dynamic> ticket) {
@@ -28,6 +29,89 @@ String _ticketUserId(Map<String, dynamic> ticket) {
     }
   }
   return '';
+}
+
+String _ticketDisplayName(Map<String, dynamic> ticket) {
+  final direct = _firstNonEmpty(ticket, const <String>[
+    'name',
+    'display_name',
+    'displayName',
+    'username',
+    'user_name',
+  ]);
+  if (direct.isNotEmpty && direct.toLowerCase() != 'null') {
+    return direct;
+  }
+
+  final user = ticket['user'];
+  if (user is Map) {
+    final nested = _firstNonEmpty(
+      user.cast<dynamic, dynamic>().map(
+            (key, value) => MapEntry(key.toString(), value),
+          ),
+      const <String>[
+        'name',
+        'display_name',
+        'displayName',
+        'username',
+        'user_name',
+      ],
+    );
+    if (nested.isNotEmpty && nested.toLowerCase() != 'null') {
+      return nested;
+    }
+  }
+
+  final phone = _firstNonEmpty(ticket, const <String>[
+    'phone',
+    'normalized_phone',
+    'normalizedPhone',
+    'user_phone',
+    'userPhone',
+  ]);
+  final phoneDisplay = _maskedPhone(phone);
+  if (phoneDisplay.isNotEmpty) {
+    return phoneDisplay;
+  }
+
+  if (user is Map) {
+    final userMap = user.cast<dynamic, dynamic>().map(
+          (key, value) => MapEntry(key.toString(), value),
+        );
+    final nestedPhone = _firstNonEmpty(userMap, const <String>[
+      'phone',
+      'normalized_phone',
+      'normalizedPhone',
+    ]);
+    final nestedPhoneDisplay = _maskedPhone(nestedPhone);
+    if (nestedPhoneDisplay.isNotEmpty) {
+      return nestedPhoneDisplay;
+    }
+  }
+
+  return 'Пользователь';
+}
+
+String _firstNonEmpty(Map<String, dynamic> source, List<String> keys) {
+  for (final key in keys) {
+    final value = (source[key] ?? '').toString().trim();
+    if (value.isNotEmpty && value.toLowerCase() != 'null') {
+      return value;
+    }
+  }
+  return '';
+}
+
+String _maskedPhone(String raw) {
+  final formatted = formatRussianPhone(raw).trim();
+  final digits = formatted.replaceAll(RegExp(r'\D'), '');
+  if (digits.length < 6) {
+    return '';
+  }
+  if (digits.length == 11 && digits.startsWith('7')) {
+    return '+7 ${digits.substring(1, 4)} *** ** ${digits.substring(9)}';
+  }
+  return '${digits.substring(0, 3)}***${digits.substring(digits.length - 2)}';
 }
 
 class AdminSupportTab extends StatelessWidget {
@@ -122,7 +206,7 @@ class AdminSupportTab extends StatelessWidget {
             final data = docs[i];
 
             final uid = _ticketUserId(data);
-            final name = (data['name'] ?? 'Пользователь').toString();
+            final name = _ticketDisplayName(data);
             final last = (data['last_message'] ?? '').toString();
             final unreadForAdmin = data['unread_for_admin'] == true;
 

@@ -28,6 +28,40 @@ export class NotificationsController {
     return this.notificationsService.listInAppNotifications(authUser);
   }
 
+  @Post('devices')
+  registerDevice(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body()
+    body: {
+      token?: string;
+      platform?: string;
+      device_uid?: string;
+      deviceUid?: string;
+      app_version?: string;
+      appVersion?: string;
+      build_number?: string;
+      buildNumber?: string;
+      locale?: string;
+    },
+  ) {
+    return this.notificationsService.registerDevice(authUser, {
+      token: body.token,
+      platform: body.platform,
+      deviceUid: body.device_uid ?? body.deviceUid,
+      appVersion: body.app_version ?? body.appVersion,
+      buildNumber: body.build_number ?? body.buildNumber,
+      locale: body.locale,
+    });
+  }
+
+  @Delete('devices')
+  unregisterDevice(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() body: { token?: string },
+  ) {
+    return this.notificationsService.unregisterDevice(authUser, body.token);
+  }
+
   @Patch(':id/read')
   markRead(
     @CurrentUser() authUser: AuthenticatedUser,

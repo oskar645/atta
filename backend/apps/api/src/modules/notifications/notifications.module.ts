@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 
 import { ApnsModule } from '../apns/apns.module';
 import { AuthModule } from '../auth/auth.module';
@@ -11,7 +11,7 @@ import {
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [ApnsModule, AuthModule, PrismaModule, ChatsModule],
+  imports: [ApnsModule, AuthModule, PrismaModule, forwardRef(() => ChatsModule)],
   controllers: [NotificationsController, AdminNotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

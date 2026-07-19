@@ -30,8 +30,6 @@ class SupportService {
   final Map<String, StreamController<List<Map<String, dynamic>>>>
       _messageControllers =
       <String, StreamController<List<Map<String, dynamic>>>>{};
-  final Map<String, Stream<List<Map<String, dynamic>>>> _messageStreams =
-      <String, Stream<List<Map<String, dynamic>>>>{};
   final Map<String, int> _messageListenerCounts = <String, int>{};
   final Map<String, Timer> _messagePollers = <String, Timer>{};
   final Map<String, bool> _ticketUsesAdminEndpoint = <String, bool>{};
@@ -66,7 +64,6 @@ class SupportService {
       poller.cancel();
     }
     _messagePollers.clear();
-    _messageStreams.clear();
     _messageListenerCounts.clear();
     _ticketUsesAdminEndpoint.clear();
     _messageCache.clear();
@@ -232,69 +229,59 @@ class SupportService {
       );
     }
     _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
-    final streamKey =
-        '${useAdminEndpoint ? 'admin' : 'user'}:$normalizedTicketId';
-    return _messageStreams.putIfAbsent(
-      streamKey,
-      () => Stream<List<Map<String, dynamic>>>.multi((streamController) {
-        final controller = _messageControllerFor(normalizedTicketId);
-        StreamSubscription<List<Map<String, dynamic>>>? sub;
-        var disposed = false;
+    return Stream<List<Map<String, dynamic>>>.multi((streamController) {
+      final controller = _messageControllerFor(normalizedTicketId);
+      StreamSubscription<List<Map<String, dynamic>>>? sub;
+      var disposed = false;
 
-        void pushCached() {
-          final cached = _messageCache[normalizedTicketId];
-          if (cached != null && !disposed) {
-            streamController.add(List<Map<String, dynamic>>.from(cached));
+      void pushCached() {
+        final cached = _messageCache[normalizedTicketId];
+        if (cached != null && !disposed) {
+          streamController.add(List<Map<String, dynamic>>.from(cached));
+        }
+      }
+
+      Future<void> refreshInitial() async {
+        try {
+          final items = useAdminEndpoint
+              ? await refreshAdminMessages(normalizedTicketId)
+              : await refreshMessages(normalizedTicketId);
+          if (!disposed) {
+            streamController.add(List<Map<String, dynamic>>.from(items));
+          }
+        } catch (error) {
+          if (!disposed) {
+            streamController.addError(error);
           }
         }
+      }
 
-        Future<void> refreshInitial() async {
-          try {
-            final items = useAdminEndpoint
-                ? await refreshAdminMessages(normalizedTicketId)
-                : await refreshMessages(normalizedTicketId);
-            if (!disposed) {
-              streamController.add(List<Map<String, dynamic>>.from(items));
-            }
-          } catch (error) {
-            if (!disposed) {
-              streamController.addError(error);
-            }
+      _messageListenerCounts[normalizedTicketId] =
+          (_messageListenerCounts[normalizedTicketId] ?? 0) + 1;
+      _ensureMessagePolling(normalizedTicketId);
+      pushCached();
+      unawaited(refreshInitial());
+      sub = controller.stream.listen(
+        (items) {
+          if (!disposed) {
+            streamController.add(List<Map<String, dynamic>>.from(items));
           }
-        }
+        },
+        onError: streamController.addError,
+      );
 
-        _messageListenerCounts[normalizedTicketId] =
-            (_messageListenerCounts[normalizedTicketId] ?? 0) + 1;
-        _ensureMessagePolling(normalizedTicketId);
-        pushCached();
-        if (!_messageCache.containsKey(normalizedTicketId)) {
-          unawaited(refreshInitial());
+      streamController.onCancel = () async {
+        disposed = true;
+        await sub?.cancel();
+        final remaining = (_messageListenerCounts[normalizedTicketId] ?? 1) - 1;
+        if (remaining <= 0) {
+          _messageListenerCounts.remove(normalizedTicketId);
+          _stopMessagePolling(normalizedTicketId);
+        } else {
+          _messageListenerCounts[normalizedTicketId] = remaining;
         }
-        sub = controller.stream.listen(
-          (items) {
-            if (!disposed) {
-              streamController.add(List<Map<String, dynamic>>.from(items));
-            }
-          },
-          onError: streamController.addError,
-        );
-
-        streamController.onCancel = () async {
-          disposed = true;
-          await sub?.cancel();
-          final remaining =
-              (_messageListenerCounts[normalizedTicketId] ?? 1) - 1;
-          if (remaining <= 0) {
-            _messageListenerCounts.remove(normalizedTicketId);
-            _stopMessagePolling(normalizedTicketId);
-          } else {
-            _messageListenerCounts[normalizedTicketId] = remaining;
-          }
-        };
-      }).asBroadcastStream(
-        onCancel: (subscription) => subscription.cancel(),
-      ),
-    );
+      };
+    });
   }
 
   Stream<List<Map<String, dynamic>>> streamTicketsForAdmin() {

@@ -162,3 +162,100 @@ test('emitNotificationNew sends global notification to all sockets', () => {
     },
   ]);
 });
+
+test('emitPresenceChanged skips unchanged heartbeat updates', () => {
+  const emissions: Array<{
+    room: string;
+    event: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const broadcasts: Array<{
+    event: string;
+    payload: Record<string, unknown>;
+  }> = [];
+
+  const gateway = new ChatsGateway(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  gateway.server = {
+    to(room: string) {
+      return {
+        emit(event: string, payload: Record<string, unknown>) {
+          emissions.push({ room, event, payload });
+        },
+      };
+    },
+    emit(event: string, payload: Record<string, unknown>) {
+      broadcasts.push({ event, payload });
+    },
+  } as never;
+
+  gateway.emitPresenceChanged({
+    userId: 'user-1',
+    isOnline: true,
+    changed: false,
+  });
+
+  assert.equal(emissions.length, 0);
+  assert.equal(broadcasts.length, 0);
+});
+
+test('emitPresenceChanged sends one presence.changed broadcast per change', () => {
+  const emissions: Array<{
+    room: string;
+    event: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  const broadcasts: Array<{
+    event: string;
+    payload: Record<string, unknown>;
+  }> = [];
+
+  const gateway = new ChatsGateway(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+  );
+
+  gateway.server = {
+    to(room: string) {
+      return {
+        emit(event: string, payload: Record<string, unknown>) {
+          emissions.push({ room, event, payload });
+        },
+      };
+    },
+    emit(event: string, payload: Record<string, unknown>) {
+      broadcasts.push({ event, payload });
+    },
+  } as never;
+
+  gateway.emitPresenceChanged({
+    userId: 'user-1',
+    isOnline: true,
+    changed: true,
+  });
+
+  assert.equal(emissions.length, 0);
+  assert.deepEqual(broadcasts, [
+    {
+      event: 'presence.changed',
+      payload: {
+        userId: 'user-1',
+        isOnline: true,
+      },
+    },
+    {
+      event: 'user.presence.changed',
+      payload: {
+        userId: 'user-1',
+        isOnline: true,
+      },
+    },
+  ]);
+});

@@ -38,9 +38,9 @@ void main() {
     expect(find.text('Витрина ATTA'), findsOneWidget);
     expect(find.text('Поднятие'), findsOneWidget);
     expect(find.text('VIP'), findsOneWidget);
-    expect(find.text('230 поинтов'), findsOneWidget);
-    expect(find.text('35 поинтов'), findsOneWidget);
-    expect(find.text('150 поинтов'), findsOneWidget);
+    expect(find.text('230 бонусов'), findsOneWidget);
+    expect(find.text('35 бонусов'), findsOneWidget);
+    expect(find.text('150 бонусов'), findsOneWidget);
     expect(find.text('Турбо'), findsNothing);
 
     await tester
@@ -49,7 +49,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Добавить в Витрину ATTA?'), findsOneWidget);
-    expect(find.text('Стоимость: 230 поинтов'), findsOneWidget);
+    expect(find.text('Стоимость: 230 бонусов'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
   });
 
@@ -79,7 +79,7 @@ void main() {
       findsWidgets,
     );
     expect(find.text('Повторить'), findsOneWidget);
-    expect(find.text('0 поинтов'), findsNothing);
+    expect(find.text('0 бонусов'), findsNothing);
   });
 
   testWidgets('sell faster screen keeps plan visible with low balance',
@@ -106,8 +106,8 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Подключить').first);
     await tester.pumpAndSettle();
 
-    expect(find.text('Недостаточно поинтов'), findsOneWidget);
-    expect(find.text('Получить поинты'), findsOneWidget);
+    expect(find.text('Недостаточно бонусов'), findsOneWidget);
+    expect(find.text('Получить бонусы'), findsOneWidget);
   });
 
   testWidgets('successful activation refreshes public feed caches',

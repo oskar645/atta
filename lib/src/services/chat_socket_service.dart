@@ -23,6 +23,8 @@ abstract class ChatSocketClient {
 
   void on(String event, void Function(dynamic payload) handler);
 
+  void off(String event);
+
   void onConnect(void Function(dynamic payload) handler);
 
   void onDisconnect(void Function(dynamic payload) handler);
@@ -83,6 +85,15 @@ class _SocketIoChatSocketClient implements ChatSocketClient {
   @override
   void on(String event, void Function(dynamic payload) handler) {
     _socket.on(event, handler);
+  }
+
+  @override
+  void off(String event) {
+    try {
+      _socket.off(event);
+    } catch (_) {
+      // Best-effort cleanup before registering a fresh listener.
+    }
   }
 
   @override
@@ -174,6 +185,8 @@ class ChatSocketService {
   Completer<void>? _connectCompleter;
   final List<String> _debugHistory = <String>[];
   final Map<String, DateTime> _lastDebugLogAtByKey = <String, DateTime>{};
+  final Map<String, int> _socketListenerCounts = <String, int>{};
+  final Map<String, bool> _lastPresenceOnlineByUser = <String, bool>{};
 
   static ChatSocketClient _defaultSocketFactory(
     String url,
@@ -486,18 +499,31 @@ class ChatSocketService {
         'chat.updated',
         'unread.changed',
         'presence.changed',
-        'user.presence.changed',
       ]) {
+        socket.off(eventName);
+        _socketListenerCounts[eventName] = 0;
+        _debugLog(
+          'Socket[$socketInstanceId] listener removed event=$eventName count=0',
+        );
         socket.on(eventName, (payload) {
           final map = payload is Map
               ? Map<String, dynamic>.from(payload)
               : <String, dynamic>{};
-          _events.add(ChatSocketEvent(eventName, map));
-          if (eventName == 'presence.changed' ||
-              eventName == 'user.presence.changed') {
-            _presence.add(PresenceSnapshot.fromMap(map));
+          if (eventName == 'presence.changed') {
+            final snapshot = PresenceSnapshot.fromMap(map);
+            if (!_shouldEmitPresenceSnapshot(snapshot)) {
+              return;
+            }
+            _events.add(ChatSocketEvent(eventName, map));
+            _presence.add(snapshot);
+            return;
           }
+          _events.add(ChatSocketEvent(eventName, map));
         });
+        _socketListenerCounts[eventName] = 1;
+        _debugLog(
+          'Socket[$socketInstanceId] listener registered event=$eventName count=1',
+        );
       }
 
       _runSocketOperation(
@@ -562,6 +588,7 @@ class ChatSocketService {
 
   Future<void> resetSession() async {
     _joinedChats.clear();
+    _lastPresenceOnlineByUser.clear();
     await disconnect();
   }
 
@@ -657,15 +684,18 @@ class ChatSocketService {
   Future<void> setPresence(bool isOnline,
       {String reason = 'presence.set'}) async {
     if (isConnected) {
+      _debugLog('Socket presence.set online=$isOnline reason=$reason');
       _safeEmit('presence.set', {'isOnline': isOnline});
       return;
     }
     await connect(reason: reason);
+    _debugLog('Socket presence.set online=$isOnline reason=$reason');
     _safeEmit('presence.set', {'isOnline': isOnline});
   }
 
   Future<void> ping({String reason = 'presence.ping'}) async {
     if (isConnected) {
+      _debugLog('Socket presence.ping reason=$reason');
       _safeEmit('presence.ping');
       return;
     }
@@ -723,12 +753,16 @@ class ChatSocketService {
       return;
     }
     _heartbeatTimerStartCount += 1;
+    _debugLog('Socket heartbeat started');
     _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
       _safeEmit('presence.ping');
     });
   }
 
   void _stopPing() {
+    if (_pingTimer != null) {
+      _debugLog('Socket heartbeat stopped');
+    }
     _pingTimer?.cancel();
     _pingTimer = null;
   }
@@ -748,6 +782,22 @@ class ChatSocketService {
     if (_lastConnectionValue == value) return;
     _lastConnectionValue = value;
     _connected.add(value);
+  }
+
+  bool _shouldEmitPresenceSnapshot(PresenceSnapshot snapshot) {
+    final userId = snapshot.userId.trim();
+    if (userId.isEmpty) return false;
+    final previous = _lastPresenceOnlineByUser[userId];
+    if (previous == snapshot.isOnline) {
+      _debugLogThrottled(
+        key: 'presence-duplicate|$userId|${snapshot.isOnline}',
+        message:
+            'Socket presence.changed duplicate ignored user=$userId online=${snapshot.isOnline}',
+      );
+      return false;
+    }
+    _lastPresenceOnlineByUser[userId] = snapshot.isOnline;
+    return true;
   }
 
   void _scheduleReconnect({
@@ -935,6 +985,9 @@ class ChatSocketService {
 
   @visibleForTesting
   String? get pendingReconnectReason => _reconnectReason;
+
+  @visibleForTesting
+  int socketListenerCount(String event) => _socketListenerCounts[event] ?? 0;
 
   @visibleForTesting
   List<String> get debugHistory => List<String>.unmodifiable(_debugHistory);

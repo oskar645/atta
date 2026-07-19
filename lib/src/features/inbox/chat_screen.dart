@@ -397,21 +397,15 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
 
   Widget _dayDivider(DateTime dt) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 10),
       child: Center(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(
-            _formatDayDivider(dt),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+        child: Text(
+          _formatDayDivider(dt),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
       ),
@@ -656,6 +650,24 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                               onDeleteMessage: () => _confirmDeleteMessage(m),
                               onOpenImage: _openImageFullScreen,
                               formatMessageTime: _formatMessageTime,
+                              onRetryMessage: () async {
+                                try {
+                                  await context
+                                      .read<ChatService>()
+                                      .retryMessage(
+                                        chatId: widget.chatId,
+                                        senderId: uid,
+                                        message: m,
+                                      );
+                                } catch (e) {
+                                  if (!context.mounted) return;
+                                  showAppSnack(
+                                    context,
+                                    _friendlyChatError(e),
+                                    isError: true,
+                                  );
+                                }
+                              },
                               onRetryImage: () async {
                                 final imageUrl = (m.imageUrl ?? '').trim();
                                 if (!imageUrl.startsWith('file://')) {
@@ -829,6 +841,7 @@ class _ChatMessageListItem extends StatelessWidget {
     required this.onDeleteMessage,
     required this.onOpenImage,
     required this.formatMessageTime,
+    required this.onRetryMessage,
     required this.onRetryImage,
     required this.onRemoveFailedImage,
   });
@@ -845,6 +858,7 @@ class _ChatMessageListItem extends StatelessWidget {
   final VoidCallback onDeleteMessage;
   final ValueChanged<String> onOpenImage;
   final String Function(DateTime value) formatMessageTime;
+  final Future<void> Function() onRetryMessage;
   final Future<void> Function() onRetryImage;
   final VoidCallback onRemoveFailedImage;
 
@@ -902,6 +916,7 @@ class _ChatMessageListItem extends StatelessWidget {
                             maxWidth: maxBubbleWidth,
                             onOpenImage: onOpenImage,
                             formatMessageTime: formatMessageTime,
+                            onRetryMessage: onRetryMessage,
                           ),
                           if (mine &&
                               message.type == 'image' &&
@@ -946,6 +961,7 @@ class _ChatMessageBubble extends StatelessWidget {
     required this.maxWidth,
     required this.onOpenImage,
     required this.formatMessageTime,
+    required this.onRetryMessage,
   });
 
   final ChatMessage message;
@@ -954,6 +970,7 @@ class _ChatMessageBubble extends StatelessWidget {
   final double maxWidth;
   final ValueChanged<String> onOpenImage;
   final String Function(DateTime value) formatMessageTime;
+  final Future<void> Function() onRetryMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -993,6 +1010,7 @@ class _ChatMessageBubble extends StatelessWidget {
             message: message,
             mine: mine,
             formatMessageTime: formatMessageTime,
+            onRetry: onRetryMessage,
           ),
         ],
       );
@@ -1041,6 +1059,7 @@ class _ChatMessageBubble extends StatelessWidget {
                   message: message,
                   mine: mine,
                   formatMessageTime: formatMessageTime,
+                  onRetry: onRetryMessage,
                 ),
               ),
             ],
@@ -1057,11 +1076,13 @@ class _MessageMeta extends StatelessWidget {
     required this.message,
     required this.mine,
     required this.formatMessageTime,
+    required this.onRetry,
   });
 
   final ChatMessage message;
   final bool mine;
   final String Function(DateTime value) formatMessageTime;
+  final Future<void> Function() onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -1082,15 +1103,44 @@ class _MessageMeta extends StatelessWidget {
     final iconColor =
         isRead ? Colors.blue : Theme.of(context).colorScheme.onSurfaceVariant;
 
-    final statusIcon = isFailed
-        ? const Icon(Icons.error_outline_rounded, size: 15, color: Colors.red)
-        : isSending
-            ? Icon(Icons.schedule_rounded, size: 14, color: iconColor)
-            : isRead
+    if (isFailed) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onRetry,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              time,
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.error_outline_rounded,
+                size: 15,
+                color: Colors.red,
+              ),
+              const SizedBox(width: 3),
+              const Text(
+                'Не отправлено',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.red,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final statusIcon = isSending
+        ? Icon(Icons.schedule_rounded, size: 14, color: iconColor)
+        : isRead
+            ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
+            : isDelivered
                 ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
-                : isDelivered
-                    ? Icon(Icons.done_all_rounded, size: 15, color: iconColor)
-                    : Icon(Icons.done_rounded, size: 15, color: iconColor);
+                : Icon(Icons.done_rounded, size: 15, color: iconColor);
 
     return Row(
       mainAxisSize: MainAxisSize.min,

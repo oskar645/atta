@@ -176,6 +176,72 @@ void main() {
     expect(find.byType(SellerPublicProfileScreen), findsOneWidget);
   });
 
+  testWidgets('admin support uses displayName fallback before generic user',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<SupportService>.value(
+            value: _FakeSupportService(
+              tickets: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'ticket-1',
+                  'uid': 'user-1',
+                  'name': '  ',
+                  'displayName': 'Алина',
+                  'last_message': 'Здравствуйте',
+                  'updated_at': '2026-07-02T10:00:00.000Z',
+                  'unread_for_admin': false,
+                },
+              ],
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: AdminSupportTab()),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('Алина'), findsOneWidget);
+    expect(find.text('Пользователь'), findsNothing);
+  });
+
+  testWidgets('admin support masks phone before generic user fallback',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<SupportService>.value(
+            value: _FakeSupportService(
+              tickets: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'ticket-1',
+                  'uid': 'user-1',
+                  'name': null,
+                  'phone': '+7 999 123 45 67',
+                  'last_message': 'Здравствуйте',
+                  'updated_at': '2026-07-02T10:00:00.000Z',
+                  'unread_for_admin': false,
+                },
+              ],
+            ),
+          ),
+        ],
+        child: const MaterialApp(
+          home: Scaffold(body: AdminSupportTab()),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    expect(find.text('+7 999 *** ** 67'), findsOneWidget);
+    expect(find.text('Пользователь'), findsNothing);
+  });
+
   testWidgets('admin ticket header shows unavailable profile message',
       (tester) async {
     await tester.pumpWidget(

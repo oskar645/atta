@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/data/auto_catalog.dart';
 import 'package:atta/src/data/electronics_catalog.dart';
+import 'package:atta/src/features/listings/car_parameters_screen.dart';
 import 'package:atta/src/features/listings/pick_location_screen.dart';
 import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/services/auth_service.dart';
@@ -1216,114 +1217,67 @@ class _AddListingScreenState extends State<AddListingScreen> {
   // ================== СОХРАНЕНИЕ ==================
   bool _validInt(String s) => int.tryParse(s.trim()) != null;
 
-  List<String> _itemsWithCurrentValue(List<String> items, String current) {
-    final normalized = current.trim().replaceAll(',', '.');
-    if (normalized.isEmpty || items.contains(normalized)) return items;
-    return [normalized, ...items];
-  }
-
-  Future<void> _openValuePickerSheet({
-    required String title,
-    required List<String> items,
-    required String currentValue,
-    required ValueChanged<String> onSelected,
-    String Function(String value)? labelBuilder,
-    String? manualHint,
-  }) async {
-    var selected = currentValue.trim();
-
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: StatefulBuilder(
-          builder: (ctx, setModal) => SizedBox(
-            height: MediaQuery.of(ctx).size.height * 0.52,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 6, 12, 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                        tooltip: 'Назад',
-                      ),
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (_, i) {
-                      final value = items[i];
-                      final isSelected = value == selected;
-                      final text = labelBuilder?.call(value) ?? value;
-                      return ListTile(
-                        title: Text(text),
-                        trailing: isSelected
-                            ? const Icon(Icons.check, color: Colors.blue)
-                            : null,
-                        onTap: () => setModal(() => selected = value),
-                      );
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () async {
-                            final custom = await _askText(
-                              title: '$title вручную',
-                              hint: manualHint ?? 'Введите значение',
-                            );
-                            if (custom == null || !mounted) return;
-                            onSelected(custom);
-                            if (ctx.mounted) {
-                              Navigator.pop(ctx);
-                            }
-                          },
-                          child: const Text('Другое / вручную'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: () {
-                            if (selected.isEmpty && items.isNotEmpty) {
-                              selected = items.first;
-                            }
-                            onSelected(selected);
-                            Navigator.pop(ctx);
-                          },
-                          child: const Text('Выбрать'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+  Future<void> _openCarParameters() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CarParametersScreen(
+          mileageController: _carMileage,
+          engineController: _carEngine,
+          powerController: _carPower,
+          ownersController: _carOwners,
+          vinController: _carVin,
+          bodyTypes: _bodyTypes,
+          fuelTypes: _fuelTypes,
+          transmissions: _transmissions,
+          drives: _drives,
+          conditions: _conditions,
+          colors: _colors,
+          ptsTypes: _ptsTypes,
+          engineVolumes: _engineVolumes,
+          powerValues: _powerValues,
+          body: _carBody,
+          fuel: _carFuel,
+          transmission: _carTransmission,
+          drive: _carDrive,
+          condition: _carCondition,
+          color: _carColor,
+          pts: _carPts,
+          cleared: _carCleared,
+          onBodyChanged: (v) => _carBody = v,
+          onFuelChanged: (v) => _carFuel = v,
+          onTransmissionChanged: (v) => _carTransmission = v,
+          onDriveChanged: (v) => _carDrive = v,
+          onConditionChanged: (v) => _carCondition = v,
+          onColorChanged: (v) => _carColor = v,
+          onPtsChanged: (v) => _carPts = v,
+          onClearedChanged: (v) => _carCleared = v,
         ),
       ),
     );
+    if (mounted) setState(() {});
+  }
+
+  String _carParametersSummary() {
+    final count = [
+      _carMileage.text.trim(),
+      _carBody,
+      _carFuel,
+      _carEngine.text.trim(),
+      _carPower.text.trim(),
+      _carTransmission,
+      _carDrive,
+      _carCondition,
+      _carColor,
+      _carPts,
+      _carCleared,
+      _carOwners.text.trim(),
+      _carVin.text.trim(),
+    ].where((value) {
+      if (value == null) return false;
+      return value.toString().trim().isNotEmpty;
+    }).length;
+
+    return count == 0 ? 'Необязательно' : 'Заполнено: $count параметров';
   }
 
   Future<void> _save() async {
@@ -1567,6 +1521,51 @@ class _AddListingScreenState extends State<AddListingScreen> {
     );
   }
 
+  Widget _carParametersTile() {
+    return InkWell(
+      onTap: _openCarParameters,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Параметры авто',
+                    style: TextStyle(
+                      color: Colors.blue,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _carParametersSummary(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.outline,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _drop({
     required String label,
     required String? value,
@@ -1801,14 +1800,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ],
           ),
 
-          // ✅ БЛОК “ПАРАМЕТРЫ АВТО”
           if (_isAuto) ...[
             const SizedBox(height: 18),
-            const Text(
-              'Параметры авто',
-              style: TextStyle(fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 10),
             TextField(
               controller: _carYear,
               keyboardType: TextInputType.number,
@@ -1817,136 +1810,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _carMileage,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                label: _fieldLabel('Пробег (необязательно)'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Кузов (необязательно)',
-              value: _carBody,
-              items: _bodyTypes,
-              onChanged: (v) => setState(() => _carBody = v),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Топливо (необязательно)',
-              value: _carFuel,
-              items: _fuelTypes,
-              onChanged: (v) => setState(() => _carFuel = v),
-            ),
-            const SizedBox(height: 12),
-            _selectTile(
-              title: 'Объём двигателя (необязательно)',
-              value: _carEngine.text.trim().isEmpty
-                  ? ''
-                  : formatEngineVolume(parseEngineVolumeInput(_carEngine.text)),
-              onTap: () => _openValuePickerSheet(
-                title: 'Объём двигателя',
-                items: _itemsWithCurrentValue(_engineVolumes, _carEngine.text),
-                currentValue: _carEngine.text.trim().replaceAll(',', '.'),
-                labelBuilder: (value) =>
-                    formatEngineVolume(parseEngineVolumeInput(value)),
-                manualHint: 'Например: 2.2 или 300 куб. см',
-                onSelected: (value) => setState(() => _carEngine.text = value),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _selectTile(
-              title: 'Мощность (необязательно)',
-              value: _carPower.text.trim().isEmpty
-                  ? ''
-                  : '${_carPower.text.trim()} л.с.',
-              onTap: () => _openValuePickerSheet(
-                title: 'Мощность',
-                items: _itemsWithCurrentValue(_powerValues, _carPower.text),
-                currentValue: _carPower.text.trim(),
-                labelBuilder: (value) => '$value л.с.',
-                manualHint: 'Например: 193 л.с.',
-                onSelected: (value) => setState(() => _carPower.text = value),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Коробка (необязательно)',
-              value: _carTransmission,
-              items: _transmissions,
-              onChanged: (v) => setState(() => _carTransmission = v),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Привод (необязательно)',
-              value: _carDrive,
-              items: _drives,
-              onChanged: (v) => setState(() => _carDrive = v),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Состояние (необязательно)',
-              value: _carCondition,
-              items: _conditions,
-              onChanged: (v) => setState(() => _carCondition = v),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Цвет (необязательно)',
-              value: _carColor,
-              items: _colors,
-              onChanged: (v) => setState(() => _carColor = v),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'ПТС (необязательно)',
-              value: _carPts,
-              items: _ptsTypes,
-              onChanged: (v) => setState(() => _carPts = v),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _carCleared == null
-                  ? 'Не указано'
-                  : (_carCleared! ? 'Да' : 'Нет'),
-              items: const [
-                DropdownMenuItem(
-                  value: 'Не указано',
-                  child: Text('Растаможен: не указано'),
-                ),
-                DropdownMenuItem(value: 'Да', child: Text('Растаможен: да')),
-                DropdownMenuItem(value: 'Нет', child: Text('Растаможен: нет')),
-              ],
-              onChanged: (v) {
-                setState(() {
-                  if (v == 'Да') {
-                    _carCleared = true;
-                  } else if (v == 'Нет') {
-                    _carCleared = false;
-                  } else {
-                    _carCleared = null;
-                  }
-                });
-              },
-              decoration: InputDecoration(
-                label: _fieldLabel('Растаможен (необязательно)'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _carOwners,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                label: _fieldLabel('Владельцев (необязательно)'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _carVin,
-              decoration: InputDecoration(
-                label: _fieldLabel('VIN (необязательно)'),
-              ),
-            ),
+            _carParametersTile(),
           ],
 
           const SizedBox(height: 12),

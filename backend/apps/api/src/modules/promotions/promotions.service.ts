@@ -151,7 +151,7 @@ export class PromotionsService {
     const wallet = await this.walletService.ensureWalletAndBonuses(authUser.userId);
     if (wallet.bonusBalance < plan.costBonus) {
       throw new BadRequestException({
-        message: 'Недостаточно поинтов',
+        message: 'Недостаточно бонусов',
         currentBalance: wallet.bonusBalance,
         requiredBalance: plan.costBonus,
       });

@@ -221,6 +221,98 @@ void main() {
 
     expect(find.text('Отзывы продавца'), findsOneWidget);
   });
+
+  testWidgets('iOS listing detail bottom scroll uses clamping physics',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(platform: TargetPlatform.iOS),
+    );
+    await tester.pumpAndSettle();
+
+    final bodyList = tester.widget<ListView>(_detailBodyListView());
+
+    expect(bodyList.physics, isA<ClampingScrollPhysics>());
+  });
+
+  testWidgets('Android listing detail scroll physics remains unchanged',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(platform: TargetPlatform.android),
+    );
+    await tester.pumpAndSettle();
+
+    final bodyList = tester.widget<ListView>(_detailBodyListView());
+
+    expect(bodyList.physics, isNull);
+  });
+
+  testWidgets('iOS similar listings empty rebuild keeps bottom position stable',
+      (tester) async {
+    final listingsService = _DelayedSimilarListingsService(
+      listing: _listingFixture(
+        description: List<String>.filled(80, 'Длинное описание').join(' '),
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: listingsService,
+        platform: TargetPlatform.iOS,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final scrollable = tester.state<ScrollableState>(
+      find.descendant(
+        of: _detailBodyListView(),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pump();
+    final before = scrollable.position.pixels;
+
+    listingsService.completeSimilar(const <Listing>[]);
+    await tester.pump();
+    await tester.pump();
+
+    expect(scrollable.position.pixels, before);
+  });
+
+  testWidgets('bottom safe-area inset remains stable on listing detail',
+      (tester) async {
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(
+          padding: EdgeInsets.only(bottom: 34),
+          viewPadding: EdgeInsets.only(bottom: 34),
+        ),
+        child: _buildTestApp(platform: TargetPlatform.iOS),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final bottomSafeArea = tester.widget<SafeArea>(
+      find
+          .ancestor(
+            of: find.text('Позвонить'),
+            matching: find.byType(SafeArea),
+          )
+          .first,
+    );
+
+    expect(bottomSafeArea.top, isFalse);
+    expect(bottomSafeArea.bottom, isTrue);
+  });
+}
+
+Finder _detailBodyListView() {
+  return find.byWidgetPredicate(
+    (widget) =>
+        widget is ListView &&
+        widget.padding == const EdgeInsets.fromLTRB(12, 12, 12, 20),
+  );
 }
 
 Widget _buildTestApp({
@@ -228,6 +320,7 @@ Widget _buildTestApp({
   ReviewsService? reviewsService,
   ProfileService? profileService,
   FavoritesService? favoritesService,
+  TargetPlatform? platform,
 }) {
   return MultiProvider(
     providers: [
@@ -254,8 +347,9 @@ Widget _buildTestApp({
       ),
       Provider<WalletService>.value(value: _FakeWalletService()),
     ],
-    child: const MaterialApp(
-      home: ListingDetailScreen(listingId: 'listing-1'),
+    child: MaterialApp(
+      theme: platform == null ? null : ThemeData(platform: platform),
+      home: const ListingDetailScreen(listingId: 'listing-1'),
     ),
   );
 }
@@ -383,6 +477,27 @@ class _CachedDetailListingsService extends ListingsService {
 
   @override
   Future<void> incrementView(String listingId) async {}
+}
+
+class _DelayedSimilarListingsService extends _FakeListingsService {
+  _DelayedSimilarListingsService({
+    required super.listing,
+  });
+
+  final Completer<List<Listing>> _similarCompleter = Completer<List<Listing>>();
+
+  void completeSimilar(List<Listing> items) {
+    _similarCompleter.complete(items);
+  }
+
+  @override
+  Future<List<Listing>> getSimilarListings(
+    Listing base, {
+    int limit = 10,
+  }) {
+    similarRequests += 1;
+    return _similarCompleter.future;
+  }
 }
 
 class _FakeFavoritesService extends FavoritesService {

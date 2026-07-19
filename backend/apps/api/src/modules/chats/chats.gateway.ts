@@ -381,9 +381,12 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   emitPresenceChanged(presence: Record<string, unknown>) {
-    const userId = (presence['userId'] ?? '').toString();
-    this.server.emit('presence.changed', presence);
-    this.server.emit('user.presence.changed', presence);
-    this.server.to(`user:${userId}`).emit('presence.changed', presence);
+    if (presence['changed'] === false) {
+      return;
+    }
+    const payload = { ...presence };
+    delete payload['changed'];
+    this.server.emit('presence.changed', payload);
+    this.server.emit('user.presence.changed', payload);
   }
 }

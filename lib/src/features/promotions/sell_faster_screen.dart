@@ -78,7 +78,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
     _reload();
   }
 
-  Future<void> _showInsufficientPoints(PromotionPlan plan) async {
+  Future<void> _showInsufficientBonuses(PromotionPlan plan) async {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -90,12 +90,12 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Недостаточно поинтов',
+                'Недостаточно бонусов',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 8),
               Text(
-                'Для тарифа "${plan.title}" нужно ${plan.costBonus} поинтов.',
+                'Для тарифа "${plan.title}" нужно ${plan.costBonus} бонусов.',
               ),
               const SizedBox(height: 16),
               SizedBox(
@@ -105,7 +105,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
                     Navigator.of(context).pop();
                     _openWallet();
                   },
-                  child: const Text('Получить поинты'),
+                  child: const Text('Получить бонусы'),
                 ),
               ),
             ],
@@ -136,7 +136,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
 
     final wallet = data.wallet;
     if (wallet != null && wallet.balance < plan.costBonus) {
-      await _showInsufficientPoints(plan);
+      await _showInsufficientBonuses(plan);
       return;
     }
 
@@ -287,7 +287,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
               Text(
                 balance == null
                     ? 'Баланс временно недоступен'
-                    : 'Баланс: $balance поинтов',
+                    : 'Баланс: $balance бонусов',
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
               ),
@@ -343,7 +343,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
                               ),
                             ),
                             Text(
-                              '${plan.costBonus} поинтов',
+                              '${plan.costBonus} бонусов',
                               style:
                                   const TextStyle(fontWeight: FontWeight.w900),
                             ),
@@ -504,12 +504,12 @@ class _PromotionConfirmSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Text('Стоимость: ${plan.costBonus} поинтов'),
+            Text('Стоимость: ${plan.costBonus} бонусов'),
             const SizedBox(height: 4),
             Text(
               wallet == null
                   ? 'Баланс временно недоступен'
-                  : 'Ваш баланс: ${wallet!.balance} поинтов',
+                  : 'Ваш баланс: ${wallet!.balance} бонусов',
             ),
             const SizedBox(height: 16),
             Row(
@@ -604,7 +604,7 @@ String _promotionErrorTextFromString(String error, PromotionPlan plan) {
     return error.trim();
   }
   if (error.contains('Недостаточно бонусов')) {
-    return 'Недостаточно поинтов';
+    return 'Недостаточно бонусов';
   }
   if (error.contains('модерации')) {
     return 'Объявление пока на модерации.';

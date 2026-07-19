@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:atta/src/app.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/services/api/notifications_api.dart';
 import 'package:atta/src/services/app_badge_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
@@ -15,6 +16,7 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/push_notification_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
@@ -177,6 +179,7 @@ void main() {
     final chats = _FakeChatService();
     final notifications = _FakeNotificationsService();
     final admin = _FakeAdminService();
+    final presence = _FakePresenceService();
 
     await tester.pumpWidget(
       _buildTestApp(
@@ -184,6 +187,7 @@ void main() {
         chats: chats,
         notifications: notifications,
         admin: admin,
+        presence: presence,
       ),
     );
 
@@ -202,6 +206,7 @@ void main() {
 
     expect(chats.handleResumeCalls, 1);
     expect(notifications.refreshCalls, 1);
+    expect(presence.recoverAfterResumeCalls, 1);
     expect(admin.refreshCalls, 0);
   });
 }
@@ -213,6 +218,7 @@ Widget _buildTestApp({
   _FakeChatService? chats,
   _FakeNotificationsService? notifications,
   _FakeAdminService? admin,
+  _FakePresenceService? presence,
   NavigatorObserver? navigatorObserver,
 }) {
   return MultiProvider(
@@ -223,23 +229,27 @@ Widget _buildTestApp({
       ),
       Provider<ListingsService>.value(
           value: listings ?? _FakeListingsService()),
-      Provider<AppBadgeService>.value(value: _FakeAppBadgeService()),
-      Provider<ChatSocketService>.value(value: ChatSocketService()),
-      Provider<ChatService>.value(value: chats ?? _FakeChatService()),
-      Provider<NotificationsService>.value(
-        value: notifications ?? _FakeNotificationsService(),
-      ),
-      Provider<AdminService>.value(value: admin ?? _FakeAdminService()),
-      Provider<SupportService>.value(value: _FakeSupportService()),
-      Provider<PresenceService>.value(value: _FakePresenceService()),
       Provider<FollowService>.value(value: FollowService()),
       Provider<FavoritesService>.value(value: FavoritesService()),
-      Provider<ProfileService>.value(value: ProfileService()),
       ChangeNotifierProvider<ListingHistoryService>.value(
         value: _FakeListingHistoryService(),
       ),
-      Provider<ReviewsService>.value(value: ReviewsService()),
+      Provider<ProfileService>.value(value: ProfileService()),
       Provider<WalletService>.value(value: _FakeWalletService()),
+      Provider<ChatSocketService>.value(value: ChatSocketService()),
+      Provider<ChatService>.value(value: chats ?? _FakeChatService()),
+      Provider<ReviewsService>.value(value: ReviewsService()),
+      Provider<SupportService>.value(value: _FakeSupportService()),
+      Provider<AdminService>.value(value: admin ?? _FakeAdminService()),
+      Provider<PresenceService>.value(
+          value: presence ?? _FakePresenceService()),
+      Provider<AppBadgeService>.value(value: _FakeAppBadgeService()),
+      Provider<NotificationsService>.value(
+        value: notifications ?? _FakeNotificationsService(),
+      ),
+      Provider<PushNotificationService>.value(
+        value: _FakePushNotificationService(),
+      ),
     ],
     child: MaterialApp(
       navigatorKey: attaNavigatorKey,
@@ -444,11 +454,18 @@ class _FakeSupportService extends SupportService {
 class _FakePresenceService extends PresenceService {
   _FakePresenceService() : super(socketService: ChatSocketService());
 
+  int recoverAfterResumeCalls = 0;
+
   @override
   Future<void> setOnline({
     required String uid,
     required bool isOnline,
   }) async {}
+
+  @override
+  Future<void> recoverAfterResume(String uid) async {
+    recoverAfterResumeCalls += 1;
+  }
 
   @override
   Future<void> resetSession() async {}
@@ -472,6 +489,20 @@ class _FakeAppBadgeService extends AppBadgeService {
 
   @override
   Future<void> clear() async {}
+}
+
+class _FakePushNotificationService extends PushNotificationService {
+  @override
+  Future<void> bindForUser({
+    required NotificationsApi api,
+    required String userId,
+  }) async {}
+
+  @override
+  Future<void> unbind({NotificationsApi? api}) async {}
+
+  @override
+  Future<void> dispose() async {}
 }
 
 class _FakeWalletService extends WalletService {

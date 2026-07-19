@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:atta/src/app.dart';
 import 'package:atta/src/features/admin/admin_screen.dart';
+import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/my_listings_screen.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
@@ -9,6 +10,7 @@ import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/support_service.dart';
@@ -220,6 +222,10 @@ class NotificationNavigationService {
   ) async {
     final auth = context.read<AuthService>();
     final notifications = context.read<NotificationsService>();
+    final type = (notification['type'] ?? '').toString().trim().toLowerCase();
+    if (type == 'chat_message' || type == 'message' || type == 'chat') {
+      return;
+    }
     final notificationId = (notification['id'] ?? '').toString().trim();
     final scope = (notification['scope'] ?? '').toString().trim().toLowerCase();
     final isRead = notification['is_read'] == true;
@@ -244,6 +250,11 @@ class NotificationNavigationService {
     switch (actionType) {
       case 'review_new':
         await _openReview(context, payload);
+        return;
+      case 'chat_message':
+      case 'message':
+      case 'chat':
+        await _openChat(context, notification, payload);
         return;
       case 'listing_approved':
       case 'moderation_approved':
@@ -282,6 +293,9 @@ class NotificationNavigationService {
             actionType == 'listing_archived' ||
             actionType == 'listing_sold' ||
             actionType == 'listing_deleted' ||
+            actionType == 'chat_message' ||
+            actionType == 'message' ||
+            actionType == 'chat' ||
             _supportActionTypes.contains(actionType) ||
             actionType == 'admin_report_new');
   }
@@ -302,6 +316,9 @@ class NotificationNavigationService {
         actionType == 'listing_archived' ||
         actionType == 'listing_sold' ||
         actionType == 'listing_deleted' ||
+        actionType == 'chat_message' ||
+        actionType == 'message' ||
+        actionType == 'chat' ||
         actionType == 'admin_report_new') {
       return false;
     }
@@ -310,6 +327,10 @@ class NotificationNavigationService {
       return true;
     }
     final hasNavigablePayload =
+        (payload['chatId'] ?? payload['chat_id'] ?? '')
+                .toString()
+                .trim()
+                .isNotEmpty ||
         (payload['ticketId'] ?? payload['ticket_id'] ?? '')
                 .toString()
                 .trim()
@@ -427,6 +448,38 @@ class NotificationNavigationService {
         isError: true,
       );
     }
+  }
+
+  static Future<void> _openChat(
+    BuildContext context,
+    Map<String, dynamic> notification,
+    Map<String, dynamic> payload,
+  ) async {
+    final chatId = (payload['chatId'] ??
+            payload['chat_id'] ??
+            notification['chatId'] ??
+            notification['chat_id'] ??
+            '')
+        .toString()
+        .trim();
+    if (chatId.isEmpty) {
+      return;
+    }
+    final actionKey = 'chat:$chatId';
+    if (_shouldSkipDuplicateOpen(actionKey)) {
+      return;
+    }
+    final uid = context.read<AuthService>().currentUser?.uid ?? '';
+    if (uid.isNotEmpty) {
+      await context.read<ChatService>().preloadChat(chatId, uid: uid);
+    }
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChatScreen(chatId: chatId),
+      ),
+    );
+    _rememberOpenedAction(actionKey);
   }
 
   static Future<void> _openSupport(

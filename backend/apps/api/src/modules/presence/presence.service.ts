@@ -20,6 +20,16 @@ export class PresenceService {
     return lastSeen.getTime() >= Date.now() - this.ttlSeconds * 1000;
   }
 
+  private async isOnlineNow(userId: string) {
+    const record = await this.prisma.userPresence.findUnique({
+      where: {
+        userId,
+      },
+    });
+
+    return record?.isOnline === true && this.isFresh(record.lastSeen);
+  }
+
   private async formatPresence(userId: string) {
     const record = await this.prisma.userPresence.findUnique({
       where: {
@@ -47,6 +57,7 @@ export class PresenceService {
   async setPresence(userId: string, isOnline: boolean) {
     const key = this.presenceKey(userId);
     const now = new Date();
+    const wasOnline = await this.isOnlineNow(userId);
 
     if (isOnline) {
       await this.redisService.setWithTtl(key, 'online', this.ttlSeconds);
@@ -83,11 +94,16 @@ export class PresenceService {
       });
     }
 
-    return this.formatPresence(userId);
+    const presence = await this.formatPresence(userId);
+    return {
+      ...presence,
+      changed: wasOnline !== presence.isOnline,
+    };
   }
 
   async touchSocket(userId: string, socketId: string) {
     const now = new Date();
+    const wasOnline = await this.isOnlineNow(userId);
     await this.redisService.setWithTtl(this.presenceKey(userId), socketId, this.ttlSeconds);
     await this.prisma.userPresence.upsert({
       where: {
@@ -106,7 +122,11 @@ export class PresenceService {
       },
     });
 
-    return this.formatPresence(userId);
+    const presence = await this.formatPresence(userId);
+    return {
+      ...presence,
+      changed: wasOnline !== presence.isOnline,
+    };
   }
 
   async touchHeartbeat(userId: string) {
@@ -133,14 +153,19 @@ export class PresenceService {
         isOnline: false,
         ttlSeconds: this.ttlSeconds,
         lastSeen: null,
+        changed: false,
       };
     }
 
     if (current.socketId && current.socketId != socketId) {
-      return this.formatPresence(userId);
+      return {
+        ...(await this.formatPresence(userId)),
+        changed: false,
+      };
     }
 
     const now = new Date();
+    const wasOnline = current.isOnline && this.isFresh(current.lastSeen);
     await this.redisService.del(this.presenceKey(userId));
     await this.prisma.userPresence.update({
       where: {
@@ -153,7 +178,11 @@ export class PresenceService {
       },
     });
 
-    return this.formatPresence(userId);
+    const presence = await this.formatPresence(userId);
+    return {
+      ...presence,
+      changed: wasOnline !== presence.isOnline,
+    };
   }
 
   async getPresence(userId: string) {

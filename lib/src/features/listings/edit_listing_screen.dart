@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:atta/src/data/auto_catalog.dart';
 
+import 'package:atta/src/features/listings/car_parameters_screen.dart';
 import 'package:atta/src/features/listings/pick_location_screen.dart';
 import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/models/listing.dart';
@@ -366,6 +367,67 @@ class _EditListingScreenState extends State<EditListingScreen> {
         ..clear()
         ..addAll(tmp);
     });
+  }
+
+  Future<void> _openCarParameters() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => CarParametersScreen(
+          mileageController: _carMileage,
+          engineController: _carEngine,
+          powerController: _carPower,
+          ownersController: _carOwners,
+          vinController: _carVin,
+          bodyTypes: _bodyTypes,
+          fuelTypes: _fuelTypes,
+          transmissions: _transmissions,
+          drives: _drives,
+          conditions: _conditions,
+          colors: _colors,
+          ptsTypes: _ptsTypes,
+          body: _carBody,
+          fuel: _carFuel,
+          transmission: _carTransmission,
+          drive: _carDrive,
+          condition: _carCondition,
+          color: _carColor,
+          pts: _carPts,
+          cleared: _carCleared,
+          onBodyChanged: (v) => _carBody = v,
+          onFuelChanged: (v) => _carFuel = v,
+          onTransmissionChanged: (v) => _carTransmission = v,
+          onDriveChanged: (v) => _carDrive = v,
+          onConditionChanged: (v) => _carCondition = v,
+          onColorChanged: (v) => _carColor = v,
+          onPtsChanged: (v) => _carPts = v,
+          onClearedChanged: (v) => _carCleared = v,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  String _carParametersSummary() {
+    final count = [
+      _carMileage.text.trim(),
+      _carBody,
+      _carFuel,
+      _carEngine.text.trim(),
+      _carPower.text.trim(),
+      _carTransmission,
+      _carDrive,
+      _carCondition,
+      _carColor,
+      _carPts,
+      _carCleared,
+      _carOwners.text.trim(),
+      _carVin.text.trim(),
+    ].where((value) {
+      if (value == null) return false;
+      return value.toString().trim().isNotEmpty;
+    }).length;
+
+    return count == 0 ? 'Необязательно' : 'Заполнено: $count параметров';
   }
 
   List<ListingPhotoItem> get _visibleExistingPhotos {
@@ -880,18 +942,48 @@ class _EditListingScreenState extends State<EditListingScreen> {
     );
   }
 
-  Widget _drop({
-    required String label,
-    required String? value,
-    required List<String> items,
-    required ValueChanged<String?> onChanged,
-  }) {
-    return DropdownButtonFormField<String>(
-      initialValue: value,
-      items:
-          items.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
-      onChanged: onChanged,
-      decoration: InputDecoration(labelText: label),
+  Widget _carParametersTile() {
+    return InkWell(
+      onTap: _openCarParameters,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Параметры авто',
+                    style: TextStyle(
+                      color: Colors.blue,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _carParametersSummary(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.outline,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1137,9 +1229,6 @@ class _EditListingScreenState extends State<EditListingScreen> {
           ),
           if (_isAuto) ...[
             const SizedBox(height: 18),
-            const Text('Параметры авто',
-                style: TextStyle(fontWeight: FontWeight.w900)),
-            const SizedBox(height: 10),
             TextField(
               controller: _carYear,
               keyboardType: TextInputType.number,
@@ -1147,71 +1236,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
                   labelText: 'Год выпуска (например: 2018)'),
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _carMileage,
-              keyboardType: TextInputType.number,
-              decoration:
-                  const InputDecoration(labelText: 'Пробег (необязательно)'),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'Кузов (необязательно)',
-                value: _carBody,
-                items: _bodyTypes,
-                onChanged: (v) => setState(() => _carBody = v)),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'Топливо (необязательно)',
-                value: _carFuel,
-                items: _fuelTypes,
-                onChanged: (v) => setState(() => _carFuel = v)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _carEngine,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                  labelText:
-                      'Объём двигателя (необязательно), например: 2.2 или 300 куб. см'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _carPower,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                  labelText: 'Мощность (л.с.), например: 193'),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'Коробка (необязательно)',
-                value: _carTransmission,
-                items: _transmissions,
-                onChanged: (v) => setState(() => _carTransmission = v)),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'Привод (необязательно)',
-                value: _carDrive,
-                items: _drives,
-                onChanged: (v) => setState(() => _carDrive = v)),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'Состояние (необязательно)',
-                value: _carCondition,
-                items: _conditions,
-                onChanged: (v) => setState(() => _carCondition = v)),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'Цвет (необязательно)',
-                value: _carColor,
-                items: _colors,
-                onChanged: (v) => setState(() => _carColor = v)),
-            const SizedBox(height: 12),
-            _drop(
-                label: 'ПТС (необязательно)',
-                value: _carPts,
-                items: _ptsTypes,
-                onChanged: (v) => setState(() => _carPts = v)),
-            const SizedBox(height: 12),
+            _carParametersTile(),
           ],
           const SizedBox(height: 12),
           TextField(

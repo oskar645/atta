@@ -244,6 +244,66 @@ void main() {
     expect(messages.single.status, 'failed');
   });
 
+  test('retry failed text message reuses local message without duplicate',
+      () async {
+    final api =
+        _FakeChatsApi(sendMessageError: const ApiException('Сбой сети'));
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await expectLater(
+      () => service.sendMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Повтори меня',
+      ),
+      throwsA(isA<ApiException>()),
+    );
+    final failed = (await service.streamMessages('chat-1').first).single;
+    api.sendMessageError = null;
+
+    await service.retryMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      message: failed,
+    );
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(api.sendMessageCalls, 2);
+    expect(messages.where((item) => item.text == 'Повтори меня'), hasLength(1));
+    expect(messages.single.status, 'sent');
+    expect(messages.single.clientMessageId, failed.clientMessageId);
+  });
+
+  test('network recovery retries failed text message automatically', () async {
+    final api = _FakeChatsApi(sendMessageError: const ApiException('Нет сети'));
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await expectLater(
+      () => service.sendMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Уйду после сети',
+      ),
+      throwsA(isA<ApiException>()),
+    );
+    api.sendMessageError = null;
+
+    await service.handleNetworkChanged('user-1');
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(
+        messages.where((item) => item.text == 'Уйду после сети'), hasLength(1));
+    expect(messages.single.status, 'sent');
+  });
+
   test('markChatsDelivered ignores message refresh network failure', () async {
     final service = ChatService(
       socketService: _FakeChatSocketService(),
@@ -991,6 +1051,47 @@ void main() {
     final chats = await service.streamMyChats('user-1').first;
     expect(chats.single.id, 'chat-cached');
   });
+
+  test('chat cache restores last text conversation when network is unavailable',
+      () async {
+    final firstService = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: _FakeChatsApi(
+        chats: <Map<String, dynamic>>[
+          _chatMap(id: 'chat-cached', lastMessage: 'Кэшированный текст'),
+        ],
+      ),
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await firstService.refreshInbox('user-1');
+    await firstService.sendMessage(
+      chatId: 'chat-cached',
+      senderId: 'user-1',
+      text: 'Останусь офлайн',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final secondService = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: _FakeChatsApi(
+        listMessagesError: const ApiException('Нет сети'),
+      )..listChatsError = const ApiException('Нет сети'),
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final chats = await secondService.streamMyChats('user-1').firstWhere(
+          (items) => items.isNotEmpty,
+        );
+    final messages =
+        await secondService.streamMessages('chat-cached').firstWhere(
+              (items) => items.isNotEmpty,
+            );
+
+    expect(chats.single.id, 'chat-cached');
+    expect(messages.single.text, 'Останусь офлайн');
+    expect(messages.single.hasImage, isFalse);
+  });
 }
 
 Map<String, dynamic> _chatMap({
@@ -1086,7 +1187,7 @@ class _FakeChatsApi extends ChatsApi {
     this.sendMessageDelay = Duration.zero,
   }) : super(ApiClient(tokenStorage: TokenStorage()));
 
-  final Object? sendMessageError;
+  Object? sendMessageError;
   Object? listChatsError;
   final Object? listMessagesError;
   final List<Map<String, dynamic>> chats;
@@ -1151,7 +1252,7 @@ class _FakeChatsApi extends ChatsApi {
       throw sendMessageError!;
     }
     return <String, dynamic>{
-      'chat': _chatMap(),
+      'chat': _chatMap(id: chatId, lastMessage: text),
       'message': <String, dynamic>{
         'id': 'server-message-1',
         'chatId': chatId,

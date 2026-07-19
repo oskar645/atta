@@ -14,6 +14,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { ChatsGateway } from './chats.gateway';
@@ -26,6 +27,7 @@ export class ChatsController {
     private readonly chatsService: ChatsService,
     private readonly chatsGateway: ChatsGateway,
     private readonly rateLimitService: RateLimitService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   @Get()
@@ -80,6 +82,11 @@ export class ChatsController {
       result.message,
       result.recipientId,
     );
+    await this.notificationsService.sendChatMessagePush({
+      recipientId: result.recipientId,
+      message: result.message,
+      chat: result.recipientChat,
+    });
     return result;
   }
 
