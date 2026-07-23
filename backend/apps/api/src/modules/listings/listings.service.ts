@@ -566,9 +566,13 @@ export class ListingsService {
       );
     }
 
-    const nextStatus = dto.status
+    const requestedStatus = dto.status
       ? listingStatusFromInput(dto.status)
-      : listing.status;
+      : undefined;
+    const nextStatus =
+      requestedStatus != null && requestedStatus !== ListingStatus.APPROVED
+        ? requestedStatus
+        : this.statusAfterOwnerEdit(listing, authUser);
 
     const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
 
@@ -602,6 +606,10 @@ export class ListingsService {
           realEstateType: dto.real_estate_type?.trim(),
           clothesType: dto.clothes_type?.trim(),
           status: nextStatus,
+          ...(nextStatus === ListingStatus.PENDING &&
+          listing.status === ListingStatus.APPROVED
+            ? this.pendingModerationUpdateData()
+            : {}),
           archivedAt:
             nextStatus === ListingStatus.ARCHIVED ? new Date() : listing.archivedAt,
         },
@@ -869,6 +877,8 @@ export class ListingsService {
       },
     });
 
+    await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser);
+
     const updated = await this.prisma.listing.findUniqueOrThrow({
       where: { id: listingId },
       include: listingInclude,
@@ -938,6 +948,8 @@ export class ListingsService {
       ),
     );
 
+    await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser);
+
     const updated = await this.prisma.listing.findUniqueOrThrow({
       where: { id: listingId },
       include: listingInclude,
@@ -966,6 +978,48 @@ export class ListingsService {
     }
     validateRussianPhoneOrThrow(normalized);
     return normalized;
+  }
+
+  private statusAfterOwnerEdit(
+    listing: { ownerId: string; status: ListingStatus },
+    authUser: AuthenticatedUser,
+  ) {
+    if (
+      listing.ownerId === authUser.userId &&
+      listing.status === ListingStatus.APPROVED
+    ) {
+      return ListingStatus.PENDING;
+    }
+
+    return listing.status;
+  }
+
+  private pendingModerationUpdateData() {
+    return {
+      rejectionReason: null,
+      moderationNote: null,
+      moderatedBy: null,
+      moderatedAt: null,
+      archivedAt: null,
+      deletedAt: null,
+    };
+  }
+
+  private async resubmitPublishedListingAfterOwnerEdit(
+    listing: { id: string; ownerId: string; status: ListingStatus },
+    authUser: AuthenticatedUser,
+  ) {
+    if (this.statusAfterOwnerEdit(listing, authUser) !== ListingStatus.PENDING) {
+      return;
+    }
+
+    await this.prisma.listing.update({
+      where: { id: listing.id },
+      data: {
+        status: ListingStatus.PENDING,
+        ...this.pendingModerationUpdateData(),
+      },
+    });
   }
 
 }

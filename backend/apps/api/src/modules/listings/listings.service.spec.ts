@@ -228,6 +228,57 @@ test('owner cannot change listing status via generic update endpoint', async () 
   );
 });
 
+test('owner edit of approved listing sends it back to moderation', async () => {
+  const listing = createApprovedListing(
+    'listing-1',
+    '2026-07-01T10:00:00.000Z',
+  );
+  let updateArgs: Record<string, unknown> | undefined;
+  let savedListing = listing;
+  const prisma = {
+    listing: {
+      findUnique: async () => ({
+        ...listing,
+        owner: {
+          phone: '79281234567',
+        },
+      }),
+      update: async (args: Record<string, unknown>) => {
+        updateArgs = args;
+        savedListing = {
+          ...savedListing,
+          ...(args.data as Record<string, unknown>),
+          updatedAt: new Date(),
+        } as typeof listing;
+        return savedListing;
+      },
+      findUniqueOrThrow: async () => savedListing,
+    },
+    listingPhoto: {
+      deleteMany: async () => ({}),
+      createMany: async () => ({}),
+    },
+    $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
+      handler(prisma),
+  };
+  const service = new ListingsService(
+    prisma as never,
+    {} as never,
+    {} as never,
+  );
+
+  const response = await service.update('listing-1', ownerUser, {
+    title: 'Updated listing',
+    status: 'approved',
+  });
+
+  assert.equal(
+    (updateArgs?.data as Record<string, unknown>).status,
+    ListingStatus.PENDING,
+  );
+  assert.equal(response.listing.status, 'pending');
+});
+
 test('mark sold works through explicit archive endpoint', async () => {
   let updateArgs: Record<string, unknown> | undefined;
   const service = createService({
@@ -975,14 +1026,22 @@ test('findAll cursor returns next page without duplicates and keeps category fil
 
 test('listing photo upload uses selected storage provider flow', async () => {
   const storageCalls: Array<Record<string, unknown>> = [];
+  let status: ListingStatus = ListingStatus.APPROVED;
+  let updateArgs: Record<string, unknown> | undefined;
   const service = new ListingsService(
     {
       listing: {
         findUnique: async () => ({
           id: 'listing-1',
           ownerId: ownerUser.userId,
+          status,
           photos: [],
         }),
+        update: async (args: Record<string, unknown>) => {
+          updateArgs = args;
+          status = (args.data as { status?: ListingStatus }).status ?? status;
+          return {};
+        },
         findUniqueOrThrow: async () => ({
           id: 'listing-1',
           ownerId: ownerUser.userId,
@@ -998,7 +1057,7 @@ test('listing photo upload uses selected storage provider flow', async () => {
           locationJson: {},
           delivery: {},
           car: null,
-          status: ListingStatus.APPROVED,
+          status,
           rejectionReason: '',
           moderationNote: null,
           moderatedBy: null,
@@ -1055,6 +1114,11 @@ test('listing photo upload uses selected storage provider flow', async () => {
     listingId: 'listing-1',
     userId: ownerUser.userId,
   });
+  assert.equal(
+    (updateArgs?.data as Record<string, unknown>).status,
+    ListingStatus.PENDING,
+  );
+  assert.equal(response.listing.status, 'pending');
   assert.match(response.photo.url, /listings\/listing-1\/photo\.jpg/);
 });
 
