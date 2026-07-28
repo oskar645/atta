@@ -232,7 +232,11 @@ class _FakePromotionsService extends PromotionsService {
 
   @override
   Future<Map<String, dynamic>> promoteListing(
-      String listingId, String type) async {
+    String listingId,
+    String type, {
+    int days = 1,
+    String? idempotencyKey,
+  }) async {
     showcaseActive = true;
     walletService.setBalance(0);
     final listingMap = _listing().toMap();

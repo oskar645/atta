@@ -434,6 +434,7 @@ class ListingsService {
     String? dealType,
     String? realEstateType,
     String? clothesType,
+    String? clothesSize,
     ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
   }) async {
     _debugSource('Listings source: Timeweb');
@@ -463,6 +464,10 @@ class ListingsService {
         'real_estate_type': realEstateType.trim(),
       if (clothesType != null && clothesType.trim().isNotEmpty)
         'clothes_type': clothesType.trim(),
+      if (category == 'Одежда' &&
+          clothesSize != null &&
+          clothesSize.trim().isNotEmpty)
+        'clothes_size': clothesSize.trim(),
     });
     final createdListing = _extractListingFromResponse(created);
     final listingId = createdListing?.id ?? '';

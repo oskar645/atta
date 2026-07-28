@@ -226,7 +226,7 @@ void main() {
     expect(service.debugHistory.last, contains('reason=chat.ensureReady'));
   });
 
-  test('server disconnect blocks presence heartbeat reconnect attempts',
+  test('heartbeat does not call connect when server-disconnected',
       () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -248,12 +248,37 @@ void main() {
     expect(service.hasPendingReconnect, isFalse);
     expect(service.reconnectScheduleCount, 0);
     expect(
-      service.debugHistory.any(
-        (entry) =>
-            entry.contains('server disconnect requires explicit recovery') &&
+      service.debugHistory.where(
+        (entry) => entry.contains('reason=presence.heartbeat'),
+      ),
+      isEmpty,
+    );
+  });
+
+  test('heartbeat does not create an infinite skipped-connect log loop',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    final socket = factory.createdSockets.single;
+
+    socket.emitDisconnect('io server disconnect');
+    await service.ping(reason: 'presence.heartbeat');
+    await service.ping(reason: 'presence.heartbeat');
+    await service.ping(reason: 'presence.heartbeat');
+
+    expect(
+      service.debugHistory.where(
+        (entry) => entry.contains('Socket connect skipped') &&
             entry.contains('reason=presence.heartbeat'),
       ),
-      isTrue,
+      isEmpty,
     );
   });
 
@@ -266,9 +291,9 @@ void main() {
       socketFactory: factory.create,
     );
 
-    await service.ping(reason: 'presence.heartbeat');
+    await service.ping(reason: 'presence.ping');
 
-    expect(service.pendingReconnectReason, 'presence.heartbeat');
+    expect(service.pendingReconnectReason, 'presence.ping');
 
     await Future<void>.delayed(const Duration(milliseconds: 2200));
 
@@ -276,7 +301,7 @@ void main() {
     expect(
       service.debugHistory.any(
         (entry) => entry.contains(
-          'Socket[1] connect start reason=presence.heartbeat',
+          'Socket[1] connect start reason=presence.ping',
         ),
       ),
       isTrue,
@@ -302,6 +327,61 @@ void main() {
     await service.ping(reason: 'presence.heartbeat');
 
     expect(service.heartbeatTimerStartCount, 1);
+    expect(service.hasHeartbeatTimer, isTrue);
+  });
+
+  test('explicit recovery restores socket after server disconnect', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    factory.createdSockets.single.emitDisconnect('io server disconnect');
+
+    await service.forceReconnect(reason: 'presence.resume');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connected, isTrue);
+    expect(factory.createdSockets.last.connectCalls, 1);
+  });
+
+  test('successful reconnect starts heartbeat again', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    expect(service.heartbeatTimerStartCount, 1);
+    factory.createdSockets.single.emitDisconnect('io server disconnect');
+    expect(service.hasHeartbeatTimer, isFalse);
+
+    await service.forceReconnect(reason: 'presence.resume');
+
+    expect(service.heartbeatTimerStartCount, 2);
+    expect(service.hasHeartbeatTimer, isTrue);
+  });
+
+  test('app resume recovery keeps one active heartbeat timer', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    await service.forceReconnect(reason: 'presence.resume');
+
+    expect(service.hasHeartbeatTimer, isTrue);
   });
 
   test('connect registers a single presence.changed listener', () async {

@@ -218,6 +218,8 @@ class AdminService {
       _cached('users', _api.users, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> onlineUsers({bool forceRefresh = false}) =>
       _cached('onlineUsers', _api.onlineUsers, forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> todayVisits({bool forceRefresh = false}) =>
+      _cached('todayVisits', _api.todayVisits, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> userById(
     String userId, {
     bool forceRefresh = false,

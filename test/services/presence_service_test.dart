@@ -41,7 +41,7 @@ void main() {
 
   test('streamIsOnline does not force socket reconnect for fallback GET',
       () async {
-    final socket = _FakeChatSocketService();
+    final socket = _FakeChatSocketService()..connected = true;
     final service = PresenceService(
       socketService: socket,
       apiClient: _FakeApiClient(
@@ -65,7 +65,7 @@ void main() {
   });
 
   test('setOnline and heartbeat use Timeweb socket bridge', () async {
-    final socket = _FakeChatSocketService();
+    final socket = _FakeChatSocketService()..connected = true;
     final service = PresenceService(
       socketService: socket,
       apiClient: _FakeApiClient(
@@ -177,6 +177,32 @@ void main() {
 
     expect(socket.connectCalls, 0);
     expect(socket.pingCalls, 3);
+  });
+
+  test('presence heartbeat skips socket ping when disconnected', () async {
+    final socket = _FakeChatSocketService();
+    final service = PresenceService(
+      socketService: socket,
+      apiClient: _FakeApiClient(
+        onGet: (
+          path, {
+          queryParameters,
+          authorized = false,
+          sendAuthIfAvailable = false,
+        }) async {
+          return <String, dynamic>{
+            'userId': 'user-1',
+            'isOnline': false,
+          };
+        },
+      ),
+    );
+
+    await service.heartbeat('user-1');
+    await service.heartbeat('user-1');
+
+    expect(socket.connectCalls, 0);
+    expect(socket.pingCalls, 0);
   });
 
   test('presence stream ignores unchanged online state', () async {
@@ -368,6 +394,9 @@ class _FakeChatSocketService extends ChatSocketService {
 
   @override
   bool get isConnected => connected;
+
+  @override
+  bool get canSendPresenceHeartbeat => connected;
 
   @override
   Future<void> connect({String reason = 'unspecified'}) async {

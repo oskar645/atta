@@ -63,6 +63,60 @@ class _ListingDraftPhotoItem {
   }
 }
 
+class _CustomClothesSizeDialog extends StatefulWidget {
+  const _CustomClothesSizeDialog({this.initialValue});
+
+  final String? initialValue;
+
+  @override
+  State<_CustomClothesSizeDialog> createState() =>
+      _CustomClothesSizeDialogState();
+}
+
+class _CustomClothesSizeDialogState extends State<_CustomClothesSizeDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue ?? '');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Другой размер'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 24,
+        textCapitalization: TextCapitalization.words,
+        decoration: const InputDecoration(
+          labelText: 'Размер',
+          hintText: 'One Size',
+          counterText: '',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('Готово'),
+        ),
+      ],
+    );
+  }
+}
+
 class _AddListingScreenState extends State<AddListingScreen> {
   final _title = TextEditingController();
   final _city = TextEditingController();
@@ -103,6 +157,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   // ✅ НОВОЕ: Одежда
   String _clothesType = 'Верхняя одежда';
+  String? _clothesSize;
 
   // ✅ доп. селекты для авто
   String? _carBody;
@@ -407,6 +462,34 @@ class _AddListingScreenState extends State<AddListingScreen> {
     'Детская одежда',
     'Аксессуары',
     'Другое',
+  ];
+
+  static const _clothesSizes = <String>[
+    'XXS',
+    'XS',
+    'S',
+    'M',
+    'L',
+    'XL',
+    '2XL',
+    '3XL',
+    '4XL',
+    '5XL',
+    '38',
+    '40',
+    '42',
+    '44',
+    '46',
+    '48',
+    '50',
+    '52',
+    '54',
+    '56',
+    '58',
+    '60',
+    '62',
+    '64',
+    '66',
   ];
 
   @override
@@ -801,6 +884,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     _dealType = 'Продажа';
     _realEstateType = 'Квартира';
     _clothesType = 'Верхняя одежда';
+    _clothesSize = null;
   }
 
   void _rebuildTitleFromSelections() {
@@ -1377,6 +1461,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     final dealType = _isRealEstate ? _dealType : null;
     final realEstateType = _isRealEstate ? _realEstateType : null;
     final clothesType = _isClothes ? _clothesType : null;
+    final clothesSize = _isClothes ? _clothesSize?.trim() : null;
 
     final auth = context.read<AuthService>();
     final svc = context.read<ListingsService>();
@@ -1453,6 +1538,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
         dealType: dealType,
         realEstateType: realEstateType,
         clothesType: clothesType,
+        clothesSize: clothesSize,
       );
 
       if (!mounted) return;
@@ -1518,6 +1604,68 @@ class _AddListingScreenState extends State<AddListingScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _openClothesSizePicker() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            children: [
+              Text(
+                'Размер',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final size in _clothesSizes)
+                    ChoiceChip(
+                      label: Text(size),
+                      selected: _clothesSize == size,
+                      onSelected: (_) => Navigator.of(sheetContext).pop(size),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Другой размер'),
+                onTap: () async {
+                  final custom =
+                      await _openCustomClothesSizeDialog(sheetContext);
+                  if (!sheetContext.mounted) return;
+                  Navigator.of(sheetContext).pop(custom);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selected == null) return;
+    final normalized = selected.trim();
+    setState(() {
+      _clothesSize = normalized.isEmpty ? null : normalized;
+    });
+  }
+
+  Future<String?> _openCustomClothesSizeDialog(BuildContext context) {
+    return showDialog<String>(
+      context: context,
+      builder: (_) => _CustomClothesSizeDialog(initialValue: _clothesSize),
     );
   }
 
@@ -1760,6 +1908,24 @@ class _AddListingScreenState extends State<AddListingScreen> {
           ),
 
           const SizedBox(height: 12),
+
+          if (_isClothes) ...[
+            _selectTile(
+              title: 'Размер',
+              value: _clothesSize?.trim() ?? '',
+              onTap: _openClothesSizePicker,
+              leading: const Icon(Icons.straighten_outlined),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Необязательно',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.outline,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
 
           TextField(
             controller: _price,

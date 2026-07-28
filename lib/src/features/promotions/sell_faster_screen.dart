@@ -120,7 +120,8 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
     _SellFasterData data,
   ) async {
     final active = _findPromotion(plan.type, data.activePromotions);
-    if (active != null || _activatingPlanType != null) {
+    if ((active != null && plan.type != 'bump') ||
+        _activatingPlanType != null) {
       return;
     }
     if (!data.canPromote) {
@@ -135,7 +136,9 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
     }
 
     final wallet = data.wallet;
-    if (wallet != null && wallet.balance < plan.costBonus) {
+    if (plan.type != 'bump' &&
+        wallet != null &&
+        wallet.balance < plan.costBonus) {
       await _showInsufficientBonuses(plan);
       return;
     }
@@ -148,62 +151,84 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
     Wallet? wallet,
   ) async {
     final promotionsService = context.read<PromotionsService>();
+    final walletService = context.read<WalletService>();
+    final listingsService = context.read<ListingsService>();
     final messenger = ScaffoldMessenger.of(context);
-    final confirmed = await showModalBottomSheet<bool>(
+    final response = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
       builder: (context) => _PromotionConfirmSheet(
         listing: widget.listing,
         plan: plan,
         wallet: wallet,
+        onConfirm: (days, idempotencyKey) async {
+          if (kDebugMode) {
+            debugPrint(
+              'SellFaster activate start listingId=${widget.listing.id} planId=${plan.type} days=$days planPrice=${plan.costBonus} walletBalance=${wallet?.balance ?? 'unknown'}',
+            );
+          }
+          setState(() {
+            _activatingPlanType = plan.type;
+          });
+          try {
+            final response = await promotionsService.promoteListing(
+              widget.listing.id,
+              plan.type,
+              days: days,
+              idempotencyKey: idempotencyKey,
+            );
+            final walletBalance = response['walletBalance'];
+            if (walletBalance is num) {
+              walletService.updateCachedBalance(walletBalance.toInt());
+            }
+            final promotedListingRaw = response['listing'];
+            final promotedListing = promotedListingRaw is Map
+                ? Listing.fromMap(
+                    promotedListingRaw.map(
+                      (key, value) => MapEntry(key.toString(), value),
+                    ),
+                  )
+                : null;
+            if (mounted) {
+              listingsService.refreshFeedAfterPromotion(
+                  listing: promotedListing);
+            }
+            if (kDebugMode) {
+              debugPrint(
+                'SellFaster activate success listingId=${widget.listing.id} planId=${plan.type} response=$response',
+              );
+            }
+            final nextFuture = _load();
+            if (mounted) {
+              setState(() {
+                _future = nextFuture;
+              });
+            }
+            final nextState = await nextFuture;
+            if (!mounted) return response;
+            final activated =
+                _findPromotion(plan.type, nextState.activePromotions);
+            if (activated == null) {
+              throw const ApiException(
+                'Продвижение применилось на сервере, но экран ещё не обновился. Попробуйте открыть его ещё раз.',
+              );
+            }
+            return response;
+          } finally {
+            if (mounted) {
+              setState(() {
+                _activatingPlanType = null;
+              });
+            }
+          }
+        },
       ),
     );
 
-    if (confirmed != true || !mounted) return;
+    if (response == null || !mounted) return;
 
     try {
-      if (kDebugMode) {
-        debugPrint(
-          'SellFaster activate start listingId=${widget.listing.id} planId=${plan.type} planPrice=${plan.costBonus} walletBalance=${wallet?.balance ?? 'unknown'}',
-        );
-      }
-      setState(() {
-        _activatingPlanType = plan.type;
-      });
-      final response =
-          await promotionsService.promoteListing(widget.listing.id, plan.type);
-      final promotedListingRaw = response['listing'];
-      final promotedListing = promotedListingRaw is Map
-          ? Listing.fromMap(
-              promotedListingRaw.map(
-                (key, value) => MapEntry(key.toString(), value),
-              ),
-            )
-          : null;
-      if (mounted) {
-        context
-            .read<ListingsService>()
-            .refreshFeedAfterPromotion(listing: promotedListing);
-      }
-      if (kDebugMode) {
-        debugPrint(
-          'SellFaster activate success listingId=${widget.listing.id} planId=${plan.type} response=$response',
-        );
-      }
-      final nextFuture = _load();
-      if (mounted) {
-        setState(() {
-          _future = nextFuture;
-        });
-      }
-      final nextState = await nextFuture;
-      if (!mounted) return;
-      final activated = _findPromotion(plan.type, nextState.activePromotions);
-      if (activated == null) {
-        throw const ApiException(
-          'Продвижение применилось на сервере, но экран ещё не обновился. Попробуйте открыть его ещё раз.',
-        );
-      }
       messenger.showSnackBar(
         SnackBar(
           content: Text(_promotionSuccessText(response)),
@@ -365,9 +390,11 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton(
-                            onPressed: active == null && !isLoading
-                                ? () => _onPlanPressed(plan, data)
-                                : null,
+                            onPressed:
+                                (active == null || plan.type == 'bump') &&
+                                        !isLoading
+                                    ? () => _onPlanPressed(plan, data)
+                                    : null,
                             child: isLoading
                                 ? const SizedBox(
                                     width: 18,
@@ -378,7 +405,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
                                     ),
                                   )
                                 : Text(
-                                    active != null
+                                    active != null && plan.type != 'bump'
                                         ? 'Уже подключено'
                                         : !data.canPromote
                                             ? 'Подключить'
@@ -423,22 +450,90 @@ class _SellFasterData {
   final String? walletErrorText;
 }
 
-class _PromotionConfirmSheet extends StatelessWidget {
+typedef _PromotionConfirmCallback = Future<Map<String, dynamic>> Function(
+  int days,
+  String idempotencyKey,
+);
+
+class _PromotionConfirmSheet extends StatefulWidget {
   const _PromotionConfirmSheet({
     required this.listing,
     required this.plan,
     required this.wallet,
+    required this.onConfirm,
   });
 
   final Listing listing;
   final PromotionPlan plan;
   final Wallet? wallet;
+  final _PromotionConfirmCallback onConfirm;
+
+  @override
+  State<_PromotionConfirmSheet> createState() => _PromotionConfirmSheetState();
+}
+
+class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
+  late final String _idempotencyKey;
+  int _days = 1;
+  bool _isSubmitting = false;
+  String? _errorText;
+
+  bool get _isRaise => widget.plan.type == 'bump';
+
+  @override
+  void initState() {
+    super.initState();
+    _idempotencyKey =
+        'raise-${widget.listing.id}-${DateTime.now().microsecondsSinceEpoch}';
+  }
+
+  void _changeDays(int delta) {
+    if (_isSubmitting) return;
+    final next = (_days + delta).clamp(1, 30);
+    if (next == _days) return;
+    setState(() {
+      _days = next;
+      _errorText = null;
+    });
+  }
+
+  Future<void> _submit() async {
+    if (_isSubmitting || !_hasEnoughBalance) return;
+    setState(() {
+      _isSubmitting = true;
+      _errorText = null;
+    });
+    try {
+      final response = await widget.onConfirm(
+        _isRaise ? _days : 1,
+        _idempotencyKey,
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(response);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _isSubmitting = false;
+        _errorText = _promotionErrorText(error, widget.plan);
+      });
+    }
+  }
+
+  int get _totalPrice => widget.plan.costBonus * (_isRaise ? _days : 1);
+  int? get _balance => widget.wallet?.balance;
+  int get _missingBonuses =>
+      (_totalPrice - (_balance ?? 0)).clamp(0, 1 << 31).toInt();
+  bool get _hasEnoughBalance => _balance == null || _balance! >= _totalPrice;
 
   @override
   Widget build(BuildContext context) {
+    final listing = widget.listing;
+    final plan = widget.plan;
+    final wallet = widget.wallet;
     final photo = listing.firstPhotoUrl;
+    final previewBalance = wallet == null ? null : wallet.balance - _totalPrice;
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -504,27 +599,100 @@ class _PromotionConfirmSheet extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Text('Стоимость: ${plan.costBonus} бонусов'),
+            if (_isRaise) ...[
+              Row(
+                children: [
+                  IconButton.outlined(
+                    onPressed: _days > 1 && !_isSubmitting
+                        ? () => _changeDays(-1)
+                        : null,
+                    icon: const Icon(Icons.remove),
+                    tooltip: 'Уменьшить',
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: Text(
+                        '$_days ${russianDayWord(_days)}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton.outlined(
+                    onPressed: _days < 30 && !_isSubmitting
+                        ? () => _changeDays(1)
+                        : null,
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Увеличить',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+            if (_isRaise) ...[
+              Text('Количество поднятий: $_days'),
+              const SizedBox(height: 4),
+              Text('Длительность: $_days ${russianDayWord(_days)}'),
+              const SizedBox(height: 4),
+            ],
+            Text('Стоимость: $_totalPrice бонусов'),
             const SizedBox(height: 4),
             Text(
               wallet == null
                   ? 'Баланс временно недоступен'
-                  : 'Ваш баланс: ${wallet!.balance} бонусов',
+                  : 'Ваш баланс: ${wallet.balance} бонусов',
             ),
+            if (previewBalance != null) ...[
+              const SizedBox(height: 4),
+              Text('После оплаты останется: $previewBalance бонусов'),
+            ],
+            if (!_hasEnoughBalance) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Недостаточно бонусов. Не хватает $_missingBonuses бонусов',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+            if (_errorText != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _errorText!,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(false),
+                    onPressed: _isSubmitting
+                        ? null
+                        : () => Navigator.of(context).pop(),
                     child: const Text('Отмена'),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('Подключить'),
+                    onPressed:
+                        _hasEnoughBalance && !_isSubmitting ? _submit : null,
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Text('Подключить'),
                   ),
                 ),
               ],
@@ -650,10 +818,30 @@ String _promotionErrorTextFromString(String error, PromotionPlan plan) {
 
 String _promotionSuccessText(Map<String, dynamic> response) {
   final message = (response['message'] ?? '').toString().toLowerCase();
+  final days = response['days'];
+  if (days is num && days.toInt() > 0) {
+    final value = days.toInt();
+    return 'Поднятие подключено на $value ${russianDayWord(value)}';
+  }
   if (message.contains('уже')) {
     return 'Уже активно';
   }
   return 'Продвижение подключено';
+}
+
+String russianDayWord(int value) {
+  final mod100 = value % 100;
+  final mod10 = value % 10;
+  if (mod100 >= 11 && mod100 <= 14) {
+    return 'дней';
+  }
+  if (mod10 == 1) {
+    return 'день';
+  }
+  if (mod10 >= 2 && mod10 <= 4) {
+    return 'дня';
+  }
+  return 'дней';
 }
 
 String _sellFasterLoadError(Object error) {

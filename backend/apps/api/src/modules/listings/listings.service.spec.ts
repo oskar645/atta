@@ -51,6 +51,7 @@ function createApprovedListing(
     dealType: null,
     realEstateType: null,
     clothesType: null,
+    clothesSize: null,
     status: ListingStatus.APPROVED,
     rejectionReason: '',
     moderationNote: null,
@@ -132,6 +133,10 @@ function createService(overrides?: {
           locationJson: {},
           delivery: {},
           car: null,
+          dealType: null,
+          realEstateType: null,
+          clothesType: null,
+          clothesSize: null,
           status: ListingStatus.PENDING,
           rejectionReason: '',
           moderationNote: null,
@@ -183,6 +188,10 @@ function createService(overrides?: {
           locationJson: {},
           delivery: {},
           car: null,
+          dealType: null,
+          realEstateType: null,
+          clothesType: null,
+          clothesSize: null,
           status: ListingStatus.ARCHIVED,
           rejectionReason: '',
           moderationNote: null,
@@ -425,6 +434,10 @@ test('create uses owner phone when dto phone is empty', async () => {
         locationJson: {},
         delivery: {},
         car: null,
+        dealType: null,
+        realEstateType: null,
+        clothesType: null,
+        clothesSize: null,
         status: ListingStatus.PENDING,
         rejectionReason: '',
         moderationNote: null,
@@ -473,6 +486,59 @@ test('create uses owner phone when dto phone is empty', async () => {
 
   assert.equal((createArgs?.data as Record<string, unknown>).phone, '79281234567');
   assert.equal(response.listing.phone, '79281234567');
+});
+
+test('create stores optional clothes size only for clothes listings', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Одежда'),
+        status: ListingStatus.PENDING,
+        clothesType: 'Верхняя одежда',
+        clothesSize: createData.clothesSize,
+      };
+    },
+  });
+
+  const response = await service.create(ownerUser, {
+    title: 'Куртка',
+    description: 'Почти новая',
+    category: 'Одежда',
+    subcategory: 'Женская одежда',
+    price: 1000,
+    clothes_type: 'Верхняя одежда',
+    clothes_size: 'XL',
+  });
+
+  assert.equal(createData?.clothesSize, 'XL');
+  assert.equal(response.listing.clothes_size, 'XL');
+});
+
+test('create ignores clothes size for other categories', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'misc'),
+        status: ListingStatus.PENDING,
+        clothesSize: createData.clothesSize,
+      };
+    },
+  });
+
+  await service.create(ownerUser, {
+    title: 'Предмет',
+    description: 'Описание',
+    category: 'misc',
+    subcategory: '',
+    price: 1000,
+    clothes_size: 'XL',
+  });
+
+  assert.equal(createData?.clothesSize, null);
 });
 
 test('public feed is sorted by publishedAt desc, then createdAt desc, then id desc', async () => {

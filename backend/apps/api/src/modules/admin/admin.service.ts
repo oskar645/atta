@@ -20,6 +20,7 @@ import {
   toIsoString,
 } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
+import { AppVisitsService } from '../app-visits/app-visits.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReviewsService } from '../reviews/reviews.service';
@@ -86,6 +87,7 @@ const protectedAdminPhones = new Set<string>([
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly appVisitsService: AppVisitsService,
     private readonly notificationsService: NotificationsService,
     private readonly reviewsService: ReviewsService,
     private readonly storageService: StorageService,
@@ -97,7 +99,7 @@ export class AdminService {
     const days14 = new Date(now.getTime() - 14 * 86400000);
     const onlineCutoff = new Date(now.getTime() - 2 * 60000);
 
-    const [users, onlineUsers, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] =
+    const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] =
       await Promise.all([
         this.prisma.user.count({
           where: {
@@ -115,6 +117,7 @@ export class AdminService {
             },
           },
         }),
+        this.appVisitsService.countToday(now),
         this.prisma.listing.count({
           where: { deletedAt: null },
         }),
@@ -208,6 +211,7 @@ export class AdminService {
       stats: {
         users,
         onlineUsers,
+        todayVisits,
         listings,
         activeListings,
         pendingModeration,
@@ -299,6 +303,10 @@ export class AdminService {
       source: 'timeweb',
       items,
     };
+  }
+
+  async listTodayVisits() {
+    return this.appVisitsService.listToday();
   }
 
   async getUserById(id: string) {

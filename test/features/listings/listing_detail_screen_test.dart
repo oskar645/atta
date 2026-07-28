@@ -145,6 +145,42 @@ void main() {
     expect(find.textContaining('+7 999 000 00 00'), findsWidgets);
   });
 
+  testWidgets('listing detail shows clothes size when present', (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            category: 'Одежда',
+            subcategory: 'Женская одежда',
+            clothesSize: 'XL',
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Размер: XL'), findsOneWidget);
+  });
+
+  testWidgets('old listing without clothes size does not show size row',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            category: 'Одежда',
+            subcategory: 'Женская одежда',
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Размер:'), findsNothing);
+  });
+
   testWidgets('listing detail hides empty optional transport fields',
       (tester) async {
     await tester.pumpWidget(
@@ -358,6 +394,9 @@ Listing _listingFixture({
   String? description,
   bool canPromote = true,
   String ownerId = 'seller-1',
+  String category = 'Авто',
+  String subcategory = 'Седан',
+  String? clothesSize,
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': 'listing-1',
@@ -366,8 +405,9 @@ Listing _listingFixture({
     'owner_name': 'Seller',
     'title': 'Test listing',
     'description': description ?? 'Описание объявления',
-    'category': 'Авто',
-    'subcategory': 'Седан',
+    'category': category,
+    'subcategory': subcategory,
+    'clothes_size': clothesSize,
     'price': 1200000,
     'phone': '+79990000000',
     'phone_hidden': false,
@@ -380,20 +420,21 @@ Listing _listingFixture({
     'can_promote': canPromote,
     'created_at': '2026-06-20T10:00:00.000Z',
     'published_at': '2026-06-20T10:00:00.000Z',
-    'car': <String, dynamic>{
-      'brand': 'Toyota',
-      'model': 'Camry',
-      'year': 2020,
-      'mileage_km': 12000,
-      'body_type': 'Седан',
-      'fuel': 'Бензин',
-      'engine_volume': 2.5,
-      'power_hp': 181,
-      'transmission': 'Автомат',
-      'drive': 'Передний',
-      'condition': 'Хорошее',
-      'color': 'Белый',
-    },
+    if (category == 'Авто')
+      'car': <String, dynamic>{
+        'brand': 'Toyota',
+        'model': 'Camry',
+        'year': 2020,
+        'mileage_km': 12000,
+        'body_type': 'Седан',
+        'fuel': 'Бензин',
+        'engine_volume': 2.5,
+        'power_hp': 181,
+        'transmission': 'Автомат',
+        'drive': 'Передний',
+        'condition': 'Хорошее',
+        'color': 'Белый',
+      },
   });
 }
 

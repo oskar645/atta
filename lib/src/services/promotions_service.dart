@@ -38,8 +38,10 @@ class PromotionsService {
 
   Future<Map<String, dynamic>> promoteListing(
     String listingId,
-    String type,
-  ) async {
+    String type, {
+    int days = 1,
+    String? idempotencyKey,
+  }) async {
     if (!ApiConfig.useTimewebBackend) {
       throw Exception('Продвижение доступно только через Timeweb backend');
     }
@@ -48,7 +50,12 @@ class PromotionsService {
         'Promotions activate request listingId=$listingId planId=$type endpoint=/listings/$listingId/promotions',
       );
     }
-    return _api.promoteListing(listingId, type);
+    return _api.promoteListing(
+      listingId,
+      type,
+      days: days,
+      idempotencyKey: idempotencyKey,
+    );
   }
 
   Future<List<ActivePromotion>> getListingPromotions(String listingId) async {

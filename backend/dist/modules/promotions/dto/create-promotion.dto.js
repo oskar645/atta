@@ -10,6 +10,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreatePromotionDto = void 0;
+const class_transformer_1 = require("class-transformer");
 const class_validator_1 = require("class-validator");
 const promotionTypes = ['showcase', 'bump', 'vip', 'turbo'];
 class CreatePromotionDto {
@@ -20,4 +21,17 @@ __decorate([
     (0, class_validator_1.IsIn)(promotionTypes),
     __metadata("design:type", Object)
 ], CreatePromotionDto.prototype, "type", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Type)(() => Number),
+    (0, class_validator_1.IsInt)(),
+    (0, class_validator_1.Min)(1),
+    (0, class_validator_1.Max)(30),
+    __metadata("design:type", Number)
+], CreatePromotionDto.prototype, "days", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreatePromotionDto.prototype, "idempotencyKey", void 0);
 //# sourceMappingURL=create-promotion.dto.js.map

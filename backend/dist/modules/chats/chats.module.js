@@ -12,6 +12,7 @@ const auth_module_1 = require("../auth/auth.module");
 const presence_module_1 = require("../presence/presence.module");
 const prisma_module_1 = require("../prisma/prisma.module");
 const storage_module_1 = require("../storage/storage.module");
+const notifications_module_1 = require("../notifications/notifications.module");
 const chats_controller_1 = require("./chats.controller");
 const chats_gateway_1 = require("./chats.gateway");
 const chats_service_1 = require("./chats.service");
@@ -25,6 +26,7 @@ exports.ChatsModule = ChatsModule = __decorate([
             prisma_module_1.PrismaModule,
             auth_module_1.AuthModule,
             storage_module_1.StorageModule,
+            (0, common_1.forwardRef)(() => notifications_module_1.NotificationsModule),
         ],
         controllers: [chats_controller_1.ChatsController, chats_controller_1.MessagesController],
         providers: [chats_service_1.ChatsService, chats_gateway_1.ChatsGateway],

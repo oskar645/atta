@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var PromotionsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PromotionsService = void 0;
 const common_1 = require("@nestjs/common");
@@ -19,6 +20,11 @@ const promotion_plans_constants_1 = require("./promotion-plans.constants");
 const promotableStatuses = new Set([
     client_1.ListingStatus.APPROVED,
 ]);
+const MIN_RAISE_DAYS = 1;
+const MAX_RAISE_DAYS = 30;
+const RAISE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const RAISE_WORKER_INTERVAL_MS = 60 * 1000;
+const RAISE_WORKER_BATCH_SIZE = 10;
 const listingInclude = {
     owner: {
         include: {
@@ -39,10 +45,27 @@ const listingInclude = {
         },
     },
 };
-let PromotionsService = class PromotionsService {
+let PromotionsService = PromotionsService_1 = class PromotionsService {
     constructor(prisma, walletService) {
         this.prisma = prisma;
         this.walletService = walletService;
+        this.logger = new common_1.Logger(PromotionsService_1.name);
+        this.workerTimer = null;
+        this.workerRunning = false;
+    }
+    onModuleInit() {
+        this.workerTimer = setInterval(() => {
+            void this.processDueRaiseCampaigns().catch((error) => {
+                this.logger.error(`Listing raise worker failed: ${error instanceof Error ? error.message : String(error)}`);
+            });
+        }, RAISE_WORKER_INTERVAL_MS);
+        this.workerTimer.unref?.();
+    }
+    onModuleDestroy() {
+        if (this.workerTimer) {
+            clearInterval(this.workerTimer);
+            this.workerTimer = null;
+        }
     }
     getPlans() {
         return {
@@ -76,9 +99,12 @@ let PromotionsService = class PromotionsService {
             cannotPromoteCode: this.getCannotPromoteCode(listing, authUser),
         };
     }
-    async promoteListing(listingId, authUser, inputType) {
+    async promoteListing(listingId, authUser, input) {
+        const inputType = typeof input === 'string' ? input : input.type;
         const type = this.parsePromotionType(inputType);
         const plan = promotion_plans_constants_1.PROMOTION_PLANS[type];
+        const days = this.parseRaiseDays(type, typeof input === 'string' ? undefined : input.days);
+        const requestIdempotencyKey = typeof input === 'string' ? undefined : input.idempotencyKey;
         const listing = await this.prisma.listing.findUnique({
             where: {
                 id: listingId,
@@ -93,6 +119,14 @@ let PromotionsService = class PromotionsService {
             throw new common_1.BadRequestException(cannotPromoteReason);
         }
         await this.expireStalePromotionsForListing(listing.id);
+        if (type === client_1.PromotionType.BUMP) {
+            return this.purchaseRaiseCampaign({
+                listingId,
+                authUser,
+                days,
+                requestIdempotencyKey,
+            });
+        }
         const activePromotion = await this.prisma.promotion.findFirst({
             where: {
                 listingId,
@@ -126,7 +160,7 @@ let PromotionsService = class PromotionsService {
         const wallet = await this.walletService.ensureWalletAndBonuses(authUser.userId);
         if (wallet.bonusBalance < plan.costBonus) {
             throw new common_1.BadRequestException({
-                message: 'Недостаточно поинтов',
+                message: 'Недостаточно бонусов',
                 currentBalance: wallet.bonusBalance,
                 requiredBalance: plan.costBonus,
             });
@@ -218,6 +252,37 @@ let PromotionsService = class PromotionsService {
             promotion: this.serializePromotion(promotion),
             walletBalance: updatedWallet.bonusBalance,
         };
+    }
+    async processDueRaiseCampaigns(now = new Date()) {
+        if (this.workerRunning) {
+            return { processed: 0 };
+        }
+        this.workerRunning = true;
+        let processed = 0;
+        try {
+            const dueCampaigns = await this.prisma.listingRaiseCampaign.findMany({
+                where: {
+                    status: client_1.ListingRaiseCampaignStatus.ACTIVE,
+                    nextRaiseAt: {
+                        lte: now,
+                    },
+                },
+                orderBy: {
+                    nextRaiseAt: 'asc',
+                },
+                take: RAISE_WORKER_BATCH_SIZE,
+            });
+            for (const campaign of dueCampaigns) {
+                const didProcess = await this.processOneRaiseCampaign(campaign.id, now);
+                if (didProcess) {
+                    processed += 1;
+                }
+            }
+            return { processed };
+        }
+        finally {
+            this.workerRunning = false;
+        }
     }
     async getShowcase() {
         await this.expirePromotionsByTime();
@@ -340,6 +405,237 @@ let PromotionsService = class PromotionsService {
             },
         });
     }
+    async purchaseRaiseCampaign(params) {
+        const { listingId, authUser, days } = params;
+        const plan = promotion_plans_constants_1.PROMOTION_PLANS[client_1.PromotionType.BUMP];
+        const totalPrice = plan.costBonus * days;
+        const idempotencyKey = this.buildRaisePurchaseIdempotencyKey(authUser.userId, listingId, days, params.requestIdempotencyKey);
+        const existingCampaign = await this.prisma.listingRaiseCampaign.findUnique({
+            where: {
+                idempotencyKey,
+            },
+        });
+        if (existingCampaign) {
+            const freshListing = await this.prisma.listing.findUniqueOrThrow({
+                where: {
+                    id: listingId,
+                },
+                include: listingInclude,
+            });
+            return {
+                message: `Поднятие подключено на ${existingCampaign.purchasedRaises} ${this.dayWord(existingCampaign.purchasedRaises)}`,
+                listing: (0, serializers_1.serializeListing)(freshListing),
+                promotion: this.serializePromotion(await this.prisma.promotion.findFirst({
+                    where: {
+                        listingId,
+                        userId: authUser.userId,
+                        type: client_1.PromotionType.BUMP,
+                        status: client_1.PromotionStatus.ACTIVE,
+                    },
+                    orderBy: {
+                        createdAt: 'desc',
+                    },
+                })),
+                walletBalance: (await this.walletService.getWallet(authUser)).balance,
+                days: existingCampaign.purchasedRaises,
+            };
+        }
+        const wallet = await this.walletService.ensureWalletAndBonuses(authUser.userId);
+        if (wallet.bonusBalance < totalPrice) {
+            throw new common_1.BadRequestException({
+                message: 'Недостаточно бонусов',
+                currentBalance: wallet.bonusBalance,
+                requiredBalance: totalPrice,
+            });
+        }
+        const walletReason = await this.walletService.resolveSpendReason(plan.walletReason);
+        const { promotion, updatedWallet } = await this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw `
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`raise:${authUser.userId}:${listingId}:${idempotencyKey}`})
+          )
+        `;
+            const existing = await tx.listingRaiseCampaign.findUnique({
+                where: {
+                    idempotencyKey,
+                },
+            });
+            if (existing) {
+                return {
+                    promotion: await tx.promotion.findFirst({
+                        where: {
+                            listingId,
+                            userId: authUser.userId,
+                            type: client_1.PromotionType.BUMP,
+                            status: client_1.PromotionStatus.ACTIVE,
+                        },
+                        orderBy: {
+                            createdAt: 'desc',
+                        },
+                    }),
+                    updatedWallet: await tx.wallet.findUniqueOrThrow({
+                        where: {
+                            userId: authUser.userId,
+                        },
+                    }),
+                };
+            }
+            const lockedListing = await tx.listing.findUnique({
+                where: {
+                    id: listingId,
+                },
+                select: {
+                    id: true,
+                    ownerId: true,
+                    status: true,
+                    deletedAt: true,
+                    archivedAt: true,
+                },
+            });
+            if (!lockedListing) {
+                throw new common_1.NotFoundException('Listing not found');
+            }
+            const cannotPromoteReason = this.getCannotPromoteReason(lockedListing, authUser);
+            if (cannotPromoteReason) {
+                throw new common_1.BadRequestException(cannotPromoteReason);
+            }
+            const updatedWallet = await this.walletService.spendBonus(authUser.userId, totalPrice, walletReason, {
+                listingId,
+                promotionType: (0, promotion_plans_constants_1.promotionTypeToResponse)(client_1.PromotionType.BUMP),
+                days,
+                pricePerRaise: plan.costBonus,
+                totalPrice,
+                requestedWalletReason: plan.walletReason.toLowerCase(),
+                walletReasonFallbackApplied: walletReason !== plan.walletReason,
+            }, tx, `promotion_raise:${idempotencyKey}`);
+            const now = new Date();
+            const promotion = await this.createBumpPromotion(tx, listingId, authUser.userId, plan.costBonus, now);
+            await tx.listingRaiseCampaign.create({
+                data: {
+                    listingId,
+                    userId: authUser.userId,
+                    purchasedRaises: days,
+                    completedRaises: 1,
+                    pricePerRaise: plan.costBonus,
+                    totalPrice,
+                    startedAt: now,
+                    lastRaiseAt: now,
+                    nextRaiseAt: days > 1 ? new Date(now.getTime() + RAISE_INTERVAL_MS) : null,
+                    status: days > 1
+                        ? client_1.ListingRaiseCampaignStatus.ACTIVE
+                        : client_1.ListingRaiseCampaignStatus.COMPLETED,
+                    idempotencyKey,
+                },
+            });
+            return {
+                promotion,
+                updatedWallet,
+            };
+        });
+        const freshListing = await this.prisma.listing.findUniqueOrThrow({
+            where: {
+                id: listingId,
+            },
+            include: listingInclude,
+        });
+        return {
+            message: `Поднятие подключено на ${days} ${this.dayWord(days)}`,
+            listing: (0, serializers_1.serializeListing)(freshListing),
+            promotion: this.serializePromotion(promotion),
+            walletBalance: updatedWallet.bonusBalance,
+            days,
+        };
+    }
+    async processOneRaiseCampaign(campaignId, now) {
+        return this.prisma.$transaction(async (tx) => {
+            const locked = await tx.$queryRaw `
+        SELECT "id"
+        FROM "listing_raise_campaigns"
+        WHERE "id" = ${campaignId}::uuid
+          AND "status" = 'ACTIVE'::"ListingRaiseCampaignStatus"
+          AND "next_raise_at" <= ${now}
+        FOR UPDATE SKIP LOCKED
+      `;
+            if (locked.length === 0) {
+                return false;
+            }
+            const campaign = await tx.listingRaiseCampaign.findUnique({
+                where: {
+                    id: campaignId,
+                },
+            });
+            if (!campaign ||
+                campaign.status !== client_1.ListingRaiseCampaignStatus.ACTIVE ||
+                campaign.nextRaiseAt == null ||
+                campaign.nextRaiseAt.getTime() > now.getTime()) {
+                return false;
+            }
+            const listing = await tx.listing.findUnique({
+                where: {
+                    id: campaign.listingId,
+                },
+                select: {
+                    id: true,
+                    ownerId: true,
+                    status: true,
+                    deletedAt: true,
+                    archivedAt: true,
+                },
+            });
+            if (!listing ||
+                listing.ownerId !== campaign.userId ||
+                this.getCannotPromoteCode(listing, {
+                    userId: campaign.userId,
+                    sessionId: '',
+                    role: 'user',
+                }) != null) {
+                await tx.listingRaiseCampaign.update({
+                    where: {
+                        id: campaign.id,
+                    },
+                    data: {
+                        status: client_1.ListingRaiseCampaignStatus.CANCELLED,
+                        nextRaiseAt: null,
+                        cancelReason: 'listing_not_promotable',
+                    },
+                });
+                return true;
+            }
+            await this.createBumpPromotion(tx, campaign.listingId, campaign.userId, campaign.pricePerRaise, campaign.nextRaiseAt);
+            const completedRaises = campaign.completedRaises + 1;
+            const hasMore = completedRaises < campaign.purchasedRaises;
+            await tx.listingRaiseCampaign.update({
+                where: {
+                    id: campaign.id,
+                },
+                data: {
+                    completedRaises,
+                    lastRaiseAt: campaign.nextRaiseAt,
+                    nextRaiseAt: hasMore
+                        ? new Date(campaign.nextRaiseAt.getTime() + RAISE_INTERVAL_MS)
+                        : null,
+                    status: hasMore
+                        ? client_1.ListingRaiseCampaignStatus.ACTIVE
+                        : client_1.ListingRaiseCampaignStatus.COMPLETED,
+                    cancelReason: null,
+                },
+            });
+            return true;
+        });
+    }
+    async createBumpPromotion(tx, listingId, userId, costBonus, startsAt) {
+        return tx.promotion.create({
+            data: {
+                listingId,
+                userId,
+                type: client_1.PromotionType.BUMP,
+                costBonus,
+                startsAt,
+                endsAt: new Date(startsAt.getTime() + RAISE_INTERVAL_MS),
+                status: client_1.PromotionStatus.ACTIVE,
+            },
+        });
+    }
     canPromoteListing(listing, authUser) {
         return this.getCannotPromoteCode(listing, authUser) == null;
     }
@@ -435,6 +731,37 @@ let PromotionsService = class PromotionsService {
                 throw new common_1.BadRequestException('Unsupported promotion type');
         }
     }
+    parseRaiseDays(type, rawDays) {
+        if (type !== client_1.PromotionType.BUMP) {
+            return 1;
+        }
+        const days = rawDays ?? 1;
+        if (!Number.isInteger(days) || days < MIN_RAISE_DAYS || days > MAX_RAISE_DAYS) {
+            throw new common_1.BadRequestException('days must be an integer from 1 to 30');
+        }
+        return days;
+    }
+    buildRaisePurchaseIdempotencyKey(userId, listingId, days, requestIdempotencyKey) {
+        const requestKey = requestIdempotencyKey?.trim();
+        if (requestKey && requestKey.length <= 120) {
+            return `raise_purchase:${userId}:${requestKey}`;
+        }
+        return `raise_purchase:${userId}:${listingId}:${days}:${Date.now()}`;
+    }
+    dayWord(days) {
+        const mod100 = days % 100;
+        const mod10 = days % 10;
+        if (mod100 >= 11 && mod100 <= 14) {
+            return 'дней';
+        }
+        if (mod10 === 1) {
+            return 'день';
+        }
+        if (mod10 >= 2 && mod10 <= 4) {
+            return 'дня';
+        }
+        return 'дней';
+    }
     async bumpMetric(promotionId, field) {
         const promotion = await this.prisma.promotion.findUnique({
             where: {
@@ -478,7 +805,7 @@ let PromotionsService = class PromotionsService {
     }
 };
 exports.PromotionsService = PromotionsService;
-exports.PromotionsService = PromotionsService = __decorate([
+exports.PromotionsService = PromotionsService = PromotionsService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         wallet_service_1.WalletService])

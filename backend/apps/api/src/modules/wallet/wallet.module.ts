@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 
 import { env } from '../../config/env';
+import { WALLET_NOW_PROVIDER } from './wallet.constants';
 import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 
@@ -12,7 +13,13 @@ import { WalletService } from './wallet.service';
     }),
   ],
   controllers: [WalletController],
-  providers: [WalletService],
+  providers: [
+    {
+      provide: WALLET_NOW_PROVIDER,
+      useValue: () => new Date(),
+    },
+    WalletService,
+  ],
   exports: [WalletService, JwtModule],
 })
 export class WalletModule {}

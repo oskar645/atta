@@ -1079,13 +1079,13 @@ class _ShowcaseCard extends StatelessWidget {
 }
 
 double _homeShowcaseCardWidth(double availableWidth) {
-  final visibleCards = availableWidth < 340 ? 2.86 : 2.72;
+  final visibleCards = availableWidth < 340 ? 3.02 : 2.86;
   final width = (availableWidth - 16) / visibleCards;
-  return width.clamp(104.0, 138.0).toDouble();
+  return width.clamp(100.0, 132.0).toDouble();
 }
 
 double _homeShowcaseCardHeight(double width) {
-  return (width * 0.96).clamp(112.0, 128.0).toDouble();
+  return (width * 0.96).clamp(108.0, 122.0).toDouble();
 }
 
 class _CategoryRow extends StatelessWidget {

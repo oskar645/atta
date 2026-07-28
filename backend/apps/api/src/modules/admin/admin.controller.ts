@@ -32,6 +32,11 @@ export class AdminController {
     return this.adminService.listOnlineUsers();
   }
 
+  @Get('today-visits')
+  listTodayVisits() {
+    return this.adminService.listTodayVisits();
+  }
+
   @Get('users/:id')
   getUserById(@Param('id') id: string) {
     return this.adminService.getUserById(id);

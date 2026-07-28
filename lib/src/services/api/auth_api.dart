@@ -55,6 +55,11 @@ class AuthApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> markAppOpened() async {
+    final response = await _client.post('/auth/app-open', authorized: true);
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> logout({
     required String refreshToken,
   }) async {

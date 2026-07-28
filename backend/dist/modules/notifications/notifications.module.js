@@ -19,7 +19,7 @@ let NotificationsModule = class NotificationsModule {
 exports.NotificationsModule = NotificationsModule;
 exports.NotificationsModule = NotificationsModule = __decorate([
     (0, common_1.Module)({
-        imports: [apns_module_1.ApnsModule, auth_module_1.AuthModule, prisma_module_1.PrismaModule, chats_module_1.ChatsModule],
+        imports: [apns_module_1.ApnsModule, auth_module_1.AuthModule, prisma_module_1.PrismaModule, (0, common_1.forwardRef)(() => chats_module_1.ChatsModule)],
         controllers: [notifications_controller_1.NotificationsController, notifications_controller_1.AdminNotificationsController],
         providers: [notifications_service_1.NotificationsService],
         exports: [notifications_service_1.NotificationsService],

@@ -36,6 +36,17 @@ let NotificationsService = class NotificationsService {
                 return client_1.NotificationType.GENERIC;
         }
     }
+    toPlatform(platform) {
+        switch ((platform ?? '').trim().toLowerCase()) {
+            case 'android':
+                return client_1.DevicePlatform.ANDROID;
+            case 'web':
+                return client_1.DevicePlatform.WEB;
+            case 'ios':
+            default:
+                return client_1.DevicePlatform.IOS;
+        }
+    }
     serialize(item) {
         const payload = this.normalizePayload(item.payload);
         return {
@@ -194,6 +205,7 @@ let NotificationsService = class NotificationsService {
                 payload: payload,
             },
         });
+        await this.sendPushToAllUsers(this.serialize(item));
         return {
             source: 'timeweb',
             item: this.serialize(item),
@@ -210,8 +222,96 @@ let NotificationsService = class NotificationsService {
                 payload: (params.payload ?? {}),
             },
         });
-        this.chatsGateway.emitNotificationNew(this.serialize(item), params.userId.trim());
+        const serialized = this.serialize(item);
+        this.chatsGateway.emitNotificationNew(serialized, params.userId.trim());
+        await this.sendPushToUser(params.userId, serialized);
         return item;
+    }
+    async registerDevice(authUser, body) {
+        const token = body.token?.trim() ?? '';
+        if (!token) {
+            throw new common_1.BadRequestException('Device token is required');
+        }
+        const item = await this.prisma.userDevice.upsert({
+            where: {
+                deviceToken: token,
+            },
+            update: {
+                userId: authUser.userId,
+                platform: this.toPlatform(body.platform),
+                deviceUid: body.deviceUid?.trim() || null,
+                appVersion: body.appVersion?.trim() || null,
+                buildNumber: body.buildNumber?.trim() || null,
+                locale: body.locale?.trim() || null,
+                isActive: true,
+                lastSeenAt: new Date(),
+            },
+            create: {
+                userId: authUser.userId,
+                platform: this.toPlatform(body.platform),
+                deviceToken: token,
+                deviceUid: body.deviceUid?.trim() || null,
+                appVersion: body.appVersion?.trim() || null,
+                buildNumber: body.buildNumber?.trim() || null,
+                locale: body.locale?.trim() || null,
+            },
+        });
+        return {
+            source: 'timeweb',
+            item: {
+                id: item.id,
+                platform: item.platform.toLowerCase(),
+                is_active: item.isActive,
+            },
+        };
+    }
+    async unregisterDevice(authUser, token) {
+        const normalizedToken = token?.trim() ?? '';
+        if (!normalizedToken) {
+            return {
+                source: 'timeweb',
+                updated: 0,
+            };
+        }
+        const result = await this.prisma.userDevice.updateMany({
+            where: {
+                userId: authUser.userId,
+                deviceToken: normalizedToken,
+            },
+            data: {
+                isActive: false,
+            },
+        });
+        return {
+            source: 'timeweb',
+            updated: result.count,
+        };
+    }
+    async sendChatMessagePush(params) {
+        const message = params.message;
+        const senderName = `${message['senderName'] ?? message['sender_name'] ?? ''}`.trim() ||
+            'Новое сообщение';
+        const isImage = `${message['type'] ?? message['messageType'] ?? ''}`.toLowerCase() ===
+            'image';
+        const text = `${message['text'] ?? message['body'] ?? message['content'] ?? ''}`.trim();
+        const serialized = {
+            id: `${message['id'] ?? ''}`.trim(),
+            scope: 'personal',
+            type: 'chat_message',
+            title: senderName,
+            body: isImage ? 'Фото' : text || 'Новое сообщение',
+            is_read: false,
+            created_at: `${message['createdAt'] ?? new Date().toISOString()}`,
+            payload: {
+                actionType: 'chat_message',
+                chatId: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
+                messageId: `${message['id'] ?? ''}`,
+                senderId: `${message['senderId'] ?? message['sender_id'] ?? ''}`,
+            },
+            chat_id: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
+            chatId: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
+        };
+        await this.sendPushToUser(params.recipientId, serialized);
     }
     serializeNotification(item) {
         return this.serialize(item);
@@ -317,6 +417,68 @@ let NotificationsService = class NotificationsService {
     }
     sendPushPlaceholder() {
         return this.apnsService.sendPlaceholder();
+    }
+    async sendPushToAllUsers(notification) {
+        const devices = await this.prisma.userDevice.findMany({
+            where: {
+                isActive: true,
+                platform: client_1.DevicePlatform.IOS,
+            },
+            select: {
+                userId: true,
+                deviceToken: true,
+            },
+            take: 5000,
+        });
+        await this.sendPushToDevices(devices, notification);
+    }
+    async sendPushToUser(userId, notification) {
+        const normalizedUserId = userId.trim();
+        if (!normalizedUserId)
+            return;
+        const devices = await this.prisma.userDevice.findMany({
+            where: {
+                userId: normalizedUserId,
+                isActive: true,
+                platform: client_1.DevicePlatform.IOS,
+            },
+            select: {
+                userId: true,
+                deviceToken: true,
+            },
+        });
+        await this.sendPushToDevices(devices, notification);
+    }
+    async sendPushToDevices(devices, notification) {
+        const title = `${notification['title'] ?? ''}`.trim() || 'ATTA';
+        const body = `${notification['body'] ?? ''}`.trim() || 'Новое уведомление';
+        const payload = {
+            notification,
+            actionType: `${notification['payload']?.['actionType'] ?? ''}`.trim() ||
+                `${notification['type'] ?? ''}`.trim(),
+        };
+        await Promise.all(devices.map(async (device) => {
+            const result = await this.apnsService.send({
+                token: device.deviceToken,
+                title,
+                body,
+                payload,
+            });
+            if (!result.sent &&
+                (result.status === 400 || result.status === 410) &&
+                (result.reason === 'BadDeviceToken' ||
+                    result.reason === 'Unregistered' ||
+                    result.reason === 'DeviceTokenNotForTopic')) {
+                await this.prisma.userDevice.updateMany({
+                    where: {
+                        deviceToken: device.deviceToken,
+                    },
+                    data: {
+                        isActive: false,
+                    },
+                });
+            }
+        }));
     }
 };
 exports.NotificationsService = NotificationsService;

@@ -186,7 +186,8 @@ class ChatSocketService {
   final List<String> _debugHistory = <String>[];
   final Map<String, DateTime> _lastDebugLogAtByKey = <String, DateTime>{};
   final Map<String, int> _socketListenerCounts = <String, int>{};
-  final Map<String, bool> _lastPresenceOnlineByUser = <String, bool>{};
+  final Map<String, PresenceSnapshot> _lastPresenceByUser =
+      <String, PresenceSnapshot>{};
 
   static ChatSocketClient _defaultSocketFactory(
     String url,
@@ -211,6 +212,7 @@ class ChatSocketService {
   Stream<PresenceSnapshot> get presenceUpdates => _presence.stream;
   Stream<bool> get connectionChanges => _connected.stream;
   bool get isConnected => _socket?.connected == true;
+  bool get canSendPresenceHeartbeat => isConnected;
   bool get isConnecting => _connectCompleter != null || _connecting;
 
   static bool isExpectedSocketCloseError(Object error) {
@@ -588,7 +590,7 @@ class ChatSocketService {
 
   Future<void> resetSession() async {
     _joinedChats.clear();
-    _lastPresenceOnlineByUser.clear();
+    _lastPresenceByUser.clear();
     await disconnect();
   }
 
@@ -699,6 +701,9 @@ class ChatSocketService {
       _safeEmit('presence.ping');
       return;
     }
+    if (reason == 'presence.heartbeat') {
+      return;
+    }
     if (isConnecting || _disconnecting || _disconnectRequested || _disposed) {
       _logConnectSkip(
         reason: reason,
@@ -787,8 +792,10 @@ class ChatSocketService {
   bool _shouldEmitPresenceSnapshot(PresenceSnapshot snapshot) {
     final userId = snapshot.userId.trim();
     if (userId.isEmpty) return false;
-    final previous = _lastPresenceOnlineByUser[userId];
-    if (previous == snapshot.isOnline) {
+    final previous = _lastPresenceByUser[userId];
+    if (previous != null &&
+        previous.isOnline == snapshot.isOnline &&
+        _sameDateTime(previous.lastSeen, snapshot.lastSeen)) {
       _debugLogThrottled(
         key: 'presence-duplicate|$userId|${snapshot.isOnline}',
         message:
@@ -796,8 +803,13 @@ class ChatSocketService {
       );
       return false;
     }
-    _lastPresenceOnlineByUser[userId] = snapshot.isOnline;
+    _lastPresenceByUser[userId] = snapshot;
     return true;
+  }
+
+  bool _sameDateTime(DateTime? left, DateTime? right) {
+    if (left == null || right == null) return left == right;
+    return left.toUtc().isAtSameMomentAs(right.toUtc());
   }
 
   void _scheduleReconnect({
@@ -982,6 +994,9 @@ class ChatSocketService {
 
   @visibleForTesting
   int get heartbeatTimerStartCount => _heartbeatTimerStartCount;
+
+  @visibleForTesting
+  bool get hasHeartbeatTimer => _pingTimer != null;
 
   @visibleForTesting
   String? get pendingReconnectReason => _reconnectReason;

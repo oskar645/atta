@@ -27,9 +27,22 @@ __decorate([
     __metadata("design:type", String)
 ], CreateSupportTicketDto.prototype, "subject", void 0);
 __decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(1),
     (0, class_validator_1.MaxLength)(4000),
     __metadata("design:type", String)
 ], CreateSupportTicketDto.prototype, "text", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], CreateSupportTicketDto.prototype, "image_url", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], CreateSupportTicketDto.prototype, "imageUrl", void 0);
 //# sourceMappingURL=create-support-ticket.dto.js.map

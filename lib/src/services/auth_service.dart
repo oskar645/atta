@@ -89,6 +89,10 @@ class AuthService {
   Future<AuthUser?> restoreSessionOnResume({bool force = false}) =>
       _backend.restoreSessionOnResume(force: force);
 
+  Future<void> markAppOpened() async {
+    await AuthApi(_apiClient).markAppOpened();
+  }
+
   Future<void> signInWithPhone({
     required String phone,
     required String password,

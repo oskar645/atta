@@ -38,7 +38,7 @@ void main() {
     );
   });
 
-  test('showcase home preparation rotates non-priority tail on refresh', () {
+  test('showcase home preparation rotates first two cards on refresh', () {
     final items = <ShowcaseItem>[
       _item(
         promotionId: 'promo-1',
@@ -73,18 +73,67 @@ void main() {
       rotationOffset: first.nextRotationOffset,
     );
 
+    expect(first.items.map((item) => item.listingId).toList(),
+        <String>['listing-1', 'listing-2', 'listing-3', 'listing-4']);
+    expect(second.items.map((item) => item.listingId).toList(),
+        <String>['listing-2', 'listing-3', 'listing-4', 'listing-1']);
     expect(
       first.items.take(2).map((item) => item.listingId).toList(),
-      <String>['listing-1', 'listing-2'],
-    );
-    expect(
-      second.items.take(2).map((item) => item.listingId).toList(),
-      <String>['listing-1', 'listing-2'],
-    );
-    expect(
-      first.items.skip(2).map((item) => item.listingId).toList(),
       isNot(
-          equals(second.items.skip(2).map((item) => item.listingId).toList())),
+          equals(second.items.take(2).map((item) => item.listingId).toList())),
+    );
+  });
+
+  test('showcase home preparation does not duplicate cards', () {
+    final prepared = ShowcaseService.prepareHomeShowcase(
+      <ShowcaseItem>[
+        _item(
+          promotionId: 'promo-1',
+          listingId: 'listing-1',
+          startsAt: DateTime(2026, 7, 8),
+        ),
+        _item(
+          promotionId: 'promo-2',
+          listingId: 'listing-2',
+          startsAt: DateTime(2026, 7, 7),
+        ),
+        _item(
+          promotionId: 'promo-3',
+          listingId: 'listing-1',
+          startsAt: DateTime(2026, 7, 6),
+        ),
+      ],
+      homeLoadCount: 1,
+      rotationOffset: 0,
+    );
+
+    final listingIds = prepared.items.map((item) => item.listingId).toList();
+    expect(listingIds, hasLength(2));
+    expect(listingIds.toSet(), hasLength(2));
+  });
+
+  test('showcase home preparation returns all items when there are few', () {
+    final prepared = ShowcaseService.prepareHomeShowcase(
+      <ShowcaseItem>[
+        _item(
+          promotionId: 'promo-1',
+          listingId: 'listing-1',
+          startsAt: DateTime(2026, 7, 8),
+        ),
+        _item(
+          promotionId: 'promo-2',
+          listingId: 'listing-2',
+          startsAt: DateTime(2026, 7, 7),
+        ),
+      ],
+      homeLoadCount: 3,
+      rotationOffset: 1,
+    );
+
+    expect(prepared.items, hasLength(2));
+    expect(
+      prepared.items.map((item) => item.listingId).toSet(),
+      <String>{'listing-1', 'listing-2'},
     );
   });
 }

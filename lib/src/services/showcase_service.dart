@@ -56,31 +56,17 @@ class ShowcaseService {
 
     deduplicated.sort(_compareShowcaseItemsByFreshness);
 
-    final pinnedCount = deduplicated.length >= 3 ? 2 : 1;
-    final pinned = deduplicated.take(pinnedCount).toList(growable: false);
-    final rotatable = deduplicated.skip(pinnedCount).toList(growable: false);
-
-    if (rotatable.isEmpty) {
-      return PreparedHomeShowcase(
-        items: deduplicated,
-        nextRotationOffset: rotationOffset,
-      );
-    }
-
     final nextRotationOffset = homeLoadCount > 0
-        ? (rotationOffset + 1) % rotatable.length
-        : rotationOffset % rotatable.length;
+        ? (rotationOffset + 1) % deduplicated.length
+        : rotationOffset % deduplicated.length;
 
     final rotated = <ShowcaseItem>[
-      ...rotatable.skip(nextRotationOffset),
-      ...rotatable.take(nextRotationOffset),
+      ...deduplicated.skip(nextRotationOffset),
+      ...deduplicated.take(nextRotationOffset),
     ];
 
     return PreparedHomeShowcase(
-      items: <ShowcaseItem>[
-        ...pinned,
-        ...rotated,
-      ],
+      items: rotated,
       nextRotationOffset: nextRotationOffset,
     );
   }

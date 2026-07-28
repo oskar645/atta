@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 
 import { AuthService } from './auth.service';
+import { AppVisitsService } from '../app-visits/app-visits.service';
 import { CurrentUser } from './current-user.decorator';
 import { LoginDto } from './dto/login.dto';
 import { LoginPhoneDto } from './dto/login-phone.dto';
@@ -25,6 +26,7 @@ import { RateLimitService } from '../rate-limit/rate-limit.service';
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly appVisitsService: AppVisitsService,
     private readonly rateLimitService: RateLimitService,
   ) {}
 
@@ -89,6 +91,12 @@ export class AuthController {
   @Get('me')
   getMe(@CurrentUser() authUser: AuthenticatedUser) {
     return this.authService.getMe(authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('app-open')
+  markAppOpened(@CurrentUser() authUser: AuthenticatedUser) {
+    return this.appVisitsService.markAppOpened(authUser.userId);
   }
 
   @Post('refresh')

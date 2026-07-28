@@ -25,12 +25,15 @@ type WalletTransactionRecord = {
   type: WalletTransactionType;
   amount: number;
   reason: WalletTransactionReason;
+  idempotencyKey?: string | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
 };
 
 function createService(initial?: {
   wallet?: Partial<WalletRecord>;
+  userCreatedAt?: Date;
+  now?: Date;
   transactions?: WalletTransactionRecord[];
   supportedReasons?: WalletTransactionReason[];
 }) {
@@ -41,6 +44,9 @@ function createService(initial?: {
     lastBonusAccrualAt: initial?.wallet?.lastBonusAccrualAt ?? null,
   };
   const transactions = [...(initial?.transactions ?? [])];
+  const userCreatedAt =
+    initial?.userCreatedAt ?? new Date('2026-07-26T12:00:00.000Z');
+  const now = initial?.now ?? new Date('2026-07-27T09:00:00.000Z');
   const supportedReasons = new Set<WalletTransactionReason>(
     initial?.supportedReasons ?? Object.values(WalletTransactionReason),
   );
@@ -77,6 +83,12 @@ function createService(initial?: {
         return { ...wallet };
       },
     },
+    user: {
+      findUniqueOrThrow: async () => ({
+        id: wallet.userId,
+        createdAt: userCreatedAt,
+      }),
+    },
     walletTransaction: {
       findFirst: async ({
         where,
@@ -84,14 +96,20 @@ function createService(initial?: {
       }: {
         where: {
           userId: string;
-          reason: WalletTransactionReason;
+          reason:
+            | WalletTransactionReason
+            | { in: WalletTransactionReason[] };
         };
         select?: Record<string, boolean>;
       }) => {
+        const reasons =
+          typeof where.reason === 'object' && 'in' in where.reason
+            ? where.reason.in
+            : [where.reason];
         const found = [...transactions]
             .filter(
               (item) =>
-                item.userId === where.userId && item.reason === where.reason,
+                item.userId === where.userId && reasons.includes(item.reason),
             )
             .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0] ??
           null;
@@ -101,6 +119,14 @@ function createService(initial?: {
           Object.keys(select).map((key) => [key, found[key as keyof WalletTransactionRecord]]),
         );
       },
+      findUnique: async ({
+        where,
+      }: {
+        where: { idempotencyKey: string };
+      }) =>
+        transactions.find(
+          (item) => item.idempotencyKey === where.idempotencyKey,
+        ) ?? null,
       findMany: async ({
         where,
         take,
@@ -172,7 +198,7 @@ function createService(initial?: {
   };
 
   return {
-    service: new WalletService(prisma as never),
+    service: new WalletService(prisma as never, () => now),
     state: {
       wallet,
       transactions,
@@ -180,22 +206,44 @@ function createService(initial?: {
   };
 }
 
-test('welcome bonus 200 is granted on first wallet bootstrap', async () => {
+test('signup bonus 500 is granted once on first wallet bootstrap', async () => {
   const { service } = createService();
 
   const wallet = await service.ensureWalletAndBonuses('user-1');
+  const secondWallet = await service.ensureWalletAndBonuses('user-1');
 
-  assert.equal(wallet.bonusBalance, 225);
+  assert.equal(wallet.bonusBalance, 500);
+  assert.equal(secondWallet.bonusBalance, 500);
 });
 
 test('daily bonus is granted only once per day', async () => {
   const { service } = createService();
 
-  const firstWallet = await service.ensureWalletAndBonuses('user-1');
+  await service.ensureWalletAndBonuses('user-1');
+  const firstWallet = await service.checkAndAccrueDailyBonus('user-1');
   const secondWallet = await service.checkAndAccrueDailyBonus('user-1');
 
-  assert.equal(firstWallet.bonusBalance, 225);
-  assert.equal(secondWallet.bonusBalance, 225);
+  assert.equal(firstWallet.bonusBalance, 525);
+  assert.equal(secondWallet.bonusBalance, 525);
+});
+
+test('daily bonus is skipped on registration calendar day', async () => {
+  const { service } = createService({
+    userCreatedAt: new Date('2026-07-27T06:00:00.000Z'),
+    now: new Date('2026-07-27T20:50:00.000Z'),
+  });
+
+  await service.ensureWalletAndBonuses('user-1');
+  const response = await service.checkAccrual({
+    userId: 'user-1',
+    sessionId: 'session-1',
+    role: 'user',
+  });
+
+  assert.equal(response.awarded, false);
+  assert.equal(response.amount, 0);
+  assert.equal(response.reason, 'registration_day');
+  assert.equal(response.wallet.balance, 500);
 });
 
 test('skipped day does not accrue retroactively', async () => {
@@ -224,16 +272,60 @@ test('skipped day does not accrue retroactively', async () => {
   assert.equal(wallet.bonusBalance, 275);
 });
 
-test('daily bonus respects max balance cap', async () => {
+test('daily bonus does not respect old max balance cap', async () => {
   const { service } = createService({
     wallet: {
       bonusBalance: 990,
     },
+    transactions: [
+      {
+        id: 'tx-1',
+        userId: 'user-1',
+        walletId: 'wallet-1',
+        type: WalletTransactionType.ACCRUAL,
+        amount: 500,
+        reason: WalletTransactionReason.SIGNUP_BONUS,
+        idempotencyKey: 'signup_bonus:user-1',
+        metadata: { source: 'signup_bonus' },
+        createdAt: new Date('2026-07-26T12:00:00.000Z'),
+      },
+    ],
   });
 
-  const wallet = await service.ensureWalletAndBonuses('user-1');
+  const wallet = await service.checkAndAccrueDailyBonus('user-1');
 
-  assert.equal(wallet.bonusBalance, 1000);
+  assert.equal(wallet.bonusBalance, 1015);
+});
+
+test('daily bonus credits balances at 1000, 5000 and 1000000', async () => {
+  for (const [balance, expected] of [
+    [1000, 1025],
+    [5000, 5025],
+    [1000000, 1000025],
+  ] as const) {
+    const { service } = createService({
+      wallet: {
+        bonusBalance: balance,
+      },
+      transactions: [
+        {
+          id: 'tx-1',
+          userId: 'user-1',
+          walletId: 'wallet-1',
+          type: WalletTransactionType.ACCRUAL,
+          amount: 500,
+          reason: WalletTransactionReason.SIGNUP_BONUS,
+          idempotencyKey: 'signup_bonus:user-1',
+          metadata: { source: 'signup_bonus' },
+          createdAt: new Date('2026-07-26T12:00:00.000Z'),
+        },
+      ],
+    });
+
+    const wallet = await service.checkAndAccrueDailyBonus('user-1');
+
+    assert.equal(wallet.bonusBalance, expected);
+  }
 });
 
 test('concurrent accrual does not double credit and stores daily_login_bonus reason', async () => {
@@ -317,7 +409,7 @@ test('getWallet returns wallet payload for authorized user without throwing', as
     role: 'user',
   });
 
-  assert.equal(response.balance, 225);
+  assert.equal(response.balance, 500);
   assert.equal(response.dailyBonusAmount, 25);
 });
 
@@ -330,7 +422,9 @@ test('checkAccrual returns wallet envelope without throwing', async () => {
     role: 'user',
   });
 
-  assert.equal(response.wallet.balance, 225);
+  assert.equal(response.awarded, true);
+  assert.equal(response.amount, 25);
+  assert.equal(response.wallet.balance, 525);
 });
 
 test('resolveSpendReason keeps promotion reason when enum value exists in database', async () => {
@@ -347,6 +441,7 @@ test('resolveSpendReason falls back when promotion enum value is missing in data
   const { service } = createService({
     supportedReasons: [
       WalletTransactionReason.WELCOME_BONUS,
+      WalletTransactionReason.SIGNUP_BONUS,
       WalletTransactionReason.RECURRING_BONUS,
       WalletTransactionReason.DAILY_LOGIN_BONUS,
       WalletTransactionReason.REFUND,

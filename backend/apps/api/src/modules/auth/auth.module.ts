@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 
 import { env } from '../../config/env';
+import { AppVisitsModule } from '../app-visits/app-visits.module';
 import { StorageModule } from '../storage/storage.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { AdminGuard } from './admin.guard';
@@ -12,6 +13,7 @@ import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 
 @Module({
   imports: [
+    AppVisitsModule,
     StorageModule,
     WalletModule,
     JwtModule.register({

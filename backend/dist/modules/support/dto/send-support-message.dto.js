@@ -15,9 +15,22 @@ class SendSupportMessageDto {
 }
 exports.SendSupportMessageDto = SendSupportMessageDto;
 __decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.MinLength)(1),
     (0, class_validator_1.MaxLength)(4000),
     __metadata("design:type", String)
 ], SendSupportMessageDto.prototype, "text", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], SendSupportMessageDto.prototype, "image_url", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(2000),
+    __metadata("design:type", String)
+], SendSupportMessageDto.prototype, "imageUrl", void 0);
 //# sourceMappingURL=send-support-message.dto.js.map

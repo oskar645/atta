@@ -68,7 +68,7 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === 'true'),
   ADMIN_PHONE_NUMBERS: z.string().optional().default(''),
-  WALLET_MAX_BONUS_BALANCE: z.coerce.number().int().positive().default(1000),
+  WALLET_TIME_ZONE: z.string().min(1).default('Europe/Moscow'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

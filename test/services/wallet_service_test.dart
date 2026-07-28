@@ -6,16 +6,11 @@ import 'package:atta/src/services/api/wallet_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-  });
-
-  test('wallet accrue check runs at most once per day across restarts',
+  test('wallet accrue check runs at most once per active session',
       () async {
     final firstApi = _FakeWalletApi();
     final firstService = WalletService(api: firstApi);
@@ -32,8 +27,8 @@ void main() {
 
     await secondService.maybeCheckAccrualOncePerSession();
 
-    expect(secondApi.checkAccrualCalls, 0);
-    expect(secondApi.getWalletCalls, 1);
+    expect(secondApi.checkAccrualCalls, 1);
+    expect(secondApi.getWalletCalls, 0);
   });
 
   test('wallet refresh uses single-flight', () async {
@@ -94,25 +89,15 @@ void main() {
     expect(service.cachedWallet?.balance, 111);
   });
 
-  test('maybeCheckAccrualOncePerSession fetches wallet when today check exists',
-      () async {
+  test('local phone date is not used to skip daily check-in', () async {
     final api = _FakeWalletApi();
     final service = WalletService(api: api);
     service.activateSession('user-1');
 
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now().toUtc();
-    final month = now.month.toString().padLeft(2, '0');
-    final day = now.day.toString().padLeft(2, '0');
-    await prefs.setString(
-      'wallet_last_accrual_check_day:user-1',
-      '${now.year}-$month-$day',
-    );
-
     final wallet = await service.maybeCheckAccrualOncePerSession();
 
-    expect(api.checkAccrualCalls, 0);
-    expect(api.getWalletCalls, 1);
+    expect(api.checkAccrualCalls, 1);
+    expect(api.getWalletCalls, 0);
     expect(wallet?.balance, 10);
   });
 }
@@ -120,8 +105,8 @@ void main() {
 Map<String, dynamic> _walletMap({required int balance}) {
   return <String, dynamic>{
     'balance': balance,
-    'max_balance': 1000,
-    'welcome_bonus': 200,
+    'max_balance': null,
+    'welcome_bonus': 500,
     'daily_bonus_amount': 25,
     'can_claim_daily_bonus': false,
     'days_until_next_accrual': 0,

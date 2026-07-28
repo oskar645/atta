@@ -188,6 +188,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   bool _consumePendingListingAfterAuth = false;
   String? _lastOpenedListingId;
   DateTime? _lastOpenedListingAt;
+  DateTime? _lastAppOpenMarkedAt;
   late final AuthService _auth;
   late final AppBadgeService _badge;
   late final ChatSocketService _socket;
@@ -246,6 +247,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
             NetworkRecoveryService();
     _setOnline(true);
     _syncBadge();
+    _runSoftStartupTask(_markAppOpened);
     _authSub = _auth.onAuthStateChange.listen((_) async {
       final uid = _auth.currentUser?.uid;
       final didChangeUser = _activeUid != null && _activeUid != uid;
@@ -291,6 +293,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         _admin.resetSession();
       }
       _support.activateAdminSession(isAdmin: isAdminUser);
+      _runSoftStartupTask(_markAppOpened);
       _runSoftStartupTask(() => _listingHistory.activateSession());
       _runSoftStartupTask(() => _setOnline(true));
       _runSoftStartupTask(_syncBadge);
@@ -516,6 +519,20 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     await _presence.setOnline(uid: uid, isOnline: online);
   }
 
+  Future<void> _markAppOpened() async {
+    if (_auth.currentUser == null) {
+      return;
+    }
+    final now = DateTime.now();
+    final lastMarkedAt = _lastAppOpenMarkedAt;
+    if (lastMarkedAt != null &&
+        now.difference(lastMarkedAt) < const Duration(minutes: 5)) {
+      return;
+    }
+    _lastAppOpenMarkedAt = now;
+    await _auth.markAppOpened();
+  }
+
   Future<void> _syncBadge() async {
     final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) {
@@ -558,6 +575,13 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     );
     _runSoftStartupTask(() async {
       await _walletService.maybeCheckAccrualOncePerSession();
+      final context = attaNavigatorKey.currentContext;
+      if (_walletService.lastAccrualAwarded &&
+          mounted &&
+          context != null &&
+          context.mounted) {
+        showAppSnack(context, 'Ежедневный бонус: +25');
+      }
     });
   }
 
@@ -606,6 +630,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         _admin.bindAdminUser(uid);
         _runSoftStartupTask(() => _admin.refreshAdminAttention(force: true));
       }
+      _runSoftStartupTask(_markAppOpened);
       _runSoftStartupTask(_syncBadge);
     }();
     _resumeSyncInFlight = future;

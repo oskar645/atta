@@ -233,8 +233,6 @@ class _WalletScreenState extends State<WalletScreen>
                       const Text(
                         'Приглашение друга: получите 100 бонусов, когда приглашённый пользователь зарегистрируется в ATTA.',
                       ),
-                      const SizedBox(height: 4),
-                      Text('Максимум: ${bundle.wallet.maxBalance} бонусов'),
                       if (bundle.wallet.lastDailyBonusAt != null) ...[
                         const SizedBox(height: 4),
                         Text(
@@ -427,6 +425,7 @@ String _transactionTitle(WalletTransaction transaction) {
     return customTitle;
   }
   switch (transaction.reason) {
+    case 'signup_bonus':
     case 'welcome_bonus':
       return 'Начислено ${transaction.amount} бонусов';
     case 'recurring_bonus':

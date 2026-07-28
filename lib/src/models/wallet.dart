@@ -38,10 +38,10 @@ class Wallet {
       maxBalance: (map['maxBalance'] ?? map['max_balance'] ?? 0) is num
           ? ((map['maxBalance'] ?? map['max_balance'] ?? 0) as num).toInt()
           : 0,
-      welcomeBonus: (map['welcomeBonus'] ?? map['welcome_bonus'] ?? 100) is num
-          ? ((map['welcomeBonus'] ?? map['welcome_bonus'] ?? 100) as num)
+      welcomeBonus: (map['welcomeBonus'] ?? map['welcome_bonus'] ?? 500) is num
+          ? ((map['welcomeBonus'] ?? map['welcome_bonus'] ?? 500) as num)
               .toInt()
-          : 100,
+          : 500,
       dailyBonusAmount:
           (map['dailyBonusAmount'] ?? map['daily_bonus_amount'] ?? 25) is num
               ? ((map['dailyBonusAmount'] ?? map['daily_bonus_amount'] ?? 25)

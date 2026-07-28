@@ -17,6 +17,7 @@ class MediaPreviewBox extends StatelessWidget {
     this.placeholderLabel,
     this.icon = Icons.image_outlined,
     this.errorIcon = Icons.broken_image_outlined,
+    @visibleForTesting this.debugImageProvider,
   });
 
   final String imageUrl;
@@ -30,6 +31,7 @@ class MediaPreviewBox extends StatelessWidget {
   final String? placeholderLabel;
   final IconData icon;
   final IconData errorIcon;
+  final ImageProvider? debugImageProvider;
 
   @override
   Widget build(BuildContext context) {
@@ -63,24 +65,42 @@ class MediaPreviewBox extends StatelessWidget {
       return _fallback(context, emptyLabel, icon);
     }
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    return SizedBox.expand(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        ),
+        child: debugImageProvider != null
+            ? _coverImage(debugImageProvider!)
+            : CachedNetworkImage(
+                imageUrl: resolvedUrl,
+                imageBuilder: (_, imageProvider) => _coverImage(imageProvider),
+                fit: BoxFit.cover,
+                alignment: Alignment.center,
+                placeholder: (_, __) => _fallback(
+                  context,
+                  placeholderLabel ?? 'Загрузка фото...',
+                  icon,
+                ),
+                errorWidget: (_, __, ___) {
+                  if (kDebugMode) {
+                    debugPrint(
+                      'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
+                    );
+                  }
+                  return _fallback(context, errorLabel, errorIcon);
+                },
+              ),
       ),
-      child: CachedNetworkImage(
-        imageUrl: resolvedUrl,
+    );
+  }
+
+  Widget _coverImage(ImageProvider imageProvider) {
+    return SizedBox.expand(
+      child: Image(
+        image: imageProvider,
         fit: BoxFit.cover,
         alignment: Alignment.center,
-        placeholder: (_, __) =>
-            _fallback(context, placeholderLabel ?? 'Загрузка фото...', icon),
-        errorWidget: (_, __, ___) {
-          if (kDebugMode) {
-            debugPrint(
-              'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
-            );
-          }
-          return _fallback(context, errorLabel, errorIcon);
-        },
       ),
     );
   }

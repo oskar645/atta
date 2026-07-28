@@ -10,6 +10,7 @@ exports.WalletModule = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const env_1 = require("../../config/env");
+const wallet_constants_1 = require("./wallet.constants");
 const wallet_controller_1 = require("./wallet.controller");
 const wallet_service_1 = require("./wallet.service");
 let WalletModule = class WalletModule {
@@ -23,7 +24,13 @@ exports.WalletModule = WalletModule = __decorate([
             }),
         ],
         controllers: [wallet_controller_1.WalletController],
-        providers: [wallet_service_1.WalletService],
+        providers: [
+            {
+                provide: wallet_constants_1.WALLET_NOW_PROVIDER,
+                useValue: () => new Date(),
+            },
+            wallet_service_1.WalletService,
+        ],
         exports: [wallet_service_1.WalletService, jwt_1.JwtModule],
     })
 ], WalletModule);

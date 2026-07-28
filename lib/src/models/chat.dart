@@ -12,6 +12,10 @@ class Chat {
   final String sellerName;
   final String buyerAvatar;
   final String sellerAvatar;
+  final bool buyerIsOnline;
+  final bool sellerIsOnline;
+  final DateTime? buyerLastSeenAt;
+  final DateTime? sellerLastSeenAt;
 
   final String lastMessage;
   final DateTime? lastMessageAt;
@@ -33,6 +37,10 @@ class Chat {
     this.sellerName = '',
     this.buyerAvatar = '',
     this.sellerAvatar = '',
+    this.buyerIsOnline = false,
+    this.sellerIsOnline = false,
+    this.buyerLastSeenAt,
+    this.sellerLastSeenAt,
     required this.lastMessage,
     required this.lastMessageAt,
     required this.createdAt,
@@ -62,6 +70,16 @@ class Chat {
   String otherUserAvatar(String myUid) {
     if (myUid == buyerId) return sellerAvatar;
     return buyerAvatar;
+  }
+
+  bool otherUserIsOnline(String myUid) {
+    if (myUid == buyerId) return sellerIsOnline;
+    return buyerIsOnline;
+  }
+
+  DateTime? otherUserLastSeenAt(String myUid) {
+    if (myUid == buyerId) return sellerLastSeenAt;
+    return buyerLastSeenAt;
   }
 
   static DateTime _parseDt(dynamic v) {
@@ -173,6 +191,22 @@ class Chat {
               row['seller_avatar'] ??
               '')
           .toString(),
+      buyerIsOnline:
+          buyerPreview['isOnline'] == true || buyerPreview['is_online'] == true,
+      sellerIsOnline: sellerPreview['isOnline'] == true ||
+          sellerPreview['is_online'] == true,
+      buyerLastSeenAt: _parseNullableDt(
+        buyerPreview['lastSeen'] ??
+            buyerPreview['last_seen'] ??
+            buyerPreview['lastSeenAt'] ??
+            buyerPreview['last_seen_at'],
+      ),
+      sellerLastSeenAt: _parseNullableDt(
+        sellerPreview['lastSeen'] ??
+            sellerPreview['last_seen'] ??
+            sellerPreview['lastSeenAt'] ??
+            sellerPreview['last_seen_at'],
+      ),
       lastMessage: (row['last_message'] ?? row['lastMessage'] ?? '').toString(),
       lastMessageAt:
           _parseNullableDt(row['last_message_at'] ?? row['lastMessageAt']),
@@ -200,11 +234,15 @@ class Chat {
         'id': buyerId,
         'display_name': buyerName,
         'avatar_url': buyerAvatar,
+        'isOnline': buyerIsOnline,
+        'lastSeen': buyerLastSeenAt?.toUtc().toIso8601String(),
       },
       'seller_preview': {
         'id': sellerId,
         'display_name': sellerName,
         'avatar_url': sellerAvatar,
+        'isOnline': sellerIsOnline,
+        'lastSeen': sellerLastSeenAt?.toUtc().toIso8601String(),
       },
       'last_message': lastMessage,
       'last_message_at': lastMessageAt?.toUtc().toIso8601String(),

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   HttpException,
+  Inject,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -16,12 +17,23 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   WALLET_DAILY_BONUS_AMOUNT,
-  WALLET_MAX_BALANCE,
+  WALLET_NOW_PROVIDER,
+  WALLET_TIME_ZONE,
   WALLET_WELCOME_BONUS,
 } from './wallet.constants';
 
 type PrismaLike = PrismaService | Prisma.TransactionClient;
+type WalletNowProvider = () => Date;
 const DAILY_LOGIN_BONUS_REASON = WalletTransactionReason.DAILY_LOGIN_BONUS;
+const SIGNUP_BONUS_REASON = WalletTransactionReason.SIGNUP_BONUS;
+type DailyBonusResult = {
+  wallet: Wallet;
+  awarded: boolean;
+  amount: number;
+  claimedDate: string;
+  alreadyClaimed?: boolean;
+  reason?: 'registration_day';
+};
 
 const reasonToResponse = (reason: WalletTransactionReason) =>
   reason.toLowerCase();
@@ -34,11 +46,15 @@ export class WalletService {
   private readonly walletReasonSupportCache =
     new Map<WalletTransactionReason, boolean>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(WALLET_NOW_PROVIDER)
+    private readonly nowProvider: WalletNowProvider = () => new Date(),
+  ) {}
 
   async getWallet(authUser: AuthenticatedUser) {
     try {
-      await this.ensureWalletAndBonuses(authUser.userId);
+      await this.ensureWalletAndSignupBonus(authUser.userId);
       const wallet = await this.findWalletOrThrow(authUser.userId);
       const transactionsPreview = await this.listTransactions(authUser.userId, 5);
 
@@ -50,7 +66,7 @@ export class WalletService {
 
   async getTransactions(authUser: AuthenticatedUser) {
     try {
-      await this.ensureWalletAndBonuses(authUser.userId);
+      await this.ensureWalletAndSignupBonus(authUser.userId);
       const wallet = await this.findWalletOrThrow(authUser.userId);
       const transactions = await this.listTransactions(authUser.userId);
 
@@ -65,9 +81,16 @@ export class WalletService {
 
   async checkAccrual(authUser: AuthenticatedUser) {
     try {
-      const wallet = await this.ensureWalletAndBonuses(authUser.userId);
+      await this.ensureWalletAndSignupBonus(authUser.userId);
+      const result = await this.checkDailyBonus(authUser.userId);
       return {
-        wallet: await this.buildWalletResponse(authUser.userId, wallet),
+        awarded: result.awarded,
+        amount: result.amount,
+        balance: result.wallet.bonusBalance,
+        alreadyClaimed: result.alreadyClaimed ?? false,
+        reason: result.reason,
+        claimedDate: result.claimedDate,
+        wallet: await this.buildWalletResponse(authUser.userId, result.wallet),
       };
     } catch (error) {
       throw this.wrapWalletError(error);
@@ -95,7 +118,9 @@ export class WalletService {
       const existing = await tx.walletTransaction.findFirst({
         where: {
           userId,
-          reason: WalletTransactionReason.WELCOME_BONUS,
+          reason: {
+            in: [SIGNUP_BONUS_REASON, WalletTransactionReason.WELCOME_BONUS],
+          },
         },
         select: {
           id: true,
@@ -110,19 +135,31 @@ export class WalletService {
         });
       }
 
-      const nextBalance = Math.min(
-        WALLET_MAX_BALANCE,
-        wallet.bonusBalance + WALLET_WELCOME_BONUS,
-      );
-      const accruedAmount = nextBalance - wallet.bonusBalance;
-      const accrualAt = new Date();
+      const idempotencyKey = `signup_bonus:${userId}`;
+      const existingByKey = await tx.walletTransaction.findUnique({
+        where: {
+          idempotencyKey,
+        },
+        select: {
+          id: true,
+        },
+      });
+      if (existingByKey) {
+        return tx.wallet.findUniqueOrThrow({
+          where: {
+            userId,
+          },
+        });
+      }
 
       const updatedWallet = await tx.wallet.update({
         where: {
           id: wallet.id,
         },
         data: {
-          bonusBalance: nextBalance,
+          bonusBalance: {
+            increment: WALLET_WELCOME_BONUS,
+          },
         },
       });
 
@@ -131,11 +168,12 @@ export class WalletService {
           userId,
           walletId: wallet.id,
           type: WalletTransactionType.ACCRUAL,
-          amount: accruedAmount,
-          reason: WalletTransactionReason.WELCOME_BONUS,
+          amount: WALLET_WELCOME_BONUS,
+          reason: SIGNUP_BONUS_REASON,
+          idempotencyKey,
           metadata: this.buildTransactionMetadata({
             description: 'Бонус за регистрацию',
-            source: 'welcome_bonus',
+            source: 'signup_bonus',
           }),
         },
       });
@@ -145,19 +183,63 @@ export class WalletService {
   }
 
   async checkAndAccrueDailyBonus(userId: string) {
-    return this.runInTransaction(async (tx) => {
+    const result = await this.checkDailyBonus(userId);
+    return result.wallet;
+  }
+
+  private async checkDailyBonus(userId: string): Promise<DailyBonusResult> {
+    const now = this.nowProvider();
+    const claimDate = this.getZonedDateStamp(now);
+    try {
+      return await this.runInTransaction(async (tx) => {
       const wallet = await this.ensureWalletForUser(userId, tx);
       await this.lockWalletRow(tx, userId);
 
-      const now = new Date();
-      const dayWindow = this.getUtcDayWindow(now);
-      const latestDailyBonus = await tx.walletTransaction.findFirst({
+      const user = await tx.user.findUniqueOrThrow({
         where: {
-          userId,
-          reason: DAILY_LOGIN_BONUS_REASON,
+          id: userId,
         },
-        orderBy: {
-          createdAt: 'desc',
+        select: {
+          createdAt: true,
+        },
+      });
+      if (this.getZonedDateStamp(user.createdAt) === claimDate) {
+        const currentWallet = await tx.wallet.findUniqueOrThrow({
+          where: {
+            userId,
+          },
+        });
+        return {
+          wallet: currentWallet,
+          awarded: false,
+          amount: 0,
+          reason: 'registration_day',
+          claimedDate: claimDate,
+        };
+      }
+
+      const idempotencyKey = `daily_login_bonus:${userId}:${claimDate}`;
+      if (
+        wallet.lastBonusAccrualAt != null &&
+        this.getZonedDateStamp(wallet.lastBonusAccrualAt) === claimDate
+      ) {
+        const currentWallet = await tx.wallet.findUniqueOrThrow({
+          where: {
+            userId,
+          },
+        });
+        return {
+          wallet: currentWallet,
+          awarded: false,
+          amount: 0,
+          alreadyClaimed: true,
+          claimedDate: claimDate,
+        };
+      }
+
+      const existingDailyBonus = await tx.walletTransaction.findUnique({
+        where: {
+          idempotencyKey,
         },
         select: {
           id: true,
@@ -165,37 +247,19 @@ export class WalletService {
         },
       });
 
-      if (
-        latestDailyBonus &&
-        latestDailyBonus.createdAt >= dayWindow.start &&
-        latestDailyBonus.createdAt < dayWindow.end
-      ) {
-        return tx.wallet.findUniqueOrThrow({
+      if (existingDailyBonus) {
+        const currentWallet = await tx.wallet.findUniqueOrThrow({
           where: {
             userId,
           },
         });
-      }
-
-      if (wallet.bonusBalance >= WALLET_MAX_BALANCE) {
-        return tx.wallet.findUniqueOrThrow({
-          where: {
-            userId,
-          },
-        });
-      }
-
-      const nextBalance = Math.min(
-        WALLET_MAX_BALANCE,
-        wallet.bonusBalance + WALLET_DAILY_BONUS_AMOUNT,
-      );
-      const accruedAmount = nextBalance - wallet.bonusBalance;
-      if (accruedAmount <= 0) {
-        return tx.wallet.findUniqueOrThrow({
-          where: {
-            userId,
-          },
-        });
+        return {
+          wallet: currentWallet,
+          awarded: false,
+          amount: 0,
+          alreadyClaimed: true,
+          claimedDate: claimDate,
+        };
       }
 
       const accrualAt = now;
@@ -204,7 +268,9 @@ export class WalletService {
           id: wallet.id,
         },
         data: {
-          bonusBalance: nextBalance,
+          bonusBalance: {
+            increment: WALLET_DAILY_BONUS_AMOUNT,
+          },
           lastBonusAccrualAt: accrualAt,
         },
       });
@@ -214,14 +280,33 @@ export class WalletService {
           userId,
           walletId: wallet.id,
           type: WalletTransactionType.ACCRUAL,
-          amount: accruedAmount,
+          amount: WALLET_DAILY_BONUS_AMOUNT,
           reason: DAILY_LOGIN_BONUS_REASON,
+          idempotencyKey,
           metadata: this.buildTransactionMetadata(),
         },
       });
 
-      return updatedWallet;
-    });
+      return {
+        wallet: updatedWallet,
+        awarded: true,
+        amount: WALLET_DAILY_BONUS_AMOUNT,
+        claimedDate: claimDate,
+      };
+      });
+    } catch (error) {
+      if (!this.isUniqueConstraintError(error)) {
+        throw error;
+      }
+      const wallet = await this.findWalletOrThrow(userId);
+      return {
+        wallet,
+        awarded: false,
+        amount: 0,
+        alreadyClaimed: true,
+        claimedDate: claimDate,
+      };
+    }
   }
 
   async spendBonus(
@@ -230,6 +315,7 @@ export class WalletService {
     reason: WalletTransactionReason,
     metadata?: Prisma.InputJsonValue,
     tx?: Prisma.TransactionClient,
+    idempotencyKey?: string,
   ) {
     if (amount <= 0) {
       throw new BadRequestException('Bonus amount must be positive');
@@ -238,6 +324,24 @@ export class WalletService {
     return this.runInTransaction(async (transaction) => {
       const wallet = await this.ensureWalletForUser(userId, transaction);
       await this.lockWalletRow(transaction, userId);
+      if (idempotencyKey) {
+        const existingTransaction = await transaction.walletTransaction.findUnique({
+          where: {
+            idempotencyKey,
+          },
+          select: {
+            id: true,
+          },
+        });
+        if (existingTransaction) {
+          return transaction.wallet.findUniqueOrThrow({
+            where: {
+              userId,
+            },
+          });
+        }
+      }
+
       const currentWallet = await transaction.wallet.findUniqueOrThrow({
         where: {
           userId,
@@ -266,6 +370,7 @@ export class WalletService {
           type: WalletTransactionType.SPEND,
           amount,
           reason,
+          idempotencyKey,
           metadata: this.buildTransactionMetadata(metadata),
         },
       });
@@ -315,18 +420,14 @@ export class WalletService {
           userId,
         },
       });
-      const nextBalance = Math.min(
-        WALLET_MAX_BALANCE,
-        currentWallet.bonusBalance + amount,
-      );
-      const refundAmount = nextBalance - currentWallet.bonusBalance;
-
       const updatedWallet = await transaction.wallet.update({
         where: {
           id: wallet.id,
         },
         data: {
-          bonusBalance: nextBalance,
+          bonusBalance: {
+            increment: amount,
+          },
         },
       });
 
@@ -335,7 +436,7 @@ export class WalletService {
           userId,
           walletId: wallet.id,
           type: WalletTransactionType.REFUND,
-          amount: refundAmount,
+          amount,
           reason,
           metadata: this.buildTransactionMetadata(metadata),
         },
@@ -441,9 +542,12 @@ export class WalletService {
   }
 
   async ensureWalletAndBonuses(userId: string) {
+    return this.ensureWalletAndSignupBonus(userId);
+  }
+
+  async ensureWalletAndSignupBonus(userId: string) {
     await this.ensureWalletForUser(userId);
-    await this.accrueWelcomeBonusIfNeeded(userId);
-    return this.checkAndAccrueDailyBonus(userId);
+    return this.accrueWelcomeBonusIfNeeded(userId);
   }
 
   async ensureWalletAndBonusesSafely(userId: string) {
@@ -459,25 +563,27 @@ export class WalletService {
     wallet: Wallet,
     transactionsPreview?: Awaited<ReturnType<WalletService['listTransactions']>>,
   ) {
-    const now = new Date();
-    const dayWindow = this.getUtcDayWindow(now);
+    const now = this.nowProvider();
+    const claimDate = this.getZonedDateStamp(now);
     const lastDailyBonusAt = wallet.lastBonusAccrualAt;
     const claimedToday =
       lastDailyBonusAt != null &&
-      lastDailyBonusAt >= dayWindow.start &&
-      lastDailyBonusAt < dayWindow.end;
-    const canClaimDailyBonus =
-      wallet.bonusBalance < WALLET_MAX_BALANCE && !claimedToday;
-    const nextDailyBonusAt = canClaimDailyBonus ? now : dayWindow.end;
+      this.getZonedDateStamp(lastDailyBonusAt) === claimDate;
+    const canClaimDailyBonus = !claimedToday;
+    const nextDailyBonusAt = canClaimDailyBonus
+      ? now
+      : this.getNextZonedMidnight(now);
     const preview =
       transactionsPreview ?? (await this.listTransactions(userId, 5));
 
     return {
       balance: wallet.bonusBalance,
-      maxBalance: WALLET_MAX_BALANCE,
+      maxBalance: null,
       welcomeBonus: WALLET_WELCOME_BONUS,
       dailyBonusAmount: WALLET_DAILY_BONUS_AMOUNT,
       lastDailyBonusAt: lastDailyBonusAt?.toISOString() ?? null,
+      claimedDate: claimDate,
+      timeZone: WALLET_TIME_ZONE,
       canClaimDailyBonus,
       nextDailyBonusAt: nextDailyBonusAt.toISOString(),
       lastBonusAccrualAt: lastDailyBonusAt?.toISOString() ?? null,
@@ -598,6 +704,7 @@ export class WalletService {
     type: WalletTransactionType;
     amount: number;
     reason: WalletTransactionReason;
+    idempotencyKey?: string | null;
     metadata: Prisma.JsonValue;
     createdAt: Date;
   }) {
@@ -608,17 +715,45 @@ export class WalletService {
       type: typeToResponse(transaction.type),
       amount: transaction.amount,
       reason: reasonToResponse(transaction.reason),
+      idempotency_key: transaction.idempotencyKey ?? null,
       metadata: transaction.metadata,
       created_at: transaction.createdAt.toISOString(),
     };
   }
 
-  private getUtcDayWindow(date: Date) {
-    const start = new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  private getZonedDateStamp(date: Date) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: WALLET_TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const values = Object.fromEntries(
+      parts
+        .filter((part) => part.type !== 'literal')
+        .map((part) => [part.type, part.value]),
     );
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-    return { start, end };
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  private getNextZonedMidnight(date: Date) {
+    const [year, month, day] = this.getZonedDateStamp(date)
+      .split('-')
+      .map((value) => Number(value));
+    const nextUtcApproximation = new Date(
+      Date.UTC(year, month - 1, day + 1, 0, 0, 0),
+    );
+    if (WALLET_TIME_ZONE === 'Europe/Moscow') {
+      return new Date(nextUtcApproximation.getTime() - 3 * 60 * 60 * 1000);
+    }
+    return nextUtcApproximation;
+  }
+
+  private isUniqueConstraintError(error: unknown) {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    );
   }
 
   private wrapWalletError(error: unknown) {

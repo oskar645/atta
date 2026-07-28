@@ -62,7 +62,11 @@ export class PromotionsController {
         windowMs: 60 * 60 * 1000,
       },
     );
-    return this.promotionsService.promoteListing(listingId, authUser, dto.type);
+    return this.promotionsService.promoteListing(listingId, authUser, {
+      type: dto.type,
+      days: dto.days,
+      idempotencyKey: dto.idempotencyKey,
+    });
   }
 
   @UseGuards(JwtAuthGuard)
@@ -82,7 +86,9 @@ export class PromotionsController {
     return this.promotionsService.promoteListing(
       listingId,
       authUser,
-      'showcase',
+      {
+        type: 'showcase',
+      },
     );
   }
 

@@ -15,7 +15,16 @@ class CreateUploadUrlDto {
 }
 exports.CreateUploadUrlDto = CreateUploadUrlDto;
 __decorate([
-    (0, class_validator_1.IsIn)(['avatars', 'listing-photos', 'chat-images', 'feed-ads']),
+    (0, class_validator_1.IsIn)([
+        'avatars',
+        'listing-photos',
+        'chat-images',
+        'feed-ads',
+        'support-images',
+        'reports',
+        'misc',
+        'videos',
+    ]),
     __metadata("design:type", String)
 ], CreateUploadUrlDto.prototype, "bucket", void 0);
 __decorate([

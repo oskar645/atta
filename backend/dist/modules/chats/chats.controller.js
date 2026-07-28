@@ -17,15 +17,17 @@ const common_1 = require("@nestjs/common");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
+const notifications_service_1 = require("../notifications/notifications.service");
 const create_chat_dto_1 = require("./dto/create-chat.dto");
 const send_chat_message_dto_1 = require("./dto/send-chat-message.dto");
 const chats_gateway_1 = require("./chats.gateway");
 const chats_service_1 = require("./chats.service");
 let ChatsController = class ChatsController {
-    constructor(chatsService, chatsGateway, rateLimitService) {
+    constructor(chatsService, chatsGateway, rateLimitService, notificationsService) {
         this.chatsService = chatsService;
         this.chatsGateway = chatsGateway;
         this.rateLimitService = rateLimitService;
+        this.notificationsService = notificationsService;
     }
     listChats(authUser) {
         return this.chatsService.listChats(authUser);
@@ -48,6 +50,11 @@ let ChatsController = class ChatsController {
         });
         const result = await this.chatsService.sendMessage(authUser, chatId, dto);
         this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId);
+        await this.notificationsService.sendChatMessagePush({
+            recipientId: result.recipientId,
+            message: result.message,
+            chat: result.recipientChat,
+        });
         return result;
     }
     async markChatRead(authUser, chatId) {
@@ -130,7 +137,8 @@ exports.ChatsController = ChatsController = __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     __metadata("design:paramtypes", [chats_service_1.ChatsService,
         chats_gateway_1.ChatsGateway,
-        rate_limit_service_1.RateLimitService])
+        rate_limit_service_1.RateLimitService,
+        notifications_service_1.NotificationsService])
 ], ChatsController);
 let MessagesController = class MessagesController {
     constructor(chatsService, chatsGateway) {

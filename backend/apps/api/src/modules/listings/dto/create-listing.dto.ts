@@ -85,6 +85,10 @@ export class CreateListingDto {
   clothes_type?: string;
 
   @IsOptional()
+  @IsString()
+  clothes_size?: string;
+
+  @IsOptional()
   @IsObject()
   car?: Record<string, unknown>;
 

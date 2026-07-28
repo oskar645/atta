@@ -10,6 +10,7 @@ exports.AuthModule = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const env_1 = require("../../config/env");
+const app_visits_module_1 = require("../app-visits/app-visits.module");
 const storage_module_1 = require("../storage/storage.module");
 const wallet_module_1 = require("../wallet/wallet.module");
 const admin_guard_1 = require("./admin.guard");
@@ -23,6 +24,7 @@ exports.AuthModule = AuthModule;
 exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [
+            app_visits_module_1.AppVisitsModule,
             storage_module_1.StorageModule,
             wallet_module_1.WalletModule,
             jwt_1.JwtModule.register({

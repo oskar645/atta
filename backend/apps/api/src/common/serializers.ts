@@ -386,6 +386,7 @@ export const serializeListing = (
   deal_type: listing.dealType,
   real_estate_type: listing.realEstateType,
   clothes_type: listing.clothesType,
+  clothes_size: listing.clothesSize ?? null,
   photo_urls:
     listing.photos?.map((photo) =>
       normalizeStoredMediaUrl(photo.publicUrl, {

@@ -13,6 +13,7 @@ exports.AdminService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
+const app_visits_service_1 = require("../app-visits/app-visits.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const reviews_service_1 = require("../reviews/reviews.service");
@@ -61,8 +62,9 @@ const protectedAdminPhones = new Set([
     '79306939954',
 ]);
 let AdminService = class AdminService {
-    constructor(prisma, notificationsService, reviewsService, storageService) {
+    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService) {
         this.prisma = prisma;
+        this.appVisitsService = appVisitsService;
         this.notificationsService = notificationsService;
         this.reviewsService = reviewsService;
         this.storageService = storageService;
@@ -72,7 +74,7 @@ let AdminService = class AdminService {
         const days30 = new Date(now.getTime() - 30 * 86400000);
         const days14 = new Date(now.getTime() - 14 * 86400000);
         const onlineCutoff = new Date(now.getTime() - 2 * 60000);
-        const [users, onlineUsers, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] = await Promise.all([
+        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] = await Promise.all([
             this.prisma.user.count({
                 where: {
                     deletedAt: null,
@@ -89,6 +91,7 @@ let AdminService = class AdminService {
                     },
                 },
             }),
+            this.appVisitsService.countToday(now),
             this.prisma.listing.count({
                 where: { deletedAt: null },
             }),
@@ -180,6 +183,7 @@ let AdminService = class AdminService {
             stats: {
                 users,
                 onlineUsers,
+                todayVisits,
                 listings,
                 activeListings,
                 pendingModeration,
@@ -263,6 +267,9 @@ let AdminService = class AdminService {
             source: 'timeweb',
             items,
         };
+    }
+    async listTodayVisits() {
+        return this.appVisitsService.listToday();
     }
     async getUserById(id) {
         const user = await this.prisma.user.findUnique({
@@ -1140,6 +1147,7 @@ exports.AdminService = AdminService;
 exports.AdminService = AdminService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        app_visits_service_1.AppVisitsService,
         notifications_service_1.NotificationsService,
         reviews_service_1.ReviewsService,
         storage_service_1.StorageService])

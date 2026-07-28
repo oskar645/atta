@@ -10,6 +10,7 @@ import 'package:atta/src/features/admin/admin_listings_screen.dart';
 import 'package:atta/src/features/admin/admin_online_users_screen.dart';
 import 'package:atta/src/features/admin/admin_promotions_screen.dart';
 import 'package:atta/src/features/admin/admin_reports_screen.dart';
+import 'package:atta/src/features/admin/admin_today_visits_screen.dart';
 import 'package:atta/src/features/admin/admin_users_screen.dart';
 import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
 import 'package:atta/src/features/admin/admin_ads_tab.dart';
@@ -951,6 +952,16 @@ class _DashboardTab extends StatelessWidget {
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => const AdminOnlineUsersScreen(),
+                  ),
+                ),
+              ),
+              card(
+                'Сегодня заходили',
+                '${read('todayVisits')}',
+                Icons.groups,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AdminTodayVisitsScreen(),
                   ),
                 ),
               ),

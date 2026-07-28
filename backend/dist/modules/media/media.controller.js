@@ -25,6 +25,7 @@ const chats_gateway_1 = require("../chats/chats.gateway");
 const chats_service_1 = require("../chats/chats.service");
 const feed_ads_service_1 = require("../feed-ads/feed-ads.service");
 const listings_service_1 = require("../listings/listings.service");
+const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const storage_service_1 = require("../storage/storage.service");
@@ -35,7 +36,7 @@ const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
 });
 // TODO: Video upload / 30 sec limit will be migrated later.
 let MediaController = MediaController_1 = class MediaController {
-    constructor(jwtService, prisma, rateLimitService, chatsGateway, chatsService, feedAdsService, listingsService, storageService, usersService) {
+    constructor(jwtService, prisma, rateLimitService, chatsGateway, chatsService, feedAdsService, listingsService, notificationsService, storageService, usersService) {
         this.jwtService = jwtService;
         this.prisma = prisma;
         this.rateLimitService = rateLimitService;
@@ -43,6 +44,7 @@ let MediaController = MediaController_1 = class MediaController {
         this.chatsService = chatsService;
         this.feedAdsService = feedAdsService;
         this.listingsService = listingsService;
+        this.notificationsService = notificationsService;
         this.storageService = storageService;
         this.usersService = usersService;
         this.logger = new common_1.Logger(MediaController_1.name);
@@ -75,8 +77,13 @@ let MediaController = MediaController_1 = class MediaController {
             limit: 20,
             windowMs: 60 * 1000,
         });
-        return this.chatsService.uploadImage(authUser, chatId, this.requireImage(file, 2 * 1024 * 1024)).then((result) => {
+        return this.chatsService.uploadImage(authUser, chatId, this.requireImage(file, 2 * 1024 * 1024)).then(async (result) => {
             this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId);
+            await this.notificationsService.sendChatMessagePush({
+                recipientId: result.recipientId,
+                message: result.message,
+                chat: result.recipientChat,
+            });
             return result;
         });
     }
@@ -393,6 +400,7 @@ exports.MediaController = MediaController = MediaController_1 = __decorate([
         chats_service_1.ChatsService,
         feed_ads_service_1.FeedAdsService,
         listings_service_1.ListingsService,
+        notifications_service_1.NotificationsService,
         storage_service_1.StorageService,
         users_service_1.UsersService])
 ], MediaController);

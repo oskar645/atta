@@ -12,13 +12,17 @@ class PromotionsApi {
 
   Future<Map<String, dynamic>> promoteListing(
     String listingId,
-    String type,
-  ) async {
+    String type, {
+    int days = 1,
+    String? idempotencyKey,
+  }) async {
     final response = await client.post(
       '/listings/$listingId/promotions',
       authorized: true,
       body: {
         'type': type,
+        if (type == 'bump') 'days': days,
+        if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
       },
     );
     return Map<String, dynamic>.from(response as Map);

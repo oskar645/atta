@@ -438,9 +438,12 @@ let ListingsService = class ListingsService {
             authUser.role !== 'admin') {
             throw new common_1.ForbiddenException('Use explicit archive endpoint for sold/archive status changes');
         }
-        const nextStatus = dto.status
+        const requestedStatus = dto.status
             ? (0, serializers_1.listingStatusFromInput)(dto.status)
-            : listing.status;
+            : undefined;
+        const nextStatus = requestedStatus != null && requestedStatus !== client_1.ListingStatus.APPROVED
+            ? requestedStatus
+            : this.statusAfterOwnerEdit(listing, authUser);
         const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
         const updated = await this.prisma.$transaction(async (tx) => {
             const savedListing = await tx.listing.update({
@@ -470,6 +473,10 @@ let ListingsService = class ListingsService {
                     realEstateType: dto.real_estate_type?.trim(),
                     clothesType: dto.clothes_type?.trim(),
                     status: nextStatus,
+                    ...(nextStatus === client_1.ListingStatus.PENDING &&
+                        listing.status === client_1.ListingStatus.APPROVED
+                        ? this.pendingModerationUpdateData()
+                        : {}),
                     archivedAt: nextStatus === client_1.ListingStatus.ARCHIVED ? new Date() : listing.archivedAt,
                 },
                 include: listingInclude,
@@ -684,6 +691,7 @@ let ListingsService = class ListingsService {
                 mimeType: uploaded.mimeType,
             },
         });
+        await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser);
         const updated = await this.prisma.listing.findUniqueOrThrow({
             where: { id: listingId },
             include: listingInclude,
@@ -739,6 +747,7 @@ let ListingsService = class ListingsService {
             where: { id: item.id },
             data: { sortOrder: index },
         })));
+        await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser);
         const updated = await this.prisma.listing.findUniqueOrThrow({
             where: { id: listingId },
             include: listingInclude,
@@ -761,6 +770,35 @@ let ListingsService = class ListingsService {
         }
         (0, phone_1.validateRussianPhoneOrThrow)(normalized);
         return normalized;
+    }
+    statusAfterOwnerEdit(listing, authUser) {
+        if (listing.ownerId === authUser.userId &&
+            listing.status === client_1.ListingStatus.APPROVED) {
+            return client_1.ListingStatus.PENDING;
+        }
+        return listing.status;
+    }
+    pendingModerationUpdateData() {
+        return {
+            rejectionReason: null,
+            moderationNote: null,
+            moderatedBy: null,
+            moderatedAt: null,
+            archivedAt: null,
+            deletedAt: null,
+        };
+    }
+    async resubmitPublishedListingAfterOwnerEdit(listing, authUser) {
+        if (this.statusAfterOwnerEdit(listing, authUser) !== client_1.ListingStatus.PENDING) {
+            return;
+        }
+        await this.prisma.listing.update({
+            where: { id: listing.id },
+            data: {
+                status: client_1.ListingStatus.PENDING,
+                ...this.pendingModerationUpdateData(),
+            },
+        });
     }
 };
 exports.ListingsService = ListingsService;

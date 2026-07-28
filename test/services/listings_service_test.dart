@@ -52,6 +52,80 @@ void main() {
     await _deleteFiles(files);
   });
 
+  test('create clothes listing omits empty optional size', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.createListing(
+      ownerId: 'user-1',
+      ownerEmail: 'user@example.com',
+      ownerName: 'User',
+      title: 'Куртка',
+      description: 'Описание',
+      category: 'Одежда',
+      subcategory: 'Женская одежда',
+      price: 1000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Москва',
+      delivery: const <String, bool>{'pickup': true},
+      photos: const <File>[],
+    );
+
+    expect(api.lastCreateBody.containsKey('clothes_size'), isFalse);
+  });
+
+  for (final size in ['XL', '46', 'One Size']) {
+    test('create clothes listing sends optional size $size', () async {
+      final api = _FakeListingsApi();
+      final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+      await service.createListing(
+        ownerId: 'user-1',
+        ownerEmail: 'user@example.com',
+        ownerName: 'User',
+        title: 'Куртка',
+        description: 'Описание',
+        category: 'Одежда',
+        subcategory: 'Женская одежда',
+        price: 1000,
+        phone: '+79990000000',
+        phoneHidden: false,
+        city: 'Москва',
+        delivery: const <String, bool>{'pickup': true},
+        photos: const <File>[],
+        clothesType: 'Верхняя одежда',
+        clothesSize: size,
+      );
+
+      expect(api.lastCreateBody['clothes_size'], size);
+    });
+  }
+
+  test('create non-clothes listing does not send optional size', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.createListing(
+      ownerId: 'user-1',
+      ownerEmail: 'user@example.com',
+      ownerName: 'User',
+      title: 'Телефон',
+      description: 'Описание',
+      category: 'Электроника',
+      subcategory: 'Телефоны',
+      price: 1000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Москва',
+      delivery: const <String, bool>{'pickup': true},
+      photos: const <File>[],
+      clothesSize: 'XL',
+    );
+
+    expect(api.lastCreateBody.containsKey('clothes_size'), isFalse);
+  });
+
   test('one failed photo reports partial failure without silent drop',
       () async {
     final mediaApi = _FakeMediaApi(failIndexes: <int>{1});
@@ -930,13 +1004,20 @@ class _FakeListingsApi extends ListingsApi {
   final List<Map<String, dynamic>> myListItems;
   final Map<String, Map<String, dynamic>> findByIdItems;
   final List<Map<String, dynamic>> listQueries = <Map<String, dynamic>>[];
+  Map<String, dynamic> lastCreateBody = const <String, dynamic>{};
   int myListingsCalls = 0;
   Object? myListingsError;
 
   @override
   Future<Map<String, dynamic>> create(Map<String, dynamic> body) async {
+    lastCreateBody = Map<String, dynamic>.from(body);
     return <String, dynamic>{
-      'listing': _listingMap(const <String>[]),
+      'listing': _listingMap(
+        const <String>[],
+        category: (body['category'] ?? 'Электроника').toString(),
+        subcategory: (body['subcategory'] ?? 'Телефоны').toString(),
+        clothesSize: body['clothes_size']?.toString(),
+      ),
     };
   }
 
@@ -1058,6 +1139,9 @@ Map<String, dynamic> _listingMap(
   String updatedAt = '2026-06-19T10:00:00.000Z',
   int viewCount = 0,
   int favoriteCount = 0,
+  String category = 'Электроника',
+  String subcategory = 'Телефоны',
+  String? clothesSize,
   Map<String, dynamic>? promotions,
 }) =>
     <String, dynamic>{
@@ -1065,8 +1149,9 @@ Map<String, dynamic> _listingMap(
       'owner_id': ownerId,
       'title': 'Товар',
       'description': 'Описание',
-      'category': 'Электроника',
-      'subcategory': 'Телефоны',
+      'category': category,
+      'subcategory': subcategory,
+      'clothes_size': clothesSize,
       'price': 1000,
       'city': 'Москва',
       'address': 'Москва',

@@ -149,7 +149,7 @@ void main() {
   );
 
   testWidgets(
-    'home showcase cards are slightly larger with partial third card on iPhone',
+    'home showcase cards are slightly smaller with partial third card on iPhone',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(390, 844));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -181,8 +181,8 @@ void main() {
       final third =
           tester.getRect(find.byKey(const ValueKey('home_showcase_card:2')));
 
-      expect(first.width, greaterThanOrEqualTo(126));
-      expect(first.width, lessThanOrEqualTo(138));
+      expect(first.width, greaterThanOrEqualTo(120));
+      expect(first.width, lessThanOrEqualTo(126));
       expect(second.left, greaterThan(first.left));
       expect(third.left, lessThan(390));
       expect(third.right, greaterThan(390));
@@ -372,6 +372,8 @@ void main() {
 
       expect(showcase.homeShowcaseCalls, 2);
       expect(find.text('Обновленная витрина'), findsOneWidget);
+      expect(find.text('Товар 1'), findsOneWidget);
+      expect(find.byType(ListingCard), findsOneWidget);
     },
   );
 

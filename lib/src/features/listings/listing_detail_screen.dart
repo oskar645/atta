@@ -1045,6 +1045,24 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                       ],
                     ),
                   ],
+                  if ((listing.clothesSize ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Icon(Icons.straighten_outlined,
+                            size: 18,
+                            color: Theme.of(context).colorScheme.outline),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Размер: ${listing.clothesSize!.trim()}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   if (isOwner) ...[
                     FutureBuilder<dynamic>(

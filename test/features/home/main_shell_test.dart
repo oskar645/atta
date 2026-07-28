@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atta/src/features/home/main_shell.dart';
+import 'package:atta/src/features/home/home_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
@@ -60,6 +61,98 @@ void main() {
     expect(buildCounts.containsKey(3), isFalse);
     expect(buildCounts.containsKey(4), isFalse);
   });
+
+  testWidgets(
+      'search tab preserves feed position when reselected from another tab',
+      (tester) async {
+    var scrollToTopCalls = 0;
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ChatService>.value(value: _FakeChatService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<PresenceService>.value(value: _FakePresenceService()),
+          ChangeNotifierProvider<MainShellController>(
+            create: (_) => MainShellController(),
+          ),
+        ],
+        child: MaterialApp(
+          home: MainShell(
+            pageBuilder: (index, controller) {
+              if (index == 0) {
+                return _HomeTabProbe(
+                  controller: controller,
+                  onScrollToTop: () => scrollToTopCalls++,
+                );
+              }
+              return Text('page:$index', textDirection: TextDirection.ltr);
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+
+    await tester.tap(find.text('Избранное'));
+    await tester.pump();
+    await tester.tap(find.text('Поиск'));
+    await tester.pump();
+
+    expect(scrollToTopCalls, 0);
+
+    await tester.tap(find.text('Поиск'));
+    await tester.pump();
+
+    expect(scrollToTopCalls, 1);
+  });
+}
+
+class _HomeTabProbe extends StatefulWidget {
+  const _HomeTabProbe({
+    required this.controller,
+    required this.onScrollToTop,
+  });
+
+  final HomeTabController controller;
+  final VoidCallback onScrollToTop;
+
+  @override
+  State<_HomeTabProbe> createState() => _HomeTabProbeState();
+}
+
+class _HomeTabProbeState extends State<_HomeTabProbe> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.attach(scrollToTop: widget.onScrollToTop);
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeTabProbe oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.onScrollToTop != widget.onScrollToTop) {
+      oldWidget.controller.detach();
+      widget.controller.attach(scrollToTop: widget.onScrollToTop);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.detach();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Text('page:0', textDirection: TextDirection.ltr);
+  }
 }
 
 class _FakeAuthService extends AuthService {

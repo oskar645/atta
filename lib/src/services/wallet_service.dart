@@ -4,7 +4,6 @@ import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/wallet_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 void _debugWalletLog(String message) {
   assert(() {
@@ -21,8 +20,6 @@ class WalletService {
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
-  static const String _lastAccrualCheckDayKeyPrefix =
-      'wallet_last_accrual_check_day';
 
   final WalletApi _api;
   String? _activeUserId;
@@ -35,6 +32,9 @@ class WalletService {
   final Map<String, Future<Wallet>> _walletFutures = <String, Future<Wallet>>{};
   final Map<String, Future<List<WalletTransaction>>> _transactionsFutures =
       <String, Future<List<WalletTransaction>>>{};
+  bool _lastAccrualAwarded = false;
+
+  bool get lastAccrualAwarded => _lastAccrualAwarded;
   Wallet? get cachedWallet {
     final userId = _currentUserId;
     if (userId == null) {
@@ -49,6 +49,25 @@ class WalletService {
       return const <WalletTransaction>[];
     }
     return _transactionsCache[userId] ?? const <WalletTransaction>[];
+  }
+
+  void updateCachedBalance(int balance) {
+    final userId = _currentUserId;
+    final cached = userId == null ? null : _walletCache[userId];
+    if (userId == null || cached == null) return;
+    _walletCache[userId] = Wallet(
+      balance: balance,
+      maxBalance: cached.maxBalance,
+      welcomeBonus: cached.welcomeBonus,
+      dailyBonusAmount: cached.dailyBonusAmount,
+      lastDailyBonusAt: cached.lastDailyBonusAt,
+      canClaimDailyBonus: cached.canClaimDailyBonus,
+      nextDailyBonusAt: cached.nextDailyBonusAt,
+      lastBonusAccrualAt: cached.lastBonusAccrualAt,
+      nextAccrualAt: cached.nextAccrualAt,
+      daysUntilNextAccrual: cached.daysUntilNextAccrual,
+      secondsUntilNextAccrual: cached.secondsUntilNextAccrual,
+    );
   }
 
   String? get _currentUserId {
@@ -92,17 +111,11 @@ class WalletService {
       final cached = _walletCache[userId];
       return cached ?? await getWallet();
     }
-    if (await _wasCheckedToday(userId)) {
-      _checkedAccrualThisSession = true;
-      final cached = _walletCache[userId];
-      return cached ?? await getWallet();
-    }
     _checkedAccrualThisSession = true;
     final future = _fetchAccrualWallet(userId);
     _accrualFutures[userId] = future;
     try {
       final wallet = await future;
-      await _markCheckedToday(userId);
       return wallet;
     } catch (_) {
       return _walletCache[userId];
@@ -113,35 +126,13 @@ class WalletService {
     }
   }
 
-  Future<bool> _wasCheckedToday(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedDay =
-        prefs.getString('$_lastAccrualCheckDayKeyPrefix:$userId')?.trim() ?? '';
-    return savedDay == _todayStamp();
-  }
-
-  Future<void> _markCheckedToday(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      '$_lastAccrualCheckDayKeyPrefix:$userId',
-      _todayStamp(),
-    );
-  }
-
-  String _todayStamp() {
-    final now = DateTime.now().toUtc();
-    final month = now.month.toString().padLeft(2, '0');
-    final day = now.day.toString().padLeft(2, '0');
-    return '${now.year}-$month-$day';
-  }
-
   Future<Wallet> getWallet({bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) {
       return cachedWallet ??
           const Wallet(
             balance: 0,
-            maxBalance: 1000,
-            welcomeBonus: 100,
+            maxBalance: 0,
+            welcomeBonus: 500,
             dailyBonusAmount: 25,
             lastDailyBonusAt: null,
             canClaimDailyBonus: true,
@@ -157,8 +148,8 @@ class WalletService {
       return cachedWallet ??
           const Wallet(
             balance: 0,
-            maxBalance: 1000,
-            welcomeBonus: 100,
+            maxBalance: 0,
+            welcomeBonus: 500,
             dailyBonusAmount: 25,
             lastDailyBonusAt: null,
             canClaimDailyBonus: true,
@@ -289,6 +280,7 @@ class WalletService {
     _debugWalletLog('Wallet accrue check start user=$userId');
     try {
       final response = await _api.checkAccrual();
+      _lastAccrualAwarded = response['awarded'] == true;
       final walletMap = response['wallet'];
       final normalized = walletMap is Map
           ? walletMap.map((key, value) => MapEntry(key.toString(), value))
@@ -300,6 +292,7 @@ class WalletService {
       );
       return wallet;
     } catch (error) {
+      _lastAccrualAwarded = false;
       _debugWalletLog('Wallet refresh error message=$error user=$userId');
       rethrow;
     } finally {

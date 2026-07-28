@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthController = void 0;
 const common_1 = require("@nestjs/common");
 const auth_service_1 = require("./auth.service");
+const app_visits_service_1 = require("../app-visits/app-visits.service");
 const current_user_decorator_1 = require("./current-user.decorator");
 const login_dto_1 = require("./dto/login.dto");
 const login_phone_dto_1 = require("./dto/login-phone.dto");
@@ -26,8 +27,9 @@ const signup_phone_dto_1 = require("./dto/signup-phone.dto");
 const jwt_auth_guard_1 = require("./jwt-auth.guard");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 let AuthController = class AuthController {
-    constructor(authService, rateLimitService) {
+    constructor(authService, appVisitsService, rateLimitService) {
         this.authService = authService;
+        this.appVisitsService = appVisitsService;
         this.rateLimitService = rateLimitService;
     }
     rateKey(request, action) {
@@ -74,6 +76,9 @@ let AuthController = class AuthController {
     }
     getMe(authUser) {
         return this.authService.getMe(authUser);
+    }
+    markAppOpened(authUser) {
+        return this.appVisitsService.markAppOpened(authUser.userId);
     }
     refresh(dto) {
         return this.authService.refresh(dto);
@@ -135,6 +140,14 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "getMe", null);
 __decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('app-open'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "markAppOpened", null);
+__decorate([
     (0, common_1.Post)('refresh'),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -161,6 +174,7 @@ __decorate([
 exports.AuthController = AuthController = __decorate([
     (0, common_1.Controller)('auth'),
     __metadata("design:paramtypes", [auth_service_1.AuthService,
+        app_visits_service_1.AppVisitsService,
         rate_limit_service_1.RateLimitService])
 ], AuthController);
 //# sourceMappingURL=auth.controller.js.map

@@ -1,8 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   testWidgets('viewed badge is visible and readable', (tester) async {
@@ -206,6 +210,79 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  for (final scenario in <({String name, int width, int height})>[
+    (name: 'horizontal photo', width: 1200, height: 800),
+    (name: 'vertical photo', width: 800, height: 1200),
+    (name: 'square photo', width: 1000, height: 1000),
+    (name: 'very wide photo', width: 2400, height: 600),
+  ]) {
+    testWidgets('listing photo frame is stable for ${scenario.name}',
+        (tester) async {
+      const frameSize = Size(220, 165);
+      const previewKey = ValueKey('listing_photo_preview');
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 220,
+              height: 165,
+              child: MediaPreviewBox(
+                key: previewKey,
+                imageUrl: '',
+                categoryHint: 'listings',
+                borderRadius: 0,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final placeholderRect = tester.getRect(find.byKey(previewKey));
+      expect(placeholderRect.size, frameSize);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: frameSize.width,
+              height: frameSize.height,
+              child: MediaPreviewBox(
+                key: previewKey,
+                imageUrl: 'https://example.com/${scenario.name}.png',
+                categoryHint: 'listings',
+                borderRadius: 0,
+                debugImageProvider: MemoryImage(
+                  _solidImageBytes(scenario.width, scenario.height),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final loadedRect = tester.getRect(find.byKey(previewKey));
+      final image = tester.widget<Image>(find.byType(Image));
+
+      expect(loadedRect.size, frameSize);
+      expect(loadedRect, placeholderRect);
+      expect(tester.getRect(find.byType(Image)).size, frameSize);
+      expect(image.fit, BoxFit.cover);
+      expect(tester.takeException(), isNull);
+    });
+  }
+}
+
+Uint8List _solidImageBytes(int width, int height) {
+  final source = img.Image(width: width, height: height);
+  for (var y = 0; y < source.height; y++) {
+    for (var x = 0; x < source.width; x++) {
+      source.setPixelRgb(x, y, 40, 120, 200);
+    }
+  }
+  return Uint8List.fromList(img.encodePng(source));
 }
 
 class _FakeReviewsService extends ReviewsService {

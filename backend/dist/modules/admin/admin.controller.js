@@ -37,6 +37,9 @@ let AdminController = class AdminController {
     listOnlineUsers() {
         return this.adminService.listOnlineUsers();
     }
+    listTodayVisits() {
+        return this.adminService.listTodayVisits();
+    }
     getUserById(id) {
         return this.adminService.getUserById(id);
     }
@@ -117,6 +120,12 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listOnlineUsers", null);
+__decorate([
+    (0, common_1.Get)('today-visits'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listTodayVisits", null);
 __decorate([
     (0, common_1.Get)('users/:id'),
     __param(0, (0, common_1.Param)('id')),

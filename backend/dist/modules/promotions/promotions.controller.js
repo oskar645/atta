@@ -44,14 +44,20 @@ let PromotionsController = class PromotionsController {
             limit: 20,
             windowMs: 60 * 60 * 1000,
         });
-        return this.promotionsService.promoteListing(listingId, authUser, dto.type);
+        return this.promotionsService.promoteListing(listingId, authUser, {
+            type: dto.type,
+            days: dto.days,
+            idempotencyKey: dto.idempotencyKey,
+        });
     }
     promoteShowcase(request, listingId, authUser) {
         this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
             limit: 20,
             windowMs: 60 * 60 * 1000,
         });
-        return this.promotionsService.promoteListing(listingId, authUser, 'showcase');
+        return this.promotionsService.promoteListing(listingId, authUser, {
+            type: 'showcase',
+        });
     }
     getListingPromotions(listingId, authUser) {
         return this.promotionsService.getListingPromotions(listingId, authUser);

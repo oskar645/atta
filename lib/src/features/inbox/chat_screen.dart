@@ -9,11 +9,13 @@ import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/models/chat.dart';
 import 'package:atta/src/models/message.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/last_seen_formatter.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
@@ -547,11 +549,28 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
 
             return Scaffold(
               appBar: AppBar(
-                title: StreamBuilder<bool>(
-                  stream: presence.streamIsOnline(otherId),
-                  initialData: presence.peekIsOnline(otherId) ?? false,
-                  builder: (context, onlineSnap) {
-                    final isOnline = onlineSnap.data == true;
+                title: StreamBuilder<PresenceSnapshot>(
+                  stream: presence.streamPresence(
+                    otherId,
+                    seed: PresenceSnapshot(
+                      userId: otherId,
+                      isOnline: chatRow.otherUserIsOnline(uid),
+                      lastSeen: chatRow.otherUserLastSeenAt(uid),
+                    ),
+                  ),
+                  initialData: presence.peekPresence(otherId) ??
+                      PresenceSnapshot(
+                        userId: otherId,
+                        isOnline: chatRow.otherUserIsOnline(uid),
+                        lastSeen: chatRow.otherUserLastSeenAt(uid),
+                      ),
+                  builder: (context, presenceSnap) {
+                    final snapshot = presenceSnap.data;
+                    final isOnline = snapshot?.isOnline == true;
+                    final status = formatLastSeen(
+                      snapshot?.lastSeen,
+                      isOnline,
+                    );
                     return Row(
                       children: [
                         PresenceBadge(
@@ -573,10 +592,35 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                               initialName: otherName,
                               initialAvatar: otherAvatar,
                             ),
-                            child: Text(
-                              otherName.isEmpty ? '...' : otherName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  otherName.isEmpty ? '...' : otherName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 1),
+                                Text(
+                                  status.isEmpty ? ' ' : status,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w400,
+                                    color: isOnline
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),

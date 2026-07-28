@@ -320,6 +320,10 @@ export class ListingsService {
         dealType: dto.deal_type?.trim() || null,
         realEstateType: dto.real_estate_type?.trim() || null,
         clothesType: dto.clothes_type?.trim() || null,
+        clothesSize:
+          dto.category.trim() === 'Одежда'
+            ? dto.clothes_size?.trim() || null
+            : null,
         publishedAt:
           listingStatusFromInput(dto.status) === ListingStatus.APPROVED
             ? new Date()
@@ -605,6 +609,10 @@ export class ListingsService {
           dealType: dto.deal_type?.trim(),
           realEstateType: dto.real_estate_type?.trim(),
           clothesType: dto.clothes_type?.trim(),
+          clothesSize:
+            dto.category?.trim() === 'Одежда' || listing.category === 'Одежда'
+              ? dto.clothes_size?.trim()
+              : undefined,
           status: nextStatus,
           ...(nextStatus === ListingStatus.PENDING &&
           listing.status === ListingStatus.APPROVED

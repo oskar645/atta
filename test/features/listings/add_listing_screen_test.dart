@@ -314,6 +314,7 @@ class _CapturingListingsService extends ListingsService {
     String? dealType,
     String? realEstateType,
     String? clothesType,
+    String? clothesSize,
     ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
   }) async {
     createCalled = true;

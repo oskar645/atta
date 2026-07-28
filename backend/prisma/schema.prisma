@@ -92,6 +92,7 @@ enum WalletTransactionType {
 }
 
 enum WalletTransactionReason {
+  SIGNUP_BONUS
   WELCOME_BONUS
   RECURRING_BONUS
   DAILY_LOGIN_BONUS
@@ -113,6 +114,13 @@ enum PromotionStatus {
   ACTIVE
   EXPIRED
   CANCELLED
+}
+
+enum ListingRaiseCampaignStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  FAILED
 }
 
 model User {
@@ -148,6 +156,7 @@ model User {
   sellerChats    Chat[]              @relation("ChatSeller")
   messages       ChatMessage[]
   presence       UserPresence?
+  dailyVisits    AppDailyVisit[]
   notifications  UserNotification[]
   reportsFiled   Report[]            @relation("ReportReporter")
   reportsOwned   Report[]            @relation("ReportOwner")
@@ -159,8 +168,23 @@ model User {
   wallet         Wallet?
   walletTransactions WalletTransaction[]
   promotions     Promotion[]
+  listingRaiseCampaigns ListingRaiseCampaign[]
 
   @@map("users")
+}
+
+model AppDailyVisit {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  visitDate      DateTime @map("visit_date") @db.Date
+  lastActivityAt DateTime @default(now()) @map("last_activity_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, visitDate], map: "app_daily_visits_user_id_visit_date_key")
+  @@index([visitDate, lastActivityAt], map: "app_daily_visits_visit_date_last_activity_at_idx")
+  @@map("app_daily_visits")
 }
 
 model AdminUser {
@@ -261,6 +285,7 @@ model Listing {
   dealType        String?       @map("deal_type")
   realEstateType  String?       @map("real_estate_type")
   clothesType     String?       @map("clothes_type")
+  clothesSize     String?       @map("clothes_size")
   status          ListingStatus @default(PENDING)
   rejectionReason String?       @map("rejection_reason")
   moderationNote  String?       @map("moderation_note")
@@ -281,6 +306,7 @@ model Listing {
   chats           Chat[]
   reports         Report[]
   promotions      Promotion[]
+  raiseCampaigns  ListingRaiseCampaign[]
 
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
@@ -589,6 +615,7 @@ model WalletTransaction {
   type      WalletTransactionType
   amount    Int
   reason    WalletTransactionReason
+  idempotencyKey String?             @unique @map("idempotency_key")
   metadata  Json?
   createdAt DateTime                @default(now()) @map("created_at")
   user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -622,6 +649,31 @@ model Promotion {
   @@index([endsAt])
   @@index([createdAt])
   @@map("promotions")
+}
+
+model ListingRaiseCampaign {
+  id              String                     @id @default(uuid()) @db.Uuid
+  userId          String                     @map("user_id") @db.Uuid
+  listingId       String                     @map("listing_id") @db.Uuid
+  purchasedRaises Int                        @map("purchased_raises")
+  completedRaises Int                        @default(0) @map("completed_raises")
+  pricePerRaise   Int                        @map("price_per_raise")
+  totalPrice      Int                        @map("total_price")
+  startedAt       DateTime                   @map("started_at")
+  lastRaiseAt     DateTime?                  @map("last_raise_at")
+  nextRaiseAt     DateTime?                  @map("next_raise_at")
+  status          ListingRaiseCampaignStatus @default(ACTIVE)
+  cancelReason    String?                    @map("cancel_reason")
+  idempotencyKey  String                     @unique @map("idempotency_key")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+  listing         Listing                    @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  user            User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, status, nextRaiseAt])
+  @@index([userId])
+  @@index([status, nextRaiseAt])
+  @@map("listing_raise_campaigns")
 }
 
 model AuditLog {

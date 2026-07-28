@@ -26,6 +26,19 @@ let NotificationsController = class NotificationsController {
     listInAppNotifications(authUser) {
         return this.notificationsService.listInAppNotifications(authUser);
     }
+    registerDevice(authUser, body) {
+        return this.notificationsService.registerDevice(authUser, {
+            token: body.token,
+            platform: body.platform,
+            deviceUid: body.device_uid ?? body.deviceUid,
+            appVersion: body.app_version ?? body.appVersion,
+            buildNumber: body.build_number ?? body.buildNumber,
+            locale: body.locale,
+        });
+    }
+    unregisterDevice(authUser, body) {
+        return this.notificationsService.unregisterDevice(authUser, body.token);
+    }
     markRead(authUser, notificationId) {
         return this.notificationsService.markRead(authUser, notificationId);
     }
@@ -50,6 +63,22 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], NotificationsController.prototype, "listInAppNotifications", null);
+__decorate([
+    (0, common_1.Post)('devices'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", void 0)
+], NotificationsController.prototype, "registerDevice", null);
+__decorate([
+    (0, common_1.Delete)('devices'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", void 0)
+], NotificationsController.prototype, "unregisterDevice", null);
 __decorate([
     (0, common_1.Patch)(':id/read'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

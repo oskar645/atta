@@ -132,9 +132,6 @@ class _MainShellState extends State<MainShell> {
       if (_i != 0) {
         setState(() => _i = 0);
         _shellController?.selectTab(0);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _homeTabController.scrollToTop();
-        });
         return;
       }
 
