@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atta/src/features/inbox/chat_screen.dart';
+import 'package:atta/src/features/admin/admin_support_message_dialog.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
 import 'package:atta/src/models/listing.dart';
@@ -150,6 +151,41 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
         setState(() => _followBusy = false);
       }
     }
+  }
+
+  String _maskedPhone(String rawPhone) {
+    final digits = normalizeRuPhoneForApi(rawPhone);
+    if (digits.length < 5) return '';
+    return '+${digits.substring(0, 1)} *** *** ${digits.substring(digits.length - 4)}';
+  }
+
+  String _supportHandle(Map<String, dynamic> userRow, String phone) {
+    final candidates = <dynamic>[
+      userRow['nickname'],
+      userRow['username'],
+      userRow['user_name'],
+    ];
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty) return '@$value';
+    }
+    return _maskedPhone(phone);
+  }
+
+  Future<void> _writeSupportMessage({
+    required String userName,
+    required String userHandle,
+  }) async {
+    final result = await showAdminSupportMessageDialog(
+      context: context,
+      userId: widget.sellerId,
+      userName: userName,
+      userHandle: userHandle,
+    );
+    if (!mounted || result == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Сообщение отправлено')),
+    );
   }
 
   @override
@@ -328,6 +364,18 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                         : 'Пользователь',
                                   ),
                                 ],
+                              ),
+                              const SizedBox(height: 10),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: FilledButton.tonalIcon(
+                                  onPressed: () => _writeSupportMessage(
+                                    userName: sellerName,
+                                    userHandle: _supportHandle(userRow, phone),
+                                  ),
+                                  icon: const Icon(Icons.support_agent),
+                                  label: const Text('Написать'),
+                                ),
                               ),
                             ],
                           ],
@@ -634,16 +682,18 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
       );
     }
 
+    final cardAspectRatio = widget.isArchive ? 0.66 : 0.72;
+
     if (_isLoading && _allItems.isEmpty) {
       return GridView.builder(
         itemCount: 4,
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           mainAxisSpacing: 10,
           crossAxisSpacing: 10,
-          childAspectRatio: 0.78,
+          childAspectRatio: cardAspectRatio,
         ),
         itemBuilder: (_, __) => const SkeletonListingCard(),
       );
@@ -663,11 +713,11 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
       itemCount: items.length,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
-        childAspectRatio: 0.78,
+        childAspectRatio: cardAspectRatio,
       ),
       itemBuilder: (_, i) => _ListingCard(
         listing: items[i],

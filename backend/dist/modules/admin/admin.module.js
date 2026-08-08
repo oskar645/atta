@@ -13,6 +13,8 @@ const app_visits_module_1 = require("../app-visits/app-visits.module");
 const notifications_module_1 = require("../notifications/notifications.module");
 const reviews_module_1 = require("../reviews/reviews.module");
 const storage_module_1 = require("../storage/storage.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
+const support_module_1 = require("../support/support.module");
 const admin_controller_1 = require("./admin.controller");
 const admin_service_1 = require("./admin.service");
 let AdminModule = class AdminModule {
@@ -26,6 +28,8 @@ exports.AdminModule = AdminModule = __decorate([
             notifications_module_1.NotificationsModule,
             reviews_module_1.ReviewsModule,
             storage_module_1.StorageModule,
+            support_module_1.SupportModule,
+            user_blocks_module_1.UserBlocksModule,
         ],
         controllers: [admin_controller_1.AdminController],
         providers: [admin_service_1.AdminService],

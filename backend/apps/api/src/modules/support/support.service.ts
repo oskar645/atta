@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import {
   NotificationType,
+  Prisma,
   SupportSenderType,
   SupportTicketStatus,
 } from '@prisma/client';
@@ -74,6 +75,20 @@ export class SupportService {
     return `${content.text} · Фото`;
   }
 
+  private notificationPreview(rawText: string | null | undefined) {
+    const preview = this.previewText(rawText).replace(/\s+/g, ' ').trim();
+    if (preview.length <= 120) return preview;
+    return `${preview.slice(0, 117).trim()}...`;
+  }
+
+  private adminContactIdempotencyKey(userId: string, rawKey?: string) {
+    const key = rawKey?.trim() ?? '';
+    if (!key) {
+      return null;
+    }
+    return `support_admin_contact:${userId}:${key}`;
+  }
+
   private serializeMessage(message: {
     id: string;
     ticketId: string;
@@ -108,7 +123,9 @@ export class SupportService {
     unreadForUser: boolean;
     createdAt: Date;
     updatedAt: Date;
+    messages?: Array<{ sender: SupportSenderType }>;
   }) {
+    const firstSender = ticket.messages?.[0]?.sender;
     return {
       id: ticket.id,
       uid: ticket.userId,
@@ -119,6 +136,8 @@ export class SupportService {
       last_message: this.previewText(ticket.lastMessage),
       unread_for_admin: ticket.unreadForAdmin,
       unread_for_user: ticket.unreadForUser,
+      initiated_by:
+        firstSender == null ? null : firstSender.toString().toLowerCase(),
       created_at: ticket.createdAt.toISOString(),
       updated_at: ticket.updatedAt.toISOString(),
     };
@@ -174,6 +193,14 @@ export class SupportService {
       where: {
         userId: authUser.userId,
       },
+      include: {
+        messages: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          take: 1,
+        },
+      },
       orderBy: {
         updatedAt: 'desc',
       },
@@ -187,6 +214,14 @@ export class SupportService {
 
   async listTickets() {
     const items = await this.prisma.supportTicket.findMany({
+      include: {
+        messages: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+          take: 1,
+        },
+      },
       orderBy: {
         updatedAt: 'desc',
       },
@@ -203,6 +238,7 @@ export class SupportService {
     name?: string;
     subject?: string;
     text?: string;
+    idempotencyKey?: string;
   }) {
     const userId = params.userId?.trim() ?? '';
     const subject = params.subject?.trim() || 'Обращение в поддержку';
@@ -213,6 +249,10 @@ export class SupportService {
     if (!text) {
       throw new BadRequestException('Сообщение обязательно');
     }
+    const idempotencyKey = this.adminContactIdempotencyKey(
+      userId,
+      params.idempotencyKey,
+    );
 
     const user = await this.prisma.user.findUnique({
       where: {
@@ -223,17 +263,26 @@ export class SupportService {
       throw new NotFoundException('Пользователь не найден');
     }
 
-    const existing = await this.prisma.supportTicket.findFirst({
-      where: {
-        userId,
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
-    });
-    if (existing) {
-      await this.sendMessageAsAdmin(existing.id, text);
-      return this.getTicketForAdmin(existing.id);
+    if (idempotencyKey) {
+      const duplicate = await this.prisma.supportMessage.findUnique({
+        where: {
+          idempotencyKey,
+        },
+        include: {
+          ticket: true,
+        },
+      });
+      if (duplicate) {
+        return {
+          source: 'timeweb',
+          ticketId: duplicate.ticketId,
+          messageId: duplicate.id,
+          created: false,
+          ticket_created: false,
+          ticket: this.serializeTicket(duplicate.ticket),
+          item: this.serializeMessage(duplicate),
+        };
+      }
     }
 
     const name =
@@ -244,48 +293,150 @@ export class SupportService {
     const encodedText = this.encodeContent({ text });
     const preview = this.previewText(encodedText);
 
-    const ticket = await this.prisma.supportTicket.create({
-      data: {
-        userId,
-        name,
-        subject,
-        status: SupportTicketStatus.OPEN,
-        lastMessage: preview,
-        unreadForAdmin: false,
-        unreadForUser: true,
-        messages: {
-          create: [
-            {
-              sender: SupportSenderType.ADMIN,
-              text: encodedText,
-            },
-          ],
-        },
-      },
-      include: {
-        messages: {
-          orderBy: {
-            createdAt: 'desc',
-          },
-        },
-      },
-    });
+    let result: {
+      ticket: Prisma.SupportTicketGetPayload<Prisma.SupportTicketDefaultArgs>;
+      message: Prisma.SupportMessageGetPayload<Prisma.SupportMessageDefaultArgs>;
+      ticketCreated: boolean;
+      messageCreated: boolean;
+    };
 
-    await this.notificationsService.createSystemNotification({
-      userId,
-      title: 'Сообщение поддержки',
-      body: preview,
-      type: NotificationType.SUPPORT,
-      payload: {
-        actionType: 'support_reply',
-        ticketId: ticket.id,
-      },
-    });
+    try {
+      result = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          SELECT pg_advisory_xact_lock(
+            hashtext(${`support_admin_contact:${userId}`})
+          )
+        `;
+
+        if (idempotencyKey) {
+          const duplicateInTx = await tx.supportMessage.findUnique({
+            where: {
+              idempotencyKey,
+            },
+            include: {
+              ticket: true,
+            },
+          });
+          if (duplicateInTx) {
+            return {
+              ticket: duplicateInTx.ticket,
+              message: duplicateInTx,
+              ticketCreated: false,
+              messageCreated: false,
+            };
+          }
+        }
+
+        let ticket = await tx.supportTicket.findFirst({
+          where: {
+            userId,
+            status: SupportTicketStatus.OPEN,
+          },
+          orderBy: {
+            updatedAt: 'desc',
+          },
+        });
+        let ticketCreated = false;
+
+        if (!ticket) {
+          ticket = await tx.supportTicket.create({
+            data: {
+              userId,
+              name,
+              subject,
+              status: SupportTicketStatus.OPEN,
+              lastMessage: preview,
+              unreadForAdmin: false,
+              unreadForUser: true,
+            },
+          });
+          ticketCreated = true;
+        }
+
+        const message = await tx.supportMessage.create({
+          data: {
+            ticketId: ticket.id,
+            sender: SupportSenderType.ADMIN,
+            text: encodedText,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+          },
+        });
+
+        const updatedTicket = await tx.supportTicket.update({
+          where: {
+            id: ticket.id,
+          },
+          data: {
+            status: SupportTicketStatus.OPEN,
+            lastMessage: preview,
+            unreadForAdmin: false,
+            unreadForUser: true,
+            subject: ticketCreated ? subject : ticket.subject,
+            name: ticketCreated ? name : ticket.name,
+          },
+        });
+
+        return {
+          ticket: updatedTicket,
+          message,
+          ticketCreated,
+          messageCreated: true,
+        };
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = idempotencyKey
+          ? await this.prisma.supportMessage.findUnique({
+              where: {
+                idempotencyKey,
+              },
+              include: {
+                ticket: true,
+              },
+            })
+          : null;
+        if (existing) {
+          result = {
+            ticket: existing.ticket,
+            message: existing,
+            ticketCreated: false,
+            messageCreated: false,
+          };
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    if (result.messageCreated) {
+      await this.notificationsService.createSystemNotification({
+        userId,
+        title: 'Сообщение от администрации',
+        body: this.notificationPreview(encodedText),
+        type: NotificationType.SUPPORT,
+        payload: {
+          type: 'support_message',
+          actionType: 'support_message',
+          ticketId: result.ticket.id,
+          userId,
+          messageId: result.message.id,
+        },
+      });
+    }
 
     return {
       source: 'timeweb',
-      ticket: this.serializeTicket(ticket),
-      items: ticket.messages.map((message) => this.serializeMessage(message)),
+      ticketId: result.ticket.id,
+      messageId: result.message.id,
+      created: result.ticketCreated,
+      ticket_created: result.ticketCreated,
+      ticket: this.serializeTicket(result.ticket),
+      item: this.serializeMessage(result.message),
     };
   }
 
@@ -374,6 +525,91 @@ export class SupportService {
               sender: SupportSenderType.ADMIN,
               text:
                   'Здравствуйте! Мы получили ваше обращение и уже передали его модераторам. Обычно ответ приходит в ближайшее время.',
+            },
+          ],
+        },
+      },
+      include: {
+        messages: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+        },
+      },
+    });
+
+    return {
+      source: 'timeweb',
+      ticket: this.serializeTicket(ticket),
+      items: ticket.messages.map((message) => this.serializeMessage(message)),
+    };
+  }
+
+  async createBlockAppeal(
+    authUser: AuthenticatedUser,
+    params: { text?: string; imageUrl?: string },
+  ) {
+    const text = params.text?.trim() ?? '';
+    const imageUrl = params.imageUrl?.trim() ?? '';
+    if (text.length === 0 && imageUrl.length === 0) {
+      throw new BadRequestException('Сообщение или фото обязательны');
+    }
+
+    const block = await this.prisma.userBlock.findFirst({
+      where: {
+        userId: authUser.userId,
+        status: 'ACTIVE',
+        OR: [{ endsAt: null }, { endsAt: { gt: new Date() } }],
+      },
+      orderBy: {
+        startsAt: 'desc',
+      },
+    });
+    if (!block) {
+      throw new BadRequestException('Активная блокировка не найдена');
+    }
+
+    const encodedText = this.encodeContent({
+      text: [
+        'Апелляция по блокировке аккаунта.',
+        `blockId: ${block.id}`,
+        block.listingId ? `listingId: ${block.listingId}` : null,
+        `reason: ${block.reason}`,
+        block.endsAt ? `endsAt: ${block.endsAt.toISOString()}` : 'permanent: true',
+        '',
+        text,
+      ].filter((line): line is string => line != null).join('\n'),
+      imageUrl,
+    });
+    const preview = this.previewText(encodedText);
+
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: authUser.userId,
+      },
+    });
+
+    const ticket = await this.prisma.supportTicket.create({
+      data: {
+        userId: authUser.userId,
+        userBlockId: block.id,
+        isBlockAppeal: true,
+        name:
+          user?.displayName?.trim() ||
+          user?.name?.trim() ||
+          user?.phone?.trim() ||
+          'Пользователь',
+        subject: 'Апелляция по блокировке',
+        status: SupportTicketStatus.OPEN,
+        lastMessage: preview,
+        unreadForAdmin: true,
+        unreadForUser: false,
+        messages: {
+          create: [
+            {
+              sender: SupportSenderType.USER,
+              senderUserId: authUser.userId,
+              text: encodedText,
             },
           ],
         },
@@ -492,11 +728,14 @@ export class SupportService {
     await this.notificationsService.createSystemNotification({
       userId: ticket.userId,
       title: 'Ответ поддержки',
-      body: previewText,
+      body: this.notificationPreview(message.text),
       type: NotificationType.SUPPORT,
       payload: {
+        type: 'support_message',
         actionType: 'support_reply',
         ticketId,
+        userId: ticket.userId,
+        messageId: message.id,
       },
     });
 

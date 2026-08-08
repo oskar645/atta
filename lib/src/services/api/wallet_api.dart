@@ -23,4 +23,23 @@ class WalletApi {
     );
     return Map<String, dynamic>.from(response as Map);
   }
+
+  Future<Map<String, dynamic>> startYookassaTopUp(int amountRub) async {
+    final response = await client.post(
+      '/payments/yookassa/create',
+      authorized: true,
+      body: <String, dynamic>{
+        'amountRub': amountRub,
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> getPaymentStatus(String paymentId) async {
+    final response = await client.get(
+      '/payments/$paymentId/status',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
 }

@@ -209,6 +209,65 @@ void main() {
     expect(presence.recoverAfterResumeCalls, 1);
     expect(admin.refreshCalls, 0);
   });
+
+  testWidgets('resume recovers presence before chat refresh', (tester) async {
+    final order = <String>[];
+    final auth = _FakeAuthService(
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final presence = _FakePresenceService(callOrder: order)
+      ..recoverAfterResumeCompleter = Completer<void>();
+    final chats = _FakeChatService(callOrder: order);
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        auth: auth,
+        presence: presence,
+        chats: chats,
+      ),
+    );
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(order, <String>['presence.resume']);
+    expect(chats.handleResumeCalls, 0);
+
+    presence.recoverAfterResumeCompleter!.complete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(order, <String>['presence.resume', 'chat.resume']);
+    expect(chats.handleResumeCalls, 1);
+  });
+
+  testWidgets('hidden paused resumed runs realtime recovery once',
+      (tester) async {
+    final auth = _FakeAuthService(
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final presence = _FakePresenceService();
+    final chats = _FakeChatService();
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        auth: auth,
+        presence: presence,
+        chats: chats,
+      ),
+    );
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(auth.restoreCalls, 1);
+    expect(presence.recoverAfterResumeCalls, 1);
+    expect(chats.handleResumeCalls, 1);
+  });
 }
 
 Widget _buildTestApp({
@@ -391,16 +450,22 @@ class _FakeListingsService extends ListingsService {
 }
 
 class _FakeChatService extends ChatService {
-  _FakeChatService() : super(socketService: ChatSocketService());
+  _FakeChatService({this.callOrder})
+      : super(socketService: ChatSocketService());
 
+  final List<String>? callOrder;
   int handleResumeCalls = 0;
 
   @override
   Stream<int> streamUnreadTotal(String uid) => Stream<int>.value(0);
 
   @override
-  Future<void> handleAppResumed(String uid) async {
+  Future<void> handleAppResumed(
+    String uid, {
+    bool recoverSocket = true,
+  }) async {
     handleResumeCalls += 1;
+    callOrder?.add('chat.resume');
   }
 
   @override
@@ -452,9 +517,12 @@ class _FakeSupportService extends SupportService {
 }
 
 class _FakePresenceService extends PresenceService {
-  _FakePresenceService() : super(socketService: ChatSocketService());
+  _FakePresenceService({this.callOrder})
+      : super(socketService: ChatSocketService());
 
+  final List<String>? callOrder;
   int recoverAfterResumeCalls = 0;
+  Completer<void>? recoverAfterResumeCompleter;
 
   @override
   Future<void> setOnline({
@@ -465,6 +533,11 @@ class _FakePresenceService extends PresenceService {
   @override
   Future<void> recoverAfterResume(String uid) async {
     recoverAfterResumeCalls += 1;
+    callOrder?.add('presence.resume');
+    final completer = recoverAfterResumeCompleter;
+    if (completer != null) {
+      await completer.future;
+    }
   }
 
   @override

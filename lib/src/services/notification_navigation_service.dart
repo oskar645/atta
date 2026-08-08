@@ -29,6 +29,7 @@ class NotificationNavigationService {
   static DateTime? _lastOpenedActionAt;
 
   static const Set<String> _supportActionTypes = <String>{
+    'support_message',
     'support_reply',
     'report_reply',
     'report_update',
@@ -136,7 +137,16 @@ class NotificationNavigationService {
             .toString()
             .trim()
             .isNotEmpty) {
-      return 'support_reply';
+      final payloadType = (payload['type'] ??
+              payload['actionType'] ??
+              payload['action_type'] ??
+              '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      return payloadType == 'support_message'
+          ? 'support_message'
+          : 'support_reply';
     }
     return '';
   }
@@ -266,6 +276,7 @@ class NotificationNavigationService {
         await _openMyListings(context, payload, actionType: actionType);
         return;
       case 'support_reply':
+      case 'support_message':
       case 'report_reply':
       case 'report_update':
       case 'personal_admin_notification':
@@ -326,31 +337,30 @@ class NotificationNavigationService {
     if (payload.isEmpty) {
       return true;
     }
-    final hasNavigablePayload =
-        (payload['chatId'] ?? payload['chat_id'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty ||
+    final hasNavigablePayload = (payload['chatId'] ?? payload['chat_id'] ?? '')
+            .toString()
+            .trim()
+            .isNotEmpty ||
         (payload['ticketId'] ?? payload['ticket_id'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty ||
-            (payload['reportId'] ?? payload['report_id'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty ||
-            (payload['reviewId'] ?? payload['review_id'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty ||
-            (payload['sellerId'] ?? payload['seller_id'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty ||
-            (payload['listingId'] ?? payload['listing_id'] ?? '')
-                .toString()
-                .trim()
-                .isNotEmpty;
+            .toString()
+            .trim()
+            .isNotEmpty ||
+        (payload['reportId'] ?? payload['report_id'] ?? '')
+            .toString()
+            .trim()
+            .isNotEmpty ||
+        (payload['reviewId'] ?? payload['review_id'] ?? '')
+            .toString()
+            .trim()
+            .isNotEmpty ||
+        (payload['sellerId'] ?? payload['seller_id'] ?? '')
+            .toString()
+            .trim()
+            .isNotEmpty ||
+        (payload['listingId'] ?? payload['listing_id'] ?? '')
+            .toString()
+            .trim()
+            .isNotEmpty;
     return !hasNavigablePayload;
   }
 
@@ -526,6 +536,11 @@ class NotificationNavigationService {
           context,
           'Обращение в поддержку не найдено.',
           isError: true,
+        );
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const SupportScreen(),
+          ),
         );
         return;
       }

@@ -1,6 +1,6 @@
 const String appInstallUrl =
     'https://apps.apple.com/us/app/atta/id6762604298?l=ru';
-const String appInviteLandingUrl = 'https://attamarket.online/app';
+const String appInviteLandingUrl = 'https://attamarket.online/invite';
 const String _appInstallUrlPlaceholder =
     'PASTE_APP_STORE_OR_TESTFLIGHT_LINK_HERE';
 

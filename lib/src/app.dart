@@ -352,6 +352,20 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         await _deepLinks.savePendingInviteReferrerId(
           referrerId,
         );
+        try {
+          final response = await _auth.recordReferralOpen(
+            referralCode: referrerId,
+          );
+          final referralId = response['referralId']?.toString().trim() ?? '';
+          if (referralId.isNotEmpty) {
+            await _deepLinks.savePendingInviteReferralId(referralId);
+          }
+        } catch (_) {
+          // Signup still carries the referral code if audit tracking is unavailable.
+        }
+        if (_auth.isAuthenticated && mounted) {
+          context.read<MainShellController>().selectTab(4);
+        }
         break;
     }
   }
@@ -398,6 +412,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     String listingId, {
     required bool clearPendingOnSuccess,
   }) async {
+    await _waitForNavigatorReady();
     final navigator = attaNavigatorKey.currentState;
     final navContext = attaNavigatorKey.currentContext;
     if (navigator == null || navContext == null) {
@@ -463,6 +478,16 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       await _deepLinks.clearPendingListingIdIfMatches(listingId);
     }
     return true;
+  }
+
+  Future<void> _waitForNavigatorReady() async {
+    for (var attempt = 0; attempt < 10; attempt += 1) {
+      if (attaNavigatorKey.currentState != null &&
+          attaNavigatorKey.currentContext != null) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
   }
 
   void _handleSocketEvent(ChatSocketEvent event) {
@@ -593,6 +618,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     if (state == AppLifecycleState.resumed) {
       unawaited(_handleAppResumed());
     } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached ||
         state == AppLifecycleState.inactive) {
       _setOnline(false);
@@ -612,8 +638,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       if (uid == null || uid.isEmpty) {
         return;
       }
-      _runSoftStartupTask(() => _presence.recoverAfterResume(uid));
-      _runSoftStartupTask(() => _chats.handleAppResumed(uid));
+      _runSoftStartupTask(() => _recoverRealtimeAfterResume(uid));
       _runSoftStartupTask(
         () => _notifications.refreshActiveSession(
           force: true,
@@ -649,9 +674,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     final uid = _auth.currentUser?.uid;
     if (uid == null || uid.isEmpty) return;
 
-    // A route change can leave a TCP socket marked as connected even though it
-    // belongs to the old network. Recreate it before reloading chat data.
-    _runSoftStartupTask(() => _chats.handleNetworkChanged(uid));
+    _runSoftStartupTask(() => _recoverRealtimeAfterNetworkChange(uid));
     _runSoftStartupTask(() => _notifications.refreshActiveSession(force: true));
     if (_auth.currentUser?.isAdmin == true) {
       _admin.activateSession();
@@ -659,6 +682,19 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       _runSoftStartupTask(() => _admin.refreshAdminAttention(force: true));
     }
     _runSoftStartupTask(_syncBadge);
+  }
+
+  Future<void> _recoverRealtimeAfterResume(String uid) async {
+    await _presence.recoverAfterResume(uid);
+    await _chats.handleAppResumed(uid, recoverSocket: false);
+  }
+
+  Future<void> _recoverRealtimeAfterNetworkChange(String uid) async {
+    // A route change can leave a TCP socket marked as connected even though it
+    // belongs to the old network. Arm presence first so the reconnect signal
+    // from chat recovery cannot be missed.
+    await _presence.recoverAfterNetworkChange(uid);
+    await _chats.handleNetworkChanged(uid);
   }
 
   @override

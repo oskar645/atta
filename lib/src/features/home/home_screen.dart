@@ -1537,6 +1537,8 @@ class _FiltersScreen extends StatefulWidget {
   State<_FiltersScreen> createState() => _FiltersScreenState();
 }
 
+const double _filterCardRadius = 16;
+
 class _FiltersScreenState extends State<_FiltersScreen> {
   late String _category = widget.initialCategory;
   late String _subcategory = widget.initialSubcategory;
@@ -1641,6 +1643,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
               return ChoiceChip(
                 label: Text(c),
                 selected: selected,
+                showCheckmark: false,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(20),
                 ),
@@ -1655,96 +1658,39 @@ class _FiltersScreenState extends State<_FiltersScreen> {
           ),
           const SizedBox(height: 12),
 
-          if (_category != 'Все' && subs.isNotEmpty) ...[
-            DropdownButtonFormField<String>(
-              initialValue: _subcategory,
-              items: subItems
-                  .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                  .toList(),
-              onChanged: (v) => setState(() => _subcategory = v ?? 'Все'),
-              decoration: const InputDecoration(
-                labelText: 'Подкатегория',
-                border: OutlineInputBorder(),
-                isDense: true,
+          DropdownButtonFormField<String>(
+            initialValue: _subcategory,
+            isExpanded: true,
+            items: subItems
+                .map(
+                  (x) => DropdownMenuItem(
+                    value: x,
+                    child: Text(
+                      x,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (v) => setState(() => _subcategory = v ?? 'Все'),
+            decoration: const InputDecoration(
+              labelText: 'Подкатегория',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.all(
+                  Radius.circular(_filterCardRadius),
+                ),
               ),
+              isDense: true,
             ),
-            const SizedBox(height: 12),
-          ],
-
-          if (_isAutoCategory) ...[
-            DropdownButtonFormField<String>(
-              initialValue: _autoBrand.isEmpty ? null : _autoBrand,
-              items: kAutoBrandsPopular
-                  .map((b) => DropdownMenuItem(value: b, child: Text(b)))
-                  .toList(),
-              onChanged: (v) {
-                setState(() {
-                  _autoBrand = v ?? '';
-                  _autoModel = '';
-                });
-              },
-              decoration: const InputDecoration(
-                labelText: 'Марка',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _autoModel.isEmpty ? null : _autoModel,
-              items: (_autoBrand.isEmpty
-                      ? const <String>[]
-                      : (kAutoModels[_autoBrand] ?? const <String>[]))
-                  .where((m) => !m.toLowerCase().contains('другая'))
-                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                  .toList(),
-              onChanged: (v) => setState(() => _autoModel = v ?? ''),
-              decoration: const InputDecoration(
-                labelText: 'Модель',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _autoCondition.isEmpty ? 'Все' : _autoCondition,
-              items: _carConditions
-                  .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                  .toList(),
-              onChanged: (v) {
-                setState(() {
-                  final selected = v ?? 'Все';
-                  _autoCondition = selected == 'Все' ? '' : selected;
-                  _onlyUncrashed = selected == 'Не битые';
-                });
-              },
-              decoration: const InputDecoration(
-                labelText: 'Состояние',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _mileageCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Пробег до (км)',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              onChanged: (v) {
-                setState(() {
-                  _autoMileageTo = int.tryParse(v.trim());
-                });
-              },
-            ),
-          ],
+          ),
+          const SizedBox(height: 12),
 
           // Where to search block.
           ListTile(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(_filterCardRadius),
+            ),
             tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             leading: const Icon(Icons.place_outlined),
             title: const Text('Где искать'),
@@ -1770,6 +1716,93 @@ class _FiltersScreenState extends State<_FiltersScreen> {
               });
             },
           ),
+
+          if (_isAutoCategory) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _autoBrand.isEmpty ? null : _autoBrand,
+              items: kAutoBrandsPopular
+                  .map((b) => DropdownMenuItem(value: b, child: Text(b)))
+                  .toList(),
+              onChanged: (v) {
+                setState(() {
+                  _autoBrand = v ?? '';
+                  _autoModel = '';
+                });
+              },
+              decoration: const InputDecoration(
+                labelText: 'Марка',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(
+                    Radius.circular(_filterCardRadius),
+                  ),
+                ),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _autoModel.isEmpty ? null : _autoModel,
+              items: (_autoBrand.isEmpty
+                      ? const <String>[]
+                      : (kAutoModels[_autoBrand] ?? const <String>[]))
+                  .where((m) => !m.toLowerCase().contains('другая'))
+                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                  .toList(),
+              onChanged: (v) => setState(() => _autoModel = v ?? ''),
+              decoration: const InputDecoration(
+                labelText: 'Модель',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(
+                    Radius.circular(_filterCardRadius),
+                  ),
+                ),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _autoCondition.isEmpty ? 'Все' : _autoCondition,
+              items: _carConditions
+                  .map((x) => DropdownMenuItem(value: x, child: Text(x)))
+                  .toList(),
+              onChanged: (v) {
+                setState(() {
+                  final selected = v ?? 'Все';
+                  _autoCondition = selected == 'Все' ? '' : selected;
+                  _onlyUncrashed = selected == 'Не битые';
+                });
+              },
+              decoration: const InputDecoration(
+                labelText: 'Состояние',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(
+                    Radius.circular(_filterCardRadius),
+                  ),
+                ),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _mileageCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Пробег до (км)',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(
+                    Radius.circular(_filterCardRadius),
+                  ),
+                ),
+                isDense: true,
+              ),
+              onChanged: (v) {
+                setState(() {
+                  _autoMileageTo = int.tryParse(v.trim());
+                });
+              },
+            ),
+          ],
 
           const SizedBox(height: 20),
         ],
@@ -1862,7 +1895,11 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
             decoration: const InputDecoration(
               prefixIcon: Icon(Icons.search),
               hintText: 'Например: Москва',
-              border: OutlineInputBorder(),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.all(
+                  Radius.circular(_filterCardRadius),
+                ),
+              ),
               isDense: true,
             ),
             onChanged: (_) => setState(() {}),
@@ -1880,8 +1917,9 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
           ),
           const SizedBox(height: 12),
           ListTile(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(_filterCardRadius),
+            ),
             tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             title: const Text('Радиус'),
             subtitle:
@@ -2003,8 +2041,9 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
                 hintText: widget.title,
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(_filterCardRadius),
+                ),
                 isDense: true,
               ),
             ),
@@ -2059,6 +2098,10 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
                           return ChoiceChip(
                             label: const Text('Не ограничивать'),
                             selected: isSel,
+                            shape: RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.circular(_filterCardRadius),
+                            ),
                             onSelected: (_) => setState(() => _radiusKm = null),
                           );
                         }
@@ -2068,6 +2111,10 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
                         return ChoiceChip(
                           label: Text('$km км'),
                           selected: isSel,
+                          shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(_filterCardRadius),
+                          ),
                           onSelected: (_) => setState(() => _radiusKm = km),
                         );
                       },

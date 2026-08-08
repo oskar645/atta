@@ -135,11 +135,14 @@ export class MediaController {
         result.recipientChat,
         result.message,
         result.recipientId,
+        undefined,
+        result.recipientUnreadTotal,
       );
       await this.notificationsService.sendChatMessagePush({
         recipientId: result.recipientId,
         message: result.message,
         chat: result.recipientChat,
+        unreadTotal: result.recipientUnreadTotal,
       });
       return result;
     });

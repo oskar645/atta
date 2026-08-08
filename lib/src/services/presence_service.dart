@@ -17,12 +17,15 @@ class PresenceService {
   static final TokenStorage _tokenStorage = TokenStorage();
 
   StreamSubscription<PresenceSnapshot>? _presenceSub;
+  StreamSubscription<bool>? _connectionSub;
   final Map<String, PresenceSnapshot> _presenceMap = {};
   final Map<String, StreamController<PresenceSnapshot>> _controllers = {};
   final Map<String, Stream<PresenceSnapshot>> _streams = {};
   final Map<String, Stream<bool>> _onlineStreams = {};
   final Map<String, DateTime> _lastFetchAt = {};
   final Map<String, Future<void>> _presenceFetchInFlight = {};
+  Future<void>? _presenceRecoveryInFlight;
+  String? _activeUserId;
 
   static const Duration _fallbackPresenceTtl = Duration(minutes: 1);
 
@@ -74,29 +77,39 @@ class PresenceService {
   }
 
   void _ensureSocketSubscription() {
-    if (_presenceSub != null) return;
-    _debugLog('Presence listener registered event=presence.changed count=1');
-    _presenceSub = _socketService?.presenceUpdates.listen((snapshot) {
-      final userId = snapshot.userId.trim();
-      if (userId.isEmpty) return;
-      _debugSource('Presence source: Timeweb');
-      _debugSource('Socket event: presence.changed');
-      final previous = _presenceMap[userId];
-      if (previous != null &&
-          previous.isOnline == snapshot.isOnline &&
-          _sameDateTime(previous.lastSeen, snapshot.lastSeen)) {
+    if (_presenceSub == null) {
+      _debugLog('Presence listener registered event=presence.changed count=1');
+      _presenceSub = _socketService?.presenceUpdates.listen((snapshot) {
+        final userId = snapshot.userId.trim();
+        if (userId.isEmpty) return;
+        _debugSource('Presence source: Timeweb');
+        _debugSource('Socket event: presence.changed');
+        final previous = _presenceMap[userId];
+        if (previous != null &&
+            previous.isOnline == snapshot.isOnline &&
+            _sameDateTime(previous.lastSeen, snapshot.lastSeen)) {
+          _lastFetchAt[userId] = DateTime.now();
+          _debugLog(
+            'Presence state unchanged user=$userId online=${snapshot.isOnline}',
+          );
+          return;
+        }
+        _presenceMap[userId] = snapshot;
         _lastFetchAt[userId] = DateTime.now();
         _debugLog(
-          'Presence state unchanged user=$userId online=${snapshot.isOnline}',
+          'Presence state updated user=$userId online=${snapshot.isOnline}',
         );
-        return;
-      }
-      _presenceMap[userId] = snapshot;
-      _lastFetchAt[userId] = DateTime.now();
-      _debugLog(
-        'Presence state updated user=$userId online=${snapshot.isOnline}',
+        _emitPresence(userId, snapshot);
+      });
+    }
+    if (_connectionSub != null) return;
+    _connectionSub = _socketService?.connectionChanges.listen((connected) {
+      if (!connected) return;
+      final uid = _activeUserId?.trim() ?? '';
+      if (uid.isEmpty) return;
+      unawaited(
+        _refreshAfterSocketConnected(uid, reason: 'socket.connected'),
       );
-      _emitPresence(userId, snapshot);
     });
   }
 
@@ -104,22 +117,28 @@ class PresenceService {
     required String uid,
     required bool isOnline,
   }) async {
+    final id = uid.trim();
+    if (id.isEmpty) return;
+    if (isOnline) {
+      _activeUserId = id;
+    }
     _debugSource('Presence source: Timeweb');
     _ensureSocketSubscription();
-    _debugLog('Presence online sent user=$uid online=$isOnline');
+    _debugLog('Presence online sent user=$id online=$isOnline');
+    final previous = _presenceMap[id];
+    final snapshot = PresenceSnapshot(userId: id, isOnline: isOnline);
+    _presenceMap[id] = snapshot;
+    if (previous?.isOnline == isOnline &&
+        _sameDateTime(previous?.lastSeen, snapshot.lastSeen)) {
+      _debugLog('Presence state unchanged user=$id online=$isOnline');
+    } else {
+      _emitPresence(id, snapshot);
+    }
     await _socketService?.setPresence(
       isOnline,
       reason: isOnline ? 'presence.setOnline' : 'presence.setOffline',
     );
-    final previous = _presenceMap[uid];
-    final snapshot = PresenceSnapshot(userId: uid, isOnline: isOnline);
-    _presenceMap[uid] = snapshot;
-    _debugLog('Presence online confirmed user=$uid online=$isOnline');
-    if (previous?.isOnline == isOnline) {
-      _debugLog('Presence state unchanged user=$uid online=$isOnline');
-      return;
-    }
-    _emitPresence(uid, snapshot);
+    _debugLog('Presence online confirmed user=$id online=$isOnline');
   }
 
   Future<void> heartbeat(String uid) async {
@@ -133,15 +152,60 @@ class PresenceService {
   }
 
   Future<void> recoverAfterResume(String uid) async {
+    await _recoverPresence(uid, reason: 'presence.resume', recoverSocket: true);
+  }
+
+  Future<void> recoverAfterNetworkChange(String uid) async {
     final id = uid.trim();
     if (id.isEmpty) return;
+    _activeUserId = id;
     _ensureSocketSubscription();
     _debugLog(
-      'Presence reconnect after resume user=$id socketConnected=${_socketService?.isConnected == true}',
+      'Presence network recovery armed user=$id socketConnected=${_socketService?.isConnected == true}',
     );
-    await _socketService?.forceReconnect(reason: 'presence.resume');
-    await setOnline(uid: id, isOnline: true);
-    await heartbeat(id);
+  }
+
+  Future<void> _recoverPresence(
+    String uid, {
+    required String reason,
+    required bool recoverSocket,
+  }) async {
+    final id = uid.trim();
+    if (id.isEmpty) return;
+    _activeUserId = id;
+    _ensureSocketSubscription();
+    _debugLog(
+      'Presence reconnect requested reason=$reason user=$id socketConnected=${_socketService?.isConnected == true}',
+    );
+    if (recoverSocket) {
+      await _socketService?.recoverAfterResume(reason: reason);
+    }
+    await _refreshAfterSocketConnected(id, reason: reason);
+  }
+
+  Future<void> _refreshAfterSocketConnected(
+    String uid, {
+    required String reason,
+  }) async {
+    final id = uid.trim();
+    if (id.isEmpty) return;
+    final existing = _presenceRecoveryInFlight;
+    if (existing != null) return existing;
+
+    final future = () async {
+      _debugLog('Presence refresh after reconnect reason=$reason user=$id');
+      await setOnline(uid: id, isOnline: true);
+      await heartbeat(id);
+      await _refreshTrackedPresence();
+    }();
+    _presenceRecoveryInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_presenceRecoveryInFlight, future)) {
+        _presenceRecoveryInFlight = null;
+      }
+    }
   }
 
   Future<void> resetSession() async {
@@ -151,6 +215,10 @@ class PresenceService {
       await presenceSub.cancel();
       _presenceSub = null;
     }
+    await _connectionSub?.cancel();
+    _connectionSub = null;
+    _activeUserId = null;
+    _presenceRecoveryInFlight = null;
     _presenceMap.clear();
     _streams.clear();
     _onlineStreams.clear();
@@ -187,6 +255,18 @@ class PresenceService {
       if (identical(_presenceFetchInFlight[id], future)) {
         _presenceFetchInFlight.remove(id);
       }
+    }
+  }
+
+  Future<void> _refreshTrackedPresence() async {
+    final activeUserId = _activeUserId?.trim() ?? '';
+    final ids = <String>{
+      ..._controllers.keys,
+      ..._presenceMap.keys,
+    }..removeWhere((id) => id.isEmpty || id == activeUserId);
+    for (final id in ids) {
+      _lastFetchAt.remove(id);
+      await _loadTimewebPresence(id);
     }
   }
 

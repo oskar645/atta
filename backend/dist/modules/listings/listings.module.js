@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const promotions_module_1 = require("../promotions/promotions.module");
 const storage_module_1 = require("../storage/storage.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const listings_controller_1 = require("./listings.controller");
 const listings_service_1 = require("./listings.service");
 let ListingsModule = class ListingsModule {
@@ -18,7 +19,7 @@ let ListingsModule = class ListingsModule {
 exports.ListingsModule = ListingsModule;
 exports.ListingsModule = ListingsModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, storage_module_1.StorageModule, promotions_module_1.PromotionsModule],
+        imports: [auth_module_1.AuthModule, storage_module_1.StorageModule, promotions_module_1.PromotionsModule, user_blocks_module_1.UserBlocksModule],
         controllers: [listings_controller_1.ListingsController],
         providers: [listings_service_1.ListingsService],
         exports: [listings_service_1.ListingsService],

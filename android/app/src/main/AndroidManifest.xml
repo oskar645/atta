@@ -22,7 +22,7 @@
         android:name="${applicationName}"
         android:label="Atta"
         android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="false">
 
         <activity
@@ -84,11 +84,27 @@
                 <data
                     android:scheme="https"
                     android:host="attamarket.online"
+                    android:pathPrefix="/invite" />
+                <data
+                    android:scheme="https"
+                    android:host="www.attamarket.online"
+                    android:pathPrefix="/invite" />
+                <data
+                    android:scheme="https"
+                    android:host="attamarket.online"
                     android:pathPrefix="/app" />
                 <data
                     android:scheme="https"
                     android:host="www.attamarket.online"
                     android:pathPrefix="/app" />
+                <data
+                    android:scheme="https"
+                    android:host="attamarket.online"
+                    android:pathPrefix="/payments/yookassa/return" />
+                <data
+                    android:scheme="https"
+                    android:host="www.attamarket.online"
+                    android:pathPrefix="/payments/yookassa/return" />
             </intent-filter>
 
         </activity>

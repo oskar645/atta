@@ -252,6 +252,9 @@ class Listing {
       status == 'archived' ||
       status == 'rejected';
 
+  bool get isPermanentlyUnavailableForBuyer =>
+      status == 'sold' || status == 'deleted' || status == 'archived';
+
   bool get canOwnerEdit => status == 'approved' || status == 'rejected';
 
   String get archiveNote {

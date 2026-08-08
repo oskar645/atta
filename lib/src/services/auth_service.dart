@@ -27,6 +27,7 @@ class AuthService {
       onRefreshSession: _backend.refreshSession,
       onSessionExpired: _backend.expireSession,
       onAwaitAuthorizedSession: _backend.awaitPrivateAuthReady,
+      onAccountBlocked: _backend.revalidateCurrentUser,
     );
   }
 
@@ -86,12 +87,19 @@ class AuthService {
 
   Future<AuthUser?> revalidateCurrentUser() => _backend.revalidateCurrentUser();
 
+  Future<AuthUser?> syncBlockStatus() => _backend.revalidateCurrentUser();
+
   Future<AuthUser?> restoreSessionOnResume({bool force = false}) =>
       _backend.restoreSessionOnResume(force: force);
 
   Future<void> markAppOpened() async {
     await AuthApi(_apiClient).markAppOpened();
   }
+
+  Future<Map<String, dynamic>> recordReferralOpen({
+    required String referralCode,
+  }) =>
+      AuthApi(_apiClient).recordReferralOpen(referralCode: referralCode);
 
   Future<void> signInWithPhone({
     required String phone,
@@ -115,12 +123,15 @@ class AuthService {
     final pendingReferralCode = referralCode.trim().isNotEmpty
         ? referralCode.trim()
         : (await DeepLinkService().readPendingInviteReferrerId()) ?? '';
+    final pendingReferralId =
+        (await DeepLinkService().readPendingInviteReferralId()) ?? '';
     await _backend.signUpWithVerifiedPhone(
       phone: phone,
       password: password,
       displayName: displayName,
       verificationCheckId: verificationCheckId,
       referralCode: pendingReferralCode,
+      referralId: pendingReferralId,
     );
     if (pendingReferralCode.isNotEmpty) {
       await DeepLinkService().clearPendingInviteReferrerId();

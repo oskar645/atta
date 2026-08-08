@@ -1,7 +1,7 @@
 name: atta
 description: ATTA MVP - classifieds app
 publish_to: 'none'
-version: 1.0.5+8
+version: 1.0.9+13
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -62,7 +62,9 @@ flutter:
     - assets/branding/
 
 flutter_launcher_icons:
-  android: false
-  ios: true
-  image_path: "assets/branding/icon/app_icon.png"
+  android: true
+  ios: false
+  image_path_android: "assets/branding/icon/android_launcher_icon.png"
+  adaptive_icon_background: "#0F5FFF"
+  adaptive_icon_foreground: "assets/branding/icon/android_adaptive_foreground.png"
   remove_alpha_ios: true

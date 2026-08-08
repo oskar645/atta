@@ -6,12 +6,16 @@ import 'package:atta/src/services/api/wallet_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('wallet accrue check runs at most once per active session',
-      () async {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
+  test('wallet accrue check runs at most once per active session', () async {
     final firstApi = _FakeWalletApi();
     final firstService = WalletService(api: firstApi);
     firstService.activateSession('user-1');
@@ -100,6 +104,97 @@ void main() {
     expect(api.getWalletCalls, 0);
     expect(wallet?.balance, 10);
   });
+
+  test('pending top up status stays local until user closes it', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'wallet_pending_yookassa_payment_id': 'payment-1',
+    });
+    final api = _FakeWalletApi();
+    api.paymentStatusHandler = () async => <String, dynamic>{
+          'paymentId': 'payment-1',
+          'status': 'pending',
+          'pointsAmount': 100,
+          'credited': false,
+        };
+    final service = WalletService(api: api);
+
+    final result = await service.checkPendingTopUpStatus();
+    expect(result?.status, WalletTopUpStatus.pending);
+    expect(api.paymentStatusCalls, 1);
+
+    await service.checkPendingTopUpStatus();
+    expect(api.paymentStatusCalls, 2);
+
+    await service.clearPendingTopUp();
+    expect(await service.checkPendingTopUpStatus(), isNull);
+  });
+
+  test('succeeded top up refreshes wallet and transactions from backend',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'wallet_pending_yookassa_payment_id': 'payment-1',
+    });
+    final api = _FakeWalletApi();
+    api.getWalletHandler = () async => _walletMap(balance: 325);
+    api.getTransactionsHandler = () async => <String, dynamic>{
+          'wallet': _walletMap(balance: 325),
+          'items': <Map<String, dynamic>>[
+            {
+              'id': 'tx-purchase-1',
+              'user_id': 'user-1',
+              'wallet_id': 'wallet-1',
+              'type': 'accrual',
+              'amount': 100,
+              'reason': 'points_purchase',
+              'created_at': '2026-08-02T10:00:00.000Z',
+            },
+          ],
+        };
+    api.paymentStatusHandler = () async => <String, dynamic>{
+          'paymentId': 'payment-1',
+          'status': 'succeeded',
+          'pointsAmount': 100,
+          'credited': true,
+          'balance': 325,
+        };
+    final service = WalletService(api: api);
+    service.activateSession('user-1');
+
+    final result = await service.checkPendingTopUpStatus();
+
+    expect(result?.status, WalletTopUpStatus.succeeded);
+    expect(service.cachedWallet?.balance, 325);
+    expect(service.cachedTransactions.single.reason, 'points_purchase');
+    expect(api.getWalletCalls, 1);
+    expect(api.getTransactionsCalls, 1);
+    expect(await service.checkPendingTopUpStatus(), isNull);
+  });
+
+  test('top up status check uses single-flight per payment id', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'wallet_pending_yookassa_payment_id': 'payment-1',
+    });
+    final api = _FakeWalletApi();
+    final completer = Completer<Map<String, dynamic>>();
+    api.paymentStatusHandler = () => completer.future;
+    final service = WalletService(api: api);
+
+    final first = service.checkPendingTopUpStatus();
+    final second = service.checkPendingTopUpStatus();
+    await Future<void>.delayed(Duration.zero);
+    expect(api.paymentStatusCalls, 1);
+
+    completer.complete(<String, dynamic>{
+      'paymentId': 'payment-1',
+      'status': 'pending',
+      'pointsAmount': 100,
+      'credited': false,
+    });
+
+    final results = await Future.wait([first, second]);
+    expect(results[0]?.status, WalletTopUpStatus.pending);
+    expect(results[1]?.status, WalletTopUpStatus.pending);
+  });
 }
 
 Map<String, dynamic> _walletMap({required int balance}) {
@@ -119,8 +214,12 @@ class _FakeWalletApi extends WalletApi {
 
   int checkAccrualCalls = 0;
   int getWalletCalls = 0;
+  int getTransactionsCalls = 0;
+  int paymentStatusCalls = 0;
   Future<Map<String, dynamic>> Function()? checkAccrualHandler;
   Future<Map<String, dynamic>> Function()? getWalletHandler;
+  Future<Map<String, dynamic>> Function()? getTransactionsHandler;
+  Future<Map<String, dynamic>> Function()? paymentStatusHandler;
 
   @override
   Future<Map<String, dynamic>> getWallet() async {
@@ -133,6 +232,19 @@ class _FakeWalletApi extends WalletApi {
   }
 
   @override
+  Future<Map<String, dynamic>> getTransactions() async {
+    getTransactionsCalls += 1;
+    final handler = getTransactionsHandler;
+    if (handler != null) {
+      return handler();
+    }
+    return <String, dynamic>{
+      'wallet': _walletMap(balance: 10),
+      'items': const <Map<String, dynamic>>[],
+    };
+  }
+
+  @override
   Future<Map<String, dynamic>> checkAccrual() async {
     checkAccrualCalls += 1;
     final handler = checkAccrualHandler;
@@ -141,6 +253,21 @@ class _FakeWalletApi extends WalletApi {
     }
     return <String, dynamic>{
       'wallet': _walletMap(balance: 10),
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> getPaymentStatus(String paymentId) async {
+    paymentStatusCalls += 1;
+    final handler = paymentStatusHandler;
+    if (handler != null) {
+      return handler();
+    }
+    return <String, dynamic>{
+      'paymentId': paymentId,
+      'status': 'pending',
+      'pointsAmount': 100,
+      'credited': false,
     };
   }
 }

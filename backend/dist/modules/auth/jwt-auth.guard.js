@@ -17,10 +17,12 @@ const env_1 = require("../../config/env");
 const phone_1 = require("../../common/phone");
 const env_2 = require("../../config/env");
 const prisma_service_1 = require("../prisma/prisma.service");
+const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 let JwtAuthGuard = class JwtAuthGuard {
-    constructor(jwtService, prisma) {
+    constructor(jwtService, prisma, userBlocksService) {
         this.jwtService = jwtService;
         this.prisma = prisma;
+        this.userBlocksService = userBlocksService;
     }
     async canActivate(context) {
         const request = context.switchToHttp().getRequest();
@@ -81,12 +83,38 @@ let JwtAuthGuard = class JwtAuthGuard {
         if (session.user.status === client_1.UserStatus.DELETED || session.user.deletedAt) {
             throw new common_1.UnauthorizedException('User account is deleted');
         }
-        request.authUser = {
+        const authUser = {
             userId: session.user.id,
             sessionId: session.id,
             email: session.user.email,
             role: this.resolveRole(session.user.adminProfile?.isAdmin === true, session.user.phone),
         };
+        request.authUser = authUser;
+        if (authUser.role !== 'admin' && this.shouldBlockWriteRequest(request)) {
+            const block = await this.userBlocksService.getActiveBlock(authUser.userId);
+            if (block) {
+                throw new common_1.ForbiddenException({
+                    code: 'ACCOUNT_BLOCKED',
+                    message: 'Аккаунт заблокирован',
+                    blockId: block.id,
+                    reason: block.reason,
+                    endsAt: block.endsAt?.toISOString() ?? null,
+                    permanent: block.type === 'PERMANENT',
+                });
+            }
+        }
+        return true;
+    }
+    shouldBlockWriteRequest(request) {
+        const method = (request.method ?? 'GET').toUpperCase();
+        if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+            return false;
+        }
+        const path = (request.path ?? request.url ?? '').split('?')[0] ?? '';
+        if (path === '/auth/logout')
+            return false;
+        if (path.startsWith('/support'))
+            return false;
         return true;
     }
     resolveRole(isAdminFromDb, phone) {
@@ -106,6 +134,7 @@ exports.JwtAuthGuard = JwtAuthGuard;
 exports.JwtAuthGuard = JwtAuthGuard = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [jwt_1.JwtService,
-        prisma_service_1.PrismaService])
+        prisma_service_1.PrismaService,
+        user_blocks_service_1.UserBlocksService])
 ], JwtAuthGuard);
 //# sourceMappingURL=jwt-auth.guard.js.map

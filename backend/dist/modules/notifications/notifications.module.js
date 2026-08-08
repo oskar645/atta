@@ -12,6 +12,7 @@ const apns_module_1 = require("../apns/apns.module");
 const auth_module_1 = require("../auth/auth.module");
 const chats_module_1 = require("../chats/chats.module");
 const prisma_module_1 = require("../prisma/prisma.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const notifications_controller_1 = require("./notifications.controller");
 const notifications_service_1 = require("./notifications.service");
 let NotificationsModule = class NotificationsModule {
@@ -19,7 +20,7 @@ let NotificationsModule = class NotificationsModule {
 exports.NotificationsModule = NotificationsModule;
 exports.NotificationsModule = NotificationsModule = __decorate([
     (0, common_1.Module)({
-        imports: [apns_module_1.ApnsModule, auth_module_1.AuthModule, prisma_module_1.PrismaModule, (0, common_1.forwardRef)(() => chats_module_1.ChatsModule)],
+        imports: [apns_module_1.ApnsModule, auth_module_1.AuthModule, prisma_module_1.PrismaModule, (0, common_1.forwardRef)(() => chats_module_1.ChatsModule), user_blocks_module_1.UserBlocksModule],
         controllers: [notifications_controller_1.NotificationsController, notifications_controller_1.AdminNotificationsController],
         providers: [notifications_service_1.NotificationsService],
         exports: [notifications_service_1.NotificationsService],

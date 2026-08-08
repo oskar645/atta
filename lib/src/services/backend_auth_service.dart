@@ -312,6 +312,7 @@ class BackendAuthService {
     required String displayName,
     required String verificationCheckId,
     String referralCode = '',
+    String referralId = '',
   }) async {
     _debugAuthLog('Auth phone signup request -> /auth/signup-phone',
         phone: phone);
@@ -321,6 +322,7 @@ class BackendAuthService {
       displayName: displayName,
       verificationCheckId: verificationCheckId,
       referralCode: referralCode,
+      referralId: referralId,
     );
     await _consumeAuthPayload(response);
     await me();
@@ -527,7 +529,11 @@ class BackendAuthService {
   Future<AuthUser> _consumeAuthPayload(Map<String, dynamic> response) async {
     final auth =
         Map<String, dynamic>.from((response['auth'] ?? const {}) as Map);
-    final rawUser = (response['user'] ?? response) as Map;
+    final rawUser =
+        Map<dynamic, dynamic>.from((response['user'] ?? response) as Map);
+    if (response['block_status'] != null) {
+      rawUser['block_status'] = response['block_status'];
+    }
     final user = _mergeUser(
       _currentUser,
       _parseUser(rawUser),
@@ -596,7 +602,11 @@ class BackendAuthService {
       if (!error.isNotFound) rethrow;
       response = await _usersApi.me();
     }
-    final rawUser = (response['user'] ?? response) as Map;
+    final rawUser =
+        Map<dynamic, dynamic>.from((response['user'] ?? response) as Map);
+    if (response['block_status'] != null) {
+      rawUser['block_status'] = response['block_status'];
+    }
     final user = _mergeUser(
       _currentUser,
       _parseUser(rawUser),
@@ -651,6 +661,9 @@ class BackendAuthService {
           raw['is_admin'] == true ||
           raw['role'] == 'admin',
       referralCode: pick(raw['referralCode']) ?? pick(raw['referral_code']),
+      blockStatus: raw['block_status'] is Map
+          ? AuthBlockStatus.fromJson(raw['block_status'] as Map)
+          : null,
     );
   }
 
@@ -693,6 +706,7 @@ class BackendAuthService {
       phoneVerified: next.phoneVerified || previous.phoneVerified,
       photoUrl: _pickPreferred(next.photoUrl, previous.photoUrl),
       referralCode: _pickPreferred(next.referralCode, previous.referralCode),
+      blockStatus: next.blockStatus,
       isAdmin: preferServerAdmin
           ? next.isAdmin
           : sameUser

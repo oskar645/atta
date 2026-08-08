@@ -19,6 +19,7 @@ const media_module_1 = require("./modules/media/media.module");
 const notifications_module_1 = require("./modules/notifications/notifications.module");
 const feed_ads_module_1 = require("./modules/feed-ads/feed-ads.module");
 const phone_verification_module_1 = require("./modules/phone-verification/phone-verification.module");
+const payments_module_1 = require("./modules/payments/payments.module");
 const presence_module_1 = require("./modules/presence/presence.module");
 const prisma_module_1 = require("./modules/prisma/prisma.module");
 const promotions_module_1 = require("./modules/promotions/promotions.module");
@@ -30,6 +31,7 @@ const s3_module_1 = require("./modules/s3/s3.module");
 const storage_module_1 = require("./modules/storage/storage.module");
 const support_module_1 = require("./modules/support/support.module");
 const users_module_1 = require("./modules/users/users.module");
+const user_blocks_module_1 = require("./modules/user-blocks/user-blocks.module");
 const user_follows_module_1 = require("./modules/user-follows/user-follows.module");
 const saved_searches_module_1 = require("./modules/saved-searches/saved-searches.module");
 const viewed_listings_module_1 = require("./modules/viewed-listings/viewed-listings.module");
@@ -47,11 +49,13 @@ exports.AppModule = AppModule = __decorate([
             apns_module_1.ApnsModule,
             auth_module_1.AuthModule,
             users_module_1.UsersModule,
+            user_blocks_module_1.UserBlocksModule,
             wallet_module_1.WalletModule,
             user_follows_module_1.UserFollowsModule,
             saved_searches_module_1.SavedSearchesModule,
             viewed_listings_module_1.ViewedListingsModule,
             phone_verification_module_1.PhoneVerificationModule,
+            payments_module_1.PaymentsModule,
             listings_module_1.ListingsModule,
             promotions_module_1.PromotionsModule,
             media_module_1.MediaModule,

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DevicePlatform, NotificationScope, NotificationType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
@@ -11,6 +11,8 @@ const excludedInAppNotificationTypes = [NotificationType.CHAT_MESSAGE];
 
 @Injectable()
 export class NotificationsService {
+  private readonly logger = new Logger(NotificationsService.name);
+
   constructor(
     private readonly apnsService: ApnsService,
     private readonly prisma: PrismaService,
@@ -279,7 +281,13 @@ export class NotificationsService {
       serialized,
       params.userId.trim(),
     );
-    await this.sendPushToUser(params.userId, serialized);
+    try {
+      await this.sendPushToUser(params.userId, serialized);
+    } catch (error) {
+      this.logger.warn(
+        `Personal notification push failed userId=${params.userId.trim()} notificationId=${item.id} error=${error instanceof Error ? error.name : 'unknown'}`,
+      );
+    }
     return item;
   }
 
@@ -360,6 +368,7 @@ export class NotificationsService {
     recipientId: string;
     message: Record<string, unknown>;
     chat: Record<string, unknown>;
+    unreadTotal?: number;
   }) {
     const message = params.message;
     const senderName =
@@ -386,6 +395,7 @@ export class NotificationsService {
       },
       chat_id: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
       chatId: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
+      unreadTotal: Math.max(0, Math.trunc(params.unreadTotal ?? 0)),
     };
     await this.sendPushToUser(params.recipientId, serialized);
   }
@@ -572,14 +582,28 @@ export class NotificationsService {
         `${(notification['payload'] as Record<string, unknown> | undefined)?.['actionType'] ?? ''}`.trim() ||
         `${notification['type'] ?? ''}`.trim(),
     };
+    const badge = this.notificationBadge(notification);
+    let unexpectedPushFailureLogged = false;
     await Promise.all(
       devices.map(async (device) => {
-        const result = await this.apnsService.send({
-          token: device.deviceToken,
-          title,
-          body,
-          payload,
-        });
+        let result: { sent: boolean; status: number; reason?: string };
+        try {
+          result = await this.apnsService.send({
+            token: device.deviceToken,
+            title,
+            body,
+            payload,
+            ...(badge == null ? {} : { badge }),
+          });
+        } catch (error) {
+          if (!unexpectedPushFailureLogged) {
+            this.logger.warn(
+              `APNs push skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`,
+            );
+            unexpectedPushFailureLogged = true;
+          }
+          return;
+        }
         if (
           !result.sent &&
           (result.status === 400 || result.status === 410) &&
@@ -598,5 +622,16 @@ export class NotificationsService {
         }
       }),
     );
+  }
+
+  private notificationBadge(notification: Record<string, unknown>) {
+    const raw =
+      notification['unreadTotal'] ??
+      notification['unread_total'] ??
+      (notification['payload'] as Record<string, unknown> | undefined)?.['unreadTotal'] ??
+      (notification['payload'] as Record<string, unknown> | undefined)?.['unread_total'];
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return undefined;
+    return Math.max(0, Math.trunc(value));
   }
 }

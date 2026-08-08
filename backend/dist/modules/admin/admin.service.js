@@ -12,13 +12,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
+const phone_1 = require("../../common/phone");
+const referral_code_1 = require("../../common/referral-code");
 const serializers_1 = require("../../common/serializers");
 const app_visits_service_1 = require("../app-visits/app-visits.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const reviews_service_1 = require("../reviews/reviews.service");
 const storage_service_1 = require("../storage/storage.service");
+const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const promotion_plans_constants_1 = require("../promotions/promotion-plans.constants");
+const listings_service_1 = require("../listings/listings.service");
 const promotionStatusFromInput = (value) => {
     switch ((value ?? '').trim().toLowerCase()) {
         case 'active':
@@ -62,19 +66,21 @@ const protectedAdminPhones = new Set([
     '79306939954',
 ]);
 let AdminService = class AdminService {
-    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService) {
+    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService) {
         this.prisma = prisma;
         this.appVisitsService = appVisitsService;
         this.notificationsService = notificationsService;
         this.reviewsService = reviewsService;
         this.storageService = storageService;
+        this.userBlocksService = userBlocksService;
     }
     async getDashboardStats() {
         const now = new Date();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
         const days30 = new Date(now.getTime() - 30 * 86400000);
         const days14 = new Date(now.getTime() - 14 * 86400000);
         const onlineCutoff = new Date(now.getTime() - 2 * 60000);
-        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d] = await Promise.all([
+        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth] = await Promise.all([
             this.prisma.user.count({
                 where: {
                     deletedAt: null,
@@ -163,6 +169,10 @@ let AdminService = class AdminService {
                     type: client_1.WalletTransactionType.SPEND,
                 },
             }),
+            this.getPointsPurchasesSummary({
+                from: monthStart.toISOString(),
+                to: now.toISOString(),
+            }),
         ]);
         const dailyMap = new Map();
         for (let index = 13; index >= 0; index -= 1) {
@@ -195,6 +205,7 @@ let AdminService = class AdminService {
                 activeAds,
                 newListings14d,
                 spentPoints30d: spentPoints30d._sum.amount ?? 0,
+                pointsPurchasesMonth,
             },
             daily: {
                 listings: listingsDaily,
@@ -281,6 +292,420 @@ let AdminService = class AdminService {
         return {
             source: 'timeweb',
             user: user ? (0, serializers_1.serializeUser)(user, { includePrivate: true }) : null,
+        };
+    }
+    resolveBlockDuration(dto, now) {
+        const duration = (dto.duration ?? '').trim().toLowerCase();
+        if (duration === 'permanent' || duration === 'forever') {
+            return {
+                type: client_1.UserBlockType.PERMANENT,
+                endsAt: null,
+            };
+        }
+        if (duration === 'custom') {
+            const endsAt = dto.ends_at ? new Date(dto.ends_at) : null;
+            if (!endsAt || Number.isNaN(endsAt.getTime()) || endsAt <= now) {
+                throw new common_1.BadRequestException('Укажите будущую дату окончания блокировки');
+            }
+            return {
+                type: client_1.UserBlockType.TEMPORARY,
+                endsAt,
+            };
+        }
+        const daysByDuration = {
+            one_day: 1,
+            '1_day': 1,
+            '1d': 1,
+            seven_days: 7,
+            '7_days': 7,
+            '7d': 7,
+            thirty_days: 30,
+            '30_days': 30,
+            '30d': 30,
+        };
+        const days = daysByDuration[duration];
+        if (!days) {
+            throw new common_1.BadRequestException('Неизвестный срок блокировки');
+        }
+        return {
+            type: client_1.UserBlockType.TEMPORARY,
+            endsAt: new Date(now.getTime() + days * 24 * 60 * 60 * 1000),
+        };
+    }
+    serializeAdminBlock(block) {
+        const user = block.user
+            ? (0, serializers_1.serializeUser)(block.user, { includePrivate: true })
+            : null;
+        return {
+            ...this.userBlocksService.serializeBlock(block),
+            user,
+            listing: block.listing ? (0, serializers_1.serializeListing)(block.listing) : null,
+            admin: block.admin
+                ? (0, serializers_1.serializeUser)(block.admin, { includePrivate: true })
+                : null,
+            support_tickets_count: block._count?.appeals ?? 0,
+            previous_blocks_count: block.user?._count?.blocks ?? 0,
+            violations_count: block.user?._count?.blocks ?? 0,
+        };
+    }
+    async listBlocks(status) {
+        const now = new Date();
+        await this.prisma.userBlock.updateMany({
+            where: {
+                status: client_1.UserBlockStatus.ACTIVE,
+                endsAt: {
+                    not: null,
+                    lte: now,
+                },
+            },
+            data: {
+                status: client_1.UserBlockStatus.EXPIRED,
+            },
+        });
+        const normalized = (status ?? 'active').trim().toLowerCase();
+        if (normalized === 'appeals') {
+            const tickets = await this.prisma.supportTicket.findMany({
+                where: {
+                    isBlockAppeal: true,
+                },
+                include: {
+                    userBlock: true,
+                },
+                orderBy: {
+                    updatedAt: 'desc',
+                },
+                take: 100,
+            });
+            return {
+                source: 'timeweb',
+                items: tickets.map((ticket) => ({
+                    id: ticket.id,
+                    ticket_id: ticket.id,
+                    user_id: ticket.userId,
+                    block_id: ticket.userBlockId,
+                    subject: ticket.subject,
+                    status: ticket.status.toLowerCase(),
+                    last_message: ticket.lastMessage,
+                    unread_for_admin: ticket.unreadForAdmin,
+                    created_at: ticket.createdAt.toISOString(),
+                    updated_at: ticket.updatedAt.toISOString(),
+                    block: this.userBlocksService.serializeBlock(ticket.userBlock),
+                })),
+            };
+        }
+        const where = normalized === 'history'
+            ? {}
+            : normalized === 'temporary'
+                ? { type: client_1.UserBlockType.TEMPORARY, status: client_1.UserBlockStatus.ACTIVE }
+                : normalized === 'permanent'
+                    ? { type: client_1.UserBlockType.PERMANENT, status: client_1.UserBlockStatus.ACTIVE }
+                    : normalized === 'finished' || normalized === 'completed'
+                        ? { status: { in: [client_1.UserBlockStatus.EXPIRED, client_1.UserBlockStatus.LIFTED] } }
+                        : { status: client_1.UserBlockStatus.ACTIVE };
+        const blocks = await this.prisma.userBlock.findMany({
+            where,
+            include: {
+                user: {
+                    include: {
+                        adminProfile: true,
+                        _count: {
+                            select: {
+                                blocks: true,
+                            },
+                        },
+                    },
+                },
+                listing: {
+                    include: {
+                        owner: {
+                            include: {
+                                adminProfile: true,
+                            },
+                        },
+                        photos: {
+                            orderBy: {
+                                sortOrder: 'asc',
+                            },
+                        },
+                    },
+                },
+                admin: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+                _count: {
+                    select: {
+                        appeals: true,
+                    },
+                },
+            },
+            orderBy: {
+                startsAt: 'desc',
+            },
+            take: 100,
+        });
+        return {
+            source: 'timeweb',
+            items: blocks.map((block) => this.serializeAdminBlock(block)),
+        };
+    }
+    async blockUser(userId, authUser, dto) {
+        if (userId === authUser.userId) {
+            throw new common_1.BadRequestException('Нельзя заблокировать текущий аккаунт администратора');
+        }
+        const reason = dto.reason?.trim() ?? '';
+        if (!reason) {
+            throw new common_1.BadRequestException('Причина блокировки обязательна');
+        }
+        const now = new Date();
+        const duration = this.resolveBlockDuration(dto, now);
+        const listingId = dto.listing_id?.trim() || undefined;
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, phone: true, deletedAt: true, status: true },
+        });
+        if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
+            throw new common_1.NotFoundException('Пользователь не найден');
+        }
+        const existing = await this.userBlocksService.getActiveBlock(userId);
+        if (existing) {
+            throw new common_1.BadRequestException('У пользователя уже есть активная блокировка');
+        }
+        const block = await this.prisma.$transaction(async (tx) => {
+            const created = await tx.userBlock.create({
+                data: {
+                    userId,
+                    listingId,
+                    adminId: authUser.userId,
+                    type: duration.type,
+                    status: client_1.UserBlockStatus.ACTIVE,
+                    reason,
+                    internalNote: dto.internal_note?.trim() || null,
+                    startsAt: now,
+                    endsAt: duration.endsAt,
+                },
+            });
+            if (listingId) {
+                await tx.listing.updateMany({
+                    where: { id: listingId, ownerId: userId },
+                    data: {
+                        status: client_1.ListingStatus.REJECTED,
+                        rejectionReason: reason,
+                        moderationNote: dto.internal_note?.trim() || reason,
+                        moderatedBy: authUser.userId,
+                        moderatedAt: now,
+                        publishedAt: null,
+                        archivedAt: null,
+                        deletedAt: null,
+                    },
+                });
+            }
+            await tx.listing.updateMany({
+                where: {
+                    ownerId: userId,
+                    status: client_1.ListingStatus.APPROVED,
+                },
+                data: {
+                    status: client_1.ListingStatus.ARCHIVED,
+                    archivedAt: now,
+                    publishedAt: null,
+                    moderationNote: 'Скрыто из ленты на время блокировки пользователя.',
+                },
+            });
+            await tx.user.update({
+                where: { id: userId },
+                data: {
+                    status: client_1.UserStatus.BLOCKED,
+                    blockedAt: now,
+                    blockReason: reason,
+                },
+            });
+            if (dto.ban_phone_identity === true && user.phone?.trim()) {
+                await tx.blockedIdentity.create({
+                    data: {
+                        normalizedPhone: user.phone.trim(),
+                        userBlockId: created.id,
+                        bannedUntil: duration.endsAt,
+                        permanent: duration.type === client_1.UserBlockType.PERMANENT,
+                        reason,
+                    },
+                });
+            }
+            await tx.auditLog.create({
+                data: {
+                    actorUserId: authUser.userId,
+                    actorRole: 'admin',
+                    action: 'user.block',
+                    entityType: 'user',
+                    entityId: userId,
+                    newData: {
+                        blockId: created.id,
+                        listingId: listingId ?? null,
+                        duration: dto.duration,
+                        endsAt: duration.endsAt?.toISOString() ?? null,
+                    },
+                },
+            });
+            return created;
+        });
+        await this.notificationsService.createSystemNotification({
+            userId,
+            title: 'Аккаунт заблокирован',
+            body: reason,
+            type: client_1.NotificationType.GENERIC,
+            payload: {
+                actionType: 'account_blocked',
+                blockId: block.id,
+                endsAt: duration.endsAt?.toISOString() ?? null,
+                permanent: duration.type === client_1.UserBlockType.PERMANENT,
+            },
+        });
+        return {
+            source: 'timeweb',
+            block: this.userBlocksService.serializeBlock(block),
+        };
+    }
+    async unblockUserBlock(blockId, authUser, dto) {
+        const block = await this.prisma.userBlock.findUnique({ where: { id: blockId } });
+        if (!block) {
+            throw new common_1.NotFoundException('Блокировка не найдена');
+        }
+        const now = new Date();
+        const reason = dto?.reason?.trim() || 'Разблокировано администратором';
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const lifted = await tx.userBlock.update({
+                where: { id: blockId },
+                data: {
+                    status: client_1.UserBlockStatus.LIFTED,
+                    liftedAt: now,
+                    liftedByAdminId: authUser.userId,
+                    liftReason: reason,
+                },
+            });
+            await tx.blockedIdentity.updateMany({
+                where: {
+                    userBlockId: blockId,
+                    liftedAt: null,
+                },
+                data: {
+                    liftedAt: now,
+                    liftedByAdminId: authUser.userId,
+                },
+            });
+            const activeOther = await tx.userBlock.count({
+                where: {
+                    userId: block.userId,
+                    id: { not: blockId },
+                    status: client_1.UserBlockStatus.ACTIVE,
+                    OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+                },
+            });
+            if (activeOther === 0) {
+                await tx.user.update({
+                    where: { id: block.userId },
+                    data: {
+                        status: client_1.UserStatus.ACTIVE,
+                        blockedAt: null,
+                        blockReason: null,
+                    },
+                });
+            }
+            await tx.auditLog.create({
+                data: {
+                    actorUserId: authUser.userId,
+                    actorRole: 'admin',
+                    action: 'user.unblock',
+                    entityType: 'user',
+                    entityId: block.userId,
+                    newData: { blockId, reason },
+                },
+            });
+            return lifted;
+        });
+        return {
+            source: 'timeweb',
+            block: this.userBlocksService.serializeBlock(updated),
+        };
+    }
+    async updateUserBlock(blockId, authUser, dto) {
+        const block = await this.prisma.userBlock.findUnique({ where: { id: blockId } });
+        if (!block) {
+            throw new common_1.NotFoundException('Блокировка не найдена');
+        }
+        if (block.status !== client_1.UserBlockStatus.ACTIVE) {
+            throw new common_1.BadRequestException('Можно изменить только активную блокировку');
+        }
+        const now = new Date();
+        const permanentRequested = dto.permanent === true;
+        const temporaryRequested = dto.permanent === false || dto.ends_at != null;
+        let nextType = block.type;
+        let nextEndsAt = block.endsAt;
+        if (permanentRequested) {
+            nextType = client_1.UserBlockType.PERMANENT;
+            nextEndsAt = null;
+        }
+        else if (temporaryRequested) {
+            const endsAt = dto.ends_at ? new Date(dto.ends_at) : block.endsAt;
+            if (!endsAt || Number.isNaN(endsAt.getTime()) || endsAt <= now) {
+                throw new common_1.BadRequestException('Укажите будущую дату окончания блокировки');
+            }
+            nextType = client_1.UserBlockType.TEMPORARY;
+            nextEndsAt = endsAt;
+        }
+        const changeReason = dto.reason?.trim() || 'Изменение срока блокировки';
+        const internalNote = dto.internal_note === undefined
+            ? block.internalNote
+            : dto.internal_note.trim() || null;
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const saved = await tx.userBlock.update({
+                where: { id: blockId },
+                data: {
+                    type: nextType,
+                    endsAt: nextEndsAt,
+                    internalNote,
+                },
+            });
+            await tx.blockedIdentity.updateMany({
+                where: {
+                    userBlockId: blockId,
+                    liftedAt: null,
+                },
+                data: {
+                    permanent: nextType === client_1.UserBlockType.PERMANENT,
+                    bannedUntil: nextType === client_1.UserBlockType.PERMANENT ? null : nextEndsAt,
+                },
+            });
+            await tx.user.update({
+                where: { id: block.userId },
+                data: {
+                    status: client_1.UserStatus.BLOCKED,
+                    blockedAt: block.startsAt,
+                    blockReason: block.reason,
+                },
+            });
+            await tx.auditLog.create({
+                data: {
+                    actorUserId: authUser.userId,
+                    actorRole: 'admin',
+                    action: 'user.block.update',
+                    entityType: 'user',
+                    entityId: block.userId,
+                    newData: {
+                        blockId,
+                        reason: changeReason,
+                        previousEndsAt: block.endsAt?.toISOString() ?? null,
+                        nextEndsAt: nextEndsAt?.toISOString() ?? null,
+                        previousType: block.type,
+                        nextType,
+                    },
+                },
+            });
+            return saved;
+        });
+        return {
+            source: 'timeweb',
+            block: this.userBlocksService.serializeBlock(updated),
         };
     }
     async deleteUser(id, authUser) {
@@ -685,6 +1110,368 @@ let AdminService = class AdminService {
             note: 'Реальные платежи не подключены. Сейчас учитываются только бонусы.',
         };
     }
+    async getPointsPurchasesSummary(query) {
+        const { fromDate, toDate } = this.resolvePointsPurchasesRange(query);
+        const search = (query.search ?? '').trim();
+        const filters = this.buildPointsPurchaseFilters({ fromDate, toDate, search });
+        const whereSql = client_1.Prisma.join(filters, ' AND ');
+        const rows = await this.prisma.$queryRaw `
+      SELECT
+        COALESCE(SUM(p."amount_rub"), 0)::text AS total_amount_rub,
+        COALESCE(SUM(p."points_amount"), 0)::bigint AS total_points,
+        COUNT(DISTINCT p."id")::bigint AS purchases_count,
+        COUNT(DISTINCT p."user_id")::bigint AS unique_buyers_count
+      FROM "payments" p
+      JOIN "users" u ON u."id" = p."user_id"
+      WHERE ${whereSql}
+    `;
+        const row = rows[0] ?? {
+            total_amount_rub: 0,
+            total_points: 0,
+            purchases_count: 0,
+            unique_buyers_count: 0,
+        };
+        return {
+            source: 'timeweb',
+            from: fromDate.toISOString(),
+            to: toDate.toISOString(),
+            totalAmountRub: this.numberFromDb(row.total_amount_rub),
+            totalPoints: this.numberFromDb(row.total_points),
+            purchasesCount: this.numberFromDb(row.purchases_count),
+            uniqueBuyersCount: this.numberFromDb(row.unique_buyers_count),
+        };
+    }
+    async listPointsPurchases(query) {
+        const { fromDate, toDate } = this.resolvePointsPurchasesRange(query);
+        const limit = Math.min(Math.max(query.limit ?? 30, 1), 100);
+        const search = (query.search ?? '').trim();
+        const cursor = this.decodePointsPurchaseCursor(query.cursor);
+        const filters = this.buildPointsPurchaseFilters({ fromDate, toDate, search });
+        if (cursor) {
+            filters.push(client_1.Prisma.sql `(p."created_at", p."id") < (${cursor.createdAt}, ${cursor.id}::uuid)`);
+        }
+        const whereSql = client_1.Prisma.join(filters, ' AND ');
+        const rows = await this.prisma.$queryRaw `
+      SELECT
+        p."id"::text AS payment_id,
+        p."user_id"::text AS user_id,
+        u."display_name" AS display_name,
+        NULLIF(u."name", '') AS username,
+        u."phone" AS phone,
+        p."amount_rub"::text AS amount_rub,
+        p."points_amount" AS points,
+        p."status"::text AS status,
+        p."created_at" AS created_at
+      FROM "payments" p
+      JOIN "users" u ON u."id" = p."user_id"
+      WHERE ${whereSql}
+      ORDER BY p."created_at" DESC, p."id" DESC
+      LIMIT ${limit + 1}
+    `;
+        const pageRows = rows.slice(0, limit);
+        const next = rows.length > limit ? pageRows[pageRows.length - 1] : null;
+        return {
+            source: 'timeweb',
+            from: fromDate.toISOString(),
+            to: toDate.toISOString(),
+            limit,
+            nextCursor: next
+                ? this.encodePointsPurchaseCursor({
+                    createdAt: next.created_at,
+                    id: next.payment_id,
+                })
+                : null,
+            items: pageRows.map((row) => ({
+                paymentId: row.payment_id,
+                userId: row.user_id,
+                displayName: row.display_name?.trim() ||
+                    row.username?.trim() ||
+                    row.phone?.trim() ||
+                    'Пользователь',
+                username: row.username?.trim() || null,
+                phone: row.phone?.trim() ? (0, phone_1.maskPhone)(row.phone) : null,
+                amountRub: this.numberFromDb(row.amount_rub),
+                points: this.numberFromDb(row.points),
+                status: 'Оплачено',
+                createdAt: row.created_at.toISOString(),
+            })),
+        };
+    }
+    async getReferralSummary(query) {
+        const range = this.resolveAnalyticsRange(query);
+        const [referrals, purchased, spent, daily] = await Promise.all([
+            this.prisma.referral.findMany({
+                where: {
+                    createdAt: range,
+                },
+            }),
+            this.prisma.walletTransaction.aggregate({
+                _sum: { amount: true },
+                where: {
+                    createdAt: range,
+                    reason: client_1.WalletTransactionReason.POINTS_PURCHASE,
+                    type: client_1.WalletTransactionType.ACCRUAL,
+                },
+            }),
+            this.prisma.walletTransaction.aggregate({
+                _sum: { amount: true },
+                where: {
+                    createdAt: range,
+                    type: client_1.WalletTransactionType.SPEND,
+                },
+            }),
+            this.prisma.walletTransaction.aggregate({
+                _sum: { amount: true },
+                where: {
+                    createdAt: range,
+                    reason: client_1.WalletTransactionReason.DAILY_LOGIN_BONUS,
+                    type: client_1.WalletTransactionType.ACCRUAL,
+                },
+            }),
+        ]);
+        const rewarded = referrals.filter((item) => item.rewardStatus === client_1.ReferralRewardStatus.REWARDED);
+        return {
+            source: 'timeweb',
+            period: (query.period ?? 'month').trim().toLowerCase() || 'month',
+            from: this.dateFilterValueToIso(range.gte),
+            to: this.dateFilterValueToIso(range.lte),
+            newRegistrationsByInvite: referrals.filter((item) => item.registeredAt)
+                .length,
+            rewardedReferralBonuses: rewarded.length,
+            referralPointsAwarded: rewarded.reduce((sum, item) => sum + item.rewardAmount, 0),
+            unfinishedInvites: referrals.filter((item) => !item.registeredAt).length,
+            rewardFailures: referrals.filter((item) => item.rewardStatus === client_1.ReferralRewardStatus.NOT_REWARDED ||
+                item.rewardStatus === client_1.ReferralRewardStatus.FAILED_RETRYABLE).length,
+            pointsPurchased: purchased._sum.amount ?? 0,
+            pointsSpent: spent._sum.amount ?? 0,
+            dailyBonusesAwarded: daily._sum.amount ?? 0,
+        };
+    }
+    async listReferrals(query) {
+        const range = this.resolveAnalyticsRange(query);
+        const search = query.search?.trim();
+        const userId = query.userId?.trim();
+        if (search || userId) {
+            return this.listReferralUsers(query, range);
+        }
+        const referrals = await this.prisma.referral.findMany({
+            where: {
+                createdAt: range,
+            },
+            include: {
+                inviter: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+                invited: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+            take: 500,
+        });
+        return {
+            source: 'timeweb',
+            period: (query.period ?? 'month').trim().toLowerCase() || 'month',
+            from: this.dateFilterValueToIso(range.gte),
+            to: this.dateFilterValueToIso(range.lte),
+            items: this.buildReferralUserItemsFromReferrals(referrals),
+        };
+    }
+    async getUserReferrals(userId, query) {
+        const normalizedUserId = userId.trim();
+        if (!this.isUuid(normalizedUserId)) {
+            throw new common_1.NotFoundException('User not found');
+        }
+        const user = await this.prisma.user.findFirst({
+            where: {
+                id: normalizedUserId,
+                deletedAt: null,
+                status: {
+                    not: client_1.UserStatus.DELETED,
+                },
+            },
+            include: {
+                adminProfile: true,
+            },
+        });
+        if (!user) {
+            throw new common_1.NotFoundException('User not found');
+        }
+        const range = this.resolveAnalyticsRange(query);
+        return {
+            source: 'timeweb',
+            period: (query.period ?? 'month').trim().toLowerCase() || 'month',
+            from: this.dateFilterValueToIso(range.gte),
+            to: this.dateFilterValueToIso(range.lte),
+            item: await this.buildReferralUserItem(user, range),
+        };
+    }
+    async listReferralUsers(query, range) {
+        const search = query.search?.trim();
+        const userId = query.userId?.trim();
+        const searchLooksLikeUuid = search ? this.isUuid(search) : false;
+        const decodedReferralUserId = search ? (0, referral_code_1.resolveReferralUserId)(search) : null;
+        const phoneDigits = (search ?? '').replace(/\D/g, '');
+        const userSearchOr = [
+            ...(userId && this.isUuid(userId) ? [{ id: userId }] : []),
+            ...(searchLooksLikeUuid ? [{ id: search }] : []),
+            ...(decodedReferralUserId ? [{ id: decodedReferralUserId }] : []),
+            ...(search
+                ? [
+                    { displayName: { contains: search, mode: 'insensitive' } },
+                    { name: { contains: search, mode: 'insensitive' } },
+                    { phone: { contains: search } },
+                ]
+                : []),
+            ...(phoneDigits.length >= 4 ? [{ phone: { contains: phoneDigits } }] : []),
+        ];
+        const matchingUsers = await this.prisma.user.findMany({
+            where: {
+                deletedAt: null,
+                status: {
+                    not: client_1.UserStatus.DELETED,
+                },
+                ...(userSearchOr.length > 0
+                    ? { OR: userSearchOr }
+                    : { id: '00000000-0000-0000-0000-000000000000' }),
+            },
+            include: {
+                adminProfile: true,
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+            take: 25,
+        });
+        return {
+            source: 'timeweb',
+            period: (query.period ?? 'month').trim().toLowerCase() || 'month',
+            from: this.dateFilterValueToIso(range.gte),
+            to: this.dateFilterValueToIso(range.lte),
+            items: await Promise.all(matchingUsers.map((user) => this.buildReferralUserItem(user, range))),
+        };
+    }
+    buildReferralUserItemsFromReferrals(referrals) {
+        const users = new Map();
+        for (const referral of referrals) {
+            const key = referral.inviterUserId;
+            const existing = users.get(key);
+            const inviter = this.serializeReferralUser(referral.inviter);
+            const item = existing ?? {
+                inviter,
+                referralCode: (0, referral_code_1.buildReferralCode)(referral.inviterUserId),
+                inviteLink: this.buildInviteLink((0, referral_code_1.buildReferralCode)(referral.inviterUserId)),
+                openedCount: 0,
+                registeredCount: 0,
+                rewardedCount: 0,
+                referralPoints: 0,
+                unfinishedCount: 0,
+                invitations: [],
+            };
+            if (referral.openedAt || referral.appOpenedAt)
+                item.openedCount += 1;
+            if (referral.registeredAt || referral.invitedUserId)
+                item.registeredCount += 1;
+            if (referral.rewardStatus === client_1.ReferralRewardStatus.REWARDED) {
+                item.rewardedCount += 1;
+                item.referralPoints += referral.rewardAmount;
+            }
+            if (!referral.registeredAt && !referral.invitedUserId) {
+                item.unfinishedCount += 1;
+            }
+            item.invitations.push(this.serializeReferral(referral));
+            users.set(key, item);
+        }
+        return Array.from(users.values());
+    }
+    async buildReferralUserItem(user, range) {
+        const referrals = await this.prisma.referral.findMany({
+            where: {
+                inviterUserId: user.id,
+                createdAt: range,
+            },
+            include: {
+                inviter: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+                invited: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+            take: 500,
+        });
+        const referralCode = (0, referral_code_1.buildReferralCode)(user.id);
+        const item = {
+            inviter: this.serializeReferralUser(user),
+            referralCode,
+            inviteLink: this.buildInviteLink(referralCode),
+            openedCount: 0,
+            registeredCount: 0,
+            rewardedCount: 0,
+            referralPoints: 0,
+            unfinishedCount: 0,
+            rejectedCount: 0,
+            invitations: [],
+        };
+        for (const referral of referrals) {
+            if (referral.openedAt || referral.appOpenedAt)
+                item.openedCount += 1;
+            if (referral.registeredAt || referral.invitedUserId)
+                item.registeredCount += 1;
+            if (referral.rewardStatus === client_1.ReferralRewardStatus.REWARDED) {
+                item.rewardedCount += 1;
+                item.referralPoints += referral.rewardAmount;
+            }
+            if (!referral.registeredAt && !referral.invitedUserId) {
+                item.unfinishedCount += 1;
+            }
+            if (referral.rewardStatus === client_1.ReferralRewardStatus.NOT_REWARDED ||
+                referral.rewardStatus === client_1.ReferralRewardStatus.FAILED_RETRYABLE) {
+                item.rejectedCount += 1;
+            }
+            item.invitations.push(this.serializeReferral(referral));
+        }
+        return item;
+    }
+    async getReferralById(id) {
+        const referral = await this.prisma.referral.findUnique({
+            where: {
+                id,
+            },
+            include: {
+                inviter: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+                invited: {
+                    include: {
+                        adminProfile: true,
+                    },
+                },
+            },
+        });
+        if (!referral) {
+            throw new common_1.NotFoundException('Referral not found');
+        }
+        return {
+            source: 'timeweb',
+            item: this.serializeReferral(referral),
+        };
+    }
     async approveListing(id, authUser) {
         const listing = await this.prisma.listing.findUnique({
             where: { id },
@@ -703,6 +1490,9 @@ let AdminService = class AdminService {
         });
         if (!listing) {
             throw new common_1.NotFoundException('Listing not found');
+        }
+        if (listing.photos.length === 0) {
+            throw new common_1.BadRequestException(listings_service_1.LISTING_PHOTO_REQUIRED);
         }
         const now = new Date();
         const updated = await this.prisma.listing.update({
@@ -1135,12 +1925,170 @@ let AdminService = class AdminService {
             lte: explicit?.lte ?? now,
         };
     }
+    resolvePointsPurchasesRange(query) {
+        const explicit = this.resolveRange({
+            from: query.from,
+            to: query.to,
+        });
+        const now = new Date();
+        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        return {
+            fromDate: explicit?.gte ?? monthStart,
+            toDate: explicit?.lte ?? now,
+        };
+    }
+    buildPointsPurchaseFilters({ fromDate, toDate, search, }) {
+        const filters = [
+            client_1.Prisma.sql `p."provider" = ${client_1.PaymentProvider.YOOKASSA}::"PaymentProvider"`,
+            client_1.Prisma.sql `p."status" = ${client_1.PaymentStatus.SUCCEEDED}::"PaymentStatus"`,
+            client_1.Prisma.sql `p."credited_at" IS NOT NULL`,
+            client_1.Prisma.sql `p."created_at" >= ${fromDate}`,
+            client_1.Prisma.sql `p."created_at" <= ${toDate}`,
+            client_1.Prisma.sql `EXISTS (
+        SELECT 1
+        FROM "wallet_transactions" wt
+        WHERE wt."user_id" = p."user_id"
+          AND wt."type" = ${client_1.WalletTransactionType.ACCRUAL}::"WalletTransactionType"
+          AND wt."reason" = ${client_1.WalletTransactionReason.POINTS_PURCHASE}::"WalletTransactionReason"
+          AND wt."amount" = p."points_amount"
+          AND wt."metadata"->>'paymentId' = p."id"::text
+      )`,
+        ];
+        const normalizedSearch = search.trim();
+        if (normalizedSearch.length > 0) {
+            const like = `%${normalizedSearch}%`;
+            const digits = normalizedSearch.replace(/\D/g, '');
+            filters.push(client_1.Prisma.sql `(
+        p."user_id"::text ILIKE ${like}
+        OR u."display_name" ILIKE ${like}
+        OR u."name" ILIKE ${like}
+        OR u."phone" ILIKE ${like}
+        ${digits ? client_1.Prisma.sql `OR regexp_replace(COALESCE(u."phone", ''), '\\D', '', 'g') ILIKE ${`%${digits}%`}` : client_1.Prisma.empty}
+      )`);
+        }
+        return filters;
+    }
+    encodePointsPurchaseCursor(value) {
+        return Buffer.from(JSON.stringify({
+            createdAt: value.createdAt.toISOString(),
+            id: value.id,
+        }), 'utf8').toString('base64url');
+    }
+    decodePointsPurchaseCursor(cursor) {
+        const raw = (cursor ?? '').trim();
+        if (!raw)
+            return null;
+        try {
+            const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+            const createdAt = new Date(String(decoded.createdAt ?? ''));
+            const id = String(decoded.id ?? '').trim();
+            if (Number.isNaN(createdAt.getTime()) || !this.isUuid(id)) {
+                return null;
+            }
+            return { createdAt, id };
+        }
+        catch {
+            return null;
+        }
+    }
+    numberFromDb(value) {
+        if (typeof value === 'bigint')
+            return Number(value);
+        if (typeof value === 'number')
+            return value;
+        const parsed = Number((value ?? '0').toString());
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
     parseWalletReason(value) {
         const normalized = (value ?? '').trim().toUpperCase();
         if (!normalized) {
             return undefined;
         }
         return Object.values(client_1.WalletTransactionReason).find((item) => item === normalized);
+    }
+    dateFilterValueToIso(value) {
+        return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+    }
+    serializeReferral(referral) {
+        return {
+            id: referral.id,
+            inviter: this.serializeReferralUser(referral.inviter),
+            invited: referral.invited ? this.serializeReferralUser(referral.invited) : null,
+            inviterUserId: referral.inviterUserId,
+            invitedUserId: referral.invitedUserId,
+            referralCode: referral.referralCode,
+            inviteLink: this.buildInviteLink(referral.referralCode),
+            openedAt: (0, serializers_1.toIsoString)(referral.openedAt),
+            appOpenedAt: (0, serializers_1.toIsoString)(referral.appOpenedAt),
+            signupStartedAt: (0, serializers_1.toIsoString)(referral.signupStartedAt),
+            registeredAt: (0, serializers_1.toIsoString)(referral.registeredAt),
+            registrationCompleted: Boolean(referral.registeredAt || referral.invitedUserId),
+            isNewUser: referral.isNewUser,
+            rewardStatus: referral.rewardStatus.toLowerCase(),
+            rewardAmount: referral.rewardAmount,
+            rewardedAt: (0, serializers_1.toIsoString)(referral.rewardedAt),
+            bonusAwarded: referral.rewardStatus === client_1.ReferralRewardStatus.REWARDED,
+            failureReason: referral.failureReason,
+            failureText: this.referralFailureText(referral),
+            walletTransactionId: referral.walletTransactionId,
+            createdAt: referral.createdAt.toISOString(),
+        };
+    }
+    serializeReferralUser(user) {
+        const displayName = user.displayName?.trim() ||
+            user.name?.trim() ||
+            user.phone?.trim() ||
+            'Пользователь';
+        return {
+            id: user.id,
+            name: displayName,
+            displayName: user.displayName?.trim() || displayName,
+            username: user.displayName?.trim() || null,
+            phone: this.safePhone(user.phone),
+            avatarUrl: (0, serializers_1.normalizeStoredMediaUrl)(user.avatarUrl ?? user.photoUrl, {
+                category: 'avatars',
+            }),
+            referralCode: (0, referral_code_1.buildReferralCode)(user.id),
+            profilePath: `/admin/users/${user.id}`,
+        };
+    }
+    buildInviteLink(referralCode) {
+        return `https://attamarket.online/invite?ref=${encodeURIComponent(referralCode)}`;
+    }
+    safePhone(phone) {
+        const digits = (phone ?? '').replace(/\D/g, '');
+        if (digits.length < 4)
+            return phone?.trim() || null;
+        return `${digits.slice(0, 1)}***${digits.slice(-4)}`;
+    }
+    isUuid(value) {
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+    }
+    referralFailureText(referral) {
+        if (referral.rewardStatus === client_1.ReferralRewardStatus.REWARDED) {
+            return null;
+        }
+        if (!referral.registeredAt && !referral.invitedUserId) {
+            return 'Ссылка открыта, но регистрация не завершена';
+        }
+        switch (referral.failureReason) {
+            case 'APP_OPENED_WITHOUT_REFERRAL_CODE':
+                return 'После установки приложение открыто без реферального кода';
+            case 'USER_ALREADY_REGISTERED':
+                return 'Пользователь уже был зарегистрирован';
+            case 'SELF_REFERRAL':
+                return 'Самоприглашение';
+            case 'BONUS_ALREADY_AWARDED_FOR_INVITED_USER':
+                return 'Бонус уже начислялся за этого пользователя';
+            case 'REWARD_ERROR_RETRYABLE':
+                return 'Ошибка начисления — требуется проверка';
+            case 'INVALID_REFERRAL_CODE':
+                return 'Реферальный код не распознан';
+            case 'INVITER_NOT_FOUND':
+                return 'Аккаунт пригласившего не найден';
+            default:
+                return referral.failureReason ? 'Бонус не начислен' : null;
+        }
     }
 };
 exports.AdminService = AdminService;
@@ -1150,6 +2098,7 @@ exports.AdminService = AdminService = __decorate([
         app_visits_service_1.AppVisitsService,
         notifications_service_1.NotificationsService,
         reviews_service_1.ReviewsService,
-        storage_service_1.StorageService])
+        storage_service_1.StorageService,
+        user_blocks_service_1.UserBlocksService])
 ], AdminService);
 //# sourceMappingURL=admin.service.js.map

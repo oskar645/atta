@@ -78,7 +78,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             client.data.userId = auth.userId;
             client.join(`user:${auth.userId}`);
             const presence = await this.presenceService.touchSocket(auth.userId, client.id);
-            this.emitPresenceChanged(presence);
+            this.emitPresenceChanged(presence, { force: true });
             this.logger.log(`Socket connected: ${client.id} user=${auth.userId}`);
         }
         catch (error) {
@@ -94,7 +94,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         if (!userId)
             return;
         const presence = await this.presenceService.disconnectSocket(userId, client.id);
-        this.emitPresenceChanged(presence);
+        this.emitPresenceChanged(presence, { force: true });
     }
     async handleJoin(payload, client) {
         const userId = (client.data.userId ?? '').toString();
@@ -128,7 +128,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             sessionId: '',
             role: 'user',
         }, payload.chatId, payload);
-        this.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId);
+        this.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId, undefined, result.recipientUnreadTotal);
         return result;
     }
     async handleDelivered(payload, client) {
@@ -156,14 +156,15 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
     }
     async handlePresence(payload, client) {
         const next = await this.presenceService.setPresence((client.data.userId ?? '').toString(), payload.isOnline);
-        this.emitPresenceChanged(next);
+        this.emitPresenceChanged(next, { force: true });
         return next;
     }
-    emitOutgoingMessage(senderChat, recipientChat, message, recipientId, notification) {
+    emitOutgoingMessage(senderChat, recipientChat, message, recipientId, notification, recipientUnreadTotal) {
         const chatId = (senderChat['id'] ?? '').toString();
         this.server.to(`user:${recipientId}`).emit('message.new', {
             chat: recipientChat,
             message,
+            ...(recipientUnreadTotal == null ? {} : { unreadTotal: recipientUnreadTotal }),
         });
         this.server.to(`chat:${chatId}`).emit('message.new', {
             message,
@@ -179,7 +180,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         }
         this.emitChatUpdatedToUser((message['senderId'] ?? '').toString(), senderChat);
         this.emitChatUpdatedToUser(recipientId, recipientChat);
-        this.emitUnreadChanged(recipientId, recipientChat);
+        this.emitUnreadChanged(recipientId, recipientChat, recipientUnreadTotal);
     }
     emitChatUpdated(chat) {
         const buyerId = (chat['buyerId'] ?? '').toString();
@@ -199,10 +200,11 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             chat,
         });
     }
-    emitUnreadChanged(userId, chat) {
+    emitUnreadChanged(userId, chat, unreadTotal) {
         this.server.to(`user:${userId}`).emit('unread.changed', {
             chatId: chat['id'],
             unreadCount: chat['unreadCount'],
+            ...(unreadTotal == null ? {} : { unreadTotal }),
         });
     }
     emitNotificationNew(notification, userId) {
@@ -282,8 +284,8 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             }
         }
     }
-    emitPresenceChanged(presence) {
-        if (presence['changed'] === false) {
+    emitPresenceChanged(presence, options = {}) {
+        if (presence['changed'] === false && options.force !== true) {
             return;
         }
         const payload = { ...presence };

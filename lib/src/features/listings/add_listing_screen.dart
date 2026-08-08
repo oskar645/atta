@@ -1,4 +1,5 @@
 // lib/src/features/listings/add_listing_screen.dart
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
@@ -30,15 +31,23 @@ class AddListingScreen extends StatefulWidget {
   State<AddListingScreen> createState() => _AddListingScreenState();
 }
 
-enum _ListingDraftPhotoState { pending, preparing, uploading, uploaded, failed }
+enum _ListingDraftPhotoState {
+  waiting,
+  preparing,
+  uploading,
+  uploaded,
+  failed,
+  deleting
+}
 
 class _ListingDraftPhotoItem {
   const _ListingDraftPhotoItem({
     required this.localId,
     required this.file,
     required this.sourceIndex,
-    this.state = _ListingDraftPhotoState.pending,
+    this.state = _ListingDraftPhotoState.waiting,
     this.statusText,
+    this.photoId = '',
   });
 
   final String localId;
@@ -46,12 +55,14 @@ class _ListingDraftPhotoItem {
   final int sourceIndex;
   final _ListingDraftPhotoState state;
   final String? statusText;
+  final String photoId;
 
   _ListingDraftPhotoItem copyWith({
     _ListingDraftPhotoState? state,
     String? statusText,
     bool clearStatusText = false,
     int? sourceIndex,
+    String? photoId,
   }) {
     return _ListingDraftPhotoItem(
       localId: localId,
@@ -59,6 +70,7 @@ class _ListingDraftPhotoItem {
       sourceIndex: sourceIndex ?? this.sourceIndex,
       state: state ?? this.state,
       statusText: clearStatusText ? null : (statusText ?? this.statusText),
+      photoId: photoId ?? this.photoId,
     );
   }
 }
@@ -138,6 +150,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
   final _photoItems = <_ListingDraftPhotoItem>[];
   bool _saving = false;
   String _draftListingId = '';
+  Future<String>? _draftListingInFlight;
+  bool _publishedDraft = false;
+  ListingsService? _listingsServiceForCleanup;
   int _nextPhotoLocalId = 0;
 
   final _picker = ImagePicker();
@@ -153,7 +168,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
   // ✅ НОВОЕ: Недвижимость
   String _dealType = 'Продажа';
-  String _realEstateType = 'Квартира';
 
   // ✅ НОВОЕ: Одежда
   String _clothesType = 'Верхняя одежда';
@@ -201,7 +215,10 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool get _hasFailedPhotos => _photoItems.any(
         (item) => item.state == _ListingDraftPhotoState.failed,
       );
-  bool get _canEditPhotoSelection => _draftListingId.isEmpty && !_saving;
+  bool get _hasUploadedPhotos => _photoItems.any(
+        (item) => item.state == _ListingDraftPhotoState.uploaded,
+      );
+  bool get _canEditPhotoSelection => !_saving;
   String get _submitLabel {
     if (_saving || _isUploadingPhotos) {
       return 'Загружаем фото...';
@@ -440,16 +457,11 @@ class _AddListingScreenState extends State<AddListingScreen> {
   ];
 
   // ✅ НОВОЕ: недвижимость / одежда
-  static const _dealTypes = <String>['Продажа', 'Аренда'];
-
-  static const _realEstateTypes = <String>[
-    'Квартира',
-    'Дом',
-    'Участок',
-    'Дача',
-    'Комната',
-    'Гараж',
-    'Коммерческая',
+  static const _dealTypes = <String>[
+    'Продажа',
+    'Аренда',
+    'Посуточно',
+    'Обмен',
   ];
 
   static const _clothesTypes = <String>[
@@ -535,7 +547,27 @@ class _AddListingScreenState extends State<AddListingScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _listingsServiceForCleanup = context.read<ListingsService>();
+  }
+
+  @override
   void dispose() {
+    if (!_publishedDraft && _draftListingId.isNotEmpty) {
+      final svc = _listingsServiceForCleanup;
+      final draftId = _draftListingId;
+      if (svc != null) {
+        unawaited(
+          svc.getListingById(draftId).then((listing) {
+            if (listing != null) {
+              return svc.deleteListing(listing: listing);
+            }
+            return null;
+          }).catchError((_) => null),
+        );
+      }
+    }
     _title.dispose();
     _city.dispose();
     _desc.dispose();
@@ -598,11 +630,17 @@ class _AddListingScreenState extends State<AddListingScreen> {
     );
     if (xs.isEmpty) return;
 
+    final added = <_ListingDraftPhotoItem>[];
     setState(() {
       for (final x in xs.take(remain)) {
-        _photoItems.add(_newPhotoItem(File(x.path)));
+        final item = _newPhotoItem(File(x.path));
+        _photoItems.add(item);
+        added.add(item);
       }
     });
+    for (final item in added) {
+      unawaited(_uploadPhotoItem(item.localId));
+    }
 
     if (xs.length > remain && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -621,7 +659,12 @@ class _AddListingScreenState extends State<AddListingScreen> {
     );
     if (x == null) return;
     if (_photoItems.length >= 10) return;
-    setState(() => _photoItems.add(_newPhotoItem(File(x.path))));
+    late final _ListingDraftPhotoItem item;
+    setState(() {
+      item = _newPhotoItem(File(x.path));
+      _photoItems.add(item);
+    });
+    unawaited(_uploadPhotoItem(item.localId));
   }
 
   _ListingDraftPhotoItem _newPhotoItem(File file) {
@@ -632,84 +675,193 @@ class _AddListingScreenState extends State<AddListingScreen> {
     );
   }
 
-  void _removePhotoAt(int index) {
-    if (!_canEditPhotoSelection) return;
+  Future<void> _removePhotoAt(int index) async {
+    final item = _photoItems[index];
+    if (!_canEditPhotoSelection ||
+        item.state == _ListingDraftPhotoState.deleting) {
+      return;
+    }
+    if (item.photoId.isNotEmpty && _draftListingId.isNotEmpty) {
+      setState(() {
+        _photoItems[index] = item.copyWith(
+          state: _ListingDraftPhotoState.deleting,
+          statusText: 'Удаляем...',
+        );
+      });
+      try {
+        await context.read<ListingsService>().deleteListingPhoto(
+              listingId: _draftListingId,
+              photoId: item.photoId,
+            );
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          final currentIndex = _photoItems.indexWhere(
+            (current) => current.localId == item.localId,
+          );
+          if (currentIndex != -1) {
+            _photoItems[currentIndex] = _photoItems[currentIndex].copyWith(
+              state: _ListingDraftPhotoState.uploaded,
+              statusText: 'Не удалось удалить',
+            );
+          }
+        });
+        return;
+      }
+      if (!mounted) return;
+    }
     setState(() {
-      _photoItems.removeAt(index);
+      _photoItems.removeWhere((current) => current.localId == item.localId);
       for (var i = 0; i < _photoItems.length; i++) {
         _photoItems[i] = _photoItems[i].copyWith(sourceIndex: i);
       }
     });
   }
 
-  void _setPhotoStateByFile(
-    File file,
+  void _setPhotoStateByLocalId(
+    String localId,
     _ListingDraftPhotoState state, {
     String? statusText,
     bool clearStatusText = false,
+    String? photoId,
   }) {
-    final path = file.path;
-    final index = _photoItems.indexWhere((item) => item.file.path == path);
+    final index = _photoItems.indexWhere((item) => item.localId == localId);
     if (index == -1) return;
     _photoItems[index] = _photoItems[index].copyWith(
       state: state,
       statusText: statusText,
       clearStatusText: clearStatusText,
+      photoId: photoId,
     );
   }
 
-  void _handlePhotoUploadStatus(ListingPhotoUploadStatus status) {
-    if (!mounted) return;
-    setState(() {
-      switch (status.state) {
-        case 'preparing':
-          _setPhotoStateByFile(
-            status.file,
-            _ListingDraftPhotoState.preparing,
-            statusText: status.message,
-            clearStatusText: status.message.trim().isEmpty,
-          );
-          break;
-        case 'uploading':
-          _setPhotoStateByFile(
-            status.file,
-            _ListingDraftPhotoState.uploading,
-            statusText: status.message,
-            clearStatusText: status.message.trim().isEmpty,
-          );
-          break;
-        case 'uploaded':
-          _setPhotoStateByFile(
-            status.file,
-            _ListingDraftPhotoState.uploaded,
-            statusText: status.message,
-            clearStatusText: status.message.trim().isEmpty,
-          );
-          break;
-        case 'failed':
-          _setPhotoStateByFile(
-            status.file,
-            _ListingDraftPhotoState.failed,
-            statusText: status.message,
-          );
-          break;
+  Future<String> _ensureDraftListingId() async {
+    if (_draftListingId.isNotEmpty) return _draftListingId;
+    final inFlight = _draftListingInFlight;
+    if (inFlight != null) return inFlight;
+    final auth = context.read<AuthService>();
+    final user = auth.currentUser;
+    if (user == null) throw StateError('Auth user is required');
+    final ownerName = (user.displayName?.trim().isNotEmpty ?? false)
+        ? user.displayName!.trim()
+        : (user.email ?? 'Пользователь');
+    final future = context
+        .read<ListingsService>()
+        .createDraftListing(
+          ownerEmail: user.email ?? '',
+          ownerName: ownerName,
+          category: _category,
+          subcategory: _subcategory,
+          city: _city.text.trim(),
+          phone: _phone.text.trim(),
+          phoneHidden: _phoneHidden,
+          delivery: _delivery,
+        )
+        .then((result) {
+      if (result.listingId.isEmpty) {
+        throw Exception('Не удалось подготовить загрузку фото');
       }
+      _draftListingId = result.listingId;
+      return _draftListingId;
     });
+    _draftListingInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_draftListingInFlight, future)) {
+        _draftListingInFlight = null;
+      }
+    }
   }
 
-  void _markPhotosQueued(Iterable<_ListingDraftPhotoItem> items) {
-    for (final item in items) {
-      _setPhotoStateByFile(
-        item.file,
-        _ListingDraftPhotoState.preparing,
-        statusText: 'Подготовка...',
-      );
+  Future<void> _uploadPhotoItem(String localId) async {
+    final index = _photoItems.indexWhere((item) => item.localId == localId);
+    if (index == -1) return;
+    final item = _photoItems[index];
+    if (item.state == _ListingDraftPhotoState.uploading ||
+        item.state == _ListingDraftPhotoState.preparing ||
+        item.state == _ListingDraftPhotoState.deleting) {
+      return;
     }
+    if (item.photoId.isNotEmpty) {
+      await _removePhotoAt(index);
+    }
+    if (!mounted) return;
+    setState(() {
+      _setPhotoStateByLocalId(
+        localId,
+        _ListingDraftPhotoState.preparing,
+        statusText: 'Сжимаем фото...',
+      );
+    });
+    try {
+      final listingId = await _ensureDraftListingId();
+      if (!mounted ||
+          !_photoItems.any((current) => current.localId == localId)) {
+        return;
+      }
+      setState(() {
+        _setPhotoStateByLocalId(
+          localId,
+          _ListingDraftPhotoState.uploading,
+          statusText: 'Загружаем...',
+        );
+      });
+      final currentIndex =
+          _photoItems.indexWhere((current) => current.localId == localId);
+      final response =
+          await context.read<ListingsService>().uploadListingPhotoItem(
+                listingId: listingId,
+                file: item.file,
+                sortOrder: currentIndex == -1 ? item.sourceIndex : currentIndex,
+              );
+      if (!mounted) return;
+      if (!_photoItems.any((current) => current.localId == localId)) {
+        if (response.photoId.isNotEmpty) {
+          unawaited(
+            context.read<ListingsService>().deleteListingPhoto(
+                  listingId: listingId,
+                  photoId: response.photoId,
+                ),
+          );
+        }
+        return;
+      }
+      setState(() {
+        _setPhotoStateByLocalId(
+          localId,
+          _ListingDraftPhotoState.uploaded,
+          statusText: null,
+          clearStatusText: true,
+          photoId: response.photoId,
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _setPhotoStateByLocalId(
+          localId,
+          _ListingDraftPhotoState.failed,
+          statusText: _friendlyPhotoError(error),
+        );
+      });
+    }
+  }
+
+  String _friendlyPhotoError(Object error) {
+    if (error is ApiException && error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+    final text = error.toString().toLowerCase();
+    if (text.contains('413') || text.contains('too large')) {
+      return 'Фото слишком большое. Попробуйте другое фото.';
+    }
+    return 'Не удалось загрузить фото';
   }
 
   String _photoStatusLabel(_ListingDraftPhotoItem item) {
     switch (item.state) {
-      case _ListingDraftPhotoState.pending:
+      case _ListingDraftPhotoState.waiting:
         return 'Ожидает';
       case _ListingDraftPhotoState.preparing:
         return item.statusText?.trim().isNotEmpty == true
@@ -727,6 +879,10 @@ class _AddListingScreenState extends State<AddListingScreen> {
         return item.statusText?.trim().isNotEmpty == true
             ? item.statusText!.trim()
             : 'Ошибка загрузки';
+      case _ListingDraftPhotoState.deleting:
+        return item.statusText?.trim().isNotEmpty == true
+            ? item.statusText!.trim()
+            : 'Удаляем...';
     }
   }
 
@@ -735,7 +891,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     _ListingDraftPhotoItem item,
   ) {
     switch (item.state) {
-      case _ListingDraftPhotoState.pending:
+      case _ListingDraftPhotoState.waiting:
         return Theme.of(context).colorScheme.onSurfaceVariant;
       case _ListingDraftPhotoState.preparing:
       case _ListingDraftPhotoState.uploading:
@@ -744,6 +900,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
         return Colors.green.shade700;
       case _ListingDraftPhotoState.failed:
         return Theme.of(context).colorScheme.error;
+      case _ListingDraftPhotoState.deleting:
+        return Theme.of(context).colorScheme.outline;
     }
   }
 
@@ -882,7 +1040,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
     // ✅ сброс недвижимость/одежда
     _dealType = 'Продажа';
-    _realEstateType = 'Квартира';
     _clothesType = 'Верхняя одежда';
     _clothesSize = null;
   }
@@ -1394,17 +1551,24 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
     if (_isUploadingPhotos) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Дождитесь завершения загрузки фото')),
+        const SnackBar(content: Text('Дождитесь загрузки фотографий')),
       );
       return;
     }
 
-    if (_hasFailedPhotos && _draftListingId.isNotEmpty) {
+    if (_hasFailedPhotos) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Сначала повторите загрузку фото с ошибкой'),
+          content: Text('Повторите загрузку фотографий с ошибкой'),
         ),
       );
+      return;
+    }
+
+    if (!_hasUploadedPhotos || _draftListingId.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Добавьте минимум 1 фото')));
       return;
     }
 
@@ -1459,106 +1623,35 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
     // ✅ новые поля
     final dealType = _isRealEstate ? _dealType : null;
-    final realEstateType = _isRealEstate ? _realEstateType : null;
     final clothesType = _isClothes ? _clothesType : null;
     final clothesSize = _isClothes ? _clothesSize?.trim() : null;
 
-    final auth = context.read<AuthService>();
     final svc = context.read<ListingsService>();
 
-    final ownerName =
-        (auth.currentUser!.displayName?.trim().isNotEmpty ?? false)
-            ? auth.currentUser!.displayName!.trim()
-            : (auth.currentUser!.email ?? 'Пользователь');
-
-    final isRetry = _draftListingId.isNotEmpty;
-    final retryItems = _photoItems
-        .where((item) => item.state == _ListingDraftPhotoState.failed)
-        .toList(growable: false);
-    setState(() {
-      _saving = true;
-      if (isRetry) {
-        _markPhotosQueued(retryItems);
-      }
-    });
+    setState(() => _saving = true);
     try {
-      if (isRetry) {
-        final retried = await svc.uploadListingPhotos(
-          listingId: _draftListingId,
-          photos: retryItems.map((item) => item.file).toList(growable: false),
-          sortOrders: retryItems
-              .map((item) => item.sourceIndex)
-              .toList(growable: false),
-          onStatusChanged: _handlePhotoUploadStatus,
-        );
-
-        if (!mounted) return;
-        if (!retried.hasFailures) {
-          Navigator.of(context).pop();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Объявление отправлено на модерацию'),
-            ),
-          );
-          return;
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              retried.allFailed
-                  ? 'Не удалось загрузить фото. Повторите попытку.'
-                  : 'Часть фото не загрузилась. Повторите только отмеченные фото.',
-            ),
-          ),
-        );
-        return;
-      }
-
-      final result = await svc.createListing(
-        ownerId: auth.currentUser!.uid,
-        ownerEmail: auth.currentUser!.email ?? '',
-        ownerName: ownerName,
+      await svc.updateListing(
+        listingId: _draftListingId,
         title: title,
         description: desc,
         category: _category,
-        subcategory: _subcategory, // ✅ ДОБАВИЛИ
+        subcategory: _subcategory,
         price: price,
         phone: phone,
         phoneHidden: _phoneHidden,
         city: city,
         delivery: _delivery,
-        photos: _photoItems.map((item) => item.file).toList(growable: false),
-        onPhotoStatusChanged: _handlePhotoUploadStatus,
-
-        // авто
-        car: car,
-
-        // ✅ новые поля
+        car: _isAuto ? car : null,
         dealType: dealType,
-        realEstateType: realEstateType,
         clothesType: clothesType,
         clothesSize: clothesSize,
       );
 
       if (!mounted) return;
-      _draftListingId = result.listingId;
-      final upload = result.photoUploadResult;
-      if (!upload.hasFailures) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Объявление отправлено на модерацию')),
-        );
-        return;
-      }
+      _publishedDraft = true;
+      Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            upload.allFailed
-                ? 'Объявление создано, но фото не загрузились. Повторите загрузку.'
-                : 'Объявление создано, но ${upload.failedCount} фото не загрузились. Повторите отмеченные фото.',
-          ),
-        ),
+        const SnackBar(content: Text('Объявление отправлено на модерацию')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -1840,7 +1933,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
           if (kSubcategories.containsKey(_category)) const SizedBox(height: 12),
 
-          // ✅ Недвижимость: сделка + тип
+          // ✅ Недвижимость: сделка
           if (_isRealEstate) ...[
             _drop(
               label: 'Сделка',
@@ -1848,16 +1941,6 @@ class _AddListingScreenState extends State<AddListingScreen> {
               items: _dealTypes,
               onChanged: (v) => setState(() {
                 _dealType = v ?? _dealType;
-                _rebuildTitleFromSelections();
-              }),
-            ),
-            const SizedBox(height: 12),
-            _drop(
-              label: 'Тип недвижимости',
-              value: _realEstateType,
-              items: _realEstateTypes,
-              onChanged: (v) => setState(() {
-                _realEstateType = v ?? _realEstateType;
                 _rebuildTitleFromSelections();
               }),
             ),
@@ -2156,12 +2239,68 @@ class _AddListingScreenState extends State<AddListingScreen> {
                                     ),
                                   ),
                                 ),
+                              if (item.state == _ListingDraftPhotoState.failed)
+                                Positioned.fill(
+                                  child: InkWell(
+                                    onTap: () => _uploadPhotoItem(item.localId),
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.black
+                                            .withValues(alpha: 0.42),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: const Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.refresh,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                          SizedBox(height: 4),
+                                          Text(
+                                            'Повторить',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (item.state ==
+                                  _ListingDraftPhotoState.deleting)
+                                Positioned.fill(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color:
+                                          Colors.black.withValues(alpha: 0.28),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               Positioned(
                                 right: 0,
                                 top: 0,
                                 child: IconButton(
                                   icon: const Icon(Icons.close),
-                                  onPressed: () => _removePhotoAt(i),
+                                  onPressed: item.state ==
+                                          _ListingDraftPhotoState.deleting
+                                      ? null
+                                      : () => _removePhotoAt(i),
                                 ),
                               ),
                             ],

@@ -30,6 +30,21 @@ class SupportApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> createBlockAppeal({
+    required String text,
+    String? imageUrl,
+  }) async {
+    final response = await _client.post(
+      '/support/block-appeals',
+      authorized: true,
+      body: {
+        if (text.trim().isNotEmpty) 'text': text.trim(),
+        if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> getTicket(String ticketId) async {
     final response =
         await _client.get('/support/tickets/$ticketId', authorized: true);

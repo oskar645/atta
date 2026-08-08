@@ -60,6 +60,13 @@ let AuthController = class AuthController {
         });
         return this.authService.signupPhone(dto);
     }
+    recordReferralOpen(request, dto) {
+        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'referrals-open'), {
+            limit: 30,
+            windowMs: 60 * 1000,
+        });
+        return this.authService.recordReferralAppOpen(dto);
+    }
     loginPhone(request, dto) {
         this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login-phone'), {
             limit: 8,
@@ -115,6 +122,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, signup_phone_dto_1.SignupPhoneDto]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "signupPhone", null);
+__decorate([
+    (0, common_1.Post)('referrals/open'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "recordReferralOpen", null);
 __decorate([
     (0, common_1.Post)('login-phone'),
     __param(0, (0, common_1.Req)()),

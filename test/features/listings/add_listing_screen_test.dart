@@ -2,9 +2,11 @@ import 'dart:io';
 
 import 'package:atta/src/features/listings/add_listing_screen.dart';
 import 'package:atta/src/models/car_specs.dart';
+import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/image_preparation_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -148,6 +150,127 @@ void main() {
     expect(listings.capturedCar!.pts, isNull);
     expect(listings.capturedCar!.owners, isNull);
     expect(listings.capturedCar!.vin, isNull);
+  });
+
+  testWidgets('create listing without selected photo is blocked',
+      (tester) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1000, 1800));
+    addTearDown(() async {
+      await binding.setSurfaceSize(null);
+    });
+
+    final listings = _CapturingListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ProfileService>.value(value: ProfileService()),
+          Provider<ListingsService>.value(value: listings),
+        ],
+        child: const MaterialApp(
+          home: AddListingScreen(),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await _enterTextWithLabel(
+      tester,
+      'Название (автозаполнение можно править)',
+      'Toyota Camry',
+    );
+    await _enterTextWithLabel(tester, 'Цена (₽)', '1500000');
+    await _enterTextWithLabel(tester, 'Город / адрес (Яндекс)', 'Москва');
+    await _enterTextWithLabel(tester, 'Телефон (для звонка)', '79288888645');
+    await _enterTextWithLabel(tester, 'Описание', 'Надежный автомобиль');
+
+    await tester.tap(find.text('Опубликовать'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Добавьте минимум 1 фото'), findsOneWidget);
+    expect(listings.createCalled, isFalse);
+  });
+
+  testWidgets('real estate listing uses product kind without separate type',
+      (tester) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1000, 1800));
+    addTearDown(() async {
+      await binding.setSurfaceSize(null);
+    });
+
+    final photo = _createTestPng();
+    const channel = MethodChannel('plugins.flutter.io/image_picker');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'pickMultiImage') {
+        return <String>[photo.path];
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      if (photo.existsSync()) photo.deleteSync();
+      final photoDir = photo.parent;
+      if (photoDir.existsSync()) photoDir.deleteSync();
+    });
+
+    final listings = _CapturingListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ProfileService>.value(value: ProfileService()),
+          Provider<ListingsService>.value(value: listings),
+        ],
+        child: const MaterialApp(
+          home: AddListingScreen(),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(_dropdownWithLabel('Категория'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Недвижимость').last);
+    await tester.pumpAndSettle();
+
+    expect(_dropdownWithLabel('Вид товара'), findsOneWidget);
+    expect(_dropdownWithLabel('Сделка'), findsOneWidget);
+    expect(_dropdownWithLabel('Тип недвижимости'), findsNothing);
+
+    await tester.tap(_dropdownWithLabel('Сделка'));
+    await tester.pumpAndSettle();
+    expect(find.text('Продажа'), findsWidgets);
+    expect(find.text('Аренда'), findsWidgets);
+    expect(find.text('Посуточно'), findsOneWidget);
+    expect(find.text('Обмен'), findsOneWidget);
+    await tester.tap(find.text('Продажа').last);
+    await tester.pumpAndSettle();
+
+    await _enterTextWithLabel(tester, 'Название', 'Квартира у парка');
+    await _enterTextWithLabel(tester, 'Цена (₽)', '5500000');
+    await _enterTextWithLabel(tester, 'Город / адрес (Яндекс)', 'Москва');
+    await _enterTextWithLabel(tester, 'Телефон (для звонка)', '79288888645');
+    await _enterTextWithLabel(tester, 'Описание', 'Светлая квартира');
+
+    await _scrollUntilBuilt(tester, find.text('Фото (0/10)').first);
+    await tester.tap(find.text('Фото (0/10)').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выбрать несколько из галереи'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Опубликовать'));
+    await tester.pumpAndSettle();
+
+    expect(listings.createCalled, isTrue);
+    expect(listings.capturedCategory, 'Недвижимость');
+    expect(listings.capturedSubcategory, 'Квартиры');
+    expect(listings.capturedDealType, 'Продажа');
   });
 }
 
@@ -294,38 +417,90 @@ File _createTestPng() {
 class _CapturingListingsService extends ListingsService {
   bool createCalled = false;
   CarSpecs? capturedCar;
+  String? capturedCategory;
+  String? capturedSubcategory;
+  String? capturedDealType;
 
   @override
-  Future<CreateListingResult> createListing({
-    required String ownerId,
+  Future<CreateListingResult> createDraftListing({
     required String ownerEmail,
     required String ownerName,
-    required String title,
-    required String description,
     required String category,
     required String subcategory,
+    required String city,
+    required String phone,
+    required bool phoneHidden,
+    required Map<String, bool> delivery,
+  }) async {
+    return const CreateListingResult(listingId: 'listing-1');
+  }
+
+  @override
+  Future<ListingPhotoUploadResponse> uploadListingPhotoItem({
+    required String listingId,
+    required File file,
+    int? sortOrder,
+    PreparedImage? preparedImage,
+  }) async {
+    return ListingPhotoUploadResponse(
+      listing: _listing(),
+      photoId: 'photo-$sortOrder',
+    );
+  }
+
+  @override
+  Future<Listing?> updateListing({
+    required String listingId,
+    required String title,
+    required String description,
     required int price,
     required String phone,
     required bool phoneHidden,
     required String city,
     required Map<String, bool> delivery,
-    required List<File> photos,
+    String? category,
+    String? subcategory,
     CarSpecs? car,
     String? dealType,
-    String? realEstateType,
     String? clothesType,
     String? clothesSize,
-    ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
   }) async {
     createCalled = true;
     capturedCar = car;
-    return const CreateListingResult(
-      listingId: 'listing-1',
-      photoUploadResult: ListingPhotoUploadResult(
-        requestedCount: 1,
-        uploadedCount: 1,
-      ),
-    );
+    capturedCategory = category ?? '';
+    capturedSubcategory = subcategory ?? '';
+    capturedDealType = dealType;
+    return _listing();
+  }
+
+  @override
+  Future<Listing?> getListingById(String id) async => _listing();
+
+  @override
+  Future<Listing?> deleteListing({required Listing listing}) async => listing;
+
+  Listing _listing() {
+    return Listing.fromMap(const <String, dynamic>{
+      'id': 'listing-1',
+      'owner_id': 'user-1',
+      'title': 'Toyota Camry',
+      'description': 'Описание',
+      'category': 'Авто',
+      'subcategory': 'Легковые автомобили',
+      'price': 1500000,
+      'phone': '+79288888645',
+      'phone_hidden': false,
+      'city': 'Москва',
+      'delivery': <String, dynamic>{},
+      'photo_urls': ['https://cdn.example.com/photo.jpg'],
+      'photo_items': [
+        {
+          'id': 'photo-0',
+          'url': 'https://cdn.example.com/photo.jpg',
+          'sort_order': 0,
+        },
+      ],
+    });
   }
 }
 

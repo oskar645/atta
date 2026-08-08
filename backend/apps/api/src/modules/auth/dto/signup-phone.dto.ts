@@ -33,4 +33,12 @@ export class SignupPhoneDto {
   @IsOptional()
   @IsString()
   referral_code?: string;
+
+  @IsOptional()
+  @IsString()
+  referralId?: string;
+
+  @IsOptional()
+  @IsString()
+  referral_id?: string;
 }

@@ -30,12 +30,24 @@ type WalletTransactionRecord = {
   createdAt: Date;
 };
 
+type ReferralRecord = {
+  id: string;
+  inviterUserId: string;
+  invitedUserId: string;
+  referralCode: string;
+  walletTransactionId?: string | null;
+  createdAt: Date;
+};
+
 function createService(initial?: {
   wallet?: Partial<WalletRecord>;
   userCreatedAt?: Date;
   now?: Date;
   transactions?: WalletTransactionRecord[];
+  referrals?: ReferralRecord[];
   supportedReasons?: WalletTransactionReason[];
+  failWalletTransactionCreate?: boolean;
+  failReferralCreate?: boolean;
 }) {
   const wallet: WalletRecord = {
     id: 'wallet-1',
@@ -44,6 +56,7 @@ function createService(initial?: {
     lastBonusAccrualAt: initial?.wallet?.lastBonusAccrualAt ?? null,
   };
   const transactions = [...(initial?.transactions ?? [])];
+  const referrals = [...(initial?.referrals ?? [])];
   const userCreatedAt =
     initial?.userCreatedAt ?? new Date('2026-07-26T12:00:00.000Z');
   const now = initial?.now ?? new Date('2026-07-27T09:00:00.000Z');
@@ -150,6 +163,9 @@ function createService(initial?: {
           createdAt?: Date;
         };
       }) => {
+        if (initial?.failWalletTransactionCreate) {
+          throw new Error('wallet transaction create failed');
+        }
         transactionSequence += 1;
         const created: WalletTransactionRecord = {
           id: `tx-${transactionSequence}`,
@@ -157,6 +173,41 @@ function createService(initial?: {
           ...data,
         };
         transactions.push(created);
+        return { ...created };
+      },
+    },
+    referral: {
+      findUnique: async ({
+        where,
+      }: {
+        where: { invitedUserId?: string; walletTransactionId?: string };
+      }) =>
+        referrals.find(
+          (item) =>
+            (where.invitedUserId != null &&
+              item.invitedUserId === where.invitedUserId) ||
+            (where.walletTransactionId != null &&
+              item.walletTransactionId === where.walletTransactionId),
+        ) ?? null,
+      create: async ({
+        data,
+      }: {
+        data: Omit<ReferralRecord, 'id' | 'createdAt'> & {
+          createdAt?: Date;
+        };
+      }) => {
+        if (initial?.failReferralCreate) {
+          throw new Error('referral create failed');
+        }
+        if (referrals.some((item) => item.invitedUserId === data.invitedUserId)) {
+          throw new Error('duplicate referral invited user');
+        }
+        const created: ReferralRecord = {
+          id: `referral-${referrals.length + 1}`,
+          createdAt: data.createdAt ?? new Date(),
+          ...data,
+        };
+        referrals.push(created);
         return { ...created };
       },
     },
@@ -189,8 +240,16 @@ function createService(initial?: {
       const previous = queue;
       queue = queue.then(() => next);
       await previous;
+      const walletSnapshot = { ...wallet };
+      const transactionsSnapshot = [...transactions];
+      const referralsSnapshot = [...referrals];
       try {
         return await handler(prisma);
+      } catch (error) {
+        Object.assign(wallet, walletSnapshot);
+        transactions.splice(0, transactions.length, ...transactionsSnapshot);
+        referrals.splice(0, referrals.length, ...referralsSnapshot);
+        throw error;
       } finally {
         release();
       }
@@ -202,6 +261,7 @@ function createService(initial?: {
     state: {
       wallet,
       transactions,
+      referrals,
     },
   };
 }
@@ -398,6 +458,127 @@ test('manual admin test bonus credits only once and stores russian description',
     )?.metadata.description,
     'Тестовые бонусы от администрации ATTA',
   );
+});
+
+test('referral inviter bonus credits exactly once with referral reason and idempotency key', async () => {
+  const { service, state } = createService({
+    wallet: {
+      bonusBalance: 300,
+    },
+  });
+
+  const first = await service.accrueReferralInviterBonusIfNeeded('user-1', {
+    invitedUserId: 'new-user-1',
+    referralCode: 'REF-CODE-1',
+  });
+  const second = await service.accrueReferralInviterBonusIfNeeded('user-1', {
+    invitedUserId: 'new-user-1',
+    referralCode: 'OTHER-REF-CODE',
+  });
+
+  assert.equal(first.applied, true);
+  assert.equal(second.applied, false);
+  assert.equal(first.wallet.bonusBalance, 400);
+  assert.equal(second.wallet.bonusBalance, 400);
+  assert.equal(
+    state.transactions.filter(
+      (item) =>
+        item.reason === WalletTransactionReason.REFERRAL_INVITER_BONUS &&
+        item.idempotencyKey === 'referral_inviter_bonus:new-user-1',
+    ).length,
+    1,
+  );
+  assert.equal(
+    state.transactions.find(
+      (item) => item.idempotencyKey === 'referral_inviter_bonus:new-user-1',
+    )?.metadata.description,
+    'Реферальный бонус за приглашение нового пользователя',
+  );
+  assert.equal(state.referrals.length, 1);
+  assert.equal(state.referrals[0]?.inviterUserId, 'user-1');
+  assert.equal(state.referrals[0]?.invitedUserId, 'new-user-1');
+});
+
+test('referral inviter bonus is skipped when invited user already has referral link', async () => {
+  const { service, state } = createService({
+    wallet: {
+      bonusBalance: 300,
+    },
+    referrals: [
+      {
+        id: 'referral-1',
+        inviterUserId: 'other-user',
+        invitedUserId: 'new-user-1',
+        referralCode: 'OTHER-REF-CODE',
+        walletTransactionId: null,
+        createdAt: new Date('2026-07-27T09:00:00.000Z'),
+      },
+    ],
+  });
+
+  const result = await service.accrueReferralInviterBonusIfNeeded('user-1', {
+    invitedUserId: 'new-user-1',
+    referralCode: 'REF-CODE-1',
+  });
+
+  assert.equal(result.applied, false);
+  assert.equal(result.wallet.bonusBalance, 300);
+  assert.equal(state.transactions.length, 0);
+  assert.equal(state.referrals.length, 1);
+});
+
+test('referral inviter bonus blocks self-referral', async () => {
+  const { service } = createService();
+
+  await assert.rejects(
+    service.accrueReferralInviterBonusIfNeeded('user-1', {
+      invitedUserId: 'user-1',
+      referralCode: 'REF-CODE-1',
+    }),
+    /Self-referral is not allowed/,
+  );
+});
+
+test('referral inviter bonus rolls back balance when transaction history creation fails', async () => {
+  const { service, state } = createService({
+    wallet: {
+      bonusBalance: 300,
+    },
+    failWalletTransactionCreate: true,
+  });
+
+  await assert.rejects(
+    service.accrueReferralInviterBonusIfNeeded('user-1', {
+      invitedUserId: 'new-user-1',
+      referralCode: 'REF-CODE-1',
+    }),
+    /wallet transaction create failed/,
+  );
+
+  assert.equal(state.wallet.bonusBalance, 300);
+  assert.equal(state.transactions.length, 0);
+  assert.equal(state.referrals.length, 0);
+});
+
+test('referral inviter bonus rolls back balance and history when referral link creation fails', async () => {
+  const { service, state } = createService({
+    wallet: {
+      bonusBalance: 300,
+    },
+    failReferralCreate: true,
+  });
+
+  await assert.rejects(
+    service.accrueReferralInviterBonusIfNeeded('user-1', {
+      invitedUserId: 'new-user-1',
+      referralCode: 'REF-CODE-1',
+    }),
+    /referral create failed/,
+  );
+
+  assert.equal(state.wallet.bonusBalance, 300);
+  assert.equal(state.transactions.length, 0);
+  assert.equal(state.referrals.length, 0);
 });
 
 test('getWallet returns wallet payload for authorized user without throwing', async () => {

@@ -1050,13 +1050,17 @@ class _TimewebFavoriteListingsTabState
               final listing = items[i];
               final photo =
                   listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
+              final isUnavailable = listing.isPermanentlyUnavailableForBuyer;
 
               return ListTile(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ListingDetailScreen(listingId: listing.id),
-                  ),
-                ),
+                onTap: isUnavailable
+                    ? null
+                    : () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ListingDetailScreen(listingId: listing.id),
+                          ),
+                        ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -1073,12 +1077,10 @@ class _TimewebFavoriteListingsTabState
                           color: Theme.of(context)
                               .colorScheme
                               .surfaceContainerHighest,
-                          child: photo == null
-                              ? const Icon(Icons.image_not_supported_outlined)
-                              : CachedNetworkImage(
-                                  imageUrl: photo,
-                                  fit: BoxFit.cover,
-                                ),
+                          child: _FavoriteListingThumbnail(
+                            photoUrl: photo,
+                            grayscale: isUnavailable,
+                          ),
                         ),
                       ],
                     ),
@@ -1118,6 +1120,52 @@ class _TimewebFavoriteListingsTabState
           ),
         );
       },
+    );
+  }
+}
+
+class _FavoriteListingThumbnail extends StatelessWidget {
+  const _FavoriteListingThumbnail({
+    required this.photoUrl,
+    required this.grayscale,
+  });
+
+  final String? photoUrl;
+  final bool grayscale;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = photoUrl == null
+        ? const Icon(Icons.image_not_supported_outlined)
+        : CachedNetworkImage(
+            imageUrl: photoUrl!,
+            fit: BoxFit.cover,
+          );
+    if (!grayscale) return child;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        0.2126,
+        0.7152,
+        0.0722,
+        0,
+        0,
+        0.2126,
+        0.7152,
+        0.0722,
+        0,
+        0,
+        0.2126,
+        0.7152,
+        0.0722,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+      ]),
+      child: child,
     );
   }
 }

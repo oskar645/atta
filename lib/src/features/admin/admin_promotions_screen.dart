@@ -15,6 +15,10 @@ class AdminPromotionsScreen extends StatefulWidget {
 class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
   String _filter = 'all';
   late Future<_AdminPromotionsData> _future;
+  _AdminPromotionsData _data = const _AdminPromotionsData(
+    items: <Map<String, dynamic>>[],
+    summary: <String, dynamic>{},
+  );
 
   @override
   void initState() {
@@ -43,10 +47,39 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
 
   Future<void> _refresh() async {
     final next = _load();
+    if (!mounted) return;
     setState(() {
       _future = next;
     });
     await next;
+  }
+
+  Future<void> _refreshAfterSuccessfulMutation({
+    _AdminPromotionsData? fallbackData,
+  }) async {
+    try {
+      final data = await _load();
+      if (!mounted) return;
+      setState(() {
+        _data = data;
+        _future = Future<_AdminPromotionsData>.value(data);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      if (fallbackData != null) {
+        setState(() {
+          _data = fallbackData;
+          _future = Future<_AdminPromotionsData>.value(fallbackData);
+        });
+      }
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Действие выполнено, но список не удалось обновить'),
+        ),
+      );
+    }
   }
 
   Future<void> _setFilter(String value) async {
@@ -91,7 +124,6 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
 
   Future<void> _cancelPromotion(String promotionId) async {
     final admin = context.read<AdminService>();
-    final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -114,10 +146,19 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
     if (confirmed != true) return;
 
     await admin.cancelPromotion(promotionId);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       const SnackBar(content: Text('Продвижение отменено')),
     );
-    await _refresh();
+    await _refreshAfterSuccessfulMutation(
+      fallbackData: _data.copyWith(
+        items: _data.items
+            .where(
+                (item) => (item['promotionId'] ?? '').toString() != promotionId)
+            .toList(growable: false),
+      ),
+    );
   }
 
   Future<void> _showUserInfo(Map<String, dynamic> item) {
@@ -165,6 +206,7 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
           }
 
           final data = snap.data!;
+          _data = data;
           return RefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
@@ -343,6 +385,16 @@ class _AdminPromotionsData {
 
   final List<Map<String, dynamic>> items;
   final Map<String, dynamic> summary;
+
+  _AdminPromotionsData copyWith({
+    List<Map<String, dynamic>>? items,
+    Map<String, dynamic>? summary,
+  }) {
+    return _AdminPromotionsData(
+      items: items ?? this.items,
+      summary: summary ?? this.summary,
+    );
+  }
 }
 
 class _AdminFilterChip extends StatelessWidget {

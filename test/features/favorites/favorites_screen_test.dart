@@ -75,6 +75,124 @@ void main() {
     expect(listings.getListingByIdCalls, 0);
   });
 
+  testWidgets('approved favorite opens as before', (tester) async {
+    await tester.pumpWidget(
+      _wrapFavorites(
+        listingsService: _CachedListingsService(
+          initialItems: <Listing>[_listingFixture(status: 'approved')],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final tile = _favoriteTile(tester, 'Тестовое объявление');
+
+    expect(tile.onTap, isNotNull);
+    expect(find.byType(ColorFiltered), findsNothing);
+  });
+
+  testWidgets('pending moderation favorite is not grayscale', (tester) async {
+    await tester.pumpWidget(
+      _wrapFavorites(
+        listingsService: _CachedListingsService(
+          initialItems: <Listing>[_listingFixture(status: 'pending')],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Тестовое объявление'), findsOneWidget);
+    expect(find.byType(ColorFiltered), findsNothing);
+  });
+
+  testWidgets('pending then approved favorite keeps opening', (tester) async {
+    final listings = _MutableCachedListingsService(
+      _listingFixture(status: 'pending'),
+    );
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        listingsService: listings,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_favoriteTile(tester, 'Тестовое объявление').onTap, isNotNull);
+
+    listings.item = _listingFixture(status: 'approved');
+    await tester.pumpWidget(
+      _wrapFavorites(
+        listingsService: listings,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(_favoriteTile(tester, 'Тестовое объявление').onTap, isNotNull);
+    expect(find.byType(ColorFiltered), findsNothing);
+  });
+
+  for (final status in <String>['sold', 'archived', 'deleted']) {
+    testWidgets('$status favorite is grayscale and does not open',
+        (tester) async {
+      await tester.pumpWidget(
+        _wrapFavorites(
+          listingsService: _CachedListingsService(
+            initialItems: <Listing>[_listingFixture(status: status)],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Тестовое объявление'), findsOneWidget);
+      expect(find.byType(ColorFiltered), findsOneWidget);
+
+      expect(_favoriteTile(tester, 'Тестовое объявление').onTap, isNull);
+    });
+  }
+
+  testWidgets('unavailable favorite can still be removed', (tester) async {
+    final favorites = _InteractiveFavoritesService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: favorites,
+        listingsService: _CachedListingsService(
+          initialItems: <Listing>[_listingFixture(status: 'sold')],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ColorFiltered), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.favorite).first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Пока нет избранных объявлений'), findsOneWidget);
+  });
+
+  testWidgets('available favorites keep ordinary card visuals', (tester) async {
+    await tester.pumpWidget(
+      _wrapFavorites(
+        listingsService: _CachedListingsService(
+          initialItems: <Listing>[
+            _listingFixture(id: 'listing-1', title: 'Активное 1'),
+            _listingFixture(id: 'listing-2', title: 'Активное 2'),
+          ],
+        ),
+        favoritesService: _StaticFavoritesService(
+          ids: <String>{'listing-1', 'listing-2'},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Активное 1'), findsOneWidget);
+    expect(find.text('Активное 2'), findsOneWidget);
+    expect(find.byType(ColorFiltered), findsNothing);
+    expect(find.byIcon(Icons.favorite), findsNWidgets(2));
+  });
+
   testWidgets(
       'favorites cold start does not launch duplicate missing listing loads',
       (tester) async {
@@ -263,6 +381,15 @@ Widget _wrapFavorites({
       Provider<ReviewsService>.value(value: _FakeReviewsService()),
     ],
     child: const MaterialApp(home: FavoritesScreen()),
+  );
+}
+
+ListTile _favoriteTile(WidgetTester tester, String title) {
+  return tester.widget<ListTile>(
+    find.ancestor(
+      of: find.text(title),
+      matching: find.byType(ListTile),
+    ),
   );
 }
 
@@ -500,6 +627,29 @@ class _CachedFavoritesService extends FavoritesService {
   }
 }
 
+class _StaticFavoritesService extends FavoritesService {
+  _StaticFavoritesService({required Set<String> ids})
+      : _ids = Set<String>.from(ids);
+
+  final Set<String> _ids;
+
+  @override
+  Set<String> peekFavoriteIds(String uid) => Set<String>.from(_ids);
+
+  @override
+  Future<Set<String>> refreshFavoriteIds(
+    String uid, {
+    String reason = 'manual',
+  }) async {
+    return Set<String>.from(_ids);
+  }
+
+  @override
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    return Stream<Set<String>>.value(Set<String>.from(_ids));
+  }
+}
+
 class _SubscriptionTrackingFavoritesService extends FavoritesService {
   final Set<String> _ids = <String>{'listing-1'};
   int activeListeners = 0;
@@ -641,6 +791,35 @@ class _CachedListingsService extends ListingsService {
   }
 }
 
+class _MutableCachedListingsService extends ListingsService {
+  _MutableCachedListingsService(this.item);
+
+  Listing item;
+
+  @override
+  List<Listing> peekListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) {
+    return <Listing>[item];
+  }
+
+  @override
+  Future<List<Listing>> getListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) async {
+    return <Listing>[item];
+  }
+
+  @override
+  Future<Listing?> getListingById(String id) async {
+    return item.id == id ? item : null;
+  }
+}
+
 class _MissingOneListingsService extends ListingsService {
   int getListingByIdCalls = 0;
 
@@ -708,6 +887,7 @@ class _FakeReviewsService extends ReviewsService {}
 Listing _listingFixture({
   String id = 'listing-1',
   String title = 'Тестовое объявление',
+  String status = 'approved',
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': id,
@@ -725,7 +905,7 @@ Listing _listingFixture({
     'delivery': const <String, dynamic>{'pickup': true},
     'photo_urls': const <String>[],
     'view_count': 0,
-    'status': 'approved',
+    'status': status,
     'rejection_reason': '',
     'can_promote': false,
     'created_at': '2026-07-01T10:00:00.000Z',

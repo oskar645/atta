@@ -20,13 +20,18 @@ const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const admin_service_1 = require("./admin.service");
 const list_admin_bonus_analytics_dto_1 = require("./dto/list-admin-bonus-analytics.dto");
 const list_admin_listings_dto_1 = require("./dto/list-admin-listings.dto");
+const list_admin_points_purchases_dto_1 = require("./dto/list-admin-points-purchases.dto");
 const list_admin_promotions_dto_1 = require("./dto/list-admin-promotions.dto");
 const list_admin_wallet_transactions_dto_1 = require("./dto/list-admin-wallet-transactions.dto");
 const moderate_listing_dto_1 = require("./dto/moderate-listing.dto");
 const archive_listing_dto_1 = require("../listings/dto/archive-listing.dto");
+const block_user_dto_1 = require("./dto/block-user.dto");
+const send_admin_support_message_dto_1 = require("./dto/send-admin-support-message.dto");
+const support_service_1 = require("../support/support.service");
 let AdminController = class AdminController {
-    constructor(adminService) {
+    constructor(adminService, supportService) {
         this.adminService = adminService;
+        this.supportService = supportService;
     }
     getDashboardStats() {
         return this.adminService.getDashboardStats();
@@ -42,6 +47,29 @@ let AdminController = class AdminController {
     }
     getUserById(id) {
         return this.adminService.getUserById(id);
+    }
+    sendSupportMessageToUser(userId, dto) {
+        return this.supportService.openTicketForAdminContact({
+            userId,
+            text: dto.message,
+            idempotencyKey: dto.idempotencyKey,
+            subject: 'Сообщение от администрации',
+        });
+    }
+    getUserReferrals(userId, query) {
+        return this.adminService.getUserReferrals(userId, query);
+    }
+    blockUser(id, authUser, dto) {
+        return this.adminService.blockUser(id, authUser, dto);
+    }
+    listBlocks(status) {
+        return this.adminService.listBlocks(status);
+    }
+    unblockUserBlock(id, authUser, dto) {
+        return this.adminService.unblockUserBlock(id, authUser, dto);
+    }
+    updateUserBlock(id, authUser, dto) {
+        return this.adminService.updateUserBlock(id, authUser, dto);
     }
     deleteUser(id, authUser) {
         return this.adminService.deleteUser(id, authUser);
@@ -70,6 +98,21 @@ let AdminController = class AdminController {
     getBonusAnalytics(query) {
         return this.adminService.getBonusAnalytics(query);
     }
+    getPointsPurchasesSummary(query) {
+        return this.adminService.getPointsPurchasesSummary(query);
+    }
+    listPointsPurchases(query) {
+        return this.adminService.listPointsPurchases(query);
+    }
+    getReferralsSummary(query) {
+        return this.adminService.getReferralSummary(query);
+    }
+    listReferrals(query) {
+        return this.adminService.listReferrals(query);
+    }
+    getReferralById(id) {
+        return this.adminService.getReferralById(id);
+    }
     approveListing(id, authUser) {
         return this.adminService.approveListing(id, authUser);
     }
@@ -95,10 +138,10 @@ let AdminController = class AdminController {
         return this.adminService.getReportsPlaceholder();
     }
     getSupportAlias() {
-        return this.adminService.getSupportTicketsPlaceholder();
+        return this.supportService.listTickets();
     }
     getSupportTicketsPlaceholder() {
-        return this.adminService.getSupportTicketsPlaceholder();
+        return this.supportService.listTickets();
     }
 };
 exports.AdminController = AdminController;
@@ -133,6 +176,56 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getUserById", null);
+__decorate([
+    (0, common_1.Post)('users/:userId/support-message'),
+    __param(0, (0, common_1.Param)('userId', new common_1.ParseUUIDPipe())),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, send_admin_support_message_dto_1.SendAdminSupportMessageDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "sendSupportMessageToUser", null);
+__decorate([
+    (0, common_1.Get)('users/:userId/referrals'),
+    __param(0, (0, common_1.Param)('userId')),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, list_admin_bonus_analytics_dto_1.ListAdminBonusAnalyticsDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getUserReferrals", null);
+__decorate([
+    (0, common_1.Post)('users/:id/block'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, block_user_dto_1.BlockUserDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "blockUser", null);
+__decorate([
+    (0, common_1.Get)('blocks'),
+    __param(0, (0, common_1.Query)('status')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listBlocks", null);
+__decorate([
+    (0, common_1.Post)('blocks/:id/unblock'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, block_user_dto_1.UnblockUserDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "unblockUserBlock", null);
+__decorate([
+    (0, common_1.Patch)('blocks/:id'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, block_user_dto_1.UpdateUserBlockDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "updateUserBlock", null);
 __decorate([
     (0, common_1.Delete)('users/:id'),
     __param(0, (0, common_1.Param)('id')),
@@ -197,6 +290,41 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getBonusAnalytics", null);
 __decorate([
+    (0, common_1.Get)('payments/points-purchases/summary'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_admin_points_purchases_dto_1.ListAdminPointsPurchasesDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getPointsPurchasesSummary", null);
+__decorate([
+    (0, common_1.Get)('payments/points-purchases'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_admin_points_purchases_dto_1.ListAdminPointsPurchasesDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listPointsPurchases", null);
+__decorate([
+    (0, common_1.Get)('referrals/summary'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_admin_bonus_analytics_dto_1.ListAdminBonusAnalyticsDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getReferralsSummary", null);
+__decorate([
+    (0, common_1.Get)('referrals'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listReferrals", null);
+__decorate([
+    (0, common_1.Get)('referrals/:id'),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getReferralById", null);
+__decorate([
     (0, common_1.Patch)('listings/:id/approve'),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -260,6 +388,7 @@ __decorate([
 exports.AdminController = AdminController = __decorate([
     (0, common_1.Controller)('admin'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
-    __metadata("design:paramtypes", [admin_service_1.AdminService])
+    __metadata("design:paramtypes", [admin_service_1.AdminService,
+        support_service_1.SupportService])
 ], AdminController);
 //# sourceMappingURL=admin.controller.js.map

@@ -8,12 +8,14 @@ import 'package:provider/provider.dart';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/features/admin/admin_listings_screen.dart';
 import 'package:atta/src/features/admin/admin_online_users_screen.dart';
+import 'package:atta/src/features/admin/admin_points_purchases_screen.dart';
 import 'package:atta/src/features/admin/admin_promotions_screen.dart';
 import 'package:atta/src/features/admin/admin_reports_screen.dart';
 import 'package:atta/src/features/admin/admin_today_visits_screen.dart';
 import 'package:atta/src/features/admin/admin_users_screen.dart';
 import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
 import 'package:atta/src/features/admin/admin_ads_tab.dart';
+import 'package:atta/src/features/admin/admin_blocks_screen.dart';
 import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
@@ -107,9 +109,9 @@ class _AdminScreenState extends State<AdminScreen>
   void initState() {
     super.initState();
     _tab = TabController(
-      length: 8,
+      length: 9,
       vsync: this,
-      initialIndex: widget.initialTabIndex.clamp(0, 7),
+      initialIndex: widget.initialTabIndex.clamp(0, 8),
     );
     _tab.addListener(_handleTabChanged);
   }
@@ -223,6 +225,7 @@ class _AdminScreenState extends State<AdminScreen>
                 _tabWithAlert('Реклама', 0),
                 _tabWithAlert('Продвижения', 0),
                 _tabWithAlert('Бонусы', 0),
+                _tabWithAlert('Блокировки', 0),
                 _tabWithAlert('Уведомления', 0),
               ],
             ),
@@ -237,6 +240,7 @@ class _AdminScreenState extends State<AdminScreen>
               const AdminAdsTab(),
               const AdminPromotionsScreen(),
               const AdminWalletAnalyticsScreen(),
+              const AdminBlocksScreen(),
               const AdminNotificationsTab(),
             ],
           ),
@@ -934,6 +938,26 @@ class _DashboardTab extends StatelessWidget {
             return int.tryParse((value ?? '').toString()) ?? 0;
           }
 
+          final pointsPurchasesMonth = Map<String, dynamic>.from(
+            stats['pointsPurchasesMonth'] as Map? ?? const {},
+          );
+          int readPurchaseMetric(String key) {
+            final value = pointsPurchasesMonth[key];
+            if (value is num) return value.toInt();
+            return int.tryParse((value ?? '').toString()) ?? 0;
+          }
+
+          String readPurchaseAmountRub() {
+            final value = pointsPurchasesMonth['totalAmountRub'];
+            final number =
+                value is num ? value : num.tryParse((value ?? '0').toString());
+            final amount = number ?? 0;
+            if (amount == amount.roundToDouble()) {
+              return amount.round().toString();
+            }
+            return amount.toStringAsFixed(2);
+          }
+
           return ListView(
             padding: const EdgeInsets.all(12),
             children: [
@@ -985,6 +1009,18 @@ class _DashboardTab extends StatelessWidget {
                 '${read('spentPoints30d')}',
                 Icons.stars_outlined,
                 subtitle: 'за последние 30 дней',
+              ),
+              card(
+                'Покупки баллов',
+                '${readPurchaseAmountRub()} ₽',
+                Icons.payments_outlined,
+                subtitle:
+                    '${readPurchaseMetric('totalPoints')} баллов • ${readPurchaseMetric('purchasesCount')} покупок',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AdminPointsPurchasesScreen(),
+                  ),
+                ),
               ),
               card(
                   'На модерации', '${read('pendingModeration')}', Icons.shield),
@@ -1045,28 +1081,37 @@ class _DashboardTab extends StatelessWidget {
         final reportsSeries =
             daily.map((e) => (e['reports_new'] ?? 0) as int).toList();
 
-        Widget card(String title, String value, IconData icon) {
+        Widget card(
+          String title,
+          String value,
+          IconData icon, {
+          VoidCallback? onTap,
+        }) {
           return Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                children: [
-                  Icon(icon),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Icon(icon),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
                     ),
-                  ),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w900,
-                      fontSize: 18,
+                    Text(
+                      value,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 18,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
@@ -1118,6 +1163,16 @@ class _DashboardTab extends StatelessWidget {
             card('Активных объявлений', '$active', Icons.campaign),
             card('Продано', '$sold', Icons.sell),
             card('Продажи за 30 дней', '$soldThisMonth', Icons.sell_outlined),
+            card(
+              'Покупки баллов',
+              'Открыть',
+              Icons.payments_outlined,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const AdminPointsPurchasesScreen(),
+                ),
+              ),
+            ),
             card('На модерации', '$pending', Icons.shield),
             card('Тикетов поддержки', '$tickets', Icons.support_agent),
             card('Жалоб (open)', '$reports', Icons.report),
@@ -1361,6 +1416,34 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     ),
   ];
 
+  static const List<_BlockDurationOption> _blockDurations = [
+    _BlockDurationOption(
+      label: '1 день',
+      value: 'one_day',
+      summary: 'первое нарушение',
+    ),
+    _BlockDurationOption(
+      label: '7 дней',
+      value: '7_days',
+      summary: 'повторное нарушение',
+    ),
+    _BlockDurationOption(
+      label: '30 дней',
+      value: '30_days',
+      summary: 'следующее нарушение',
+    ),
+    _BlockDurationOption(
+      label: 'До даты',
+      value: 'custom',
+      summary: 'ручной срок',
+    ),
+    _BlockDurationOption(
+      label: 'Навсегда',
+      value: 'permanent',
+      summary: 'серьезное нарушение',
+    ),
+  ];
+
   Future<void> _approve() async {
     final adminService = context.read<AdminService>();
     final savedSearchService = context.read<SavedSearchService>();
@@ -1587,6 +1670,180 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     return res;
   }
 
+  Future<void> _blockUser() async {
+    final adminService = context.read<AdminService>();
+    final ownerId = (widget.listingData['owner_id'] ?? '').toString().trim();
+    if (ownerId.isEmpty) {
+      showAppSnack(context, 'Не найден пользователь объявления', isError: true);
+      return;
+    }
+
+    final decision = await _askBlockDecision();
+    if (decision == null) return;
+
+    setState(() => _busy = true);
+    try {
+      await adminService.blockUser(
+        ownerId,
+        duration: decision.duration.value,
+        reason: decision.reason,
+        internalNote: decision.internalNote,
+        listingId: widget.listingId,
+        endsAt: decision.endsAt?.toIso8601String(),
+        banPhoneIdentity: decision.banPhoneIdentity,
+      );
+      if (!mounted) return;
+      showAppSnack(context, 'Пользователь заблокирован, объявление отклонено');
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      showAppSnack(context, 'Ошибка блокировки: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<_BlockDecision?> _askBlockDecision() async {
+    var selected = 0;
+    DateTime? customEndsAt;
+    var banPhoneIdentity = false;
+    var reason = '';
+    var note = '';
+    final ownerName = (widget.listingData['owner_name'] ??
+            widget.listingData['ownerName'] ??
+            '')
+        .toString();
+    final title = (widget.listingData['title'] ?? '').toString();
+
+    final res = await showDialog<_BlockDecision>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) {
+          final duration = _blockDurations[selected];
+          final needsDate = duration.value == 'custom';
+          final canSubmit =
+              reason.trim().isNotEmpty && (!needsDate || customEndsAt != null);
+          return AlertDialog(
+            title: const Text('Заблокировать пользователя'),
+            content: SizedBox(
+              width: 460,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (ownerName.trim().isNotEmpty)
+                      _AdminInfoRow(label: 'Пользователь', value: ownerName),
+                    _AdminInfoRow(label: 'Объявление', value: title),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (int i = 0; i < _blockDurations.length; i++)
+                          ChoiceChip(
+                            label: Text(_blockDurations[i].label),
+                            selected: selected == i,
+                            onSelected: (_) => setState(() => selected = i),
+                          ),
+                      ],
+                    ),
+                    if (needsDate) ...[
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            firstDate:
+                                DateTime.now().add(const Duration(days: 1)),
+                            lastDate:
+                                DateTime.now().add(const Duration(days: 3650)),
+                            initialDate: customEndsAt ??
+                                DateTime.now().add(const Duration(days: 1)),
+                          );
+                          if (picked != null) {
+                            if (!ctx.mounted) return;
+                            setState(() => customEndsAt = picked);
+                          }
+                        },
+                        icon: const Icon(Icons.event),
+                        label: Text(
+                          customEndsAt == null
+                              ? 'Выбрать дату'
+                              : _formatModerationDate(
+                                  customEndsAt!.toIso8601String()),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    TextField(
+                      minLines: 2,
+                      maxLines: 4,
+                      onChanged: (value) => setState(() => reason = value),
+                      decoration: const InputDecoration(
+                        labelText: 'Причина блокировки',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      minLines: 2,
+                      maxLines: 3,
+                      onChanged: (value) => note = value,
+                      decoration: const InputDecoration(
+                        labelText: 'Внутренний комментарий',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: banPhoneIdentity,
+                      onChanged: duration.value == 'permanent'
+                          ? (value) =>
+                              setState(() => banPhoneIdentity = value ?? false)
+                          : null,
+                      title: const Text(
+                          'Запретить повторную регистрацию по номеру'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                    Text(
+                      'Итог: объявление будет отклонено и скрыто из ленты, пользователь получит блокировку ${duration.label} (${duration.summary}).',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: canSubmit
+                    ? () => Navigator.pop(
+                          ctx,
+                          _BlockDecision(
+                            duration: duration,
+                            reason: reason.trim(),
+                            internalNote:
+                                note.trim().isEmpty ? null : note.trim(),
+                            endsAt: customEndsAt,
+                            banPhoneIdentity: banPhoneIdentity,
+                          ),
+                        )
+                    : null,
+                child: const Text('Заблокировать'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    return res;
+  }
+
   @override
   Widget build(BuildContext context) {
     final d = widget.listingData;
@@ -1787,6 +2044,12 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
             icon: const Icon(Icons.delete, color: Colors.redAccent),
             label: const Text('Удалить полностью'),
           ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _blockUser,
+            icon: const Icon(Icons.lock),
+            label: const Text('Заблокировать пользователя'),
+          ),
         ],
       ),
     );
@@ -1934,7 +2197,7 @@ String _moderationFieldLabel(String key) {
     'delivery': 'Доставка',
     'address': 'Адрес',
     'deal_type': 'Тип сделки',
-    'real_estate_type': 'Тип недвижимости',
+    'real_estate_type': 'Вид товара',
     'clothes_type': 'Тип одежды',
     'auto_brand': 'Марка авто',
     'auto_model': 'Модель авто',
@@ -2032,6 +2295,34 @@ class _ModerationRejectReason {
     required this.label,
     required this.rejectionReason,
     required this.notificationBody,
+  });
+}
+
+class _BlockDurationOption {
+  final String label;
+  final String value;
+  final String summary;
+
+  const _BlockDurationOption({
+    required this.label,
+    required this.value,
+    required this.summary,
+  });
+}
+
+class _BlockDecision {
+  final _BlockDurationOption duration;
+  final String reason;
+  final String? internalNote;
+  final DateTime? endsAt;
+  final bool banPhoneIdentity;
+
+  const _BlockDecision({
+    required this.duration,
+    required this.reason,
+    required this.internalNote,
+    required this.endsAt,
+    required this.banPhoneIdentity,
   });
 }
 

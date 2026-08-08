@@ -15,6 +15,7 @@ const listings_module_1 = require("../listings/listings.module");
 const prisma_module_1 = require("../prisma/prisma.module");
 const storage_module_1 = require("../storage/storage.module");
 const notifications_module_1 = require("../notifications/notifications.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const users_module_1 = require("../users/users.module");
 const media_controller_1 = require("./media.controller");
 let MediaModule = class MediaModule {
@@ -30,6 +31,7 @@ exports.MediaModule = MediaModule = __decorate([
             notifications_module_1.NotificationsModule,
             prisma_module_1.PrismaModule,
             storage_module_1.StorageModule,
+            user_blocks_module_1.UserBlocksModule,
             users_module_1.UsersModule,
         ],
         controllers: [media_controller_1.MediaController],

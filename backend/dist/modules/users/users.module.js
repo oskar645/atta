@@ -10,6 +10,7 @@ exports.UsersModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const storage_module_1 = require("../storage/storage.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const wallet_module_1 = require("../wallet/wallet.module");
 const users_controller_1 = require("./users.controller");
 const users_service_1 = require("./users.service");
@@ -18,7 +19,7 @@ let UsersModule = class UsersModule {
 exports.UsersModule = UsersModule;
 exports.UsersModule = UsersModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, storage_module_1.StorageModule, wallet_module_1.WalletModule],
+        imports: [auth_module_1.AuthModule, storage_module_1.StorageModule, user_blocks_module_1.UserBlocksModule, wallet_module_1.WalletModule],
         controllers: [users_controller_1.UsersController],
         providers: [users_service_1.UsersService],
         exports: [users_service_1.UsersService],

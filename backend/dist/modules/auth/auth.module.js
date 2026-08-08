@@ -13,6 +13,7 @@ const env_1 = require("../../config/env");
 const app_visits_module_1 = require("../app-visits/app-visits.module");
 const storage_module_1 = require("../storage/storage.module");
 const wallet_module_1 = require("../wallet/wallet.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const admin_guard_1 = require("./admin.guard");
 const auth_controller_1 = require("./auth.controller");
 const auth_service_1 = require("./auth.service");
@@ -27,6 +28,7 @@ exports.AuthModule = AuthModule = __decorate([
             app_visits_module_1.AppVisitsModule,
             storage_module_1.StorageModule,
             wallet_module_1.WalletModule,
+            user_blocks_module_1.UserBlocksModule,
             jwt_1.JwtModule.register({
                 secret: env_1.env.JWT_ACCESS_SECRET,
             }),

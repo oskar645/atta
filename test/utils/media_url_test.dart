@@ -35,4 +35,14 @@ void main() {
       'https://attamarket.online/uploads/avatars/legacy.jpg',
     );
   });
+
+  test('resolver converts file media object urls to backend https urls', () {
+    expect(
+      resolvePublicMediaUrl(
+        'file:///media/object?category=avatars&key=avatars%2Fuser-1%2Fphoto.jpg',
+        categoryHint: 'avatars',
+      ),
+      'https://attamarket.online/media/object?category=avatars&key=avatars%2Fuser-1%2Fphoto.jpg',
+    );
+  });
 }

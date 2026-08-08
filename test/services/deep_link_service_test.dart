@@ -64,6 +64,17 @@ void main() {
     expect(link?.referrerId, 'REFERRAL_CODE_456');
   });
 
+  test('https://attamarket.online/invite parses as invite without referrer',
+      () {
+    final link = parseAttaDeepLink(
+      Uri.parse('https://attamarket.online/invite'),
+    );
+
+    expect(link, isNotNull);
+    expect(link?.type, AttaDeepLinkType.invite);
+    expect(link?.referrerId, '');
+  });
+
   test('saving pending listing deep link does not log out user', () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(

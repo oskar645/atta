@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'blocked_account_screen.dart';
 import 'login_screen.dart';
 import '../home/main_shell.dart';
 
@@ -85,6 +86,9 @@ class _AuthGateState extends State<AuthGate> {
     final auth = context.watch<AuthService>();
 
     if (auth.isAuthenticated) {
+      if (auth.currentUser?.isBlocked == true) {
+        return const BlockedAccountScreen();
+      }
       final authenticatedBuilder = widget.authenticatedBuilder;
       return authenticatedBuilder != null
           ? authenticatedBuilder(context)

@@ -309,6 +309,7 @@ Listing _listing() {
     dealType: null,
     realEstateType: null,
     clothesType: null,
+    clothesSize: null,
     viewCount: 0,
     favoriteCount: 0,
     status: 'approved',

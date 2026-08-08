@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -223,6 +224,128 @@ void main() {
     await sub.cancel();
   });
 
+  test('socket status update before message does not create placeholder',
+      () async {
+    final socket = _FakeChatSocketService();
+    final service = ChatService(
+      socketService: socket,
+      api: _FakeChatsApi(),
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final states = <List<ChatMessage>>[];
+    final sub = service.streamMessages('chat-1').listen(
+          (items) => states.add(List<ChatMessage>.from(items)),
+        );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    socket.emitEvent(
+      'message.delivered',
+      <String, dynamic>{
+        'message': <String, dynamic>{
+          'id': 'message-status-first',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'status': 'delivered',
+          'deliveredAt': DateTime.now().toIso8601String(),
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    socket.emitEvent(
+      'message.read',
+      <String, dynamic>{
+        'message': <String, dynamic>{
+          'id': 'message-status-first',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'status': 'read',
+          'readAt': DateTime.now().toIso8601String(),
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(
+      states.expand((items) => items).where(
+            (message) => message.id == 'message-status-first',
+          ),
+      isEmpty,
+    );
+
+    socket.emitEvent(
+      'message.new',
+      <String, dynamic>{
+        'chat': _chatMap(),
+        'message': <String, dynamic>{
+          'id': 'message-status-first',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'text': 'Полное сообщение',
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(messages.where((item) => item.id == 'message-status-first'),
+        hasLength(1));
+    expect(messages.single.text, 'Полное сообщение');
+    await sub.cancel();
+  });
+
+  test('socket status placeholder is not emitted before REST message load',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      listMessageItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'message-from-rest',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'text': 'Пришло из REST',
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    socket.emitEvent(
+      'message.read',
+      <String, dynamic>{
+        'message': <String, dynamic>{
+          'id': 'message-from-rest',
+          'chatId': 'chat-1',
+          'senderId': 'user-2',
+          'status': 'read',
+          'readAt': DateTime.now().toIso8601String(),
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final states = <List<ChatMessage>>[];
+    final sub = service.streamMessages('chat-1').listen(
+          (items) => states.add(List<ChatMessage>.from(items)),
+        );
+    final messages = await service.streamMessages('chat-1').firstWhere(
+          (items) => items.isNotEmpty,
+        );
+
+    expect(states.first, isEmpty);
+    expect(
+        messages.where((item) => item.id == 'message-from-rest'), hasLength(1));
+    expect(messages.single.text, 'Пришло из REST');
+    await sub.cancel();
+  });
+
   test('failed text message remains visible instead of disappearing', () async {
     final service = ChatService(
       socketService: _FakeChatSocketService(),
@@ -272,8 +395,50 @@ void main() {
     );
 
     final messages = await service.streamMessages('chat-1').first;
-    expect(api.sendMessageCalls, 2);
+    expect(api.sendMessageCalls, 3);
     expect(messages.where((item) => item.text == 'Повтори меня'), hasLength(1));
+    expect(messages.single.status, 'sent');
+    expect(messages.single.clientMessageId, failed.clientMessageId);
+  });
+
+  test('repeated tap on failed message does not create duplicate', () async {
+    final api =
+        _FakeChatsApi(sendMessageError: const ApiException('Сбой сети'));
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await expectLater(
+      () => service.sendMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        text: 'Без дубля retry',
+      ),
+      throwsA(isA<ApiException>()),
+    );
+    final failed = (await service.streamMessages('chat-1').first).single;
+    api.sendMessageError = null;
+
+    await Future.wait([
+      service.retryMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        message: failed,
+      ),
+      service.retryMessage(
+        chatId: 'chat-1',
+        senderId: 'user-1',
+        message: failed,
+      ),
+    ]);
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(
+      messages.where((item) => item.text == 'Без дубля retry'),
+      hasLength(1),
+    );
     expect(messages.single.status, 'sent');
     expect(messages.single.clientMessageId, failed.clientMessageId);
   });
@@ -503,6 +668,134 @@ void main() {
     expect(api.sendMessageCalls, 1);
     final messages = await service.streamMessages('chat-1').first;
     expect(messages.single.status, 'sent');
+  });
+
+  test('Android socket connecting send waits and sends one message', () async {
+    final socket = _FakeChatSocketService(connectCompleter: Completer<void>());
+    final api = _FakeChatsApi();
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final send = service.sendMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'После connect',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.sendMessageCalls, 0);
+    socket.completeConnect();
+    await send;
+
+    expect(api.sendMessageCalls, 1);
+    final messages = await service.streamMessages('chat-1').first;
+    expect(
+        messages.where((item) => item.text == 'После connect'), hasLength(1));
+    expect(messages.single.status, 'sent');
+  });
+
+  test('Android first REST send error retries safely with one message',
+      () async {
+    final api = _FakeChatsApi(
+      sendMessageErrors: <Object>[const ApiException('Socket route warming')],
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.sendMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'Один tap',
+    );
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(api.sendMessageCalls, 2);
+    expect(messages.where((item) => item.text == 'Один tap'), hasLength(1));
+    expect(messages.single.status, 'sent');
+  });
+
+  test('Android resume first send works without manual retry', () async {
+    final socket = _FakeChatSocketService(reconnecting: true);
+    final api = _FakeChatsApi();
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.handleAppResumed('user-1');
+    await service.sendMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'После resume',
+    );
+
+    expect(socket.forceReconnectCalls, greaterThanOrEqualTo(1));
+    expect(api.sendMessageCalls, 1);
+    final messages = await service.streamMessages('chat-1').first;
+    expect(messages.where((item) => item.text == 'После resume'), hasLength(1));
+    expect(messages.single.status, 'sent');
+  });
+
+  test('resume send waits for disconnected socket recovery and stays single',
+      () async {
+    final socket = _FakeChatSocketService(
+      forceReconnectCompleter: Completer<void>(),
+    );
+    final api = _FakeChatsApi();
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-1').listen((_) {});
+    service.setForegroundChat('chat-1');
+    await Future<void>.delayed(Duration.zero);
+    socket.connected = false;
+
+    final resume = service.handleAppResumed('user-1');
+    await Future<void>.delayed(Duration.zero);
+    final send = service.sendMessage(
+      chatId: 'chat-1',
+      senderId: 'user-1',
+      text: 'Первый tap после resume',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.sendMessageCalls, 0);
+    socket.completeForceReconnect();
+    await Future.wait(<Future<void>>[resume, send]);
+
+    final sentClientMessageId = api.lastClientMessageId!;
+    socket.emitEvent(
+      'message.new',
+      <String, dynamic>{
+        'message': <String, dynamic>{
+          'id': 'server-message-1',
+          'chatId': 'chat-1',
+          'senderId': 'user-1',
+          'text': 'Первый tap после resume',
+          'clientMessageId': sentClientMessageId,
+          'status': 'sent',
+          'createdAt': DateTime.now().toIso8601String(),
+        },
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    final messages = await service.streamMessages('chat-1').first;
+    expect(api.sendMessageCalls, 1);
+    expect(messages.where((item) => item.text == 'Первый tap после resume'),
+        hasLength(1));
+    expect(messages.single.status, 'sent');
+    await sub.cancel();
   });
 
   test('pending image message is merged with server message without duplicate',
@@ -830,6 +1123,70 @@ void main() {
     await sub.cancel();
   });
 
+  test('socket chat update without message payload refreshes messages',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi();
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-1').listen((_) {});
+    socket.emitEvent(
+      'message.new',
+      <String, dynamic>{
+        'chat': _chatMap(id: 'chat-1', lastMessage: 'Догрузи меня'),
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(api.listMessagesCalls, contains('chat-1'));
+    await sub.cancel();
+  });
+
+  test('chat.updated with newer preview refreshes active chat history',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(
+          id: 'preview-history-1',
+          chatId: 'chat-preview',
+          text: 'Preview уже показал',
+        ),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-preview').listen((_) {});
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    api.listMessagesCalls.clear();
+
+    socket.emitEvent(
+      'chat.updated',
+      <String, dynamic>{
+        'chat': _chatMap(
+          id: 'chat-preview',
+          lastMessage: 'Preview уже показал',
+          lastMessageAt: DateTime.utc(2026, 7, 2, 12).toIso8601String(),
+        ),
+      },
+    );
+
+    final messages = await service.streamMessages('chat-preview').firstWhere(
+        (items) => items.any((item) => item.id == 'preview-history-1'));
+
+    expect(api.listMessagesCalls, contains('chat-preview'));
+    expect(messages.single.text, 'Preview уже показал');
+    await sub.cancel();
+  });
+
   test('chat list sorted by lastMessageAt desc, not updatedAt desc', () async {
     final service = ChatService(
       socketService: _FakeChatSocketService(),
@@ -906,7 +1263,7 @@ void main() {
 
     expect(api.listChatsCalls, greaterThanOrEqualTo(1));
     expect(api.markChatReadCalls, isEmpty);
-    expect(socket.reconnectCalls, 1);
+    expect(socket.forceReconnectCalls, 1);
   });
 
   test('resume inside active chat rejoins, refreshes and marks only that chat',
@@ -929,8 +1286,8 @@ void main() {
     await service.handleAppResumed('user-1');
 
     expect(socket.joinedChats, contains('chat-a'));
-    expect(api.listMessagesCalls, ['chat-a']);
-    expect(api.markChatReadCalls, ['chat-a']);
+    expect(api.listMessagesCalls.where((id) => id == 'chat-a').length, 2);
+    expect(api.markChatReadCalls.where((id) => id != 'chat-a'), isEmpty);
     await sub.cancel();
   });
 
@@ -956,9 +1313,265 @@ void main() {
     await service.handleAppResumed('user-1');
 
     expect(api.listChatsCalls, 1);
-    expect(api.listMessagesCalls.where((id) => id == 'chat-a').length, 1);
-    expect(api.markChatReadCalls.where((id) => id == 'chat-a').length, 1);
+    expect(api.listMessagesCalls.where((id) => id == 'chat-a').length, 2);
+    expect(api.markChatReadCalls.where((id) => id != 'chat-a'), isEmpty);
     await sub.cancel();
+  });
+
+  test('Android sends while iPhone background then iPhone resume shows message',
+      () async {
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(
+          id: 'chat-cross-device',
+          lastMessage: 'Android -> iPhone',
+          unreadCount: 1,
+        ),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(
+          id: 'android-to-iphone-1',
+          chatId: 'chat-cross-device',
+          senderId: 'android-user',
+          text: 'Android -> iPhone',
+        ),
+      ],
+      unreadTotal: 1,
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-cross-device').listen((_) {});
+    await service.handleAppResumed('iphone-user');
+
+    final messages = await service
+        .streamMessages('chat-cross-device')
+        .firstWhere(
+            (items) => items.any((item) => item.id == 'android-to-iphone-1'));
+
+    expect(api.listChatsCalls, greaterThanOrEqualTo(1));
+    expect(api.listMessagesCalls, contains('chat-cross-device'));
+    expect(messages.single.text, 'Android -> iPhone');
+    await sub.cancel();
+  });
+
+  test(
+      'iPhone sends while Android background then Android resume shows message',
+      () async {
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(
+          id: 'chat-cross-device',
+          lastMessage: 'iPhone -> Android',
+          unreadCount: 1,
+        ),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(
+          id: 'iphone-to-android-1',
+          chatId: 'chat-cross-device',
+          senderId: 'iphone-user',
+          text: 'iPhone -> Android',
+        ),
+      ],
+      unreadTotal: 1,
+    );
+    final socket = _FakeChatSocketService()..connected = true;
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-cross-device').listen((_) {});
+    await service.handleAppResumed('android-user');
+
+    final messages = await service
+        .streamMessages('chat-cross-device')
+        .firstWhere(
+            (items) => items.any((item) => item.id == 'iphone-to-android-1'));
+
+    expect(socket.forceReconnectCalls, 1);
+    expect(messages.single.text, 'iPhone -> Android');
+    await sub.cancel();
+  });
+
+  test('multiple offline messages keep unread count aligned with history',
+      () async {
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(
+          id: 'chat-offline',
+          lastMessage: 'Третье offline',
+          unreadCount: 3,
+        ),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(
+            id: 'offline-1', chatId: 'chat-offline', text: 'Первое offline'),
+        _messageMap(
+            id: 'offline-2', chatId: 'chat-offline', text: 'Второе offline'),
+        _messageMap(
+            id: 'offline-3', chatId: 'chat-offline', text: 'Третье offline'),
+      ],
+      unreadTotal: 3,
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+    final unreadValues = <int>[];
+    final unreadSub =
+        service.streamUnreadTotal('user-1').listen(unreadValues.add);
+    final messageSub = service.streamMessages('chat-offline').listen((_) {});
+
+    await service.handleAppResumed('user-1');
+    final messages = await service
+        .streamMessages('chat-offline')
+        .firstWhere((items) => items.length == 3);
+
+    expect(unreadValues, contains(3));
+    expect(messages, hasLength(3));
+    await unreadSub.cancel();
+    await messageSub.cancel();
+  });
+
+  test('cold start keeps unread preview and history consistent', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'atta.chat.cache.v1.user-1': jsonEncode(<String, dynamic>{
+        'updatedAt': DateTime.utc(2026, 7, 1, 10).toIso8601String(),
+        'chats': <Map<String, dynamic>>[
+          _chatMap(
+            id: 'chat-cold',
+            lastMessage: 'Старый preview',
+            unreadCount: 1,
+          ),
+        ],
+        'messagesByChat': <String, dynamic>{
+          'chat-cold': <Map<String, dynamic>>[
+            _messageMap(id: 'old-cold', chatId: 'chat-cold', text: 'Старое'),
+          ],
+        },
+      }),
+    });
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(
+          id: 'chat-cold',
+          lastMessage: 'Новое после cold start',
+          unreadCount: 2,
+        ),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(id: 'cold-1', chatId: 'chat-cold', text: 'Первое новое'),
+        _messageMap(
+          id: 'cold-2',
+          chatId: 'chat-cold',
+          text: 'Новое после cold start',
+        ),
+      ],
+      unreadTotal: 2,
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final chats = await service.streamMyChats('user-1').firstWhere(
+          (items) => items.any(
+            (chat) =>
+                chat.id == 'chat-cold' &&
+                chat.lastMessage == 'Новое после cold start',
+          ),
+        );
+    final messages = await service
+        .streamMessages('chat-cold')
+        .firstWhere((items) => items.any((item) => item.id == 'cold-2'));
+
+    expect(chats.single.lastMessage, 'Новое после cold start');
+    expect(chats.single.unreadFor('user-1'), 2);
+    expect(
+        messages.map((item) => item.text), contains(chats.single.lastMessage));
+  });
+
+  test('false connected socket is recreated before resume recovery', () async {
+    final socket = _FakeChatSocketService()..connected = true;
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-false-connected', lastMessage: 'После recovery'),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(
+          id: 'false-connected-1',
+          chatId: 'chat-false-connected',
+          text: 'После recovery',
+        ),
+      ],
+    );
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final sub = service.streamMessages('chat-false-connected').listen((_) {});
+    await service.handleAppResumed('user-1');
+
+    expect(socket.forceReconnectCalls, 1);
+    expect(socket.joinedChats, contains('chat-false-connected'));
+    expect(api.listMessagesCalls, contains('chat-false-connected'));
+    await sub.cancel();
+  });
+
+  test('chat preview unread and message list do not diverge after recovery',
+      () async {
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(
+          id: 'chat-consistent',
+          lastMessage: 'Финальное сообщение',
+          unreadCount: 4,
+        ),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(id: 'consistent-1', chatId: 'chat-consistent', text: '1'),
+        _messageMap(id: 'consistent-2', chatId: 'chat-consistent', text: '2'),
+        _messageMap(id: 'consistent-3', chatId: 'chat-consistent', text: '3'),
+        _messageMap(
+          id: 'consistent-4',
+          chatId: 'chat-consistent',
+          text: 'Финальное сообщение',
+        ),
+      ],
+      unreadTotal: 4,
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+    final unreadValues = <int>[];
+    final unreadSub =
+        service.streamUnreadTotal('user-1').listen(unreadValues.add);
+
+    await service.handleAppResumed('user-1');
+    final chats = await service.streamMyChats('user-1').firstWhere(
+          (items) => items.any((chat) => chat.id == 'chat-consistent'),
+        );
+    final messages = await service
+        .streamMessages('chat-consistent')
+        .firstWhere((items) => items.length == 4);
+
+    expect(unreadValues, contains(4));
+    expect(chats.single.unreadFor('user-1'), 4);
+    expect(
+        messages.map((item) => item.text), contains(chats.single.lastMessage));
+    await unreadSub.cancel();
   });
 
   test('opening chat multiple times does not spam ensureReady', () async {
@@ -1092,6 +1705,151 @@ void main() {
     expect(messages.single.text, 'Останусь офлайн');
     expect(messages.single.hasImage, isFalse);
   });
+
+  test('old cached message list does not block REST refresh on chat open',
+      () async {
+    final cachedAt = DateTime.utc(2026, 7, 1, 10).toIso8601String();
+    final freshAt = DateTime.utc(2026, 7, 1, 11).toIso8601String();
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'atta.chat.cache.v1.user-1': jsonEncode(<String, dynamic>{
+        'updatedAt': cachedAt,
+        'chats': <Map<String, dynamic>>[
+          _chatMap(
+            id: 'chat-cross-platform',
+            lastMessage: 'Новое с другого телефона',
+            lastMessageAt: freshAt,
+            unreadCount: 1,
+          ),
+        ],
+        'messagesByChat': <String, dynamic>{
+          'chat-cross-platform': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'old-message',
+              'chatId': 'chat-cross-platform',
+              'senderId': 'user-2',
+              'text': 'Старое из cache',
+              'type': 'text',
+              'status': 'read',
+              'createdAt': cachedAt,
+            },
+          ],
+        },
+      }),
+    });
+    final api = _FakeChatsApi(
+      chats: <Map<String, dynamic>>[
+        _chatMap(
+          id: 'chat-cross-platform',
+          lastMessage: 'Новое с другого телефона',
+          lastMessageAt: freshAt,
+          unreadCount: 1,
+        ),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'new-message',
+          'chatId': 'chat-cross-platform',
+          'senderId': 'user-2',
+          'text': 'Новое с другого телефона',
+          'status': 'sent',
+          'createdAt': freshAt,
+        },
+      ],
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    final preview = await service.streamMyChats('user-1').firstWhere(
+          (items) => items.isNotEmpty,
+        );
+    final messages = await service
+        .streamMessages('chat-cross-platform')
+        .firstWhere((items) => items.any((item) => item.id == 'new-message'));
+
+    expect(preview.single.lastMessage, 'Новое с другого телефона');
+    expect(api.listMessagesCalls, contains('chat-cross-platform'));
+    expect(messages.map((item) => item.id), contains('old-message'));
+    expect(messages.map((item) => item.id), contains('new-message'));
+    expect(messages.where((item) => item.id == 'new-message'), hasLength(1));
+  });
+
+  test('markChatRead before REST messages finishes keeps incoming message',
+      () async {
+    final api = _FakeChatsApi(
+      listMessagesDelay: const Duration(milliseconds: 30),
+      chats: <Map<String, dynamic>>[
+        _chatMap(id: 'chat-race', lastMessage: 'Не терять', unreadCount: 1),
+      ],
+      listMessageItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'race-message',
+          'chatId': 'chat-race',
+          'senderId': 'user-2',
+          'text': 'Не терять',
+          'status': 'sent',
+          'createdAt': DateTime.utc(2026, 7, 1, 12).toIso8601String(),
+        },
+      ],
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.refreshInbox('user-1');
+    final sub = service.streamMessages('chat-race').listen((_) {});
+    await service.markChatRead(chatId: 'chat-race', uid: 'user-1');
+    final messages = await service
+        .streamMessages('chat-race')
+        .firstWhere((items) => items.any((item) => item.id == 'race-message'));
+
+    expect(api.markChatReadCalls, ['chat-race']);
+    expect(messages.where((item) => item.id == 'race-message'), hasLength(1));
+    await sub.cancel();
+  });
+
+  test('foreground push syncs REST messages before marking chat read',
+      () async {
+    final api = _FakeChatsApi(
+      listMessageItems: <Map<String, dynamic>>[
+        _messageMap(
+          id: 'push-open-1',
+          chatId: 'chat-push',
+          text: 'Открыто из push',
+        ),
+      ],
+    );
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    service.setForegroundChat('chat-push');
+    service.ingestMessageNotification(
+      currentUserId: 'user-1',
+      notification: <String, dynamic>{
+        'chatId': 'chat-push',
+        'type': 'chat_message',
+      },
+    );
+
+    final messages = await service
+        .streamMessages('chat-push')
+        .firstWhere((items) => items.any((item) => item.id == 'push-open-1'));
+
+    expect(messages.single.text, 'Открыто из push');
+    expect(
+        api.operationLog,
+        containsAllInOrder(<String>[
+          'listMessages:chat-push',
+          'markChatRead:chat-push',
+        ]));
+  });
 }
 
 Map<String, dynamic> _chatMap({
@@ -1119,8 +1877,30 @@ Map<String, dynamic> _chatMap({
       'unread_for_seller': 0,
     };
 
+Map<String, dynamic> _messageMap({
+  required String id,
+  required String chatId,
+  String senderId = 'user-2',
+  required String text,
+  String status = 'sent',
+  DateTime? createdAt,
+}) =>
+    <String, dynamic>{
+      'id': id,
+      'chatId': chatId,
+      'senderId': senderId,
+      'text': text,
+      'status': status,
+      'createdAt': (createdAt ?? DateTime.now()).toIso8601String(),
+    };
+
 class _FakeChatSocketService extends ChatSocketService {
-  _FakeChatSocketService({this.hangConnect = false});
+  _FakeChatSocketService({
+    this.hangConnect = false,
+    this.connectCompleter,
+    this.forceReconnectCompleter,
+    this.reconnecting = false,
+  });
 
   final StreamController<ChatSocketEvent> _eventsController =
       StreamController<ChatSocketEvent>.broadcast();
@@ -1128,8 +1908,13 @@ class _FakeChatSocketService extends ChatSocketService {
   final List<String> readIds = <String>[];
   final List<String> joinedChats = <String>[];
   final bool hangConnect;
+  final Completer<void>? connectCompleter;
+  final Completer<void>? forceReconnectCompleter;
+  bool reconnecting;
+  bool forceReconnectInFlight = false;
   int connectCalls = 0;
   int reconnectCalls = 0;
+  int forceReconnectCalls = 0;
   bool connected = false;
 
   @override
@@ -1144,13 +1929,47 @@ class _FakeChatSocketService extends ChatSocketService {
     if (hangConnect) {
       return Completer<void>().future;
     }
+    if (connectCompleter != null && !connectCompleter!.isCompleted) {
+      await connectCompleter!.future;
+      connected = true;
+      reconnecting = false;
+      return;
+    }
+    if (forceReconnectInFlight &&
+        forceReconnectCompleter != null &&
+        !forceReconnectCompleter!.isCompleted) {
+      await forceReconnectCompleter!.future;
+      connected = true;
+      reconnecting = false;
+      return;
+    }
     connected = true;
+    reconnecting = false;
   }
 
   @override
   Future<void> reconnect({String reason = 'manual'}) async {
     reconnectCalls += 1;
     connected = true;
+    reconnecting = false;
+  }
+
+  @override
+  Future<void> forceReconnect({String reason = 'manual'}) async {
+    forceReconnectCalls += 1;
+    if (forceReconnectCompleter != null &&
+        !forceReconnectCompleter!.isCompleted) {
+      forceReconnectInFlight = true;
+      await forceReconnectCompleter!.future;
+    }
+    forceReconnectInFlight = false;
+    connected = true;
+    reconnecting = false;
+  }
+
+  @override
+  Future<void> recoverAfterResume({String reason = 'resume'}) async {
+    await forceReconnect(reason: reason);
   }
 
   @override
@@ -1160,6 +1979,14 @@ class _FakeChatSocketService extends ChatSocketService {
 
   @override
   bool get isConnected => connected;
+
+  @override
+  bool get isConnecting =>
+      forceReconnectInFlight ||
+      connectCompleter != null && !connectCompleter!.isCompleted;
+
+  @override
+  bool get isReconnecting => reconnecting;
 
   @override
   void leaveChat(String chatId) {}
@@ -1177,24 +2004,42 @@ class _FakeChatSocketService extends ChatSocketService {
   void emitEvent(String name, Map<String, dynamic> payload) {
     _eventsController.add(ChatSocketEvent(name, payload));
   }
+
+  void completeConnect() {
+    connectCompleter?.complete();
+  }
+
+  void completeForceReconnect() {
+    forceReconnectCompleter?.complete();
+  }
 }
 
 class _FakeChatsApi extends ChatsApi {
   _FakeChatsApi({
     this.sendMessageError,
+    List<Object>? sendMessageErrors,
     this.listMessagesError,
     this.chats = const <Map<String, dynamic>>[],
+    this.listMessageItems = const <Map<String, dynamic>>[],
+    this.listMessagesDelay = Duration.zero,
     this.sendMessageDelay = Duration.zero,
-  }) : super(ApiClient(tokenStorage: TokenStorage()));
+    this.unreadTotal,
+  })  : sendMessageErrors = List<Object>.from(sendMessageErrors ?? const []),
+        super(ApiClient(tokenStorage: TokenStorage()));
 
   Object? sendMessageError;
+  final List<Object> sendMessageErrors;
   Object? listChatsError;
   final Object? listMessagesError;
   final List<Map<String, dynamic>> chats;
+  final List<Map<String, dynamic>> listMessageItems;
+  final Duration listMessagesDelay;
   final Duration sendMessageDelay;
+  final int? unreadTotal;
   final List<String> getChatCalls = <String>[];
   final List<String> listMessagesCalls = <String>[];
   final List<String> markChatReadCalls = <String>[];
+  final List<String> operationLog = <String>[];
   int listChatsCalls = 0;
   int sendMessageCalls = 0;
   String? lastClientMessageId;
@@ -1205,18 +2050,25 @@ class _FakeChatsApi extends ChatsApi {
     if (listChatsError != null) {
       throw listChatsError!;
     }
-    return <String, dynamic>{'items': chats};
+    return <String, dynamic>{
+      'items': chats,
+      if (unreadTotal != null) 'unreadTotal': unreadTotal,
+    };
   }
 
   @override
   Future<Map<String, dynamic>> listMessages(String chatId) async {
     listMessagesCalls.add(chatId);
+    operationLog.add('listMessages:$chatId');
+    if (listMessagesDelay > Duration.zero) {
+      await Future<void>.delayed(listMessagesDelay);
+    }
     if (listMessagesError != null) {
       throw listMessagesError!;
     }
     return <String, dynamic>{
-      'chat': _chatMap(),
-      'items': <Map<String, dynamic>>[],
+      'chat': _chatMap(id: chatId),
+      'items': listMessageItems,
     };
   }
 
@@ -1231,6 +2083,7 @@ class _FakeChatsApi extends ChatsApi {
   @override
   Future<Map<String, dynamic>> markChatRead(String chatId) async {
     markChatReadCalls.add(chatId);
+    operationLog.add('markChatRead:$chatId');
     return <String, dynamic>{
       'chat': _chatMap(id: chatId, unreadCount: 0),
       'messageIds': const <String>[],
@@ -1247,6 +2100,9 @@ class _FakeChatsApi extends ChatsApi {
     lastClientMessageId = clientMessageId;
     if (sendMessageDelay > Duration.zero) {
       await Future<void>.delayed(sendMessageDelay);
+    }
+    if (sendMessageErrors.isNotEmpty) {
+      throw sendMessageErrors.removeAt(0);
     }
     if (sendMessageError != null) {
       throw sendMessageError!;

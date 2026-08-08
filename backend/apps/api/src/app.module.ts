@@ -11,6 +11,7 @@ import { MediaModule } from './modules/media/media.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { FeedAdsModule } from './modules/feed-ads/feed-ads.module';
 import { PhoneVerificationModule } from './modules/phone-verification/phone-verification.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { PresenceModule } from './modules/presence/presence.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { PromotionsModule } from './modules/promotions/promotions.module';
@@ -22,6 +23,7 @@ import { S3Module } from './modules/s3/s3.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { SupportModule } from './modules/support/support.module';
 import { UsersModule } from './modules/users/users.module';
+import { UserBlocksModule } from './modules/user-blocks/user-blocks.module';
 import { UserFollowsModule } from './modules/user-follows/user-follows.module';
 import { SavedSearchesModule } from './modules/saved-searches/saved-searches.module';
 import { ViewedListingsModule } from './modules/viewed-listings/viewed-listings.module';
@@ -36,11 +38,13 @@ import { WalletModule } from './modules/wallet/wallet.module';
     ApnsModule,
     AuthModule,
     UsersModule,
+    UserBlocksModule,
     WalletModule,
     UserFollowsModule,
     SavedSearchesModule,
     ViewedListingsModule,
     PhoneVerificationModule,
+    PaymentsModule,
     ListingsModule,
     PromotionsModule,
     MediaModule,

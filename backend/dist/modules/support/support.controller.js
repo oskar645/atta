@@ -55,6 +55,16 @@ let SupportController = class SupportController {
             imageUrl: body.imageUrl ?? body.image_url,
         });
     }
+    createBlockAppeal(request, authUser, body) {
+        this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? 'block-appeal'), {
+            limit: 4,
+            windowMs: 60 * 1000,
+        });
+        return this.supportService.createBlockAppeal(authUser, {
+            text: body.text,
+            imageUrl: body.imageUrl ?? body.image_url,
+        });
+    }
     getTicket(authUser, ticketId) {
         return this.supportService.getTicketForUser(authUser, ticketId);
     }
@@ -96,6 +106,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object, create_support_ticket_dto_1.CreateSupportTicketDto]),
     __metadata("design:returntype", void 0)
 ], SupportController.prototype, "createTicket", null);
+__decorate([
+    (0, common_1.Post)('block-appeals'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, create_support_ticket_dto_1.CreateSupportTicketDto]),
+    __metadata("design:returntype", void 0)
+], SupportController.prototype, "createBlockAppeal", null);
 __decorate([
     (0, common_1.Get)('tickets/:id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
@@ -152,6 +171,7 @@ let AdminSupportController = class AdminSupportController {
             name: body.name,
             subject: body.subject,
             text: body.text,
+            idempotencyKey: body.idempotencyKey,
         });
     }
     closeTicket(ticketId) {

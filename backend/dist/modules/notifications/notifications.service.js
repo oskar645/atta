@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var NotificationsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationsService = void 0;
 const common_1 = require("@nestjs/common");
@@ -17,11 +18,12 @@ const apns_service_1 = require("../apns/apns.service");
 const chats_gateway_1 = require("../chats/chats.gateway");
 const prisma_service_1 = require("../prisma/prisma.service");
 const excludedInAppNotificationTypes = [client_1.NotificationType.CHAT_MESSAGE];
-let NotificationsService = class NotificationsService {
+let NotificationsService = NotificationsService_1 = class NotificationsService {
     constructor(apnsService, prisma, chatsGateway) {
         this.apnsService = apnsService;
         this.prisma = prisma;
         this.chatsGateway = chatsGateway;
+        this.logger = new common_1.Logger(NotificationsService_1.name);
     }
     toType(type) {
         switch ((type ?? '').trim().toLowerCase()) {
@@ -224,7 +226,12 @@ let NotificationsService = class NotificationsService {
         });
         const serialized = this.serialize(item);
         this.chatsGateway.emitNotificationNew(serialized, params.userId.trim());
-        await this.sendPushToUser(params.userId, serialized);
+        try {
+            await this.sendPushToUser(params.userId, serialized);
+        }
+        catch (error) {
+            this.logger.warn(`Personal notification push failed userId=${params.userId.trim()} notificationId=${item.id} error=${error instanceof Error ? error.name : 'unknown'}`);
+        }
         return item;
     }
     async registerDevice(authUser, body) {
@@ -310,6 +317,7 @@ let NotificationsService = class NotificationsService {
             },
             chat_id: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
             chatId: `${message['chatId'] ?? message['chat_id'] ?? params.chat['id'] ?? ''}`,
+            unreadTotal: Math.max(0, Math.trunc(params.unreadTotal ?? 0)),
         };
         await this.sendPushToUser(params.recipientId, serialized);
     }
@@ -457,13 +465,26 @@ let NotificationsService = class NotificationsService {
             actionType: `${notification['payload']?.['actionType'] ?? ''}`.trim() ||
                 `${notification['type'] ?? ''}`.trim(),
         };
+        const badge = this.notificationBadge(notification);
+        let unexpectedPushFailureLogged = false;
         await Promise.all(devices.map(async (device) => {
-            const result = await this.apnsService.send({
-                token: device.deviceToken,
-                title,
-                body,
-                payload,
-            });
+            let result;
+            try {
+                result = await this.apnsService.send({
+                    token: device.deviceToken,
+                    title,
+                    body,
+                    payload,
+                    ...(badge == null ? {} : { badge }),
+                });
+            }
+            catch (error) {
+                if (!unexpectedPushFailureLogged) {
+                    this.logger.warn(`APNs push skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`);
+                    unexpectedPushFailureLogged = true;
+                }
+                return;
+            }
             if (!result.sent &&
                 (result.status === 400 || result.status === 410) &&
                 (result.reason === 'BadDeviceToken' ||
@@ -480,9 +501,19 @@ let NotificationsService = class NotificationsService {
             }
         }));
     }
+    notificationBadge(notification) {
+        const raw = notification['unreadTotal'] ??
+            notification['unread_total'] ??
+            notification['payload']?.['unreadTotal'] ??
+            notification['payload']?.['unread_total'];
+        const value = Number(raw);
+        if (!Number.isFinite(value))
+            return undefined;
+        return Math.max(0, Math.trunc(value));
+    }
 };
 exports.NotificationsService = NotificationsService;
-exports.NotificationsService = NotificationsService = __decorate([
+exports.NotificationsService = NotificationsService = NotificationsService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [apns_service_1.ApnsService,
         prisma_service_1.PrismaService,

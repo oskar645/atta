@@ -14,6 +14,14 @@ function createService(
     walletService?: {
       ensureWalletAndBonuses?: (userId: string) => Promise<unknown>;
       ensureWalletAndBonusesSafely?: (userId: string) => Promise<unknown>;
+      accrueReferralInviterBonusIfNeeded?: (
+        userId: string,
+        params: {
+          invitedUserId: string;
+          referralCode: string;
+        },
+        tx?: unknown,
+      ) => Promise<unknown>;
       accrueManualBonusIfNeeded?: (
         userId: string,
         params: {
@@ -25,10 +33,26 @@ function createService(
         },
       ) => Promise<unknown>;
     };
+    userBlocksService?: {
+      getActiveBlock?: (userId: string) => Promise<unknown>;
+      assertNotBlocked?: (userId: string) => Promise<void>;
+    };
   },
 ) {
+  const prismaWithTransaction: Record<string, unknown> = {
+    ...prisma,
+    blockedIdentity: {
+      updateMany: async () => ({ count: 0 }),
+      findFirst: async () => null,
+      ...((prisma.blockedIdentity as Record<string, unknown> | undefined) ?? {}),
+    },
+    $transaction:
+      prisma.$transaction ??
+      (async <T>(handler: (tx: Record<string, unknown>) => Promise<T>) =>
+        handler(prismaWithTransaction)),
+  };
   return new AuthService(
-    prisma as never,
+    prismaWithTransaction as never,
     {
       signAsync: async (payload: Record<string, unknown>) =>
         `${payload.type ?? 'token'}-token`,
@@ -38,8 +62,15 @@ function createService(
     {
       ensureWalletAndBonuses: async () => undefined,
       ensureWalletAndBonusesSafely: async () => undefined,
+      accrueReferralInviterBonusIfNeeded: async () => undefined,
       accrueManualBonusIfNeeded: async () => undefined,
       ...overrides?.walletService,
+    } as never,
+    {
+      getActiveBlock: async () => null,
+      assertNotBlocked: async () => undefined,
+      serializeBlock: () => null,
+      ...overrides?.userBlocksService,
     } as never,
   );
 }
@@ -262,6 +293,150 @@ test('loginPhone succeeds even if wallet bootstrap fails', async () => {
   assert.equal(response.auth.access_token, 'access-token');
 });
 
+for (const days of [1, 7, 30]) {
+  test(`loginPhone allows expired ${days}-day block after active block reconciliation`, async () => {
+    let checkedUserId = '';
+    const service = createService(
+      {
+        user: {
+          findUnique: async () =>
+            baseActiveUser({
+              status: UserStatus.BLOCKED,
+              blockedAt: new Date(Date.now() - days * 86400000),
+              blockReason: 'Temporary block',
+            }),
+          update: async () => undefined,
+        },
+        userSession: {
+          create: async () => undefined,
+        },
+      },
+      {
+        userBlocksService: {
+          getActiveBlock: async (userId) => {
+            checkedUserId = userId;
+            return null;
+          },
+        },
+      },
+    );
+
+    const response = await service.loginPhone({
+      phone: '79281234567',
+      password: '12345678',
+    });
+
+    assert.equal(checkedUserId, 'user-1');
+    assert.equal(response.user.id, 'user-1');
+  });
+}
+
+test('loginPhone rejects permanent active block', async () => {
+  const service = createService(
+    {
+      user: {
+        findUnique: async () => baseActiveUser({ blockedAt: new Date() }),
+        update: async () => undefined,
+      },
+      userSession: {
+        create: async () => undefined,
+      },
+    },
+    {
+      userBlocksService: {
+        getActiveBlock: async () => ({
+          id: 'block-1',
+          userId: 'user-1',
+          adminId: 'admin-1',
+          type: 'PERMANENT',
+          status: 'ACTIVE',
+          reason: 'Permanent block',
+          startsAt: new Date(),
+          endsAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.loginPhone({
+      phone: '79281234567',
+      password: '12345678',
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpException);
+      assert.equal(error.getStatus(), 401);
+      assert.deepEqual(error.getResponse(), {
+        code: 'ACCOUNT_BLOCKED',
+        message: 'Аккаунт заблокирован',
+      });
+      return true;
+    },
+  );
+});
+
+test('signupPhone allows expired temporary BlockedIdentity and lifts it idempotently', async () => {
+  let updateManyCalls = 0;
+  const createdUser = baseActiveUser({
+    id: 'new-user-expired-identity',
+    phone: '79281234571',
+  });
+
+  const service = createService({
+    blockedIdentity: {
+      updateMany: async () => {
+        updateManyCalls += 1;
+        return { count: updateManyCalls === 1 ? 1 : 0 };
+      },
+      findFirst: async () => null,
+    },
+    phoneVerification: {
+      update: async () => undefined,
+      findFirst: async ({ where }: { where: Record<string, unknown> }) =>
+        'createdUserId' in where
+          ? null
+          : {
+              id: 'verification-expired-identity',
+              phone: '79281234571',
+              purpose: 'SIGNUP',
+              status: 'CONFIRMED',
+              expiresAt: new Date(Date.now() + 60_000),
+            },
+    },
+    user: {
+      findUnique: async ({ where }: { where: { phone?: string; id?: string } }) => {
+        if (where.phone) return null;
+        if (where.id === createdUser.id) return createdUser;
+        return null;
+      },
+      create: async () => createdUser,
+    },
+    userSession: {
+      create: async () => undefined,
+    },
+  });
+
+  const first = await service.signupPhone({
+    phone: '+79281234571',
+    password: '12345678',
+    displayName: 'Expired Identity',
+    verificationCheckId: 'verification-expired-identity',
+  });
+
+  const second = await service.signupPhone({
+    phone: '+79281234571',
+    password: '12345678',
+    displayName: 'Expired Identity',
+    verificationCheckId: 'verification-expired-identity',
+  });
+
+  assert.equal(first.user.id, 'new-user-expired-identity');
+  assert.equal(second.user.id, 'new-user-expired-identity');
+  assert.equal(updateManyCalls, 2);
+});
+
 test('getMe does not crash if wallet has issue', async () => {
   const service = createService(
     {
@@ -324,18 +499,22 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
   const service = createService(
     {
       phoneVerification: {
-        findUnique: async () => ({
-          id: 'verification-1',
-          phone: '79281234567',
-          purpose: 'SIGNUP',
-          status: 'CONFIRMED',
-        }),
         update: async () => undefined,
-        findFirst: async () => null,
+        findFirst: async ({ where }: { where: Record<string, unknown> }) =>
+          'createdUserId' in where
+            ? null
+            : {
+                id: 'verification-1',
+                phone: '79281234567',
+                purpose: 'SIGNUP',
+                status: 'CONFIRMED',
+                expiresAt: new Date(Date.now() + 60_000),
+              },
       },
       user: {
         findUnique: async ({ where }: { where: { phone?: string; id?: string } }) => {
           if (where.phone) return null;
+          if (where.id === createdUser.id) return createdUser;
           if (where.id === inviter.id) return inviter;
           return null;
         },
@@ -348,7 +527,7 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
     {
       walletService: {
         ensureWalletAndBonuses: async () => undefined,
-        accrueManualBonusIfNeeded: async (userId, params) => {
+        accrueReferralInviterBonusIfNeeded: async (userId, params) => {
           bonusCalls.push({ userId, params: params as Record<string, unknown> });
           return { applied: true };
         },
@@ -366,14 +545,9 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
 
   assert.equal(bonusCalls.length, 1);
   assert.equal(bonusCalls[0]?.userId, inviter.id);
-  assert.equal(bonusCalls[0]?.params.amount, 100);
   assert.equal(
-    bonusCalls[0]?.params.description,
-    'Бонус за приглашение друга',
-  );
-  assert.equal(
-    bonusCalls[0]?.params.reference,
-    'REFERRAL_INVITER_BONUS:new-user-1',
+    bonusCalls[0]?.params.invitedUserId,
+    'new-user-1',
   );
 });
 
@@ -389,17 +563,24 @@ test('signupPhone ignores invalid referral code and still completes registration
   const service = createService(
     {
       phoneVerification: {
-        findUnique: async () => ({
-          id: 'verification-2',
-          phone: '79281234568',
-          purpose: 'SIGNUP',
-          status: 'CONFIRMED',
-        }),
         update: async () => undefined,
-        findFirst: async () => null,
+        findFirst: async ({ where }: { where: Record<string, unknown> }) =>
+          'createdUserId' in where
+            ? null
+            : {
+                id: 'verification-2',
+                phone: '79281234568',
+                purpose: 'SIGNUP',
+                status: 'CONFIRMED',
+                expiresAt: new Date(Date.now() + 60_000),
+              },
       },
       user: {
-        findUnique: async () => null,
+        findUnique: async ({ where }: { where: { phone?: string; id?: string } }) => {
+          if (where.phone) return null;
+          if (where.id === createdUser.id) return createdUser;
+          return null;
+        },
         create: async () => createdUser,
       },
       userSession: {
@@ -409,7 +590,7 @@ test('signupPhone ignores invalid referral code and still completes registration
     {
       walletService: {
         ensureWalletAndBonuses: async () => undefined,
-        accrueManualBonusIfNeeded: async () => {
+        accrueReferralInviterBonusIfNeeded: async () => {
           bonusCallCount += 1;
           return { applied: true };
         },
@@ -429,6 +610,107 @@ test('signupPhone ignores invalid referral code and still completes registration
   assert.equal(bonusCallCount, 0);
 });
 
+test('signupPhone ignores referral code when inviter does not exist', async () => {
+  const createdUser = baseActiveUser({
+    id: 'new-user-4',
+    phone: '79281234570',
+    displayName: 'New User 4',
+    name: 'New User 4',
+  });
+  let bonusCallCount = 0;
+
+  const service = createService(
+    {
+      phoneVerification: {
+        update: async () => undefined,
+        findFirst: async ({ where }: { where: Record<string, unknown> }) =>
+          'createdUserId' in where
+            ? null
+            : {
+                id: 'verification-4',
+                phone: '79281234570',
+                purpose: 'SIGNUP',
+                status: 'CONFIRMED',
+                expiresAt: new Date(Date.now() + 60_000),
+              },
+      },
+      user: {
+        findUnique: async ({ where }: { where: { phone?: string; id?: string } }) => {
+          if (where.phone) return null;
+          if (where.id === createdUser.id) return createdUser;
+          return null;
+        },
+        create: async () => createdUser,
+      },
+      userSession: {
+        create: async () => undefined,
+      },
+    },
+    {
+      walletService: {
+        ensureWalletAndBonuses: async () => undefined,
+        accrueReferralInviterBonusIfNeeded: async () => {
+          bonusCallCount += 1;
+          return { applied: true };
+        },
+      },
+    },
+  );
+
+  const response = await service.signupPhone({
+    phone: '+79281234570',
+    password: '12345678',
+    displayName: 'New User 4',
+    verificationCheckId: 'verification-4',
+    referralCode: buildReferralCode('missing-inviter'),
+  });
+
+  assert.equal(response.user.id, 'new-user-4');
+  assert.equal(bonusCallCount, 0);
+});
+
+test('signupPhone blocks existing phone before referral bonus', async () => {
+  let bonusCallCount = 0;
+
+  const service = createService(
+    {
+      phoneVerification: {
+        findFirst: async () => ({
+          id: 'verification-existing',
+          phone: '79281234567',
+          purpose: 'SIGNUP',
+          status: 'CONFIRMED',
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
+      },
+      user: {
+        findUnique: async ({ where }: { where: { phone?: string } }) =>
+          where.phone ? baseActiveUser() : null,
+      },
+    },
+    {
+      walletService: {
+        accrueReferralInviterBonusIfNeeded: async () => {
+          bonusCallCount += 1;
+          return { applied: true };
+        },
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.signupPhone({
+      phone: '+79281234567',
+      password: '12345678',
+      displayName: 'Existing User',
+      verificationCheckId: 'verification-existing',
+      referralCode: buildReferralCode('inviter-1'),
+    }),
+    /Phone is already registered/,
+  );
+  assert.equal(bonusCallCount, 0);
+});
+
 test('signupPhone blocks self-referral bonus by matching inviter user id', async () => {
   const createdUser = baseActiveUser({
     id: 'same-user-1',
@@ -441,17 +723,24 @@ test('signupPhone blocks self-referral bonus by matching inviter user id', async
   const service = createService(
     {
       phoneVerification: {
-        findUnique: async () => ({
-          id: 'verification-3',
-          phone: '79281234569',
-          purpose: 'SIGNUP',
-          status: 'CONFIRMED',
-        }),
         update: async () => undefined,
-        findFirst: async () => null,
+        findFirst: async ({ where }: { where: Record<string, unknown> }) =>
+          'createdUserId' in where
+            ? null
+            : {
+                id: 'verification-3',
+                phone: '79281234569',
+                purpose: 'SIGNUP',
+                status: 'CONFIRMED',
+                expiresAt: new Date(Date.now() + 60_000),
+              },
       },
       user: {
-        findUnique: async () => null,
+        findUnique: async ({ where }: { where: { phone?: string; id?: string } }) => {
+          if (where.phone) return null;
+          if (where.id === createdUser.id) return createdUser;
+          return null;
+        },
         create: async () => createdUser,
       },
       userSession: {
@@ -461,7 +750,7 @@ test('signupPhone blocks self-referral bonus by matching inviter user id', async
     {
       walletService: {
         ensureWalletAndBonuses: async () => undefined,
-        accrueManualBonusIfNeeded: async () => {
+        accrueReferralInviterBonusIfNeeded: async () => {
           bonusCallCount += 1;
           return { applied: true };
         },

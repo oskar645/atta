@@ -16,4 +16,9 @@ export class SendSupportMessageDto {
   @IsString()
   @MaxLength(2000)
   imageUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  idempotencyKey?: string;
 }

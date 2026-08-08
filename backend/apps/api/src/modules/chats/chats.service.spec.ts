@@ -65,11 +65,21 @@ function createMessage() {
   };
 }
 
+function chatAggregate(sum: Record<string, number | null> = {}) {
+  return async () => ({
+    _sum: {
+      unreadForBuyer: sum.unreadForBuyer ?? null,
+      unreadForSeller: sum.unreadForSeller ?? null,
+    },
+  });
+}
+
 test('sendMessage updates chats without creating in-app notification', async () => {
   const chatUpdateCalls: Array<Record<string, unknown>> = [];
   const prisma = {
     chat: {
       findUnique: async () => createChat(),
+      aggregate: chatAggregate({ unreadForBuyer: 1, unreadForSeller: 0 }),
     },
     $transaction: async (
       callback: (tx: {
@@ -102,6 +112,9 @@ test('sendMessage updates chats without creating in-app notification', async () 
     {
       buildProtectedChatUrl: () => '',
     } as never,
+    {
+      assertNotBlocked: async () => undefined,
+    } as never,
   );
 
   const result = await service.sendMessage(
@@ -117,6 +130,8 @@ test('sendMessage updates chats without creating in-app notification', async () 
 
   assert.equal(result.recipientId, 'buyer-1');
   assert.equal(result.message.id, 'message-1');
+  assert.equal(result.recipientUnreadTotal, 1);
+  assert.equal(result.created, true);
   assert.deepEqual(chatUpdateCalls[0]?.['data'], {
     lastMessage: 'Здравствуйте',
     lastMessageType: 'TEXT',
@@ -139,6 +154,7 @@ test('sendMessage with duplicate clientMessageId returns existing message once',
     {
       chat: {
         findUnique: async () => createChat(),
+        aggregate: chatAggregate(),
       },
       chatMessage: {
         findFirst: async () => existingMessage,
@@ -172,6 +188,7 @@ test('sendMessage with duplicate clientMessageId returns existing message once',
   );
 
   assert.equal(result.message.id, 'message-1');
+  assert.equal(result.created, false);
   assert.equal(
     result.message.clientMessageId,
     '7d1b7418-8080-4dde-bdb8-64551a986d53',
@@ -204,6 +221,7 @@ test('listChats sorts by lastMessageAt desc and keeps empty chats below', async 
     {
       chat: {
         findMany: async () => [oldChat, emptyChat, freshChat],
+        aggregate: chatAggregate({ unreadForBuyer: 0, unreadForSeller: 0 }),
       },
     } as never,
     {
@@ -222,6 +240,7 @@ test('listChats sorts by lastMessageAt desc and keeps empty chats below', async 
     ['chat-fresh', 'chat-old', 'chat-empty'],
   );
   assert.equal(result.items[2].lastMessageAt, null);
+  assert.equal(result.unreadTotal, 0);
 });
 
 test('markChatRead resets only current participant unread and marks incoming messages read', async () => {
@@ -425,6 +444,7 @@ test('listChats returns separate chats for same participants with different list
             },
           },
         ],
+        aggregate: chatAggregate({ unreadForBuyer: 3, unreadForSeller: 0 }),
       },
     } as never,
     {
@@ -445,6 +465,7 @@ test('listChats returns separate chats for same participants with different list
   assert.equal(result.items[1].id, 'chat-mercedes');
   assert.equal(result.items[1].listingId, 'listing-mercedes');
   assert.equal(result.items[1].listingPreview.title, 'Mercedes');
+  assert.equal(result.unreadTotal, 3);
 });
 
 test('markMessageDelivered does not convert message to read', async () => {

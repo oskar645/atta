@@ -626,6 +626,7 @@ class _FakeAuthApi extends AuthApi {
     required String displayName,
     required String verificationCheckId,
     String referralCode = '',
+    String referralId = '',
   }) async {
     lastSignupPhoneReferralCode =
         referralCode.trim().isEmpty ? null : referralCode.trim();

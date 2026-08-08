@@ -117,6 +117,16 @@ class ListingPhotoUploadResult {
   bool get allFailed => requestedCount > 0 && uploadedCount == 0;
 }
 
+class ListingPhotoUploadResponse {
+  const ListingPhotoUploadResponse({
+    required this.listing,
+    required this.photoId,
+  });
+
+  final Listing listing;
+  final String photoId;
+}
+
 class ListingsService {
   ListingsService({
     ListingsApi? api,
@@ -432,7 +442,6 @@ class ListingsService {
     required List<File> photos,
     CarSpecs? car,
     String? dealType,
-    String? realEstateType,
     String? clothesType,
     String? clothesSize,
     ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
@@ -460,8 +469,6 @@ class ListingsService {
       if (car != null) 'car': car.toMap(),
       if (dealType != null && dealType.trim().isNotEmpty)
         'deal_type': dealType.trim(),
-      if (realEstateType != null && realEstateType.trim().isNotEmpty)
-        'real_estate_type': realEstateType.trim(),
       if (clothesType != null && clothesType.trim().isNotEmpty)
         'clothes_type': clothesType.trim(),
       if (category == 'Одежда' &&
@@ -499,6 +506,42 @@ class ListingsService {
       photoUploadResult: photoUploadResult,
       listing: latestListing,
     );
+  }
+
+  Future<CreateListingResult> createDraftListing({
+    required String ownerEmail,
+    required String ownerName,
+    required String category,
+    required String subcategory,
+    required String city,
+    required String phone,
+    required bool phoneHidden,
+    required Map<String, bool> delivery,
+  }) async {
+    _debugSource('Listings source: Timeweb');
+    final created = await _api.create({
+      'owner_email': ownerEmail,
+      'owner_name': ownerName,
+      'title': 'Черновик объявления',
+      'description': 'Черновик объявления',
+      'category': category,
+      'subcategory': subcategory,
+      'price': 0,
+      'phone': phone,
+      'phone_hidden': phoneHidden,
+      'city': city,
+      'address': city,
+      'delivery': delivery,
+      'photo_urls': const <String>[],
+      'status': 'pending',
+    });
+    final listing = _extractListingFromResponse(created);
+    final listingId = listing?.id ?? '';
+    if (listing != null) {
+      _upsertListingInCaches(listing);
+      _emitRefresh(clearCaches: false);
+    }
+    return CreateListingResult(listingId: listingId, listing: listing);
   }
 
   Future<Listing?> deleteListing({required Listing listing}) async {
@@ -594,7 +637,12 @@ class ListingsService {
     required bool phoneHidden,
     required String city,
     required Map<String, bool> delivery,
+    String? category,
+    String? subcategory,
     CarSpecs? car,
+    String? dealType,
+    String? clothesType,
+    String? clothesSize,
   }) async {
     _debugSource('Listings source: Timeweb');
     final response = await _api.update(
@@ -602,6 +650,10 @@ class ListingsService {
       {
         'title': title,
         'description': description,
+        if (category != null && category.trim().isNotEmpty)
+          'category': category.trim(),
+        if (subcategory != null && subcategory.trim().isNotEmpty)
+          'subcategory': subcategory.trim(),
         'price': price,
         'phone': phone,
         'phone_hidden': phoneHidden,
@@ -609,6 +661,14 @@ class ListingsService {
         'address': city,
         'delivery': delivery,
         if (car != null) 'car': car.toMap(),
+        if (dealType != null && dealType.trim().isNotEmpty)
+          'deal_type': dealType.trim(),
+        if (clothesType != null && clothesType.trim().isNotEmpty)
+          'clothes_type': clothesType.trim(),
+        if (category == 'Одежда' &&
+            clothesSize != null &&
+            clothesSize.trim().isNotEmpty)
+          'clothes_size': clothesSize.trim(),
       },
     );
     final updated = _extractListingFromResponse(response);
@@ -623,6 +683,21 @@ class ListingsService {
   }
 
   Future<Listing> uploadListingPhoto({
+    required String listingId,
+    required File file,
+    int? sortOrder,
+    PreparedImage? preparedImage,
+  }) async {
+    return (await uploadListingPhotoItem(
+      listingId: listingId,
+      file: file,
+      sortOrder: sortOrder,
+      preparedImage: preparedImage,
+    ))
+        .listing;
+  }
+
+  Future<ListingPhotoUploadResponse> uploadListingPhotoItem({
     required String listingId,
     required File file,
     int? sortOrder,
@@ -656,12 +731,15 @@ class ListingsService {
       if (raw is! Map) {
         throw Exception('Не удалось обновить фото объявления');
       }
+      final photoRaw = response['photo'];
+      final photoId =
+          (photoRaw is Map ? (photoRaw['id'] ?? '') : '').toString().trim();
       final listing = Listing.fromMap(
         raw.map((key, value) => MapEntry(key.toString(), value)),
       );
       _upsertListingInCaches(listing);
       _emitRefresh(clearCaches: false);
-      return listing;
+      return ListingPhotoUploadResponse(listing: listing, photoId: photoId);
     }
 
     throw UnimplementedError('Legacy listing photo upload is not handled here');

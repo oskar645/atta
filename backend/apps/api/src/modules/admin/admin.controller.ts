@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -7,15 +7,22 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminService } from './admin.service';
 import { ListAdminBonusAnalyticsDto } from './dto/list-admin-bonus-analytics.dto';
 import { ListAdminListingsDto } from './dto/list-admin-listings.dto';
+import { ListAdminPointsPurchasesDto } from './dto/list-admin-points-purchases.dto';
 import { ListAdminPromotionsDto } from './dto/list-admin-promotions.dto';
 import { ListAdminWalletTransactionsDto } from './dto/list-admin-wallet-transactions.dto';
 import { ModerateListingDto } from './dto/moderate-listing.dto';
 import { ArchiveListingDto } from '../listings/dto/archive-listing.dto';
+import { BlockUserDto, UnblockUserDto, UpdateUserBlockDto } from './dto/block-user.dto';
+import { SendAdminSupportMessageDto } from './dto/send-admin-support-message.dto';
+import { SupportService } from '../support/support.service';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminController {
-  constructor(private readonly adminService: AdminService) {}
+  constructor(
+    private readonly adminService: AdminService,
+    private readonly supportService: SupportService,
+  ) {}
 
   @Get('dashboard/stats')
   getDashboardStats() {
@@ -40,6 +47,59 @@ export class AdminController {
   @Get('users/:id')
   getUserById(@Param('id') id: string) {
     return this.adminService.getUserById(id);
+  }
+
+  @Post('users/:userId/support-message')
+  sendSupportMessageToUser(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body() dto: SendAdminSupportMessageDto,
+  ) {
+    return this.supportService.openTicketForAdminContact({
+      userId,
+      text: dto.message,
+      idempotencyKey: dto.idempotencyKey,
+      subject: 'Сообщение от администрации',
+    });
+  }
+
+  @Get('users/:userId/referrals')
+  getUserReferrals(
+    @Param('userId') userId: string,
+    @Query() query: ListAdminBonusAnalyticsDto,
+  ) {
+    return this.adminService.getUserReferrals(userId, query);
+  }
+
+  @Post('users/:id/block')
+  blockUser(
+    @Param('id') id: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() dto: BlockUserDto,
+  ) {
+    return this.adminService.blockUser(id, authUser, dto);
+  }
+
+  @Get('blocks')
+  listBlocks(@Query('status') status?: string) {
+    return this.adminService.listBlocks(status);
+  }
+
+  @Post('blocks/:id/unblock')
+  unblockUserBlock(
+    @Param('id') id: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() dto: UnblockUserDto,
+  ) {
+    return this.adminService.unblockUserBlock(id, authUser, dto);
+  }
+
+  @Patch('blocks/:id')
+  updateUserBlock(
+    @Param('id') id: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() dto: UpdateUserBlockDto,
+  ) {
+    return this.adminService.updateUserBlock(id, authUser, dto);
   }
 
   @Delete('users/:id')
@@ -91,6 +151,31 @@ export class AdminController {
   @Get('analytics/bonuses')
   getBonusAnalytics(@Query() query: ListAdminBonusAnalyticsDto) {
     return this.adminService.getBonusAnalytics(query);
+  }
+
+  @Get('payments/points-purchases/summary')
+  getPointsPurchasesSummary(@Query() query: ListAdminPointsPurchasesDto) {
+    return this.adminService.getPointsPurchasesSummary(query);
+  }
+
+  @Get('payments/points-purchases')
+  listPointsPurchases(@Query() query: ListAdminPointsPurchasesDto) {
+    return this.adminService.listPointsPurchases(query);
+  }
+
+  @Get('referrals/summary')
+  getReferralsSummary(@Query() query: ListAdminBonusAnalyticsDto) {
+    return this.adminService.getReferralSummary(query);
+  }
+
+  @Get('referrals')
+  listReferrals(@Query() query: ListAdminBonusAnalyticsDto & { search?: string; userId?: string }) {
+    return this.adminService.listReferrals(query);
+  }
+
+  @Get('referrals/:id')
+  getReferralById(@Param('id') id: string) {
+    return this.adminService.getReferralById(id);
   }
 
   @Patch('listings/:id/approve')
@@ -149,11 +234,11 @@ export class AdminController {
 
   @Get('support')
   getSupportAlias() {
-    return this.adminService.getSupportTicketsPlaceholder();
+    return this.supportService.listTickets();
   }
 
   @Get('support/tickets')
   getSupportTicketsPlaceholder() {
-    return this.adminService.getSupportTicketsPlaceholder();
+    return this.supportService.listTickets();
   }
 }

@@ -22,13 +22,15 @@ const env_2 = require("../../config/env");
 const serializers_1 = require("../../common/serializers");
 const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
+const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const wallet_service_1 = require("../wallet/wallet.service");
 let AuthService = class AuthService {
-    constructor(prisma, jwtService, storageService, walletService) {
+    constructor(prisma, jwtService, storageService, walletService, userBlocksService) {
         this.prisma = prisma;
         this.jwtService = jwtService;
         this.storageService = storageService;
         this.walletService = walletService;
+        this.userBlocksService = userBlocksService;
     }
     async signup(payload) {
         const email = payload.email?.trim().toLowerCase();
@@ -85,6 +87,10 @@ let AuthService = class AuthService {
         if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
             throw new common_1.UnauthorizedException('Invalid login credentials');
         }
+        const activeBlock = await this.userBlocksService.getActiveBlock(user.id);
+        if (activeBlock) {
+            throw this.createUnauthorizedError('ACCOUNT_BLOCKED', 'Аккаунт заблокирован');
+        }
         const isPasswordValid = await (0, bcryptjs_1.compare)(payload.password, user.passwordHash);
         if (!isPasswordValid) {
             throw new common_1.UnauthorizedException('Invalid login credentials');
@@ -107,8 +113,10 @@ let AuthService = class AuthService {
     }
     async signupPhone(payload) {
         const normalizedPhone = this.normalizePhoneOrThrow(payload.phone);
+        await this.assertPhoneRegistrationAllowed(normalizedPhone);
         const verificationCheckId = this.pickVerificationCheckId(payload.verificationCheckId, payload.verification_check_id);
         const referralCode = this.pickOptionalReferralCode(payload.referralCode, payload.referral_code);
+        const referralId = this.pickOptionalReferralCode(payload.referralId, payload.referral_id);
         const displayName = (payload.displayName ?? payload.display_name ?? '').trim();
         if (!displayName) {
             throw new common_1.BadRequestException('Display name is required');
@@ -127,38 +135,47 @@ let AuthService = class AuthService {
             },
         });
         if (existingUser && !existingUser.deletedAt && existingUser.status !== client_1.UserStatus.DELETED) {
+            await this.markReferralFailureById(referralId, 'USER_ALREADY_REGISTERED');
             throw new common_1.ConflictException('Phone is already registered');
         }
         const passwordHash = await (0, bcryptjs_1.hash)(payload.password, 10);
-        const user = await this.prisma.user.create({
-            data: {
-                id: (0, crypto_1.randomUUID)(),
-                phone: normalizedPhone,
-                phoneVerified: true,
-                displayName,
-                name: displayName,
-                passwordHash,
-            },
-            include: {
-                adminProfile: true,
-            },
-        });
-        const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
-        const session = await this.createSession(userWithAdmin);
-        await this.prisma.phoneVerification.update({
-            where: {
-                id: verification.id,
-            },
-            data: {
-                createdUserId: userWithAdmin.id,
-            },
-        });
-        await this.ensureWalletBootstrapSafely(userWithAdmin.id);
-        await this.applyReferralBonusSafely({
-            newUser: userWithAdmin,
-            normalizedPhone,
-            referralCode,
-            verificationId: verification.id,
+        const { userWithAdmin, session } = await this.prisma.$transaction(async (tx) => {
+            const user = await tx.user.create({
+                data: {
+                    id: (0, crypto_1.randomUUID)(),
+                    phone: normalizedPhone,
+                    phoneVerified: true,
+                    displayName,
+                    name: displayName,
+                    passwordHash,
+                },
+                include: {
+                    adminProfile: true,
+                },
+            });
+            const createdUserWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
+            const createdSession = await this.createSession(createdUserWithAdmin, tx);
+            await tx.phoneVerification.update({
+                where: {
+                    id: verification.id,
+                },
+                data: {
+                    createdUserId: createdUserWithAdmin.id,
+                },
+            });
+            await this.walletService.ensureWalletAndBonuses(createdUserWithAdmin.id, tx);
+            await this.applyReferralBonusIfEligible({
+                newUser: createdUserWithAdmin,
+                normalizedPhone,
+                referralCode,
+                referralId,
+                verificationId: verification.id,
+                tx,
+            });
+            return {
+                userWithAdmin: createdUserWithAdmin,
+                session: createdSession,
+            };
         });
         return this.buildAuthResponse(userWithAdmin, session.auth);
     }
@@ -194,8 +211,9 @@ let AuthService = class AuthService {
         if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
             throw this.createUserNotFoundError();
         }
-        if (user.blockedAt) {
-            throw this.createUnauthorizedError('ACCOUNT_DISABLED', 'Аккаунт временно недоступен');
+        const activeBlock = await this.userBlocksService.getActiveBlock(user.id);
+        if (activeBlock) {
+            throw this.createUnauthorizedError('ACCOUNT_BLOCKED', 'Аккаунт заблокирован');
         }
         const isPasswordValid = await (0, bcryptjs_1.compare)(password, user.passwordHash);
         if (!isPasswordValid) {
@@ -259,7 +277,11 @@ let AuthService = class AuthService {
     async getMe(authUser) {
         await this.ensureWalletBootstrapSafely(authUser.userId);
         const user = await this.ensureAdminBootstrapForUserId(authUser.userId);
-        return this.buildUserEnvelope(user);
+        const block = await this.userBlocksService.getActiveBlock(authUser.userId);
+        return {
+            ...this.buildUserEnvelope(user),
+            block_status: this.userBlocksService.serializeBlock(block),
+        };
     }
     async refresh(payload) {
         let tokenPayload;
@@ -494,10 +516,11 @@ let AuthService = class AuthService {
             user_id: userId,
         };
     }
-    async createSession(user) {
+    async createSession(user, tx) {
+        const prisma = tx ?? this.prisma;
         const sessionId = (0, crypto_1.randomUUID)();
         const auth = await this.buildAuthTokens(user, sessionId, user.adminProfile);
-        await this.prisma.userSession.create({
+        await prisma.userSession.create({
             data: {
                 id: sessionId,
                 userId: user.id,
@@ -623,6 +646,44 @@ let AuthService = class AuthService {
             isAdmin,
         };
     }
+    async assertPhoneRegistrationAllowed(normalizedPhone) {
+        const now = new Date();
+        await this.prisma.blockedIdentity.updateMany({
+            where: {
+                normalizedPhone,
+                liftedAt: null,
+                permanent: false,
+                bannedUntil: {
+                    not: null,
+                    lte: now,
+                },
+            },
+            data: {
+                liftedAt: now,
+            },
+        });
+        const blockedIdentity = await this.prisma.blockedIdentity.findFirst({
+            where: {
+                normalizedPhone,
+                liftedAt: null,
+                OR: [
+                    { permanent: true },
+                    {
+                        bannedUntil: {
+                            not: null,
+                            gt: now,
+                        },
+                    },
+                ],
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+        if (blockedIdentity) {
+            throw this.createUnauthorizedError('PHONE_BLOCKED', 'Этот номер телефона заблокирован. Обратитесь в поддержку');
+        }
+    }
     normalizePhoneOrThrow(phone) {
         const normalizedPhone = (0, phone_1.normalizeRussianPhone)(phone);
         if (!normalizedPhone) {
@@ -656,6 +717,56 @@ let AuthService = class AuthService {
     pickOptionalReferralCode(...values) {
         return values.find((value) => value?.trim())?.trim() ?? '';
     }
+    async recordReferralAppOpen(payload) {
+        const referralCode = this.pickOptionalReferralCode(payload.referralCode, payload.referral_code);
+        const inviterUserId = (0, referral_code_1.resolveReferralUserId)(referralCode);
+        if (!referralCode || !inviterUserId) {
+            return {
+                source: 'timeweb',
+                referralId: null,
+                accepted: false,
+                failureReason: 'INVALID_REFERRAL_CODE',
+            };
+        }
+        const inviter = await this.prisma.user.findUnique({
+            where: {
+                id: inviterUserId,
+            },
+            select: {
+                id: true,
+                deletedAt: true,
+                status: true,
+            },
+        });
+        if (!inviter || inviter.deletedAt || inviter.status === client_1.UserStatus.DELETED) {
+            return {
+                source: 'timeweb',
+                referralId: null,
+                accepted: false,
+                failureReason: 'INVITER_NOT_FOUND',
+            };
+        }
+        const appOpened = payload.appOpened ?? payload.app_opened ?? true;
+        const now = new Date();
+        const referral = await this.prisma.referral.create({
+            data: {
+                inviterUserId: inviter.id,
+                referralCode,
+                openedAt: now,
+                appOpenedAt: appOpened ? now : null,
+                rewardStatus: client_1.ReferralRewardStatus.PENDING,
+            },
+            select: {
+                id: true,
+            },
+        });
+        return {
+            source: 'timeweb',
+            referralId: referral.id,
+            accepted: true,
+            failureReason: null,
+        };
+    }
     async assertConfirmedPhoneVerification(params) {
         const verification = await this.prisma.phoneVerification.findFirst({
             where: {
@@ -676,24 +787,22 @@ let AuthService = class AuthService {
         }
         return verification;
     }
-    async applyReferralBonusSafely(params) {
-        try {
-            await this.applyReferralBonusIfEligible(params);
-        }
-        catch (error) {
-            console.warn(`[AuthService] referral bonus skipped for user=${params.newUser.id}: ${error instanceof Error ? error.message : 'unknown error'}`);
-        }
-    }
     async applyReferralBonusIfEligible(params) {
         const normalizedReferralCode = params.referralCode.trim();
         if (!normalizedReferralCode) {
+            await this.markReferralFailureById(params.referralId, 'APP_OPENED_WITHOUT_REFERRAL_CODE', params.tx);
             return;
         }
         const inviterUserId = (0, referral_code_1.resolveReferralUserId)(normalizedReferralCode);
         if (!inviterUserId || inviterUserId === params.newUser.id) {
+            await this.markReferralFailureById(params.referralId, inviterUserId === params.newUser.id
+                ? 'SELF_REFERRAL'
+                : 'INVALID_REFERRAL_CODE', params.tx);
             return;
         }
-        const priorSignupForPhone = await this.prisma.phoneVerification.findFirst({
+        const prisma = params.tx ?? this.prisma;
+        await this.markReferralSignupStarted(params.referralId, params.tx);
+        const priorSignupForPhone = await prisma.phoneVerification.findFirst({
             where: {
                 phone: params.normalizedPhone,
                 purpose: client_1.PhoneVerificationPurpose.SIGNUP,
@@ -710,9 +819,10 @@ let AuthService = class AuthService {
             },
         });
         if (priorSignupForPhone) {
+            await this.markReferralFailureById(params.referralId, 'USER_ALREADY_REGISTERED', params.tx);
             return;
         }
-        const inviter = await this.prisma.user.findUnique({
+        const inviter = await prisma.user.findUnique({
             where: {
                 id: inviterUserId,
             },
@@ -721,33 +831,69 @@ let AuthService = class AuthService {
             },
         });
         if (!inviter || inviter.deletedAt || inviter.status === client_1.UserStatus.DELETED) {
+            await this.markReferralFailureById(params.referralId, 'INVITER_NOT_FOUND', params.tx);
             return;
         }
         const inviterPhone = (0, phone_1.normalizeRussianPhone)(inviter.phone ?? '');
         if (inviterPhone && inviterPhone === params.normalizedPhone) {
+            await this.markReferralFailureById(params.referralId, 'SELF_REFERRAL', params.tx);
             return;
         }
-        await this.walletService.accrueManualBonusIfNeeded(inviter.id, {
-            amount: 100,
-            reference: `REFERRAL_INVITER_BONUS:${params.newUser.id}`,
-            description: 'Бонус за приглашение друга',
-            source: 'referral_bonus',
-            metadata: {
-                referralCode: normalizedReferralCode,
+        try {
+            await this.walletService.accrueReferralInviterBonusIfNeeded(inviter.id, {
                 invitedUserId: params.newUser.id,
-                invitedPhone: params.normalizedPhone,
+                referralCode: normalizedReferralCode,
+                referralId: params.referralId,
+            }, params.tx);
+        }
+        catch (error) {
+            await this.markReferralFailureById(params.referralId, 'REWARD_ERROR_RETRYABLE', params.tx, client_1.ReferralRewardStatus.FAILED_RETRYABLE);
+            throw error;
+        }
+    }
+    async markReferralSignupStarted(referralId, tx) {
+        const normalizedReferralId = referralId.trim();
+        if (!normalizedReferralId)
+            return;
+        const prisma = tx ?? this.prisma;
+        await prisma.referral
+            .update({
+            where: {
+                id: normalizedReferralId,
             },
-        });
+            data: {
+                signupStartedAt: new Date(),
+            },
+        })
+            .catch(() => undefined);
+    }
+    async markReferralFailureById(referralId, failureReason, tx, rewardStatus = client_1.ReferralRewardStatus.NOT_REWARDED) {
+        const normalizedReferralId = referralId.trim();
+        if (!normalizedReferralId)
+            return;
+        const prisma = tx ?? this.prisma;
+        await prisma.referral
+            .update({
+            where: {
+                id: normalizedReferralId,
+            },
+            data: {
+                rewardStatus,
+                failureReason,
+            },
+        })
+            .catch(() => undefined);
     }
     async ensureAdminBootstrapForUserId(userId) {
         const user = await this.findActiveUserById(userId);
         return this.ensureAdminBootstrapForUser(user);
     }
-    async ensureAdminBootstrapForUser(user) {
+    async ensureAdminBootstrapForUser(user, tx) {
         const normalizedPhone = (0, phone_1.normalizeRussianPhone)(user.phone ?? '');
         const adminPhones = new Set((0, env_2.parseAdminPhoneNumbers)());
         if (normalizedPhone.length > 0 && adminPhones.has(normalizedPhone)) {
-            await this.prisma.adminUser.upsert({
+            const prisma = tx ?? this.prisma;
+            await prisma.adminUser.upsert({
                 where: {
                     userId: user.id,
                 },
@@ -763,7 +909,8 @@ let AuthService = class AuthService {
                 },
             });
         }
-        const refreshedUser = await this.prisma.user.findUnique({
+        const prisma = tx ?? this.prisma;
+        const refreshedUser = await prisma.user.findUnique({
             where: {
                 id: user.id,
             },
@@ -783,6 +930,7 @@ exports.AuthService = AuthService = __decorate([
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,
         storage_service_1.StorageService,
-        wallet_service_1.WalletService])
+        wallet_service_1.WalletService,
+        user_blocks_service_1.UserBlocksService])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

@@ -16,20 +16,7 @@ import UserNotifications
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     GeneratedPluginRegistrant.register(with: self)
-    if let controller = window?.rootViewController as? FlutterViewController {
-      pushChannel = FlutterMethodChannel(
-        name: "atta/push_notifications",
-        binaryMessenger: controller.binaryMessenger
-      )
-      pushChannel?.setMethodCallHandler { [weak self] call, result in
-        self?.handlePushMethod(call: call, result: result)
-      }
-      tapEventChannel = FlutterEventChannel(
-        name: "atta/push_notification_taps",
-        binaryMessenger: controller.binaryMessenger
-      )
-      tapEventChannel?.setStreamHandler(tapStreamHandler)
-    }
+    registerPushChannels()
     if let remoteNotification = launchOptions?[.remoteNotification] as? [AnyHashable: Any] {
       initialNotification = normalizeUserInfo(remoteNotification)
     }
@@ -59,6 +46,25 @@ import UserNotifications
       )
     )
     tokenResult = nil
+  }
+
+  private func registerPushChannels() {
+    guard let registrar = registrar(forPlugin: "AttaPushNotifications") else {
+      return
+    }
+    let messenger = registrar.messenger()
+    pushChannel = FlutterMethodChannel(
+      name: "atta/push_notifications",
+      binaryMessenger: messenger
+    )
+    pushChannel?.setMethodCallHandler { [weak self] call, result in
+      self?.handlePushMethod(call: call, result: result)
+    }
+    tapEventChannel = FlutterEventChannel(
+      name: "atta/push_notification_taps",
+      binaryMessenger: messenger
+    )
+    tapEventChannel?.setStreamHandler(tapStreamHandler)
   }
 
   override func userNotificationCenter(

@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const prisma_module_1 = require("../prisma/prisma.module");
 const redis_module_1 = require("../redis/redis.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const presence_controller_1 = require("./presence.controller");
 const presence_service_1 = require("./presence.service");
 let PresenceModule = class PresenceModule {
@@ -18,7 +19,7 @@ let PresenceModule = class PresenceModule {
 exports.PresenceModule = PresenceModule;
 exports.PresenceModule = PresenceModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, redis_module_1.RedisModule, prisma_module_1.PrismaModule],
+        imports: [auth_module_1.AuthModule, redis_module_1.RedisModule, prisma_module_1.PrismaModule, user_blocks_module_1.UserBlocksModule],
         controllers: [presence_controller_1.PresenceController],
         providers: [presence_service_1.PresenceService],
         exports: [presence_service_1.PresenceService],

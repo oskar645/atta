@@ -10,6 +10,7 @@ exports.UserFollowsModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const prisma_module_1 = require("../prisma/prisma.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const user_follows_controller_1 = require("./user-follows.controller");
 const user_follows_service_1 = require("./user-follows.service");
 let UserFollowsModule = class UserFollowsModule {
@@ -17,7 +18,7 @@ let UserFollowsModule = class UserFollowsModule {
 exports.UserFollowsModule = UserFollowsModule;
 exports.UserFollowsModule = UserFollowsModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule],
+        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, user_blocks_module_1.UserBlocksModule],
         controllers: [user_follows_controller_1.UserFollowsController],
         providers: [user_follows_service_1.UserFollowsService],
         exports: [user_follows_service_1.UserFollowsService],

@@ -10,6 +10,7 @@ exports.WalletModule = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const env_1 = require("../../config/env");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const wallet_constants_1 = require("./wallet.constants");
 const wallet_controller_1 = require("./wallet.controller");
 const wallet_service_1 = require("./wallet.service");
@@ -19,6 +20,7 @@ exports.WalletModule = WalletModule;
 exports.WalletModule = WalletModule = __decorate([
     (0, common_1.Module)({
         imports: [
+            user_blocks_module_1.UserBlocksModule,
             jwt_1.JwtModule.register({
                 secret: env_1.env.JWT_ACCESS_SECRET,
             }),

@@ -311,6 +311,33 @@ void main() {
       expect(find.text('Подтвердите номер'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'registration username keeps text keyboard after phone field and mode switch',
+    (tester) async {
+      final auth = _FakeAuthService();
+
+      await tester.pumpWidget(_buildLoginTestApp(auth));
+
+      final loginPhone = find.byKey(const ValueKey('login-phone-field'));
+      await tester.tap(loginPhone);
+      await tester.enterText(loginPhone, '928 123 45 67');
+      await tester.pump();
+
+      await tester.tap(find.text('Нет аккаунта? Создать аккаунт'));
+      await tester.pumpAndSettle();
+
+      final username =
+          find.byKey(const ValueKey('phone-registration-username-field'));
+      await tester.tap(username);
+      await tester.pump();
+
+      final field = tester.widget<TextField>(username);
+      expect(field.keyboardType, TextInputType.text);
+      expect(field.focusNode?.hasFocus, isTrue);
+      expect(find.byKey(const ValueKey('login-phone-field')), findsNothing);
+    },
+  );
 }
 
 Widget _buildLoginTestApp(

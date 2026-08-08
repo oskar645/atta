@@ -6,13 +6,22 @@ import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:flutter/foundation.dart';
 
+typedef BadgeSupportChecker = Future<bool> Function();
+typedef BadgeUpdater = Future<void> Function(int count);
+
 class AppBadgeService {
+  AppBadgeService({
+    BadgeSupportChecker? isSupported,
+    BadgeUpdater? updateBadge,
+  })  : _isSupported = isSupported ?? AppBadgePlus.isSupported,
+        _updateBadge = updateBadge ?? AppBadgePlus.updateBadge;
+
+  final BadgeSupportChecker _isSupported;
+  final BadgeUpdater _updateBadge;
   StreamSubscription<int>? _chatSub;
-  StreamSubscription<int>? _notificationsSub;
 
   String? _activeUserId;
   int _unreadChats = 0;
-  int _unreadNotifications = 0;
 
   Future<void> bindForUser({
     required String userId,
@@ -24,7 +33,6 @@ class AppBadgeService {
     await _cancelSubscriptions();
     _activeUserId = userId;
     _unreadChats = 0;
-    _unreadNotifications = 0;
 
     _chatSub = chatService.streamUnreadTotal(userId).listen(
       (count) async {
@@ -36,24 +44,11 @@ class AppBadgeService {
         await _pushBadge();
       },
     );
-
-    _notificationsSub =
-        notificationsService.streamUnreadBadgeCount(userId).listen(
-      (count) async {
-        _unreadNotifications = count;
-        await _pushBadge();
-      },
-      onError: (_, __) async {
-        _unreadNotifications = 0;
-        await _pushBadge();
-      },
-    );
   }
 
   Future<void> clear() async {
     _activeUserId = null;
     _unreadChats = 0;
-    _unreadNotifications = 0;
     await _cancelSubscriptions();
     await _setBadgeCount(0);
   }
@@ -64,14 +59,11 @@ class AppBadgeService {
 
   Future<void> _cancelSubscriptions() async {
     await _chatSub?.cancel();
-    await _notificationsSub?.cancel();
     _chatSub = null;
-    _notificationsSub = null;
   }
 
   Future<void> _pushBadge() async {
-    final total = _unreadChats + _unreadNotifications;
-    await _setBadgeCount(total);
+    await _setBadgeCount(_unreadChats);
   }
 
   Future<void> _setBadgeCount(int count) async {
@@ -79,9 +71,9 @@ class AppBadgeService {
     if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) return;
 
     try {
-      final supported = await AppBadgePlus.isSupported();
+      final supported = await _isSupported();
       if (!supported) return;
-      await AppBadgePlus.updateBadge(count.clamp(0, 999));
+      await _updateBadge(count.clamp(0, 999));
     } catch (_) {
       // Ignore badge errors on unsupported launchers/devices.
     }

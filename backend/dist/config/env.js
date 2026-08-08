@@ -67,6 +67,21 @@ const envSchema = zod_1.z.object({
         .transform((value) => value === 'true'),
     ADMIN_PHONE_NUMBERS: zod_1.z.string().optional().default(''),
     WALLET_TIME_ZONE: zod_1.z.string().min(1).default('Europe/Moscow'),
+    YOOKASSA_SHOP_ID: zod_1.z.string().optional().default('1425242'),
+    YOOKASSA_SECRET_KEY: zod_1.z.string().optional().default(''),
+    YOOKASSA_RETURN_URL: zod_1.z
+        .string()
+        .url()
+        .optional()
+        .default('https://attamarket.online/payments/yookassa/return'),
+    YOOKASSA_WEBHOOK_URL: zod_1.z
+        .string()
+        .url()
+        .optional()
+        .default('https://attamarket.online/payments/yookassa/webhook'),
+    YOOKASSA_MIN_AMOUNT_RUB: zod_1.z.coerce.number().int().positive().default(100),
+    YOOKASSA_MAX_AMOUNT_RUB: zod_1.z.coerce.number().int().positive().default(1500),
+    YOOKASSA_POINTS_PER_RUBLE: zod_1.z.coerce.number().int().positive().default(1),
 });
 const parsedEnv = envSchema.safeParse(process.env);
 if (!parsedEnv.success) {

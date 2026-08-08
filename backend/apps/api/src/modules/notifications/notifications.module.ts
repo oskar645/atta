@@ -4,6 +4,7 @@ import { ApnsModule } from '../apns/apns.module';
 import { AuthModule } from '../auth/auth.module';
 import { ChatsModule } from '../chats/chats.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { UserBlocksModule } from '../user-blocks/user-blocks.module';
 import {
   AdminNotificationsController,
   NotificationsController,
@@ -11,7 +12,7 @@ import {
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [ApnsModule, AuthModule, PrismaModule, forwardRef(() => ChatsModule)],
+  imports: [ApnsModule, AuthModule, PrismaModule, forwardRef(() => ChatsModule), UserBlocksModule],
   controllers: [NotificationsController, AdminNotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

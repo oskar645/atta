@@ -50,13 +50,27 @@ let AppController = AppController_1 = class AppController {
                 details: [
                     {
                         appID: `${AppController_1.appleTeamId}.${AppController_1.iosBundleId}`,
-                        paths: ['/listing/*', '/invite*', '/app*'],
+                        paths: ['/listing/*', '/invite*', '/app*', '/payments/yookassa/return*'],
                     },
                 ],
             },
         };
     }
-    getAppLandingPage() {
+    getAndroidAssetLinks() {
+        const fingerprints = this.getAndroidSha256Fingerprints();
+        return [
+            {
+                relation: ['delegate_permission/common.handle_all_urls'],
+                target: {
+                    namespace: 'android_app',
+                    package_name: AppController_1.androidPackageName,
+                    sha256_cert_fingerprints: fingerprints,
+                },
+            },
+        ];
+    }
+    getAppLandingPage(ref) {
+        const pageUrl = this.buildInviteLandingUrl(ref);
         return `<!doctype html>
 <html lang="ru">
   <head>
@@ -68,24 +82,32 @@ let AppController = AppController_1 = class AppController {
     <meta property="og:title" content="ATTA" />
     <meta property="og:description" content="Приложение для объявлений" />
     <meta property="og:image" content="${AppController_1.appOgImageUrl}" />
-    <meta property="og:url" content="${AppController_1.appLandingUrl}" />
+    <meta property="og:url" content="${pageUrl}" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="ATTA" />
     <meta name="twitter:description" content="Приложение для объявлений" />
     <meta name="twitter:image" content="${AppController_1.appOgImageUrl}" />
-    <link rel="canonical" href="${AppController_1.appLandingUrl}" />
-    <meta http-equiv="refresh" content="1;url=${AppController_1.appStoreFallbackUrl}" />
-    <script>
-      setTimeout(function () {
-        window.location.replace('${AppController_1.appStoreFallbackUrl}');
-      }, 120);
-    </script>
+    <link rel="canonical" href="${pageUrl}" />
+    ${this.renderInviteLandingScript(ref)}
+    ${this.renderLandingStyles()}
   </head>
   <body>
-    <p>Открываем ATTA…</p>
-    <p><a href="${AppController_1.appStoreFallbackUrl}">Если переход не сработал, нажмите сюда.</a></p>
+    <main>
+      <section class="card">
+        <h1>ATTA</h1>
+        <p>Откройте приложение ATTA или установите его из магазина.</p>
+        ${this.renderStoreButtons()}
+      </section>
+    </main>
   </body>
 </html>`;
+    }
+    buildInviteLandingUrl(ref) {
+        const normalizedRef = (ref ?? '').trim();
+        if (!normalizedRef) {
+            return AppController_1.appLandingUrl;
+        }
+        return `${AppController_1.appLandingUrl}?ref=${encodeURIComponent(normalizedRef)}`;
     }
     getAppIcon(res) {
         const candidates = [
@@ -143,7 +165,6 @@ let AppController = AppController_1 = class AppController {
         const pageUrl = normalizedListingId
             ? `https://attamarket.online/listing/${encodeURIComponent(normalizedListingId)}`
             : 'https://attamarket.online/listing';
-        const buttonText = params.available ? 'Открыть в приложении' : 'Установить ATTA';
         return `<!doctype html>
 <html lang="ru">
   <head>
@@ -161,6 +182,7 @@ let AppController = AppController_1 = class AppController {
     <meta name="twitter:description" content="${this.escapeHtml(params.description)}" />
     <meta name="twitter:image" content="${AppController_1.appOgImageUrl}" />
     <link rel="canonical" href="${pageUrl}" />
+    ${this.renderSmartFallbackScript()}
     <style>
       body {
         margin: 0;
@@ -219,16 +241,133 @@ let AppController = AppController_1 = class AppController {
       <section class="card">
         <h1>ATTA</h1>
         <p>${this.escapeHtml(params.description)}</p>
-        <p>Если приложение уже установлено, после открытия объявления дополнительные переходы не выполняются.</p>
-        <div class="actions">
-          <a class="button" href="${pageUrl}">${buttonText}</a>
-          <a class="button secondary" href="${AppController_1.appStoreFallbackUrl}">App Store</a>
-          <a class="button secondary" href="${AppController_1.googlePlayFallbackUrl}">Google Play</a>
-        </div>
+        <p>${params.available ? 'Если приложение не установлено, скачайте ATTA из магазина.' : 'Если приложение не установлено, выберите магазин вручную.'}</p>
+        ${this.renderStoreButtons({ appStoreLabel: 'Скачать ATTA в App Store' })}
       </section>
     </main>
   </body>
 </html>`;
+    }
+    renderInviteLandingScript(ref) {
+        const normalizedRef = (ref ?? '').trim();
+        return `<script>
+      (function () {
+        var ua = navigator.userAgent || navigator.vendor || '';
+        var platform = /android/i.test(ua)
+          ? 'android'
+          : (/iPad|iPhone|iPod/.test(ua) ? 'ios' : 'unknown');
+        document.documentElement.setAttribute('data-platform', platform);
+        ${normalizedRef ? `try {
+          var ref = '${this.escapeJavaScriptString(normalizedRef)}';
+          window.localStorage.setItem('atta.invite.referralCode', ref);
+          document.cookie = 'atta_invite_ref=' + encodeURIComponent(ref) + '; Max-Age=2592000; Path=/; SameSite=Lax; Secure';
+          try {
+            window.fetch('/auth/referrals/open', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ referralCode: ref, appOpened: false }),
+              keepalive: true
+            });
+          } catch (_) {}
+        } catch (_) {}` : ''}
+      })();
+    </script>`;
+    }
+    renderLandingStyles() {
+        return `<style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f5f5;
+        color: #1f1f1f;
+      }
+      main {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+      .card {
+        width: 100%;
+        max-width: 420px;
+        background: #ffffff;
+        border-radius: 18px;
+        padding: 24px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+        text-align: center;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+      }
+      p {
+        margin: 0 0 18px;
+        line-height: 1.5;
+      }
+      .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-top: 20px;
+      }
+      a.button {
+        display: inline-block;
+        padding: 12px 18px;
+        border-radius: 12px;
+        background: #1f1f1f;
+        color: #ffffff;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      a.button.secondary {
+        background: #ffffff;
+        color: #1f1f1f;
+        border: 1px solid rgba(31, 31, 31, 0.14);
+      }
+    </style>`;
+    }
+    renderSmartFallbackScript() {
+        return `<script>
+      (function () {
+        var ua = navigator.userAgent || navigator.vendor || '';
+        if (!/android/i.test(ua)) return;
+
+        var googlePlayUrl = '${AppController_1.googlePlayFallbackUrl}';
+        var handled = false;
+        var timer = null;
+
+        function stopFallback() {
+          handled = true;
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
+        }
+
+        document.addEventListener('visibilitychange', function () {
+          if (document.hidden) stopFallback();
+        });
+        window.addEventListener('pagehide', stopFallback);
+        window.addEventListener('blur', function () {
+          setTimeout(function () {
+            if (document.hidden) stopFallback();
+          }, 0);
+        });
+
+        timer = setTimeout(function () {
+          if (handled) return;
+          window.location.replace(googlePlayUrl);
+        }, 900);
+      })();
+    </script>`;
+    }
+    renderStoreButtons(options) {
+        const appStoreLabel = options?.appStoreLabel ?? 'Скачать в App Store';
+        return `<div class="actions">
+          <a class="button" href="${AppController_1.appStoreFallbackUrl}">${appStoreLabel}</a>
+          <a class="button secondary" href="${AppController_1.googlePlayFallbackUrl}">Скачать в Google Play</a>
+        </div>`;
     }
     escapeHtml(value) {
         return value
@@ -237,6 +376,20 @@ let AppController = AppController_1 = class AppController {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+    }
+    escapeJavaScriptString(value) {
+        return value
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'")
+            .replace(/\r/g, '\\r')
+            .replace(/\n/g, '\\n')
+            .replace(/</g, '\\x3c');
+    }
+    getAndroidSha256Fingerprints() {
+        return (process.env.ANDROID_SHA256_CERT_FINGERPRINTS ?? '')
+            .split(',')
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0);
     }
     async checkDatabaseHealth() {
         try {
@@ -258,12 +411,13 @@ let AppController = AppController_1 = class AppController {
     }
 };
 exports.AppController = AppController;
-AppController.appStoreFallbackUrl = 'https://apps.apple.com/us/app/atta/id6762604298?l=ru';
-AppController.googlePlayFallbackUrl = 'https://play.google.com/store/apps/details?id=com.example.atta';
-AppController.appLandingUrl = 'https://attamarket.online/app';
+AppController.appStoreFallbackUrl = 'https://apps.apple.com/app/id6762604298';
+AppController.googlePlayFallbackUrl = 'https://play.google.com/store/apps/details?id=online.attomarket.atta';
+AppController.appLandingUrl = 'https://attamarket.online/invite';
 AppController.appOgImageUrl = 'https://attamarket.online/meta/app-icon.png';
 AppController.appleTeamId = 'F5F8UG6LWD';
 AppController.iosBundleId = 'com.mansurdagalaev.atta';
+AppController.androidPackageName = 'online.attomarket.atta';
 __decorate([
     (0, common_1.Get)('health'),
     __metadata("design:type", Function),
@@ -278,15 +432,24 @@ __decorate([
 ], AppController.prototype, "getDependenciesHealth", null);
 __decorate([
     (0, common_1.Get)('.well-known/apple-app-site-association'),
+    (0, common_1.Header)('Content-Type', 'application/json'),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], AppController.prototype, "getAppleAppSiteAssociation", null);
 __decorate([
-    (0, common_1.Get)(['app', 'invite']),
-    (0, common_1.Header)('Content-Type', 'text/html; charset=utf-8'),
+    (0, common_1.Get)('.well-known/assetlinks.json'),
+    (0, common_1.Header)('Content-Type', 'application/json'),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], AppController.prototype, "getAndroidAssetLinks", null);
+__decorate([
+    (0, common_1.Get)(['app', 'invite']),
+    (0, common_1.Header)('Content-Type', 'text/html; charset=utf-8'),
+    __param(0, (0, common_1.Query)('ref')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", void 0)
 ], AppController.prototype, "getAppLandingPage", null);
 __decorate([

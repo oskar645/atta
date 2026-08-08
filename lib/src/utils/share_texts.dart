@@ -55,7 +55,6 @@ ShareTextResult buildInviteShareText({
   if (resolvedInstallUrl == null) {
     return const ShareTextResult.error(appInstallUrlNotConfiguredMessage);
   }
-
   final normalizedReferralCode = referralCode.trim();
   final inviteUrl = normalizedReferralCode.isEmpty
       ? resolvedInstallUrl

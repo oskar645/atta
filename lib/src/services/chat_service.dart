@@ -64,12 +64,14 @@ class ChatService {
   DateTime? _lastAppResumeRefreshAt;
   final Set<String> _activeChatIds = <String>{};
   String? _foregroundChatId;
+  int? _authoritativeUnreadTotal;
   int _messageOrderSequence = 0;
   Future<void>? _ensureReadyInFlight;
   String? _ensureReadyUserId;
 
   static const Duration _markReadCooldown = Duration(seconds: 2);
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
+  static const Duration _sendRetryBackoff = Duration(milliseconds: 250);
 
   Object? get lastChatsLoadError => _lastChatsLoadError;
 
@@ -115,6 +117,7 @@ class ChatService {
     _lastMarkReadAt.clear();
     _activeChatIds.clear();
     _foregroundChatId = null;
+    _authoritativeUnreadTotal = null;
     _ensureReadyInFlight = null;
     _ensureReadyUserId = null;
     _chatsById.clear();
@@ -196,6 +199,35 @@ class ChatService {
     );
   }
 
+  Future<void> _prepareTransportForTextSend({
+    required String chatId,
+    required String senderId,
+  }) async {
+    try {
+      await _ensureTimewebReady(senderId);
+      final socket = _socketService;
+      if (socket == null) return;
+
+      if (!socket.isConnected &&
+          socket.isReconnecting &&
+          !socket.isConnecting) {
+        await socket
+            .forceReconnect(reason: 'chat.send.reconnect')
+            .timeout(_socketReadyTimeout);
+      }
+      if (!socket.isConnected && socket.isConnecting) {
+        await socket.connect(reason: 'chat.send.waitConnecting').timeout(
+              _socketReadyTimeout,
+            );
+      }
+      await socket.joinChat(chatId, reason: 'chat.send.join').timeout(
+            _socketReadyTimeout,
+          );
+    } catch (error) {
+      _debugSource('Text send transport preparation skipped: $error');
+    }
+  }
+
   StreamController<Chat?> _chatControllerFor(String chatId) {
     return _chatControllers.putIfAbsent(
       chatId,
@@ -215,11 +247,25 @@ class ChatService {
     _chatsController.add(items);
     final uid = _activeUserId ?? '';
     _unreadController.add(
-      items.fold<int>(0, (sum, chat) => sum + chat.unreadFor(uid)),
+      _currentUnreadTotalFor(uid),
     );
     for (final chat in items) {
       _chatControllers[chat.id]?.add(chat);
     }
+  }
+
+  int _currentUnreadTotalFor(String uid) {
+    return _authoritativeUnreadTotal ??
+        _sortedChats().fold<int>(0, (sum, chat) => sum + chat.unreadFor(uid));
+  }
+
+  void _applyAuthoritativeUnreadTotal(Map<String, dynamic> payload) {
+    final raw = payload['unreadTotal'] ?? payload['unread_total'];
+    final value =
+        raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+    if (value == null) return;
+    _authoritativeUnreadTotal = value < 0 ? 0 : value;
+    _emitChats();
   }
 
   String _cacheKey(String uid) => 'atta.chat.cache.v1.${uid.trim()}';
@@ -260,7 +306,6 @@ class ChatService {
             if (message.type != 'text' || message.hasImage) continue;
             _upsertMessageIntoList(items, message);
           }
-          _loadedMessageChatIds.add(chatId);
         }
       }
       _emitChats();
@@ -284,7 +329,12 @@ class ChatService {
           (chatId, messages) => MapEntry(
             chatId,
             messages
-                .where((message) => message.type == 'text' && !message.hasImage)
+                .where(
+                  (message) =>
+                      message.type == 'text' &&
+                      !message.hasImage &&
+                      message.hasVisibleContent,
+                )
                 .map(_messageToCacheMap)
                 .toList(),
           ),
@@ -365,6 +415,7 @@ class ChatService {
   }
 
   void _upsertChat(Chat chat) {
+    _authoritativeUnreadTotal = null;
     _chatsById[chat.id] = chat;
     _emitChats();
     unawaited(_persistCachedState());
@@ -380,11 +431,57 @@ class ChatService {
   }
 
   void _upsertMessage(ChatMessage message) {
+    _removeDuplicateMessageIds(message);
     final items =
         _messagesByChat.putIfAbsent(message.chatId, () => <ChatMessage>[]);
     _upsertMessageIntoList(items, message);
     _emitMessages(message.chatId);
     unawaited(_persistCachedState());
+  }
+
+  void _patchExistingMessage(ChatMessage message) {
+    final messageId = message.id.trim();
+    if (messageId.isEmpty) return;
+    final chatId = message.chatId.trim();
+    final entries = chatId.isNotEmpty
+        ? <MapEntry<String, List<ChatMessage>>>[
+            MapEntry(chatId, _messagesByChat[chatId] ?? <ChatMessage>[]),
+          ]
+        : _messagesByChat.entries;
+    for (final entry in entries) {
+      final items = entry.value;
+      final index = items.indexWhere((item) => item.id.trim() == messageId);
+      if (index == -1) continue;
+      items[index] = _mergeMessages(items[index], message);
+      _emitMessages(entry.key);
+      unawaited(_persistCachedState());
+      return;
+    }
+  }
+
+  void _removeDuplicateMessageIds(ChatMessage message) {
+    final messageId = message.id.trim();
+    final chatId = message.chatId.trim();
+    if (messageId.isEmpty) return;
+    for (final entry in _messagesByChat.entries) {
+      if (entry.key == chatId) continue;
+      entry.value.removeWhere((item) => item.id.trim() == messageId);
+    }
+  }
+
+  void _removeDuplicateMessageIdsFromList(
+    List<ChatMessage> items,
+    ChatMessage message,
+    int keepIndex,
+  ) {
+    final messageId = message.id.trim();
+    if (messageId.isEmpty) return;
+    for (var index = items.length - 1; index >= 0; index -= 1) {
+      if (index == keepIndex) continue;
+      if (items[index].id.trim() == messageId) {
+        items.removeAt(index);
+      }
+    }
   }
 
   void _removeMessage(String chatId, String messageId) {
@@ -528,7 +625,11 @@ class ChatService {
 
     switch (event.name) {
       case 'chat.updated':
-        if (chatMap != null) _upsertChat(Chat.fromMap(chatMap));
+        if (chatMap != null) {
+          final chat = Chat.fromMap(chatMap);
+          _upsertChat(chat);
+          _refreshHistoryForVisibleChatUpdate(chat);
+        }
         break;
       case 'message.new':
       case 'message.sent':
@@ -540,13 +641,17 @@ class ChatService {
           if (message.senderId != (_activeUserId ?? '')) {
             _socketService?.sendDelivered(message.id);
           }
+        } else if (chatMap != null) {
+          final chatId = (chatMap['id'] ?? chatMap['chatId'] ?? '').toString();
+          unawaited(_refreshMessages(chatId).catchError((_) {}));
         }
+        _applyAuthoritativeUnreadTotal(payload);
         break;
       case 'message.delivered':
       case 'message.read':
         _debugSource('Socket event: ${event.name}');
         if (messageMap != null) {
-          _upsertMessage(ChatMessage.fromMap(messageMap));
+          _patchExistingMessage(ChatMessage.fromMap(messageMap));
         }
         break;
       case 'message.deleted':
@@ -599,7 +704,33 @@ class ChatService {
             ),
           );
         }
+        if (unread > 0 && _activeChatIds.contains(chatId)) {
+          _refreshMessagesInBackground(chatId);
+        }
+        _applyAuthoritativeUnreadTotal(payload);
         break;
+    }
+  }
+
+  void _refreshHistoryForVisibleChatUpdate(Chat chat) {
+    final chatId = chat.id.trim();
+    if (chatId.isEmpty || !_activeChatIds.contains(chatId)) {
+      return;
+    }
+    final lastMessageAt = chat.lastMessageAt;
+    if (lastMessageAt == null) {
+      return;
+    }
+    final latestKnownMessageAt = (_messagesByChat[chatId] ?? const [])
+        .where((message) => !message.id.trim().startsWith('temp-'))
+        .map((message) => message.createdAt)
+        .fold<DateTime?>(null, (latest, value) {
+      if (latest == null || value.isAfter(latest)) return value;
+      return latest;
+    });
+    if (latestKnownMessageAt == null ||
+        lastMessageAt.isAfter(latestKnownMessageAt)) {
+      _refreshMessagesInBackground(chatId);
     }
   }
 
@@ -635,6 +766,10 @@ class ChatService {
       _chatsById
         ..clear()
         ..addEntries(items.map((item) => MapEntry(item.id, item)));
+      final unreadTotal = response['unreadTotal'] ?? response['unread_total'];
+      _authoritativeUnreadTotal = unreadTotal is num
+          ? unreadTotal.toInt()
+          : int.tryParse(unreadTotal?.toString() ?? '');
       _lastChatsLoadError = null;
       _emitChats();
       unawaited(_persistCachedState());
@@ -692,6 +827,12 @@ class ChatService {
     }
   }
 
+  void _refreshMessagesInBackground(String chatId) {
+    unawaited(_refreshMessages(chatId).catchError((error) {
+      _debugSource('Messages refresh skipped for $chatId: $error');
+    }));
+  }
+
   Future<void> _refreshMessagesInternal(String chatId) async {
     final response = await _api.listMessages(chatId);
     final rawChat = response['chat'];
@@ -744,9 +885,7 @@ class ChatService {
     _ensureChatsRefreshStarted(uid);
     _ensureSocketConnectedInBackground(uid);
     return Stream<int>.multi((controller) {
-      controller.add(
-        _sortedChats().fold<int>(0, (sum, chat) => sum + chat.unreadFor(uid)),
-      );
+      controller.add(_currentUnreadTotalFor(uid));
       final sub = _unreadController.stream.listen(
         controller.add,
         onError: controller.addError,
@@ -796,13 +935,17 @@ class ChatService {
     await refreshChats();
   }
 
-  Future<void> handleAppResumed(String uid) async {
+  Future<void> handleAppResumed(
+    String uid, {
+    bool recoverSocket = true,
+  }) async {
     _activeUserId = uid.trim();
-    if (_socketService?.isConnected != true) {
-      final reconnectFuture =
-          _socketService?.reconnect(reason: 'chat.handleAppResumed');
+    if (recoverSocket) {
+      final reconnectFuture = _socketService?.recoverAfterResume(
+        reason: 'chat.handleAppResumed',
+      );
       if (reconnectFuture != null) {
-        unawaited(reconnectFuture.catchError((_) {}));
+        await reconnectFuture.timeout(_socketReadyTimeout).catchError((_) {});
       }
     }
     final now = DateTime.now();
@@ -819,12 +962,14 @@ class ChatService {
       if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
         await markChatRead(chatId: foregroundChatId, uid: uid);
       }
+      await retryFailedTextMessages(senderId: uid);
       return;
     }
     _lastAppResumeRefreshAt = now;
     await refreshChats();
     for (final chatId in _activeChatIds.toList()) {
       await _refreshChat(chatId);
+      await _refreshMessages(chatId);
       await _socketService?.joinChat(
         chatId,
         reason: 'chat.rejoinAfterResume',
@@ -834,6 +979,7 @@ class ChatService {
     if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
       await markChatRead(chatId: foregroundChatId, uid: uid);
     }
+    await retryFailedTextMessages(senderId: uid);
   }
 
   Future<void> handleNetworkChanged(String uid) async {
@@ -848,6 +994,7 @@ class ChatService {
     await refreshChats();
     for (final chatId in _activeChatIds.toList()) {
       await _refreshChat(chatId);
+      await _refreshMessages(chatId);
       await _socketService?.joinChat(
         chatId,
         reason: 'chat.rejoinAfterNetworkChange',
@@ -867,10 +1014,7 @@ class ChatService {
     }
     unawaited(_ensureReadyAndJoinChat(chatId));
     _activeChatIds.add(chatId);
-    if (!_loadedMessageChatIds.contains(chatId) &&
-        !_messagesRefreshInFlight.containsKey(chatId)) {
-      unawaited(_refreshMessages(chatId));
-    }
+    _refreshMessagesInBackground(chatId);
     return Stream<List<ChatMessage>>.multi((controller) {
       controller.add(
         List<ChatMessage>.from(_messagesByChat[chatId] ?? const []),
@@ -1116,8 +1260,7 @@ class ChatService {
     String? tempId,
     DateTime? createdAt,
   }) async {
-    await _ensureTimewebReady(senderId);
-    await _socketService?.joinChat(chatId);
+    await _prepareTransportForTextSend(chatId: chatId, senderId: senderId);
     final localClientMessageId = clientMessageId ?? _uuid.v4();
     final localTempId = tempId ?? 'temp-$localClientMessageId';
     final localCreatedAt = createdAt ?? DateTime.now();
@@ -1134,8 +1277,9 @@ class ChatService {
     );
 
     try {
-      final response = await _api.sendMessage(
+      final response = await _sendTextViaRestWithRecovery(
         chatId: chatId,
+        senderId: senderId,
         text: text,
         clientMessageId: localClientMessageId,
       );
@@ -1169,6 +1313,36 @@ class ChatService {
         ),
       );
       rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> _sendTextViaRestWithRecovery({
+    required String chatId,
+    required String senderId,
+    required String text,
+    required String clientMessageId,
+  }) async {
+    try {
+      return await _api.sendMessage(
+        chatId: chatId,
+        text: text,
+        clientMessageId: clientMessageId,
+      );
+    } catch (firstError) {
+      _debugSource(
+        'Text send first attempt failed; retrying clientMessageId=$clientMessageId error=$firstError',
+      );
+      try {
+        await Future<void>.delayed(_sendRetryBackoff);
+        await _prepareTransportForTextSend(chatId: chatId, senderId: senderId);
+        return await _api.sendMessage(
+          chatId: chatId,
+          text: text,
+          clientMessageId: clientMessageId,
+        );
+      } catch (_) {
+        throw firstError;
+      }
     }
   }
 
@@ -1287,10 +1461,16 @@ class ChatService {
     _activeUserId = currentUserId.trim();
     if (_activeUserId == null || _activeUserId!.isEmpty) return;
     if (_foregroundChatId == chatId) {
-      unawaited(markChatRead(chatId: chatId, uid: _activeUserId!));
+      unawaited(() async {
+        await _refreshMessages(chatId);
+        await markChatRead(chatId: chatId, uid: _activeUserId!);
+      }());
       return;
     }
-    unawaited(_refreshChat(chatId));
+    unawaited(() async {
+      await _refreshChat(chatId);
+      await _refreshMessages(chatId);
+    }());
   }
 
   Future<String> resolveMessageImageUrl(String rawValue) async {
@@ -1451,11 +1631,13 @@ class ChatService {
     if (index == -1) {
       items.add(normalized);
       _messageOrderByKey.putIfAbsent(mergeKey, () => ++_messageOrderSequence);
+      _removeDuplicateMessageIdsFromList(items, normalized, items.length - 1);
       return;
     }
 
     final previous = items[index];
     items[index] = _mergeMessages(previous, normalized);
+    _removeDuplicateMessageIdsFromList(items, items[index], index);
   }
 
   int _findExistingMessageIndex(

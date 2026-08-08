@@ -11,6 +11,45 @@ import 'package:provider/provider.dart';
 
 void main() {
   testWidgets(
+    'dashboard shows points purchases card and opens purchases screen',
+    (tester) async {
+      final adminService = _FakeAdminService();
+      tester.view.physicalSize = const Size(900, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<AdminService>.value(value: adminService),
+            Provider<NotificationsService>.value(
+              value: _FakeNotificationsService(),
+            ),
+            Provider<SavedSearchService>.value(
+              value: _FakeSavedSearchService(),
+            ),
+          ],
+          child: const MaterialApp(home: AdminScreen()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Покупки баллов'), findsOneWidget);
+      expect(find.text('1250 ₽'), findsOneWidget);
+      expect(find.text('500 баллов • 2 покупок'), findsOneWidget);
+
+      await tester.tap(find.text('Покупки баллов'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AdminScreen), findsNothing);
+      expect(find.text('Покупки баллов'), findsWidgets);
+    },
+  );
+
+  testWidgets(
     'moderation keeps current list visible while status refresh is loading',
     (tester) async {
       final adminService = _FakeAdminService();
@@ -423,12 +462,49 @@ class _FakeAdminService extends AdminService {
         'supportTickets': 0,
         'reportsOpen': 0,
         'activeAds': 0,
+        'pointsPurchasesMonth': <String, dynamic>{
+          'totalAmountRub': 1250,
+          'totalPoints': 500,
+          'purchasesCount': 2,
+        },
       },
       'daily': <String, dynamic>{
         'listings': <Map<String, dynamic>>[
           <String, dynamic>{'listings_new': 1},
         ],
       },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> pointsPurchasesSummary({
+    String? from,
+    String? to,
+    String? search,
+    bool forceRefresh = false,
+  }) async {
+    return <String, dynamic>{
+      'summary': <String, dynamic>{
+        'totalAmountRub': 1250,
+        'totalPoints': 500,
+        'purchasesCount': 2,
+      },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> pointsPurchases({
+    String? from,
+    String? to,
+    String? search,
+    int? limit,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    return <String, dynamic>{
+      'items': <Map<String, dynamic>>[],
+      'hasMore': false,
+      'nextCursor': null,
     };
   }
 

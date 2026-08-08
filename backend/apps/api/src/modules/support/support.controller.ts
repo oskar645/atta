@@ -83,6 +83,25 @@ export class SupportController {
     });
   }
 
+  @Post('block-appeals')
+  createBlockAppeal(
+    @Req() request: any,
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() body: CreateSupportTicketDto,
+  ) {
+    this.rateLimitService.consumeOrThrow(
+      this.rateKey(authUser.userId, request?.ip?.toString() ?? 'block-appeal'),
+      {
+        limit: 4,
+        windowMs: 60 * 1000,
+      },
+    );
+    return this.supportService.createBlockAppeal(authUser, {
+      text: body.text,
+      imageUrl: body.imageUrl ?? body.image_url,
+    });
+  }
+
   @Get('tickets/:id')
   getTicket(
     @CurrentUser() authUser: AuthenticatedUser,
@@ -165,6 +184,7 @@ export class AdminSupportController {
       name?: string;
       subject?: string;
       text?: string;
+      idempotencyKey?: string;
     },
   ) {
     return this.supportService.openTicketForAdminContact({
@@ -172,6 +192,7 @@ export class AdminSupportController {
       name: body.name,
       subject: body.subject,
       text: body.text,
+      idempotencyKey: body.idempotencyKey,
     });
   }
 

@@ -146,6 +146,29 @@ void main() {
     expect(await service.streamOpenReportsCount().first, 0);
     expect(await service.streamUnreadSupportForAdminCount().first, 0);
   });
+
+  test('referral searches use separate cache keys and force refresh', () async {
+    final api = _FakeAdminApi();
+    final service = AdminService(api: api);
+
+    final resultA = await service.referrals(search: 'Alice');
+    final resultB = await service.referrals(search: 'Bob');
+    final refreshedA = await service.referrals(
+      search: 'Alice',
+      forceRefresh: true,
+    );
+
+    expect(resultA['items'], [
+      {'id': 'referral-user:Alice'}
+    ]);
+    expect(resultB['items'], [
+      {'id': 'referral-user:Bob'}
+    ]);
+    expect(refreshedA['items'], [
+      {'id': 'referral-user:Alice'}
+    ]);
+    expect(api.referralSearches, ['Alice', 'Bob', 'Alice']);
+  });
 }
 
 class _FakeAuthApi extends AuthApi {
@@ -172,6 +195,7 @@ class _FakeAdminApi extends AdminApi {
   int listingsCalls = 0;
   int reportsCalls = 0;
   int supportCalls = 0;
+  final List<String> referralSearches = <String>[];
   List<Map<String, dynamic>> pendingItems = <Map<String, dynamic>>[
     <String, dynamic>{
       'id': 'listing-1',
@@ -205,5 +229,24 @@ class _FakeAdminApi extends AdminApi {
   Future<Map<String, dynamic>> support() async {
     supportCalls += 1;
     return <String, dynamic>{'items': const <Map<String, dynamic>>[]};
+  }
+
+  @override
+  Future<Map<String, dynamic>> referrals({
+    String? period,
+    String? from,
+    String? to,
+    String? search,
+    String? userId,
+  }) async {
+    final key = (search?.trim().isNotEmpty ?? false)
+        ? search!.trim()
+        : (userId?.trim() ?? '');
+    referralSearches.add(key);
+    return <String, dynamic>{
+      'items': [
+        <String, dynamic>{'id': 'referral-user:$key'},
+      ],
+    };
   }
 }

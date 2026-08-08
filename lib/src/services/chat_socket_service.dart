@@ -21,6 +21,12 @@ abstract class ChatSocketClient {
 
   void emit(String event, [Map<String, dynamic>? payload]);
 
+  Future<dynamic> emitWithAck(
+    String event, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 3),
+  ]);
+
   void on(String event, void Function(dynamic payload) handler);
 
   void off(String event);
@@ -80,6 +86,18 @@ class _SocketIoChatSocketClient implements ChatSocketClient {
       return;
     }
     _socket.emit(event, payload);
+  }
+
+  @override
+  Future<dynamic> emitWithAck(
+    String event, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 3),
+  ]) {
+    return _socket.timeout(timeout.inMilliseconds).emitWithAckAsync(
+          event,
+          payload ?? <String, dynamic>{},
+        );
   }
 
   @override
@@ -198,6 +216,7 @@ class ChatSocketService {
 
   static const Duration _connectRetryCooldown = Duration(seconds: 5);
   static const Duration _connectAttemptTimeout = Duration(seconds: 10);
+  static const Duration _transportProbeTimeout = Duration(seconds: 3);
   static const Duration _serverDisconnectCooldownMin = Duration(seconds: 30);
   static const Duration _serverDisconnectCooldownMax = Duration(minutes: 5);
   static const Duration _skipLogThrottle = Duration(seconds: 45);
@@ -214,6 +233,7 @@ class ChatSocketService {
   bool get isConnected => _socket?.connected == true;
   bool get canSendPresenceHeartbeat => isConnected;
   bool get isConnecting => _connectCompleter != null || _connecting;
+  bool get isReconnecting => _reconnectTimer != null;
 
   static bool isExpectedSocketCloseError(Object error) {
     final type = error.runtimeType.toString();
@@ -317,6 +337,16 @@ class ChatSocketService {
     _connectCompleter = null;
   }
 
+  void _abortConnectAttempt({required String reason}) {
+    final completer = _connectCompleter;
+    _connecting = false;
+    _connectCompleter = null;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete();
+    }
+    _debugLog('Socket connect attempt aborted reason=$reason');
+  }
+
   void _logConnectSkip({
     required String reason,
     required String skip,
@@ -398,6 +428,35 @@ class ChatSocketService {
     _disconnectRequested = false;
     _cancelReconnectTimer();
     try {
+      final existingSocket = _socket;
+      if (existingSocket != null && _socketOwnerUserId == userId) {
+        _debugLog(
+          'Socket stale instance replaced reason=$reason user=$userId state=${_stateLabel()}',
+        );
+        _abandonSocket(
+          existingSocket,
+          reason: 'replace-stale-same-user-before-connect',
+        );
+        _disposeSocket(
+          existingSocket,
+          debugContext: 'replace-stale-same-user-before-connect.dispose',
+        );
+        _socket = null;
+        _socketOwnerUserId = null;
+        _lastConnectAttemptAt = null;
+      } else if (existingSocket != null) {
+        _abandonSocket(
+          existingSocket,
+          reason: 'replace-stale-before-connect',
+        );
+        _disposeSocket(
+          existingSocket,
+          debugContext: 'replace-stale-before-connect.dispose',
+        );
+        _socket = null;
+        _socketOwnerUserId = null;
+      }
+
       final lastAttemptAt = _lastConnectAttemptAt;
       if (lastAttemptAt != null &&
           DateTime.now().difference(lastAttemptAt) < _connectRetryCooldown) {
@@ -419,29 +478,6 @@ class ChatSocketService {
         );
         _completeConnectAttempt();
         return;
-      }
-
-      final existingSocket = _socket;
-      if (existingSocket != null && _socketOwnerUserId == userId) {
-        _logConnectSkip(
-          reason: reason,
-          skip: 'existing socket still present',
-          userId: userId,
-        );
-        _completeConnectAttempt();
-        return;
-      }
-      if (existingSocket != null) {
-        _abandonSocket(
-          existingSocket,
-          reason: 'replace-stale-before-connect',
-        );
-        _disposeSocket(
-          existingSocket,
-          debugContext: 'replace-stale-before-connect.dispose',
-        );
-        _socket = null;
-        _socketOwnerUserId = null;
       }
 
       _lastConnectAttemptAt = DateTime.now();
@@ -607,6 +643,51 @@ class ChatSocketService {
     return _reconnect(reason: reason, force: true);
   }
 
+  Future<void> recoverAfterResume({String reason = 'resume'}) async {
+    if (_disposed || _disconnecting) return;
+    final socket = _socket;
+    final socketInstanceId = _socketInstanceSequence;
+    _debugLog(
+      'Socket[$socketInstanceId] resume recovery start reason=$reason connected=${socket?.connected == true} state=${_stateLabel()}',
+    );
+    final probeOk = await _probeTransport(reason: reason);
+    _debugLog(
+      'Socket[$socketInstanceId] transport probe result=$probeOk reason=$reason',
+    );
+    if (!probeOk) {
+      await forceReconnect(reason: '$reason.stale');
+    } else {
+      _emitConnection(true);
+    }
+    _debugLog(
+      'Socket[$_socketInstanceSequence] resume recovery end reason=$reason connected=$isConnected state=${_stateLabel()}',
+    );
+  }
+
+  Future<bool> _probeTransport({required String reason}) async {
+    final socket = _socket;
+    if (socket == null || !socket.connected) {
+      return false;
+    }
+    try {
+      await socket
+          .emitWithAck(
+            'presence.ping',
+            <String, dynamic>{'probe': true},
+            _transportProbeTimeout,
+          )
+          .timeout(_transportProbeTimeout);
+      _debugLog('Socket transport probe ok reason=$reason');
+      return true;
+    } catch (error) {
+      _debugLog('Socket transport probe failed reason=$reason error=$error');
+      if (identical(_socket, socket)) {
+        _emitConnection(false);
+      }
+      return false;
+    }
+  }
+
   Future<void> _reconnect({
     required String reason,
     bool force = false,
@@ -622,7 +703,7 @@ class ChatSocketService {
       );
       return;
     }
-    if (_connecting || (!force && isConnected)) {
+    if ((_connecting && !force) || (!force && isConnected)) {
       _logConnectSkip(
         reason: reason,
         skip: 'reconnect ignored because socket is already active',
@@ -647,8 +728,11 @@ class ChatSocketService {
       return;
     }
     _debugLog(
-      'Socket reconnect requested reason=$reason user=$userId state=${_stateLabel()}',
+      'Socket forceReconnect start reason=$reason user=$userId state=${_stateLabel()} force=$force',
     );
+    if (force && _connecting) {
+      _abortConnectAttempt(reason: reason);
+    }
     _cancelReconnectTimer();
     _stopPing();
     _runSocketOperation(
@@ -666,6 +750,9 @@ class ChatSocketService {
     _socketOwnerUserId = null;
     _lastConnectAttemptAt = null;
     await connect(reason: reason);
+    _debugLog(
+      'Socket forceReconnect end reason=$reason user=$userId connected=$isConnected state=${_stateLabel()}',
+    );
   }
 
   Future<void> joinChat(String chatId, {String reason = 'chat.join'}) async {
@@ -673,6 +760,7 @@ class ChatSocketService {
     if (id.isEmpty) return;
     _joinedChats.add(id);
     await connect(reason: reason);
+    _debugLog('Socket join chat=$id reason=$reason connected=$isConnected');
     _safeEmit('chat.join', {'chatId': id});
   }
 
@@ -744,12 +832,14 @@ class ChatSocketService {
   void sendDelivered(String messageId) {
     final id = messageId.trim();
     if (id.isEmpty) return;
+    _debugLog('Socket message.delivered id=$id connected=$isConnected');
     _safeEmit('message.delivered', {'messageId': id});
   }
 
   void sendRead(String messageId) {
     final id = messageId.trim();
     if (id.isEmpty) return;
+    _debugLog('Socket message.read id=$id connected=$isConnected');
     _safeEmit('message.read', {'messageId': id});
   }
 
@@ -758,7 +848,7 @@ class ChatSocketService {
       return;
     }
     _heartbeatTimerStartCount += 1;
-    _debugLog('Socket heartbeat started');
+    _debugLog('Socket heartbeat started count=$_heartbeatTimerStartCount');
     _pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
       _safeEmit('presence.ping');
     });

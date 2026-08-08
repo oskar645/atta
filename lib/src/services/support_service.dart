@@ -141,6 +141,23 @@ class SupportService {
     return ticketId;
   }
 
+  Future<String> createBlockAppeal({
+    required String text,
+  }) async {
+    _debugSource('Support source: Timeweb block appeal');
+    final response = await _api.createBlockAppeal(text: text);
+    final rawTicket = response['ticket'];
+    final ticketId =
+        (rawTicket is Map ? rawTicket['id'] : null)?.toString() ?? '';
+    if (ticketId.isNotEmpty) {
+      final items = _extractItems(response);
+      if (items.isNotEmpty) {
+        _publishMessages(ticketId, items);
+      }
+    }
+    return ticketId;
+  }
+
   Future<void> sendMessage({
     required String ticketId,
     required String text,

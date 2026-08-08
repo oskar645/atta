@@ -39,6 +39,99 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> sendSupportMessageToUser({
+    required String userId,
+    required String message,
+    required String idempotencyKey,
+  }) async {
+    final response = await client.post(
+      '/admin/users/${Uri.encodeComponent(userId)}/support-message',
+      authorized: true,
+      body: {
+        'message': message.trim(),
+        'idempotencyKey': idempotencyKey.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> blocks({String? status}) async {
+    final response = await client.get(
+      '/admin/blocks',
+      queryParameters: {
+        if (status != null && status.trim().isNotEmpty) 'status': status.trim(),
+      },
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> blockUser(
+    String userId, {
+    required String duration,
+    required String reason,
+    String? internalNote,
+    String? listingId,
+    String? endsAt,
+    bool banPhoneIdentity = false,
+  }) async {
+    final response = await client.post(
+      '/admin/users/$userId/block',
+      body: {
+        'duration': duration,
+        'reason': reason.trim(),
+        if (internalNote != null && internalNote.trim().isNotEmpty)
+          'internal_note': internalNote.trim(),
+        if (listingId != null && listingId.trim().isNotEmpty)
+          'listing_id': listingId.trim(),
+        if (endsAt != null && endsAt.trim().isNotEmpty)
+          'ends_at': endsAt.trim(),
+        'ban_phone_identity': banPhoneIdentity,
+      },
+      authorized: true,
+    );
+    return _mutationResponseMap(response);
+  }
+
+  Future<Map<String, dynamic>> unblock(String blockId, {String? reason}) async {
+    final response = await client.post(
+      '/admin/blocks/$blockId/unblock',
+      body: {
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      authorized: true,
+    );
+    return _mutationResponseMap(response);
+  }
+
+  Future<Map<String, dynamic>> updateBlock(
+    String blockId, {
+    String? endsAt,
+    bool? permanent,
+    String? internalNote,
+    String? reason,
+  }) async {
+    final response = await client.patch(
+      '/admin/blocks/$blockId',
+      body: {
+        if (endsAt != null && endsAt.trim().isNotEmpty)
+          'ends_at': endsAt.trim(),
+        if (permanent != null) 'permanent': permanent,
+        if (internalNote != null) 'internal_note': internalNote.trim(),
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      authorized: true,
+    );
+    return _mutationResponseMap(response);
+  }
+
+  Map<String, dynamic> _mutationResponseMap(dynamic response) {
+    if (response is Map) {
+      return Map<String, dynamic>.from(response);
+    }
+    return <String, dynamic>{'ok': true};
+  }
+
   Future<Map<String, dynamic>> listings({String? status}) async {
     final response = await client.get(
       '/admin/listings',
@@ -182,6 +275,101 @@ class AdminApi {
       authorized: true,
       queryParameters: {
         if (period != null && period.trim().isNotEmpty) 'period': period.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> pointsPurchasesSummary({
+    String? from,
+    String? to,
+    String? search,
+  }) async {
+    final response = await client.get(
+      '/admin/payments/points-purchases/summary',
+      authorized: true,
+      queryParameters: {
+        if (from != null && from.trim().isNotEmpty) 'from': from.trim(),
+        if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> pointsPurchases({
+    String? from,
+    String? to,
+    String? search,
+    int? limit,
+    String? cursor,
+  }) async {
+    final response = await client.get(
+      '/admin/payments/points-purchases',
+      authorized: true,
+      queryParameters: {
+        if (from != null && from.trim().isNotEmpty) 'from': from.trim(),
+        if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty)
+          'cursor': cursor.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> referralSummary({
+    String? period,
+    String? from,
+    String? to,
+  }) async {
+    final response = await client.get(
+      '/admin/referrals/summary',
+      authorized: true,
+      queryParameters: {
+        if (period != null && period.trim().isNotEmpty) 'period': period.trim(),
+        if (from != null && from.trim().isNotEmpty) 'from': from.trim(),
+        if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> referrals({
+    String? period,
+    String? from,
+    String? to,
+    String? search,
+    String? userId,
+  }) async {
+    final response = await client.get(
+      '/admin/referrals',
+      authorized: true,
+      queryParameters: {
+        if (period != null && period.trim().isNotEmpty) 'period': period.trim(),
+        if (from != null && from.trim().isNotEmpty) 'from': from.trim(),
+        if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (userId != null && userId.trim().isNotEmpty) 'userId': userId.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> userReferrals(
+    String userId, {
+    String? period,
+    String? from,
+    String? to,
+  }) async {
+    final response = await client.get(
+      '/admin/users/${Uri.encodeComponent(userId)}/referrals',
+      authorized: true,
+      queryParameters: {
+        if (period != null && period.trim().isNotEmpty) 'period': period.trim(),
+        if (from != null && from.trim().isNotEmpty) 'from': from.trim(),
+        if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);

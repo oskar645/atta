@@ -106,6 +106,11 @@ __decorate([
 ], CreateListingDto.prototype, "clothes_type", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateListingDto.prototype, "clothes_size", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsObject)(),
     __metadata("design:type", Object)
 ], CreateListingDto.prototype, "car", void 0);

@@ -12,6 +12,7 @@ import 'package:http_parser/http_parser.dart';
 typedef ApiRefreshHandler = Future<bool> Function();
 typedef ApiSessionExpiredHandler = Future<void> Function();
 typedef ApiAuthorizedSessionWaiter = Future<void> Function();
+typedef ApiAccountBlockedHandler = Future<void> Function();
 
 class ApiClient {
   ApiClient({
@@ -26,6 +27,7 @@ class ApiClient {
   static ApiRefreshHandler? _refreshHandler;
   static ApiSessionExpiredHandler? _sessionExpiredHandler;
   static ApiAuthorizedSessionWaiter? _authorizedSessionWaiter;
+  static ApiAccountBlockedHandler? _accountBlockedHandler;
   static Future<bool>? _refreshInFlight;
   int _requestSequence = 0;
 
@@ -33,10 +35,12 @@ class ApiClient {
     ApiRefreshHandler? onRefreshSession,
     ApiSessionExpiredHandler? onSessionExpired,
     ApiAuthorizedSessionWaiter? onAwaitAuthorizedSession,
+    ApiAccountBlockedHandler? onAccountBlocked,
   }) {
     _refreshHandler = onRefreshSession;
     _sessionExpiredHandler = onSessionExpired;
     _authorizedSessionWaiter = onAwaitAuthorizedSession;
+    _accountBlockedHandler = onAccountBlocked;
   }
 
   Future<dynamic> get(
@@ -281,7 +285,16 @@ class ApiClient {
           );
         }
       }
-      final decoded = _decodeResponse(response);
+      late final dynamic decoded;
+      try {
+        decoded = _decodeResponse(response);
+      } on ApiException catch (error) {
+        if ((authorized || sendAuthIfAvailable) &&
+            error.code == 'ACCOUNT_BLOCKED') {
+          await _accountBlockedHandler?.call();
+        }
+        rethrow;
+      }
       if (isPrivate) {
         _logPrivate('PrivateRequest complete requestId=$id');
       }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
@@ -226,8 +228,7 @@ void main() {
     expect(service.debugHistory.last, contains('reason=chat.ensureReady'));
   });
 
-  test('heartbeat does not call connect when server-disconnected',
-      () async {
+  test('heartbeat does not call connect when server-disconnected', () async {
     final storage = TokenStorage();
     await _saveSession(storage);
     final factory = _FakeSocketFactory(autoConnect: true);
@@ -275,7 +276,8 @@ void main() {
 
     expect(
       service.debugHistory.where(
-        (entry) => entry.contains('Socket connect skipped') &&
+        (entry) =>
+            entry.contains('Socket connect skipped') &&
             entry.contains('reason=presence.heartbeat'),
       ),
       isEmpty,
@@ -473,6 +475,89 @@ void main() {
     expect(factory.createdSockets.last.listenerCount('presence.changed'), 1);
   });
 
+  test('force reconnect restores realtime listeners once', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    final firstSocket = factory.createdSockets.single;
+    await service.forceReconnect(reason: 'chat.handleAppResumed');
+    final nextSocket = factory.createdSockets.last;
+
+    for (final event in const <String>[
+      'message.new',
+      'message.sent',
+      'unread.changed',
+      'presence.changed',
+    ]) {
+      expect(firstSocket.listenerCount(event), 0);
+      expect(nextSocket.listenerCount(event), 1);
+      expect(service.socketListenerCount(event), 1);
+    }
+  });
+
+  test('resume probe recreates stale socket even when connected is true',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    final firstSocket = factory.createdSockets.single
+      ..ackError = TimeoutException('stale transport');
+
+    await service.recoverAfterResume(reason: 'presence.resume');
+
+    expect(firstSocket.emitWithAckCalls, 1);
+    expect(firstSocket.clearListenersCalls, greaterThan(0));
+    expect(firstSocket.disposeCalls, 1);
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connected, isTrue);
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains('transport probe result=false'),
+      ),
+      isTrue,
+    );
+  });
+
+  test('connect recreates stale same-user socket before retry cooldown',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    final firstSocket = factory.createdSockets.single;
+    firstSocket.setConnectedForTest(false);
+
+    await service.connect(reason: 'chat.ensureReady');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(firstSocket.clearListenersCalls, greaterThan(0));
+    expect(firstSocket.disposeCalls, 1);
+    expect(factory.createdSockets.last.connectCalls, 1);
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains('Socket stale instance replaced'),
+      ),
+      isTrue,
+    );
+  });
+
   test('normal close during disconnect does not throw uncaught exception',
       () async {
     final storage = TokenStorage();
@@ -589,6 +674,9 @@ class _FakeChatSocketClient implements ChatSocketClient {
   int disconnectCalls = 0;
   int disposeCalls = 0;
   int clearListenersCalls = 0;
+  int emitWithAckCalls = 0;
+  bool ackEnabled = true;
+  Object? ackError;
   bool _connected = false;
 
   @override
@@ -640,6 +728,22 @@ class _FakeChatSocketClient implements ChatSocketClient {
   @override
   void emit(String event, [Map<String, dynamic>? payload]) {}
 
+  @override
+  Future<dynamic> emitWithAck(
+    String event, [
+    Map<String, dynamic>? payload,
+    Duration timeout = const Duration(seconds: 3),
+  ]) async {
+    emitWithAckCalls += 1;
+    if (ackError != null) {
+      throw ackError!;
+    }
+    if (!ackEnabled) {
+      return Completer<dynamic>().future;
+    }
+    return <String, dynamic>{'ok': true};
+  }
+
   void emitConnectError(Object error) {
     for (final handler
         in List<void Function(dynamic)>.from(_connectErrorHandlers)) {
@@ -660,6 +764,10 @@ class _FakeChatSocketClient implements ChatSocketClient {
         in List<void Function(dynamic)>.from(_disconnectHandlers)) {
       handler(reason);
     }
+  }
+
+  void setConnectedForTest(bool value) {
+    _connected = value;
   }
 
   void emitEvent(String event, Object? payload) {

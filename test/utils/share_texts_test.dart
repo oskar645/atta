@@ -75,20 +75,32 @@ void main() {
     expect(text, isNot(contains('atta://')));
   });
 
-  test('invite share text contains referral code but not user id', () {
+  test('invite share text uses one universal invite link only', () {
     final result = buildInviteShareText(
       referralCode: 'REF-CODE-42',
-      installUrl: 'https://attamarket.online/app',
+      installUrl: 'https://attamarket.online/invite',
     );
     final text = result.text;
 
     expect(result.errorMessage, isNull);
     expect(text, isNotNull);
     expect(text, contains('Привет! Я пользуюсь ATTA'));
-    expect(text, contains('https://attamarket.online/app?ref=REF-CODE-42'));
+    expect(text, contains('https://attamarket.online/invite'));
+    expect(text, contains('ref=REF-CODE-42'));
     expect(text, isNot(contains('https://apps.apple.com/search?term=ATTA')));
     expect(text, isNot(contains('5.42.125.179')));
     expect(text, isNot(contains('atta://invite')));
     expect(text, isNot(contains('user-42')));
+  });
+
+  test('invite share text without referral code keeps plain invite link', () {
+    final result = buildInviteShareText(
+      referralCode: '',
+      installUrl: 'https://attamarket.online/invite',
+    );
+
+    expect(result.errorMessage, isNull);
+    expect(result.text, contains('https://attamarket.online/invite'));
+    expect(result.text, isNot(contains('ref=')));
   });
 }

@@ -76,17 +76,22 @@ export class ChatsController {
       },
     );
     const result = await this.chatsService.sendMessage(authUser, chatId, dto);
-    this.chatsGateway.emitOutgoingMessage(
-      result.chat,
-      result.recipientChat,
-      result.message,
-      result.recipientId,
-    );
-    await this.notificationsService.sendChatMessagePush({
-      recipientId: result.recipientId,
-      message: result.message,
-      chat: result.recipientChat,
-    });
+    if (result.created !== false) {
+      this.chatsGateway.emitOutgoingMessage(
+        result.chat,
+        result.recipientChat,
+        result.message,
+        result.recipientId,
+        undefined,
+        result.recipientUnreadTotal,
+      );
+      await this.notificationsService.sendChatMessagePush({
+        recipientId: result.recipientId,
+        message: result.message,
+        chat: result.recipientChat,
+        unreadTotal: result.recipientUnreadTotal,
+      });
+    }
     return result;
   }
 

@@ -11,6 +11,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { PresenceService } from '../presence/presence.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { UserBlocksService } from '../user-blocks/user-blocks.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
@@ -42,6 +43,9 @@ export class ChatsService {
     private readonly prisma: PrismaService,
     private readonly presenceService: PresenceService,
     private readonly storageService: StorageService,
+    private readonly userBlocksService: UserBlocksService = {
+      assertNotBlocked: async () => undefined,
+    } as unknown as UserBlocksService,
   ) {}
 
   private async ensureChatParticipant(chatId: string, userId: string) {
@@ -154,6 +158,35 @@ export class ChatsService {
     };
   }
 
+  async unreadTotalForUser(userId: string) {
+    const normalizedUserId = userId.trim();
+    if (!normalizedUserId) return 0;
+    const [buyerUnread, sellerUnread] = await Promise.all([
+      this.prisma.chat.aggregate({
+        where: {
+          buyerId: normalizedUserId,
+          deletedByBuyerAt: null,
+        },
+        _sum: {
+          unreadForBuyer: true,
+        },
+      }),
+      this.prisma.chat.aggregate({
+        where: {
+          sellerId: normalizedUserId,
+          deletedBySellerAt: null,
+        },
+        _sum: {
+          unreadForSeller: true,
+        },
+      }),
+    ]);
+    return (
+      (buyerUnread._sum.unreadForBuyer ?? 0) +
+      (sellerUnread._sum.unreadForSeller ?? 0)
+    );
+  }
+
   private serializeMessage(
     message: Prisma.ChatMessageGetPayload<{ include: typeof messageInclude }>,
   ) {
@@ -238,10 +271,13 @@ export class ChatsService {
 
     return {
       items: await Promise.all(chats.map((chat) => this.serializeChat(chat, authUser.userId))),
+      unreadTotal: await this.unreadTotalForUser(authUser.userId),
     };
   }
 
   async createOrGetChat(authUser: AuthenticatedUser, dto: CreateChatDto) {
+    await this.userBlocksService.assertNotBlocked(authUser.userId);
+
     if (authUser.userId === dto.sellerId) {
       throw new BadRequestException('Нельзя написать самому себе');
     }
@@ -325,6 +361,8 @@ export class ChatsService {
     chatId: string,
     dto: SendChatMessageDto,
   ) {
+    await this.userBlocksService.assertNotBlocked(authUser.userId);
+
     const chat = await this.ensureChatParticipant(chatId, authUser.userId);
     const text = dto.text.trim();
     if (!text) {
@@ -350,6 +388,8 @@ export class ChatsService {
           recipientChat: await this.serializeChat(existing.chat, recipientId),
           message: this.serializeMessage(existing),
           recipientId,
+          recipientUnreadTotal: await this.unreadTotalForUser(recipientId),
+          created: false,
         };
       }
     }
@@ -399,6 +439,8 @@ export class ChatsService {
       recipientChat: await this.serializeChat(result.chat, recipientId),
       message: this.serializeMessage(result.message),
       recipientId,
+      recipientUnreadTotal: await this.unreadTotalForUser(recipientId),
+      created: true,
     };
   }
 
@@ -613,6 +655,8 @@ export class ChatsService {
       recipientChat: await this.serializeChat(result.chat, recipientId),
       message: this.serializeMessage(result.message),
       recipientId,
+      recipientUnreadTotal: await this.unreadTotalForUser(recipientId),
+      created: true,
     };
   }
 

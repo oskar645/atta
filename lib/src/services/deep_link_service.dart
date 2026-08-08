@@ -36,6 +36,8 @@ class DeepLinkService {
   static const String pendingListingIdKey = 'pending_deep_link_listing_id';
   static const String pendingInviteReferrerIdKey =
       'pending_deep_link_invite_referrer_id';
+  static const String pendingInviteReferralIdKey =
+      'pending_deep_link_invite_referral_id';
   static const String lastHandledInitialLinkKey =
       'last_handled_initial_deep_link';
   static const String lastHandledInitialLinkAtKey =
@@ -147,9 +149,24 @@ class DeepLinkService {
     return value;
   }
 
+  Future<void> savePendingInviteReferralId(String referralId) async {
+    final normalized = referralId.trim();
+    if (normalized.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(pendingInviteReferralIdKey, normalized);
+  }
+
+  Future<String?> readPendingInviteReferralId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(pendingInviteReferralIdKey)?.trim();
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
   Future<void> clearPendingInviteReferrerId() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(pendingInviteReferrerIdKey);
+    await prefs.remove(pendingInviteReferralIdKey);
   }
 
   Future<void> dispose() async {
@@ -174,7 +191,6 @@ AttaDeepLink? parseAttaDeepLink(Uri uri) {
 
     if (host == 'invite') {
       final referrerId = (uri.queryParameters['ref'] ?? '').trim();
-      if (referrerId.isEmpty) return null;
       return AttaDeepLink.invite(
         uri: uri,
         referrerId: referrerId,
@@ -202,7 +218,6 @@ AttaDeepLink? parseAttaDeepLink(Uri uri) {
       (uri.pathSegments.first.trim().toLowerCase() == 'invite' ||
           uri.pathSegments.first.trim().toLowerCase() == 'app')) {
     final referrerId = (uri.queryParameters['ref'] ?? '').trim();
-    if (referrerId.isEmpty) return null;
     return AttaDeepLink.invite(
       uri: uri,
       referrerId: referrerId,

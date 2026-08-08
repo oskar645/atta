@@ -238,6 +238,21 @@ class AdminService {
     return response;
   }
 
+  Future<Map<String, dynamic>> sendSupportMessageToUser({
+    required String userId,
+    required String message,
+    required String idempotencyKey,
+  }) async {
+    final response = await _api.sendSupportMessageToUser(
+      userId: userId,
+      message: message,
+      idempotencyKey: idempotencyKey,
+    );
+    _cache.remove('support');
+    await refreshAdminAttention(force: true);
+    return response;
+  }
+
   Future<Map<String, dynamic>> listings({
     String? status,
     bool forceRefresh = false,
@@ -298,12 +313,168 @@ class AdminService {
         () => _api.bonusAnalytics(period: period),
         forceRefresh: forceRefresh,
       );
+  Future<Map<String, dynamic>> pointsPurchasesSummary({
+    String? from,
+    String? to,
+    String? search,
+    bool forceRefresh = false,
+  }) =>
+      _cached(
+        'pointsPurchasesSummary:${from ?? ''}:${to ?? ''}:${search ?? ''}',
+        () => _api.pointsPurchasesSummary(
+          from: from,
+          to: to,
+          search: search,
+        ),
+        forceRefresh: forceRefresh,
+      );
+  Future<Map<String, dynamic>> pointsPurchases({
+    String? from,
+    String? to,
+    String? search,
+    int? limit,
+    String? cursor,
+    bool forceRefresh = false,
+  }) =>
+      _cached(
+        'pointsPurchases:${from ?? ''}:${to ?? ''}:${search ?? ''}:${limit ?? ''}:${cursor ?? ''}',
+        () => _api.pointsPurchases(
+          from: from,
+          to: to,
+          search: search,
+          limit: limit,
+          cursor: cursor,
+        ),
+        forceRefresh: forceRefresh,
+      );
+  Future<Map<String, dynamic>> referralSummary({
+    String? period,
+    String? from,
+    String? to,
+    bool forceRefresh = false,
+  }) =>
+      _cached(
+        'referralSummary:${period ?? 'default'}:${from ?? ''}:${to ?? ''}',
+        () => _api.referralSummary(period: period, from: from, to: to),
+        forceRefresh: forceRefresh,
+      );
+  Future<Map<String, dynamic>> referrals({
+    String? period,
+    String? from,
+    String? to,
+    String? search,
+    String? userId,
+    bool forceRefresh = false,
+  }) =>
+      _cached(
+        'referrals:${period ?? 'default'}:${from ?? ''}:${to ?? ''}:${search ?? ''}:${userId ?? ''}',
+        () => _api.referrals(
+          period: period,
+          from: from,
+          to: to,
+          search: search,
+          userId: userId,
+        ),
+        forceRefresh: forceRefresh,
+      );
+  Future<Map<String, dynamic>> userReferrals(
+    String userId, {
+    String? period,
+    String? from,
+    String? to,
+    bool forceRefresh = false,
+  }) =>
+      _cached(
+        'userReferrals:$userId:${period ?? 'default'}:${from ?? ''}:${to ?? ''}',
+        () => _api.userReferrals(
+          userId,
+          period: period,
+          from: from,
+          to: to,
+        ),
+        forceRefresh: forceRefresh,
+      );
   Future<Map<String, dynamic>> approveListing(String listingId) =>
       _mutateListing(
         () => _api.approveListing(listingId),
         listingId: listingId,
         fallbackStatus: 'approved',
       );
+
+  Future<Map<String, dynamic>> blocks({
+    String? status,
+    bool forceRefresh = false,
+  }) =>
+      _cached(
+        'blocks:${status ?? 'active'}',
+        () => _api.blocks(status: status),
+        forceRefresh: forceRefresh,
+      );
+
+  Future<Map<String, dynamic>> blockUser(
+    String userId, {
+    required String duration,
+    required String reason,
+    String? internalNote,
+    String? listingId,
+    String? endsAt,
+    bool banPhoneIdentity = false,
+  }) async {
+    final response = await _api.blockUser(
+      userId,
+      duration: duration,
+      reason: reason,
+      internalNote: internalNote,
+      listingId: listingId,
+      endsAt: endsAt,
+      banPhoneIdentity: banPhoneIdentity,
+    );
+    if (listingId != null && listingId.trim().isNotEmpty) {
+      _removeItemFromCache('listings:pending', listingId.trim());
+    }
+    _cache.remove('blocks:active');
+    _cache.remove('blocks:temporary');
+    _cache.remove('blocks:permanent');
+    _cache.remove('blocks:history');
+    return response;
+  }
+
+  Future<Map<String, dynamic>> unblock(
+    String blockId, {
+    String? reason,
+  }) async {
+    final response = await _api.unblock(blockId, reason: reason);
+    _cache.remove('blocks:active');
+    _cache.remove('blocks:temporary');
+    _cache.remove('blocks:permanent');
+    _cache.remove('blocks:finished');
+    _cache.remove('blocks:history');
+    return response;
+  }
+
+  Future<Map<String, dynamic>> updateBlock(
+    String blockId, {
+    String? endsAt,
+    bool? permanent,
+    String? internalNote,
+    String? reason,
+  }) async {
+    final response = await _api.updateBlock(
+      blockId,
+      endsAt: endsAt,
+      permanent: permanent,
+      internalNote: internalNote,
+      reason: reason,
+    );
+    _cache.remove('blocks:active');
+    _cache.remove('blocks:temporary');
+    _cache.remove('blocks:permanent');
+    _cache.remove('blocks:finished');
+    _cache.remove('blocks:appeals');
+    _cache.remove('blocks:history');
+    return response;
+  }
+
   Future<Map<String, dynamic>> rejectListing(
     String listingId, {
     String? reason,

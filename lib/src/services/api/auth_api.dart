@@ -60,6 +60,18 @@ class AuthApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> recordReferralOpen({
+    required String referralCode,
+  }) async {
+    final response = await _client.post(
+      '/auth/referrals/open',
+      body: {
+        'referralCode': referralCode.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> logout({
     required String refreshToken,
   }) async {
@@ -126,6 +138,7 @@ class AuthApi {
     required String displayName,
     required String verificationCheckId,
     String referralCode = '',
+    String referralId = '',
   }) async {
     final response = await _client.post(
       '/auth/signup-phone',
@@ -135,6 +148,7 @@ class AuthApi {
         'displayName': displayName,
         'verificationCheckId': verificationCheckId,
         if (referralCode.trim().isNotEmpty) 'referralCode': referralCode.trim(),
+        if (referralId.trim().isNotEmpty) 'referralId': referralId.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);

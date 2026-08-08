@@ -19,6 +19,7 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const wallet_constants_1 = require("./wallet.constants");
 const DAILY_LOGIN_BONUS_REASON = client_1.WalletTransactionReason.DAILY_LOGIN_BONUS;
 const SIGNUP_BONUS_REASON = client_1.WalletTransactionReason.SIGNUP_BONUS;
+const REFERRAL_INVITER_BONUS_REASON = client_1.WalletTransactionReason.REFERRAL_INVITER_BONUS;
 const reasonToResponse = (reason) => reason.toLowerCase();
 const typeToResponse = (type) => type.toLowerCase();
 let WalletService = class WalletService {
@@ -82,7 +83,7 @@ let WalletService = class WalletService {
             },
         });
     }
-    async accrueWelcomeBonusIfNeeded(userId) {
+    async accrueWelcomeBonusIfNeeded(userId, tx) {
         return this.runInTransaction(async (tx) => {
             const wallet = await this.ensureWalletForUser(userId, tx);
             await this.lockWalletRow(tx, userId);
@@ -145,7 +146,7 @@ let WalletService = class WalletService {
                 },
             });
             return updatedWallet;
-        });
+        }, tx);
     }
     async checkAndAccrueDailyBonus(userId) {
         const result = await this.checkDailyBonus(userId);
@@ -436,12 +437,239 @@ let WalletService = class WalletService {
             };
         }, tx);
     }
-    async ensureWalletAndBonuses(userId) {
-        return this.ensureWalletAndSignupBonus(userId);
+    async accrueReferralInviterBonusIfNeeded(inviterUserId, { invitedUserId, referralCode, referralId, }, tx) {
+        const normalizedInviterUserId = inviterUserId.trim();
+        const normalizedInvitedUserId = invitedUserId.trim();
+        const normalizedReferralCode = referralCode.trim();
+        const normalizedReferralId = referralId?.trim() ?? '';
+        if (!normalizedInviterUserId || !normalizedInvitedUserId) {
+            throw new common_1.BadRequestException('Referral user ids are required');
+        }
+        if (normalizedInviterUserId === normalizedInvitedUserId) {
+            throw new common_1.BadRequestException('Self-referral is not allowed');
+        }
+        const idempotencyKey = `referral_inviter_bonus:${normalizedInvitedUserId}`;
+        return this.runInTransaction(async (transaction) => {
+            const wallet = await this.ensureWalletForUser(normalizedInviterUserId, transaction);
+            await this.lockWalletRow(transaction, normalizedInviterUserId);
+            const existingTransaction = await transaction.walletTransaction.findUnique({
+                where: {
+                    idempotencyKey,
+                },
+                select: {
+                    id: true,
+                },
+            });
+            if (existingTransaction) {
+                await this.markReferralAlreadyProcessed(transaction, {
+                    referralId: normalizedReferralId,
+                    invitedUserId: normalizedInvitedUserId,
+                    failureReason: 'BONUS_ALREADY_AWARDED_FOR_INVITED_USER',
+                });
+                return {
+                    applied: false,
+                    wallet: await transaction.wallet.findUniqueOrThrow({
+                        where: {
+                            userId: normalizedInviterUserId,
+                        },
+                    }),
+                };
+            }
+            const existingReferral = await transaction.referral.findUnique({
+                where: {
+                    invitedUserId: normalizedInvitedUserId,
+                },
+                select: {
+                    id: true,
+                },
+            });
+            if (existingReferral) {
+                await this.markReferralAlreadyProcessed(transaction, {
+                    referralId: normalizedReferralId,
+                    invitedUserId: normalizedInvitedUserId,
+                    failureReason: 'BONUS_ALREADY_AWARDED_FOR_INVITED_USER',
+                });
+                return {
+                    applied: false,
+                    wallet: await transaction.wallet.findUniqueOrThrow({
+                        where: {
+                            userId: normalizedInviterUserId,
+                        },
+                    }),
+                };
+            }
+            const updatedWallet = await transaction.wallet.update({
+                where: {
+                    id: wallet.id,
+                },
+                data: {
+                    bonusBalance: {
+                        increment: wallet_constants_1.WALLET_REFERRAL_INVITER_BONUS,
+                    },
+                },
+            });
+            const walletTransaction = await transaction.walletTransaction.create({
+                data: {
+                    userId: normalizedInviterUserId,
+                    walletId: wallet.id,
+                    type: client_1.WalletTransactionType.ACCRUAL,
+                    amount: wallet_constants_1.WALLET_REFERRAL_INVITER_BONUS,
+                    reason: REFERRAL_INVITER_BONUS_REASON,
+                    idempotencyKey,
+                    metadata: this.buildTransactionMetadata({
+                        description: 'Реферальный бонус за приглашение нового пользователя',
+                        source: 'referral_inviter_bonus',
+                        invitedUserId: normalizedInvitedUserId,
+                        referralCode: normalizedReferralCode,
+                    }),
+                },
+            });
+            const rewardedAt = new Date();
+            const referralData = {
+                inviterUserId: normalizedInviterUserId,
+                invitedUserId: normalizedInvitedUserId,
+                referralCode: normalizedReferralCode,
+                signupStartedAt: rewardedAt,
+                registeredAt: rewardedAt,
+                isNewUser: true,
+                rewardStatus: client_1.ReferralRewardStatus.REWARDED,
+                rewardAmount: wallet_constants_1.WALLET_REFERRAL_INVITER_BONUS,
+                rewardedAt,
+                failureReason: null,
+                walletTransactionId: walletTransaction.id,
+            };
+            if (normalizedReferralId) {
+                const updatedReferral = await transaction.referral.updateMany({
+                    where: {
+                        id: normalizedReferralId,
+                    },
+                    data: referralData,
+                });
+                if (updatedReferral.count === 0) {
+                    await transaction.referral.create({
+                        data: {
+                            ...referralData,
+                            openedAt: rewardedAt,
+                            appOpenedAt: rewardedAt,
+                        },
+                    });
+                }
+            }
+            else {
+                await transaction.referral.create({
+                    data: {
+                        ...referralData,
+                        openedAt: rewardedAt,
+                        appOpenedAt: rewardedAt,
+                    },
+                });
+            }
+            return {
+                applied: true,
+                wallet: updatedWallet,
+            };
+        }, tx);
     }
-    async ensureWalletAndSignupBonus(userId) {
-        await this.ensureWalletForUser(userId);
-        return this.accrueWelcomeBonusIfNeeded(userId);
+    async markReferralAlreadyProcessed(tx, params) {
+        if (!params.referralId)
+            return;
+        const current = await tx.referral.findUnique({
+            where: {
+                id: params.referralId,
+            },
+            select: {
+                rewardStatus: true,
+                walletTransactionId: true,
+            },
+        });
+        if (current?.rewardStatus === client_1.ReferralRewardStatus.REWARDED ||
+            current?.walletTransactionId) {
+            return;
+        }
+        await tx.referral
+            .update({
+            where: {
+                id: params.referralId,
+            },
+            data: {
+                invitedUserId: params.invitedUserId,
+                registeredAt: new Date(),
+                isNewUser: true,
+                rewardStatus: client_1.ReferralRewardStatus.NOT_REWARDED,
+                failureReason: params.failureReason,
+            },
+        })
+            .catch(() => undefined);
+    }
+    async accruePurchasedPointsIfNeeded(userId, { amount, paymentId, providerPaymentId, }, tx) {
+        if (amount <= 0) {
+            throw new common_1.BadRequestException('Bonus amount must be positive');
+        }
+        const normalizedPaymentId = paymentId.trim();
+        const normalizedProviderPaymentId = providerPaymentId.trim();
+        if (!normalizedPaymentId || !normalizedProviderPaymentId) {
+            throw new common_1.BadRequestException('Payment ids are required');
+        }
+        const idempotencyKey = `points_purchase:${normalizedPaymentId}`;
+        return this.runInTransaction(async (transaction) => {
+            const wallet = await this.ensureWalletForUser(userId, transaction);
+            await this.lockWalletRow(transaction, userId);
+            const existingTransaction = await transaction.walletTransaction.findUnique({
+                where: {
+                    idempotencyKey,
+                },
+                select: {
+                    id: true,
+                },
+            });
+            if (existingTransaction) {
+                return {
+                    applied: false,
+                    wallet: await transaction.wallet.findUniqueOrThrow({
+                        where: {
+                            userId,
+                        },
+                    }),
+                };
+            }
+            const updatedWallet = await transaction.wallet.update({
+                where: {
+                    id: wallet.id,
+                },
+                data: {
+                    bonusBalance: {
+                        increment: amount,
+                    },
+                },
+            });
+            await transaction.walletTransaction.create({
+                data: {
+                    userId,
+                    walletId: wallet.id,
+                    type: client_1.WalletTransactionType.ACCRUAL,
+                    amount,
+                    reason: client_1.WalletTransactionReason.POINTS_PURCHASE,
+                    idempotencyKey,
+                    metadata: this.buildTransactionMetadata({
+                        description: 'Покупка баллов',
+                        source: 'points_purchase',
+                        paymentId: normalizedPaymentId,
+                        providerPaymentId: normalizedProviderPaymentId,
+                    }),
+                },
+            });
+            return {
+                applied: true,
+                wallet: updatedWallet,
+            };
+        }, tx);
+    }
+    async ensureWalletAndBonuses(userId, tx) {
+        return this.ensureWalletAndSignupBonus(userId, tx);
+    }
+    async ensureWalletAndSignupBonus(userId, tx) {
+        await this.ensureWalletForUser(userId, tx);
+        return this.accrueWelcomeBonusIfNeeded(userId, tx);
     }
     async ensureWalletAndBonusesSafely(userId) {
         try {

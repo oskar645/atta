@@ -156,6 +156,9 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
+  final _loginPhoneFocusNode = FocusNode();
+  final _registrationNameFocusNode = FocusNode();
+  final _registrationPhoneFocusNode = FocusNode();
 
   bool _isLogin = true;
   bool _loading = false;
@@ -181,6 +184,9 @@ class _LoginScreenState extends State<LoginScreen> {
     _emailCtrl.dispose();
     _nameCtrl.dispose();
     _passCtrl.dispose();
+    _loginPhoneFocusNode.dispose();
+    _registrationNameFocusNode.dispose();
+    _registrationPhoneFocusNode.dispose();
     super.dispose();
   }
 
@@ -391,6 +397,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _toggleMode() {
+    FocusScope.of(context).unfocus();
     setState(() {
       _isLogin = !_isLogin;
       _loading = false;
@@ -579,12 +586,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _buildPhonePrefixField() {
     return _buildPhoneField(
+      key: const ValueKey('registration-email-phone-field'),
+      focusNode: _registrationPhoneFocusNode,
       controller: _phoneDigitsCtrl,
       onChanged: (_) => setState(() {}),
     );
   }
 
   Widget _buildPhoneField({
+    Key? key,
+    FocusNode? focusNode,
     required TextEditingController controller,
     ValueChanged<String>? onChanged,
     ValueChanged<String>? onSubmitted,
@@ -593,6 +604,8 @@ class _LoginScreenState extends State<LoginScreen> {
     String? errorText,
   }) {
     return TextField(
+      key: key,
+      focusNode: focusNode,
       controller: controller,
       keyboardType: TextInputType.phone,
       textInputAction: TextInputAction.done,
@@ -630,6 +643,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ],
           if (_isLogin) ...[
             _buildPhoneField(
+              key: const ValueKey('login-phone-field'),
+              focusNode: _loginPhoneFocusNode,
               controller: _loginCtrl,
               onChanged: (_) => setState(() {}),
               onSubmitted: (_) {
@@ -664,10 +679,18 @@ class _LoginScreenState extends State<LoginScreen> {
           ] else if (_showPhoneAuth &&
               (_authMethod == _AuthMethod.phone || !_showEmailSignup)) ...[
             TextField(
+              key: const ValueKey('phone-registration-username-field'),
+              focusNode: _registrationNameFocusNode,
               controller: _nameCtrl,
-              keyboardType: TextInputType.name,
+              keyboardType: TextInputType.text,
               textCapitalization: TextCapitalization.words,
               textInputAction: TextInputAction.next,
+              onTap: () {
+                if (!_registrationNameFocusNode.hasFocus) {
+                  FocusScope.of(context).unfocus();
+                  _registrationNameFocusNode.requestFocus();
+                }
+              },
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(labelText: 'Имя пользователя'),
             ),
@@ -690,6 +713,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ] else if (_showEmailSignup) ...[
             TextField(
+              key: const ValueKey('email-registration-name-field'),
               controller: _nameCtrl,
               keyboardType: TextInputType.name,
               textCapitalization: TextCapitalization.words,
@@ -700,6 +724,7 @@ class _LoginScreenState extends State<LoginScreen> {
             _buildPhonePrefixField(),
             const SizedBox(height: 12),
             TextField(
+              key: const ValueKey('email-registration-email-field'),
               controller: _emailCtrl,
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
@@ -825,8 +850,10 @@ class _PhoneRegistrationCredentialsScreenState
         padding: const EdgeInsets.all(16),
         children: [
           TextField(
+            key:
+                const ValueKey('phone-registration-credentials-username-field'),
             controller: _nameCtrl,
-            keyboardType: TextInputType.name,
+            keyboardType: TextInputType.text,
             textCapitalization: TextCapitalization.words,
             textInputAction: TextInputAction.next,
             onChanged: (_) => setState(() {}),

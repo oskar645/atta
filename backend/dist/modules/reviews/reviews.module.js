@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const notifications_module_1 = require("../notifications/notifications.module");
 const prisma_module_1 = require("../prisma/prisma.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const reviews_controller_1 = require("./reviews.controller");
 const reviews_service_1 = require("./reviews.service");
 let ReviewsModule = class ReviewsModule {
@@ -18,7 +19,7 @@ let ReviewsModule = class ReviewsModule {
 exports.ReviewsModule = ReviewsModule;
 exports.ReviewsModule = ReviewsModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, notifications_module_1.NotificationsModule],
+        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, notifications_module_1.NotificationsModule, user_blocks_module_1.UserBlocksModule],
         controllers: [reviews_controller_1.ReviewsController, reviews_controller_1.AdminReviewsController],
         providers: [reviews_service_1.ReviewsService],
         exports: [reviews_service_1.ReviewsService],

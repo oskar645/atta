@@ -33,4 +33,10 @@ __decorate([
     (0, class_validator_1.MaxLength)(2000),
     __metadata("design:type", String)
 ], SendSupportMessageDto.prototype, "imageUrl", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(160),
+    __metadata("design:type", String)
+], SendSupportMessageDto.prototype, "idempotencyKey", void 0);
 //# sourceMappingURL=send-support-message.dto.js.map

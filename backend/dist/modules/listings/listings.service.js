@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ListingsService = exports.LISTING_STATUSES = void 0;
+exports.ListingsService = exports.LISTING_PHOTO_REQUIRED = exports.LISTING_STATUSES = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
@@ -17,6 +17,7 @@ const phone_1 = require("../../common/phone");
 const prisma_service_1 = require("../prisma/prisma.service");
 const promotions_service_1 = require("../promotions/promotions.service");
 const storage_service_1 = require("../storage/storage.service");
+const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const listingInclude = {
     owner: {
         include: {
@@ -45,9 +46,10 @@ exports.LISTING_STATUSES = [
     'deleted',
     'archived',
 ];
+exports.LISTING_PHOTO_REQUIRED = 'LISTING_PHOTO_REQUIRED';
 const toInputJson = (value) => (value ?? {});
 const toNullableInputJson = (value) => (value ?? client_1.Prisma.JsonNull);
-const DEFAULT_FEED_HEAD_SIZE = 8;
+const PROTECTED_FEED_HEAD_SIZE = 10;
 const parsePromotionDate = (value) => {
     const parsed = value instanceof Date ? value : value == null ? null : new Date(value);
     if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
@@ -66,6 +68,76 @@ const compareFeedByFreshness = (a, b) => {
         return createdDiff;
     }
     return b.id.localeCompare(a.id);
+};
+const publicFeedOrderBy = [
+    {
+        publishedAt: {
+            sort: 'desc',
+            nulls: 'last',
+        },
+    },
+    {
+        createdAt: 'desc',
+    },
+    {
+        id: 'desc',
+    },
+];
+const buildPublicFeedCursorWhere = (cursor) => {
+    if (cursor == null) {
+        return null;
+    }
+    const createdAt = new Date(cursor.createdAt);
+    if (Number.isNaN(createdAt.getTime())) {
+        return null;
+    }
+    if (cursor.publishedAt == null) {
+        return {
+            publishedAt: null,
+            OR: [
+                {
+                    createdAt: {
+                        lt: createdAt,
+                    },
+                },
+                {
+                    createdAt,
+                    id: {
+                        lt: cursor.id,
+                    },
+                },
+            ],
+        };
+    }
+    const publishedAt = new Date(cursor.publishedAt);
+    if (Number.isNaN(publishedAt.getTime())) {
+        return null;
+    }
+    return {
+        OR: [
+            {
+                publishedAt: {
+                    lt: publishedAt,
+                },
+            },
+            {
+                publishedAt,
+                createdAt: {
+                    lt: createdAt,
+                },
+            },
+            {
+                publishedAt,
+                createdAt,
+                id: {
+                    lt: cursor.id,
+                },
+            },
+            {
+                publishedAt: null,
+            },
+        ],
+    };
 };
 const getPaidFeedRank = (promotions) => {
     const latestByTier = new Map();
@@ -130,31 +202,68 @@ const comparePaidFeedListings = (a, b) => {
     }
     return compareFeedByFreshness(a, b);
 };
-const buildPublicFeedOrder = (listings, headSize = DEFAULT_FEED_HEAD_SIZE) => {
+const buildPublicFeedOrder = (listings, headSize = PROTECTED_FEED_HEAD_SIZE) => {
     const freshnessSorted = [...listings].sort(compareFeedByFreshness);
-    const regular = [];
-    const paid = [];
-    for (const listing of freshnessSorted) {
-        const rank = getPaidFeedRank(listing.promotions);
-        if (rank.tier === 'none') {
-            regular.push(listing);
-        }
-        else {
-            paid.push(listing);
+    const naturalTop = freshnessSorted.slice(0, headSize);
+    const movedPaid = freshnessSorted
+        .slice(headSize)
+        .filter((listing) => getPaidFeedRank(listing.promotions).tier !== 'none');
+    if (movedPaid.length === 0) {
+        return freshnessSorted;
+    }
+    const movedIds = new Set(movedPaid.map((listing) => listing.id));
+    const placedIds = new Set();
+    const protectedHead = Array.from({ length: headSize }, () => null);
+    for (const [index, listing] of naturalTop.entries()) {
+        if (getPaidFeedRank(listing.promotions).tier !== 'none') {
+            protectedHead[index] = listing;
+            placedIds.add(listing.id);
         }
     }
-    paid.sort(comparePaidFeedListings);
+    const availableSlots = protectedHead
+        .map((listing, index) => (listing == null ? index : -1))
+        .filter((index) => index >= 0)
+        .slice(-Math.min(movedPaid.length, protectedHead.filter((listing) => listing == null).length));
+    for (const [index, slot] of availableSlots.entries()) {
+        const listing = movedPaid[index];
+        if (listing == null) {
+            break;
+        }
+        protectedHead[slot] = listing;
+        placedIds.add(listing.id);
+    }
+    const naturalRest = freshnessSorted.filter((listing) => !movedIds.has(listing.id) && !placedIds.has(listing.id));
+    let regularIndex = 0;
+    for (let index = 0; index < protectedHead.length; index += 1) {
+        if (protectedHead[index] == null) {
+            protectedHead[index] = naturalRest[regularIndex] ?? null;
+            if (naturalRest[regularIndex] != null) {
+                placedIds.add(naturalRest[regularIndex].id);
+            }
+            regularIndex += 1;
+        }
+    }
     return [
-        ...regular.slice(0, headSize),
-        ...paid,
-        ...regular.slice(headSize),
-    ];
+        ...protectedHead.filter((listing) => listing != null),
+        ...movedPaid.slice(availableSlots.length),
+        ...freshnessSorted.filter((listing) => !placedIds.has(listing.id)),
+    ].filter((listing, index, items) => items.findIndex((candidate) => candidate.id === listing.id) === index);
 };
 const toFeedCursorPayload = (listing) => ({
-    bumpAt: getPaidFeedRank(listing.promotions).activatedAt?.toISOString() ?? null,
+    promotedAt: getPaidFeedRank(listing.promotions).activatedAt?.toISOString() ?? null,
+    sortGroup: null,
+    sortAt: null,
     publishedAt: listing.publishedAt?.toISOString() ?? null,
     createdAt: listing.createdAt.toISOString(),
     id: listing.id,
+});
+const toRankedFeedCursorPayload = (row) => ({
+    promotedAt: row.promotedAt?.toISOString() ?? null,
+    sortGroup: row.sortGroup,
+    sortAt: row.sortAt.toISOString(),
+    publishedAt: row.publishedAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    id: row.id,
 });
 const encodeFeedCursor = (listing) => Buffer.from(JSON.stringify(toFeedCursorPayload(listing))).toString('base64url');
 const parseFeedCursor = (rawCursor) => {
@@ -171,8 +280,14 @@ const parseFeedCursor = (rawCursor) => {
             return null;
         }
         return {
-            bumpAt: typeof parsed.bumpAt === 'string' && parsed.bumpAt.trim().length > 0
-                ? parsed.bumpAt
+            promotedAt: typeof parsed.promotedAt === 'string' && parsed.promotedAt.trim().length > 0
+                ? parsed.promotedAt
+                : null,
+            sortGroup: typeof parsed.sortGroup === 'number' && Number.isFinite(parsed.sortGroup)
+                ? parsed.sortGroup
+                : null,
+            sortAt: typeof parsed.sortAt === 'string' && parsed.sortAt.trim().length > 0
+                ? parsed.sortAt
                 : null,
             publishedAt: typeof parsed.publishedAt === 'string' &&
                 parsed.publishedAt.trim().length > 0
@@ -186,13 +301,18 @@ const parseFeedCursor = (rawCursor) => {
         return null;
     }
 };
+const parseRankRowDate = (value) => value == null ? null : value instanceof Date ? value : new Date(value);
 let ListingsService = class ListingsService {
-    constructor(prisma, storageService, promotionsService) {
+    constructor(prisma, storageService, promotionsService, userBlocksService = {
+        assertNotBlocked: async () => undefined,
+    }) {
         this.prisma = prisma;
         this.storageService = storageService;
         this.promotionsService = promotionsService;
+        this.userBlocksService = userBlocksService;
     }
     async create(authUser, dto) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
         const owner = await this.prisma.user.findUnique({
             where: {
                 id: authUser.userId,
@@ -202,6 +322,11 @@ let ListingsService = class ListingsService {
             throw new common_1.NotFoundException('Listing owner was not found');
         }
         const nextPhone = this.pickListingPhone(dto.phone, owner.phone);
+        const requestedStatus = (0, serializers_1.listingStatusFromInput)(dto.status);
+        const nextStatus = authUser.role === 'admin' ? requestedStatus : client_1.ListingStatus.PENDING;
+        if (nextStatus === client_1.ListingStatus.APPROVED && !dto.photo_urls?.length) {
+            throw new common_1.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
+        }
         const listing = await this.prisma.listing.create({
             data: {
                 ownerId: authUser.userId,
@@ -226,16 +351,17 @@ let ListingsService = class ListingsService {
                     : undefined,
                 phone: nextPhone,
                 phoneHidden: dto.phone_hidden ?? false,
-                status: (0, serializers_1.listingStatusFromInput)(dto.status),
+                status: nextStatus,
                 delivery: toInputJson(dto.delivery),
                 locationJson: toInputJson(dto.location),
                 car: dto.car ? toNullableInputJson(dto.car) : undefined,
                 dealType: dto.deal_type?.trim() || null,
                 realEstateType: dto.real_estate_type?.trim() || null,
                 clothesType: dto.clothes_type?.trim() || null,
-                publishedAt: (0, serializers_1.listingStatusFromInput)(dto.status) === client_1.ListingStatus.APPROVED
-                    ? new Date()
+                clothesSize: dto.category.trim() === 'Одежда'
+                    ? dto.clothes_size?.trim() || null
                     : null,
+                publishedAt: nextStatus === client_1.ListingStatus.APPROVED ? new Date() : null,
                 photos: dto.photo_urls?.length
                     ? {
                         create: dto.photo_urls.map((url, index) => ({
@@ -277,6 +403,9 @@ let ListingsService = class ListingsService {
         }
         else if (!ownerMe && !ownerId) {
             where.status = client_1.ListingStatus.APPROVED;
+            where.photos = {
+                some: {},
+            };
             where.owner = {
                 deletedAt: null,
                 status: client_1.UserStatus.ACTIVE,
@@ -364,28 +493,64 @@ let ListingsService = class ListingsService {
         if (andConditions.length > 0) {
             where.AND = andConditions;
         }
+        const isPublicFeed = !ownerMe && !ownerId && !status;
+        if (isPublicFeed && typeof this.prisma.$queryRaw === 'function') {
+            const rankedRows = await this.findPublicFeedRankedRows({
+                search,
+                category,
+                city,
+                minPrice: params?.minPrice,
+                maxPrice: params?.maxPrice,
+                cursor,
+                limit,
+            });
+            const pageRows = rankedRows.slice(0, limit);
+            const hasMore = rankedRows.length > limit;
+            const ids = pageRows.map((row) => row.id);
+            const listings = ids.length === 0
+                ? []
+                : await this.prisma.listing.findMany({
+                    where: {
+                        id: {
+                            in: ids,
+                        },
+                    },
+                    include: listingInclude,
+                });
+            const listingsById = new Map(listings.map((listing) => [listing.id, listing]));
+            const pageItems = ids
+                .map((id) => listingsById.get(id))
+                .filter((listing) => listing != null);
+            const nextCursor = hasMore && pageRows.length > 0
+                ? Buffer.from(JSON.stringify(toRankedFeedCursorPayload(pageRows[pageRows.length - 1]))).toString('base64url')
+                : null;
+            return {
+                items: pageItems.map((listing) => (0, serializers_1.serializeListing)(listing)),
+                nextCursor,
+                hasMore,
+                allowed_statuses: exports.LISTING_STATUSES,
+            };
+        }
+        const cursorWhere = buildPublicFeedCursorWhere(cursor);
+        if (cursorWhere != null) {
+            if (where.AND == null) {
+                where.AND = [cursorWhere];
+            }
+            else if (Array.isArray(where.AND)) {
+                where.AND.push(cursorWhere);
+            }
+        }
         const listings = await this.prisma.listing.findMany({
             where,
             include: listingInclude,
-            orderBy: [
-                {
-                    publishedAt: 'desc',
-                },
-                {
-                    createdAt: 'desc',
-                },
-                {
-                    id: 'desc',
-                },
-            ],
+            orderBy: publicFeedOrderBy,
+            take: limit + 1,
         });
-        const orderedListings = buildPublicFeedOrder(listings);
-        const startIndex = cursor == null
-            ? 0
-            : orderedListings.findIndex((listing) => listing.id === cursor.id) + 1;
-        const safeStartIndex = startIndex < 0 ? 0 : startIndex;
-        const pageItems = orderedListings.slice(safeStartIndex, safeStartIndex + limit);
-        const hasMore = safeStartIndex + limit < orderedListings.length;
+        const orderedListings = isPublicFeed
+            ? buildPublicFeedOrder(listings)
+            : listings;
+        const pageItems = orderedListings.slice(0, limit);
+        const hasMore = orderedListings.length > limit;
         const nextCursor = hasMore && pageItems.length > 0
             ? encodeFeedCursor(pageItems[pageItems.length - 1])
             : null;
@@ -395,6 +560,173 @@ let ListingsService = class ListingsService {
             hasMore,
             allowed_statuses: exports.LISTING_STATUSES,
         };
+    }
+    async findPublicFeedRankedRows(params) {
+        const whereParts = [
+            client_1.Prisma.sql `l."deleted_at" IS NULL`,
+            client_1.Prisma.sql `l."status"::text = 'APPROVED'`,
+            client_1.Prisma.sql `EXISTS (
+        SELECT 1
+        FROM "listing_photos" lp
+        WHERE lp."listing_id" = l."id"
+      )`,
+            client_1.Prisma.sql `u."deleted_at" IS NULL`,
+            client_1.Prisma.sql `u."status"::text = 'ACTIVE'`,
+        ];
+        if (params.category && params.category.toLowerCase() !== 'все') {
+            whereParts.push(client_1.Prisma.sql `l."category" = ${params.category}`);
+        }
+        if (params.city) {
+            const cityPattern = `%${params.city}%`;
+            whereParts.push(client_1.Prisma.sql `(
+        l."city" ILIKE ${cityPattern}
+        OR l."address" ILIKE ${cityPattern}
+      )`);
+        }
+        if (typeof params.minPrice === 'number') {
+            whereParts.push(client_1.Prisma.sql `l."price" >= ${params.minPrice}`);
+        }
+        if (typeof params.maxPrice === 'number') {
+            whereParts.push(client_1.Prisma.sql `l."price" <= ${params.maxPrice}`);
+        }
+        if (params.search) {
+            const searchPattern = `%${params.search}%`;
+            whereParts.push(client_1.Prisma.sql `(
+        l."title" ILIKE ${searchPattern}
+        OR l."description" ILIKE ${searchPattern}
+        OR l."category" ILIKE ${searchPattern}
+        OR l."subcategory" ILIKE ${searchPattern}
+        OR l."city" ILIKE ${searchPattern}
+        OR l."address" ILIKE ${searchPattern}
+        OR l."owner_name" ILIKE ${searchPattern}
+      )`);
+        }
+        const cursor = this.buildRankedFeedCursorSql(params.cursor);
+        const rows = await this.prisma.$queryRaw `
+      WITH base AS (
+        SELECT
+          l."id",
+          l."published_at",
+          l."created_at",
+          MAX(p."created_at") FILTER (
+            WHERE p."status"::text = 'ACTIVE'
+              AND p."ends_at" > NOW()
+              AND p."type"::text IN ('VIP', 'BUMP', 'TURBO')
+          ) AS promoted_at
+        FROM "listings" l
+        JOIN "users" u ON u."id" = l."owner_id"
+        LEFT JOIN "promotions" p ON p."listing_id" = l."id"
+        WHERE ${client_1.Prisma.join(whereParts, ' AND ')}
+        GROUP BY l."id", l."published_at", l."created_at"
+      ),
+      ranked AS (
+        SELECT
+          base.*,
+          ROW_NUMBER() OVER (
+            ORDER BY
+              base."published_at" DESC NULLS LAST,
+              base."created_at" DESC,
+              base."id" DESC
+          ) AS natural_rank
+        FROM base
+      ),
+      moved AS (
+        SELECT
+          ranked.*,
+          SUM(
+            CASE
+              WHEN promoted_at IS NOT NULL
+                AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+                THEN 1
+              ELSE 0
+            END
+          ) OVER (
+            ORDER BY natural_rank ASC
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS moved_rank,
+          COUNT(*) FILTER (
+            WHERE promoted_at IS NOT NULL
+              AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+          ) OVER () AS moved_count
+        FROM ranked
+      ),
+      ordered AS (
+        SELECT
+          "id",
+          promoted_at,
+          published_at,
+          created_at,
+          CASE
+            WHEN promoted_at IS NOT NULL
+              AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+              THEN ${PROTECTED_FEED_HEAD_SIZE}
+                - LEAST(moved_count, ${PROTECTED_FEED_HEAD_SIZE})
+                + moved_rank
+            WHEN natural_rank >= (
+              ${PROTECTED_FEED_HEAD_SIZE}
+                - LEAST(moved_count, ${PROTECTED_FEED_HEAD_SIZE})
+                + 1
+            ) THEN natural_rank + LEAST(moved_count, ${PROTECTED_FEED_HEAD_SIZE})
+            ELSE natural_rank
+          END AS sort_group,
+          COALESCE("published_at", "created_at") AS sort_at
+        FROM moved
+      )
+      SELECT
+        "id",
+        promoted_at,
+        sort_group,
+        sort_at,
+        published_at,
+        created_at
+      FROM ordered
+      WHERE ${cursor}
+      ORDER BY
+        sort_group ASC,
+        sort_at DESC,
+        created_at DESC,
+        "id" DESC
+      LIMIT ${params.limit + 1}
+    `;
+        return rows.map((row) => ({
+            id: row.id,
+            promotedAt: parseRankRowDate(row.promoted_at),
+            sortGroup: Number(row.sort_group),
+            sortAt: parseRankRowDate(row.sort_at) ?? new Date(0),
+            publishedAt: parseRankRowDate(row.published_at),
+            createdAt: parseRankRowDate(row.created_at) ?? new Date(0),
+        }));
+    }
+    buildRankedFeedCursorSql(cursor) {
+        if (cursor == null ||
+            cursor.sortGroup == null ||
+            cursor.sortAt == null) {
+            return client_1.Prisma.sql `TRUE`;
+        }
+        const sortAt = new Date(cursor.sortAt);
+        const createdAt = new Date(cursor.createdAt);
+        if (Number.isNaN(sortAt.getTime()) ||
+            Number.isNaN(createdAt.getTime())) {
+            return client_1.Prisma.sql `TRUE`;
+        }
+        return client_1.Prisma.sql `(
+      sort_group > ${cursor.sortGroup}
+      OR (
+        sort_group = ${cursor.sortGroup}
+        AND (
+          sort_at < ${sortAt}
+          OR (
+            sort_at = ${sortAt}
+            AND created_at < ${createdAt}
+          )
+          OR (
+            sort_at = ${sortAt}
+            AND created_at = ${createdAt}
+            AND "id" < ${cursor.id}::uuid
+          )
+        )
+      )
+    )`;
     }
     async findOne(id, authUser) {
         const listing = await this.prisma.listing.findUnique({
@@ -409,6 +741,7 @@ let ListingsService = class ListingsService {
         const isAdmin = authUser?.role === 'admin';
         const isOwner = authUser?.userId === listing.ownerId;
         const isPublic = listing.status === client_1.ListingStatus.APPROVED &&
+            listing.photos.length > 0 &&
             listing.deletedAt == null &&
             listing.owner?.deletedAt == null &&
             listing.owner?.status === client_1.UserStatus.ACTIVE;
@@ -421,6 +754,7 @@ let ListingsService = class ListingsService {
         };
     }
     async update(id, authUser, dto) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
         const listing = await this.prisma.listing.findUnique({
             where: {
                 id,
@@ -472,6 +806,9 @@ let ListingsService = class ListingsService {
                     dealType: dto.deal_type?.trim(),
                     realEstateType: dto.real_estate_type?.trim(),
                     clothesType: dto.clothes_type?.trim(),
+                    clothesSize: dto.category?.trim() === 'Одежда' || listing.category === 'Одежда'
+                        ? dto.clothes_size?.trim()
+                        : undefined,
                     status: nextStatus,
                     ...(nextStatus === client_1.ListingStatus.PENDING &&
                         listing.status === client_1.ListingStatus.APPROVED
@@ -508,6 +845,9 @@ let ListingsService = class ListingsService {
         };
     }
     async remove(id, authUser) {
+        if (authUser.role !== 'admin') {
+            await this.userBlocksService.assertNotBlocked(authUser.userId);
+        }
         const listing = await this.prisma.listing.findUnique({
             where: {
                 id,
@@ -537,6 +877,9 @@ let ListingsService = class ListingsService {
         };
     }
     async archive(id, authUser, dto) {
+        if (authUser.role !== 'admin') {
+            await this.userBlocksService.assertNotBlocked(authUser.userId);
+        }
         const listing = await this.prisma.listing.findUnique({
             where: {
                 id,
@@ -729,6 +1072,9 @@ let ListingsService = class ListingsService {
         if (!photo) {
             throw new common_1.NotFoundException('Listing photo not found');
         }
+        if (listing.photos.length <= 1 && this.requiresPhotoBeforePublication(listing.status)) {
+            throw new common_1.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
+        }
         await this.storageService.deleteStoredFile('listings', photo.storageKey);
         await this.prisma.listingPhoto.delete({
             where: {
@@ -788,6 +1134,17 @@ let ListingsService = class ListingsService {
             deletedAt: null,
         };
     }
+    requiresPhotoBeforePublication(status) {
+        switch (status) {
+            case client_1.ListingStatus.APPROVED:
+            case client_1.ListingStatus.PENDING:
+            case client_1.ListingStatus.REJECTED:
+            case client_1.ListingStatus.ARCHIVED:
+                return true;
+            default:
+                return false;
+        }
+    }
     async resubmitPublishedListingAfterOwnerEdit(listing, authUser) {
         if (this.statusAfterOwnerEdit(listing, authUser) !== client_1.ListingStatus.PENDING) {
             return;
@@ -806,6 +1163,7 @@ exports.ListingsService = ListingsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         storage_service_1.StorageService,
-        promotions_service_1.PromotionsService])
+        promotions_service_1.PromotionsService,
+        user_blocks_service_1.UserBlocksService])
 ], ListingsService);
 //# sourceMappingURL=listings.service.js.map

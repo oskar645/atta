@@ -7,6 +7,7 @@ import { ListingsModule } from '../listings/listings.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StorageModule } from '../storage/storage.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { UserBlocksModule } from '../user-blocks/user-blocks.module';
 import { UsersModule } from '../users/users.module';
 import { MediaController } from './media.controller';
 
@@ -19,6 +20,7 @@ import { MediaController } from './media.controller';
     NotificationsModule,
     PrismaModule,
     StorageModule,
+    UserBlocksModule,
     UsersModule,
   ],
   controllers: [MediaController],

@@ -51,6 +51,9 @@ let ApnsService = ApnsService_1 = class ApnsService {
         this.logger = new common_1.Logger(ApnsService_1.name);
         this.cachedPrivateKey = null;
         this.cachedJwt = null;
+        this.missingPrivateKeyWarningLogged = false;
+        this.invalidConfigWarningLogged = false;
+        this.rejectedResponseWarningLogged = false;
     }
     sendPlaceholder() {
         return {
@@ -65,8 +68,15 @@ let ApnsService = ApnsService_1 = class ApnsService {
         if (!deviceToken) {
             return { sent: false, status: 0, reason: 'missing_token' };
         }
-        const client = http2.connect(this.apnsOrigin());
-        const jwt = this.providerToken();
+        let client;
+        let jwt;
+        try {
+            jwt = this.providerToken();
+            client = http2.connect(this.apnsOrigin());
+        }
+        catch (error) {
+            return this.skipForConfigurationError(error);
+        }
         const body = JSON.stringify({
             aps: {
                 alert: {
@@ -79,15 +89,35 @@ let ApnsService = ApnsService_1 = class ApnsService {
             ...(push.payload ?? {}),
         });
         return await new Promise((resolve) => {
-            const request = client.request({
-                ':method': 'POST',
-                ':path': `/3/device/${deviceToken}`,
-                authorization: `bearer ${jwt}`,
-                'apns-topic': env_1.env.APNS_BUNDLE_ID,
-                'apns-push-type': 'alert',
-                'apns-priority': '10',
-                'content-type': 'application/json',
+            let settled = false;
+            const finish = (result) => {
+                if (settled)
+                    return;
+                settled = true;
+                client.close();
+                resolve(result);
+            };
+            client.on('error', (error) => {
+                this.logger.warn(`APNs client failed: ${this.safeError(error)}`);
+                finish({ sent: false, status: 0, reason: 'client_failed' });
             });
+            let request;
+            try {
+                request = client.request({
+                    ':method': 'POST',
+                    ':path': `/3/device/${deviceToken}`,
+                    authorization: `bearer ${jwt}`,
+                    'apns-topic': env_1.env.APNS_BUNDLE_ID,
+                    'apns-push-type': 'alert',
+                    'apns-priority': '10',
+                    'content-type': 'application/json',
+                });
+            }
+            catch (error) {
+                this.logger.warn(`APNs request failed: ${this.safeError(error)}`);
+                finish({ sent: false, status: 0, reason: 'request_failed' });
+                return;
+            }
             let status = 0;
             let responseBody = '';
             request.setEncoding('utf8');
@@ -98,14 +128,12 @@ let ApnsService = ApnsService_1 = class ApnsService {
                 responseBody += chunk;
             });
             request.on('error', (error) => {
-                this.logger.warn(`APNs send failed: ${error.message}`);
-                client.close();
-                resolve({ sent: false, status: 0, reason: error.message });
+                this.logger.warn(`APNs send failed: ${this.safeError(error)}`);
+                finish({ sent: false, status: 0, reason: 'send_failed' });
             });
             request.on('end', () => {
-                client.close();
                 if (status >= 200 && status < 300) {
-                    resolve({ sent: true, status });
+                    finish({ sent: true, status });
                     return;
                 }
                 let reason = responseBody.trim();
@@ -116,9 +144,16 @@ let ApnsService = ApnsService_1 = class ApnsService {
                 catch {
                     // Keep raw APNs response when it is not JSON.
                 }
-                resolve({ sent: false, status, reason });
+                this.warnForRejectedResponse(status, reason);
+                finish({ sent: false, status, reason });
             });
-            request.end(body);
+            try {
+                request.end(body);
+            }
+            catch (error) {
+                this.logger.warn(`APNs request end failed: ${this.safeError(error)}`);
+                finish({ sent: false, status: 0, reason: 'request_failed' });
+            }
         });
     }
     apnsOrigin() {
@@ -157,6 +192,49 @@ let ApnsService = ApnsService_1 = class ApnsService {
         }
         this.cachedPrivateKey = fs.readFileSync(env_1.env.APNS_PRIVATE_KEY_PATH, 'utf8');
         return this.cachedPrivateKey;
+    }
+    skipForConfigurationError(error) {
+        const nodeError = error;
+        if (nodeError?.code === 'ENOENT') {
+            if (!this.missingPrivateKeyWarningLogged) {
+                this.logger.warn('APNs private key file is missing; push notifications will be skipped until APNs is configured.');
+                this.missingPrivateKeyWarningLogged = true;
+            }
+            return {
+                sent: false,
+                status: 0,
+                reason: 'apns_private_key_missing',
+                skipped: true,
+            };
+        }
+        if (!this.invalidConfigWarningLogged) {
+            this.logger.warn(`APNs is not configured correctly; push notifications will be skipped. error=${this.safeError(error)}`);
+            this.invalidConfigWarningLogged = true;
+        }
+        return {
+            sent: false,
+            status: 0,
+            reason: 'apns_configuration_invalid',
+            skipped: true,
+        };
+    }
+    safeError(error) {
+        if (error instanceof Error) {
+            return error.name;
+        }
+        return 'unknown';
+    }
+    warnForRejectedResponse(status, reason) {
+        if (this.rejectedResponseWarningLogged)
+            return;
+        this.logger.warn(`APNs rejected push request. status=${status} reason=${this.safeReason(reason)}`);
+        this.rejectedResponseWarningLogged = true;
+    }
+    safeReason(reason) {
+        const normalized = `${reason ?? ''}`.trim();
+        if (!normalized)
+            return 'unknown';
+        return normalized.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 80);
     }
     base64Url(value) {
         return Buffer.from(value)

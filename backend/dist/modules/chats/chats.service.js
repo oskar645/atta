@@ -16,6 +16,7 @@ const serializers_1 = require("../../common/serializers");
 const presence_service_1 = require("../presence/presence.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
+const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const chatInclude = {
     listing: {
         include: {
@@ -36,10 +37,13 @@ const messageInclude = {
     },
 };
 let ChatsService = class ChatsService {
-    constructor(prisma, presenceService, storageService) {
+    constructor(prisma, presenceService, storageService, userBlocksService = {
+        assertNotBlocked: async () => undefined,
+    }) {
         this.prisma = prisma;
         this.presenceService = presenceService;
         this.storageService = storageService;
+        this.userBlocksService = userBlocksService;
     }
     async ensureChatParticipant(chatId, userId) {
         const chat = await this.prisma.chat.findUnique({
@@ -112,6 +116,33 @@ let ChatsService = class ChatsService {
             buyerPreview: this.participantPreview(chat.buyer, presenceMap.get(chat.buyerId)),
             sellerPreview: this.participantPreview(chat.seller, presenceMap.get(chat.sellerId)),
         };
+    }
+    async unreadTotalForUser(userId) {
+        const normalizedUserId = userId.trim();
+        if (!normalizedUserId)
+            return 0;
+        const [buyerUnread, sellerUnread] = await Promise.all([
+            this.prisma.chat.aggregate({
+                where: {
+                    buyerId: normalizedUserId,
+                    deletedByBuyerAt: null,
+                },
+                _sum: {
+                    unreadForBuyer: true,
+                },
+            }),
+            this.prisma.chat.aggregate({
+                where: {
+                    sellerId: normalizedUserId,
+                    deletedBySellerAt: null,
+                },
+                _sum: {
+                    unreadForSeller: true,
+                },
+            }),
+        ]);
+        return ((buyerUnread._sum.unreadForBuyer ?? 0) +
+            (sellerUnread._sum.unreadForSeller ?? 0));
     }
     serializeMessage(message) {
         const imageUrl = message.messageType === client_1.ChatMessageType.IMAGE && message.imageKey
@@ -190,9 +221,11 @@ let ChatsService = class ChatsService {
         });
         return {
             items: await Promise.all(chats.map((chat) => this.serializeChat(chat, authUser.userId))),
+            unreadTotal: await this.unreadTotalForUser(authUser.userId),
         };
     }
     async createOrGetChat(authUser, dto) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
         if (authUser.userId === dto.sellerId) {
             throw new common_1.BadRequestException('Нельзя написать самому себе');
         }
@@ -263,6 +296,7 @@ let ChatsService = class ChatsService {
         };
     }
     async sendMessage(authUser, chatId, dto) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
         const chat = await this.ensureChatParticipant(chatId, authUser.userId);
         const text = dto.text.trim();
         if (!text) {
@@ -286,6 +320,8 @@ let ChatsService = class ChatsService {
                     recipientChat: await this.serializeChat(existing.chat, recipientId),
                     message: this.serializeMessage(existing),
                     recipientId,
+                    recipientUnreadTotal: await this.unreadTotalForUser(recipientId),
+                    created: false,
                 };
             }
         }
@@ -330,6 +366,8 @@ let ChatsService = class ChatsService {
             recipientChat: await this.serializeChat(result.chat, recipientId),
             message: this.serializeMessage(result.message),
             recipientId,
+            recipientUnreadTotal: await this.unreadTotalForUser(recipientId),
+            created: true,
         };
     }
     async deleteChat(authUser, chatId) {
@@ -517,6 +555,8 @@ let ChatsService = class ChatsService {
             recipientChat: await this.serializeChat(result.chat, recipientId),
             message: this.serializeMessage(result.message),
             recipientId,
+            recipientUnreadTotal: await this.unreadTotalForUser(recipientId),
+            created: true,
         };
     }
     async getChatImageAccess(authUser, messageId) {
@@ -727,6 +767,7 @@ exports.ChatsService = ChatsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         presence_service_1.PresenceService,
-        storage_service_1.StorageService])
+        storage_service_1.StorageService,
+        user_blocks_service_1.UserBlocksService])
 ], ChatsService);
 //# sourceMappingURL=chats.service.js.map

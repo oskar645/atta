@@ -1,10 +1,12 @@
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/features/admin/admin_support_message_dialog.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class AdminUsersScreen extends StatefulWidget {
@@ -157,6 +159,34 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     return _protectedAdminPhones.contains(_value(item, const ['phone']));
   }
 
+  String _supportHandle(Map<String, dynamic> item) {
+    final nickname = _value(
+      item,
+      const ['nickname', 'username', 'user_name', 'display_name'],
+    );
+    if (nickname.isNotEmpty) return '@$nickname';
+    return _maskedPhone(_value(item, const ['phone']));
+  }
+
+  String _maskedPhone(String rawPhone) {
+    final digits = normalizeRuPhoneForApi(rawPhone);
+    if (digits.length < 5) return '';
+    return '+${digits.substring(0, 1)} *** *** ${digits.substring(digits.length - 4)}';
+  }
+
+  Future<void> _writeSupportMessage(Map<String, dynamic> item) async {
+    final userId = _value(item, const ['id']);
+    if (userId.isEmpty || _busy) return;
+    final result = await showAdminSupportMessageDialog(
+      context: context,
+      userId: userId,
+      userName: _value(item, const ['display_name', 'name', 'email', 'phone']),
+      userHandle: _supportHandle(item),
+    );
+    if (!mounted || result == null) return;
+    showAppSnack(context, 'Сообщение отправлено');
+  }
+
   String _statusLabel(Map<String, dynamic> item) {
     if ((item['deleted_at'] ?? '').toString().trim().isNotEmpty) {
       return 'Удалён';
@@ -212,6 +242,14 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         isError: true,
       );
     }
+  }
+
+  Future<void> _copyUserId(String userId) async {
+    final value = userId.trim();
+    if (value.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    showAppSnack(context, 'ID скопирован');
   }
 
   @override
@@ -307,7 +345,25 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                                   'phone'
                                 ]))}',
                           ),
-                          Text('User ID: ${_value(item, const ['id'])}'),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'User ID: ${_value(item, const ['id'])}',
+                                ),
+                              ),
+                              IconButton(
+                                visualDensity: VisualDensity.compact,
+                                tooltip: 'Скопировать ID',
+                                onPressed: _busy
+                                    ? null
+                                    : () => _copyUserId(
+                                          _value(item, const ['id']),
+                                        ),
+                                icon: const Icon(Icons.copy, size: 18),
+                              ),
+                            ],
+                          ),
                           Text('Дата регистрации: ${_value(item, const [
                                 'created_at'
                               ])}'),
@@ -320,13 +376,27 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                           const SizedBox(height: 10),
                           Align(
                             alignment: Alignment.centerRight,
-                            child: OutlinedButton(
-                              onPressed: _busy || isProtectedAdmin
-                                  ? null
-                                  : () => _deleteUser(item),
-                              child: Text(
-                                isProtectedAdmin ? 'Защищён' : 'Удалить',
-                              ),
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              alignment: WrapAlignment.end,
+                              children: [
+                                FilledButton.tonalIcon(
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _writeSupportMessage(item),
+                                  icon: const Icon(Icons.support_agent),
+                                  label: const Text('Написать'),
+                                ),
+                                OutlinedButton(
+                                  onPressed: _busy || isProtectedAdmin
+                                      ? null
+                                      : () => _deleteUser(item),
+                                  child: Text(
+                                    isProtectedAdmin ? 'Защищён' : 'Удалить',
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],

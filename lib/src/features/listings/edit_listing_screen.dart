@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:atta/src/data/auto_catalog.dart';
@@ -28,15 +29,60 @@ class EditListingScreen extends StatefulWidget {
   State<EditListingScreen> createState() => _EditListingScreenState();
 }
 
+enum _EditPhotoState {
+  waiting,
+  preparing,
+  uploading,
+  uploaded,
+  failed,
+  deleting
+}
+
+class _EditNewPhotoItem {
+  const _EditNewPhotoItem({
+    required this.localId,
+    required this.file,
+    required this.sourceIndex,
+    this.state = _EditPhotoState.waiting,
+    this.statusText,
+    this.photoId = '',
+  });
+
+  final String localId;
+  final File file;
+  final int sourceIndex;
+  final _EditPhotoState state;
+  final String? statusText;
+  final String photoId;
+
+  _EditNewPhotoItem copyWith({
+    _EditPhotoState? state,
+    String? statusText,
+    bool clearStatusText = false,
+    int? sourceIndex,
+    String? photoId,
+  }) {
+    return _EditNewPhotoItem(
+      localId: localId,
+      file: file,
+      sourceIndex: sourceIndex ?? this.sourceIndex,
+      state: state ?? this.state,
+      statusText: clearStatusText ? null : (statusText ?? this.statusText),
+      photoId: photoId ?? this.photoId,
+    );
+  }
+}
+
 class _EditListingScreenState extends State<EditListingScreen> {
   bool _inited = false;
   bool _saving = false;
   bool _loading = true;
   String? _loadError;
   Listing? _listing;
-  final _newPhotos = <XFile>[];
+  final _newPhotos = <_EditNewPhotoItem>[];
   final _removedPhotoIds = <String>{};
   final _picker = ImagePicker();
+  int _nextPhotoLocalId = 0;
 
   final _title = TextEditingController();
   final _city = TextEditingController();
@@ -94,6 +140,17 @@ class _EditListingScreenState extends State<EditListingScreen> {
 
   bool get _isPassengerCar =>
       _isAuto && isPassengerCarsSubcategory(_subcategory);
+  bool get _isUploadingPhotos => _newPhotos.any(
+        (item) =>
+            item.state == _EditPhotoState.preparing ||
+            item.state == _EditPhotoState.uploading,
+      );
+  bool get _hasFailedPhotos => _newPhotos.any(
+        (item) => item.state == _EditPhotoState.failed,
+      );
+  bool get _hasUploadedNewPhotos => _newPhotos.any(
+        (item) => item.state == _EditPhotoState.uploaded,
+      );
 
   static const _bodyTypes = <String>[
     'Седан',
@@ -441,6 +498,8 @@ class _EditListingScreenState extends State<EditListingScreen> {
   int get _totalPhotoCount => _visibleExistingPhotos.length + _newPhotos.length;
 
   Future<void> _pickMorePhotos() async {
+    final listing = _listing;
+    if (listing == null) return;
     final remain = 10 - _totalPhotoCount;
     if (remain <= 0) return;
 
@@ -448,15 +507,170 @@ class _EditListingScreenState extends State<EditListingScreen> {
     if (picked.isEmpty) return;
     if (!mounted) return;
 
+    final added = <_EditNewPhotoItem>[];
     setState(() {
-      _newPhotos.addAll(picked.take(remain));
+      for (final photo in picked.take(remain)) {
+        final item = _EditNewPhotoItem(
+          localId: 'photo_${_nextPhotoLocalId++}',
+          file: File(photo.path),
+          sourceIndex: _visibleExistingPhotos.length + _newPhotos.length,
+        );
+        _newPhotos.add(item);
+        added.add(item);
+      }
     });
+    for (final item in added) {
+      unawaited(_uploadNewPhotoItem(item.localId, listing.id));
+    }
 
     if (picked.length > remain) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Можно максимум 10 фото. Добавлено: $remain')),
       );
     }
+  }
+
+  void _setNewPhotoStateByLocalId(
+    String localId,
+    _EditPhotoState state, {
+    String? statusText,
+    bool clearStatusText = false,
+    String? photoId,
+  }) {
+    final index = _newPhotos.indexWhere((item) => item.localId == localId);
+    if (index == -1) return;
+    _newPhotos[index] = _newPhotos[index].copyWith(
+      state: state,
+      statusText: statusText,
+      clearStatusText: clearStatusText,
+      photoId: photoId,
+    );
+  }
+
+  Future<void> _uploadNewPhotoItem(String localId, String listingId) async {
+    final index = _newPhotos.indexWhere((item) => item.localId == localId);
+    if (index == -1) return;
+    final item = _newPhotos[index];
+    if (item.state == _EditPhotoState.preparing ||
+        item.state == _EditPhotoState.uploading ||
+        item.state == _EditPhotoState.deleting) {
+      return;
+    }
+    if (item.photoId.isNotEmpty) {
+      await _removeNewPhoto(item);
+      if (!mounted) return;
+    }
+    setState(() {
+      _setNewPhotoStateByLocalId(
+        localId,
+        _EditPhotoState.preparing,
+        statusText: 'Сжимаем фото...',
+      );
+    });
+    try {
+      if (!mounted ||
+          !_newPhotos.any((current) => current.localId == localId)) {
+        return;
+      }
+      setState(() {
+        _setNewPhotoStateByLocalId(
+          localId,
+          _EditPhotoState.uploading,
+          statusText: 'Загружаем...',
+        );
+      });
+      final currentIndex =
+          _newPhotos.indexWhere((current) => current.localId == localId);
+      final response =
+          await context.read<ListingsService>().uploadListingPhotoItem(
+                listingId: listingId,
+                file: item.file,
+                sortOrder: currentIndex == -1
+                    ? item.sourceIndex
+                    : _visibleExistingPhotos.length + currentIndex,
+              );
+      if (!mounted) return;
+      if (!_newPhotos.any((current) => current.localId == localId)) {
+        if (response.photoId.isNotEmpty) {
+          unawaited(
+            context.read<ListingsService>().deleteListingPhoto(
+                  listingId: listingId,
+                  photoId: response.photoId,
+                ),
+          );
+        }
+        return;
+      }
+      setState(() {
+        _setNewPhotoStateByLocalId(
+          localId,
+          _EditPhotoState.uploaded,
+          clearStatusText: true,
+          photoId: response.photoId,
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _setNewPhotoStateByLocalId(
+          localId,
+          _EditPhotoState.failed,
+          statusText: _friendlyPhotoError(error),
+        );
+      });
+    }
+  }
+
+  Future<void> _removeNewPhoto(_EditNewPhotoItem item) async {
+    final listing = _listing;
+    final index = _newPhotos.indexWhere(
+      (current) => current.localId == item.localId,
+    );
+    if (index == -1) return;
+    if (item.photoId.isNotEmpty && listing != null) {
+      setState(() {
+        _newPhotos[index] = item.copyWith(
+          state: _EditPhotoState.deleting,
+          statusText: 'Удаляем...',
+        );
+      });
+      try {
+        await context.read<ListingsService>().deleteListingPhoto(
+              listingId: listing.id,
+              photoId: item.photoId,
+            );
+      } catch (_) {
+        if (!mounted) return;
+        setState(() {
+          _setNewPhotoStateByLocalId(
+            item.localId,
+            _EditPhotoState.uploaded,
+            statusText: 'Не удалось удалить',
+          );
+        });
+        return;
+      }
+      if (!mounted) return;
+    }
+    setState(() {
+      _newPhotos.removeWhere((current) => current.localId == item.localId);
+      for (var i = 0; i < _newPhotos.length; i++) {
+        _newPhotos[i] = _newPhotos[i].copyWith(
+          sourceIndex: _visibleExistingPhotos.length + i,
+        );
+      }
+    });
+  }
+
+  String _friendlyPhotoError(Object error) {
+    if (error is ApiException && error.message.trim().isNotEmpty) {
+      return error.message.trim();
+    }
+    final text = error.toString().toLowerCase();
+    if (text.contains('413') || text.contains('too large')) {
+      return 'Фото слишком большое. Попробуйте другое фото.';
+    }
+    return 'Не удалось загрузить фото';
   }
 
   String _friendlyError(Object error) {
@@ -754,6 +968,36 @@ class _EditListingScreenState extends State<EditListingScreen> {
       return;
     }
 
+    if (_totalPhotoCount == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Добавьте минимум 1 фото')),
+      );
+      return;
+    }
+
+    if (_isUploadingPhotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Дождитесь загрузки фотографий')),
+      );
+      return;
+    }
+
+    if (_hasFailedPhotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Повторите загрузку фотографий с ошибкой'),
+        ),
+      );
+      return;
+    }
+
+    if (_visibleExistingPhotos.isEmpty && !_hasUploadedNewPhotos) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Добавьте минимум 1 фото')),
+      );
+      return;
+    }
+
     CarSpecs? car;
     if (_isAuto) {
       final year =
@@ -816,6 +1060,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
         car: _isAuto ? car : null,
       );
 
+      if (!mounted) return;
       for (final photoId in _removedPhotoIds.where((id) => id.isNotEmpty)) {
         await listingsService.deleteListingPhoto(
           listingId: listing.id,
@@ -823,72 +1068,10 @@ class _EditListingScreenState extends State<EditListingScreen> {
         );
       }
 
-      final uploadResult = await listingsService.uploadListingPhotos(
-        listingId: listing.id,
-        photos: _newPhotos.map((photo) => File(photo.path)).toList(),
-        startIndex: _visibleExistingPhotos.length,
-      );
-
       if (!mounted) return;
-      if (uploadResult.hasFailures) {
-        final retry = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text('Часть фото не загрузилась'),
-                content: Text(
-                  uploadResult.allFailed
-                      ? 'Не удалось загрузить фото. Попробовать ещё раз?'
-                      : 'Загружено ${uploadResult.uploadedCount} из ${uploadResult.requestedCount} фото. Повторить загрузку?',
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text('Позже'),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text('Повторить'),
-                  ),
-                ],
-              ),
-            ) ??
-            false;
-
-        if (retry) {
-          final retried = await listingsService.uploadListingPhotos(
-            listingId: listing.id,
-            photos: uploadResult.failures.map((item) => item.file).toList(),
-            sortOrders:
-                uploadResult.failures.map((item) => item.index).toList(),
-          );
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                retried.hasFailures
-                    ? 'Объявление обновлено, но ${retried.failedCount} фото не загрузились'
-                    : 'Объявление обновлено',
-              ),
-            ),
-          );
-        } else {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                uploadResult.allFailed
-                    ? 'Не удалось загрузить фото. Попробуйте ещё раз.'
-                    : 'Объявление обновлено, но ${uploadResult.failedCount} фото не загрузились',
-              ),
-            ),
-          );
-        }
-      } else {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Объявление обновлено')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Объявление обновлено')),
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
@@ -1136,33 +1319,94 @@ class _EditListingScreenState extends State<EditListingScreen> {
                     _newPhotos[index - _visibleExistingPhotos.length];
                 return Stack(
                   children: [
-                    ClipRRect(
+                    InkWell(
+                      onTap: localPhoto.state == _EditPhotoState.failed
+                          ? () => _uploadNewPhotoItem(
+                                localPhoto.localId,
+                                listing.id,
+                              )
+                          : null,
                       borderRadius: BorderRadius.circular(14),
-                      child: Image.file(
-                        File(localPhoto.path),
-                        width: 92,
-                        height: 92,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: Image.file(
+                          localPhoto.file,
                           width: 92,
                           height: 92,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
-                          alignment: Alignment.center,
-                          child: const Icon(Icons.image_not_supported_outlined),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 92,
+                            height: 92,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            alignment: Alignment.center,
+                            child:
+                                const Icon(Icons.image_not_supported_outlined),
+                          ),
                         ),
                       ),
                     ),
+                    if (localPhoto.state == _EditPhotoState.preparing ||
+                        localPhoto.state == _EditPhotoState.uploading ||
+                        localPhoto.state == _EditPhotoState.deleting)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.28),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          alignment: Alignment.center,
+                          child: const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      ),
+                    if (localPhoto.state == _EditPhotoState.failed)
+                      Positioned.fill(
+                        child: InkWell(
+                          onTap: () => _uploadNewPhotoItem(
+                            localPhoto.localId,
+                            listing.id,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.42),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            alignment: Alignment.center,
+                            child: const Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.refresh,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                                SizedBox(height: 4),
+                                Text(
+                                  'Повторить',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     Positioned(
                       right: 4,
                       top: 4,
                       child: InkWell(
-                        onTap: () {
-                          setState(() {
-                            _newPhotos.remove(localPhoto);
-                          });
-                        },
+                        onTap: localPhoto.state == _EditPhotoState.deleting
+                            ? null
+                            : () => _removeNewPhoto(localPhoto),
                         child: const CircleAvatar(
                           radius: 12,
                           child: Icon(Icons.close, size: 14),

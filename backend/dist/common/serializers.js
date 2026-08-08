@@ -265,6 +265,7 @@ const serializeListing = (listing, options) => ({
     deal_type: listing.dealType,
     real_estate_type: listing.realEstateType,
     clothes_type: listing.clothesType,
+    clothes_size: listing.clothesSize ?? null,
     photo_urls: listing.photos?.map((photo) => (0, exports.normalizeStoredMediaUrl)(photo.publicUrl, {
         category: 'listings',
         providerHint: photo.storageBucket,

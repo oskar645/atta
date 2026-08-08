@@ -10,6 +10,7 @@ exports.SavedSearchesModule = void 0;
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const prisma_module_1 = require("../prisma/prisma.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const saved_searches_controller_1 = require("./saved-searches.controller");
 const saved_searches_service_1 = require("./saved-searches.service");
 let SavedSearchesModule = class SavedSearchesModule {
@@ -17,7 +18,7 @@ let SavedSearchesModule = class SavedSearchesModule {
 exports.SavedSearchesModule = SavedSearchesModule;
 exports.SavedSearchesModule = SavedSearchesModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule],
+        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, user_blocks_module_1.UserBlocksModule],
         controllers: [saved_searches_controller_1.SavedSearchesController],
         providers: [saved_searches_service_1.SavedSearchesService],
         exports: [saved_searches_service_1.SavedSearchesService],

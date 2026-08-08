@@ -150,9 +150,30 @@ test('sendToAll keeps media and link payload in serialized notification', async 
           payload: data.payload,
         }),
       },
+      userDevice: {
+        findMany: async () => [],
+      },
     } as never,
     {} as never,
   );
+
+  const result = await service.sendToAll({
+    title: 'Новость',
+    body: 'Текст',
+    payload: {
+      description: 'Подробности',
+      imageUrl: 'https://cdn.example.com/misc/notification.jpg',
+      actionUrl: 'https://t.me/atta_app',
+    },
+  });
+
+  assert.equal(result.item.payload.description, 'Подробности');
+  assert.equal(result.item.payload.actionUrl, 'https://t.me/atta_app');
+  assert.equal(
+    result.item.payload.imageUrl,
+    'https://cdn.example.com/misc/notification.jpg',
+  );
+});
 
 test('createSystemNotification emits personal realtime event for recipient only', async () => {
   const emitted: Array<{ notification: Record<string, unknown>; userId?: string }> = [];
@@ -171,6 +192,9 @@ test('createSystemNotification emits personal realtime event for recipient only'
           type: NotificationType.SUPPORT,
           payload: data.payload,
         }),
+      },
+      userDevice: {
+        findMany: async () => [],
       },
     } as never,
     {
@@ -200,20 +224,213 @@ test('createSystemNotification emits personal realtime event for recipient only'
   assert.equal(emitted[0].notification['scope'], 'personal');
 });
 
-  const result = await service.sendToAll({
-    title: 'Новость',
-    body: 'Текст',
+test('chat message push sends absolute APNs badge count', async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  const service = new NotificationsService(
+    {
+      send: async (push: Record<string, unknown>) => {
+        pushes.push(push);
+        return { sent: true, status: 200 };
+      },
+    } as never,
+    {
+      userDevice: {
+        findMany: async () => [
+          {
+            userId: 'user-1',
+            deviceToken: 'ios-token-1',
+          },
+          {
+            userId: 'user-1',
+            deviceToken: 'ios-token-2',
+          },
+        ],
+      },
+    } as never,
+    {} as never,
+  );
+
+  await service.sendChatMessagePush({
+    recipientId: 'user-1',
+    message: {
+      id: 'message-1',
+      chatId: 'chat-1',
+      senderId: 'user-2',
+      text: 'Привет',
+      createdAt: baseDate.toISOString(),
+    },
+    chat: {
+      id: 'chat-1',
+    },
+    unreadTotal: 7,
+  });
+
+  assert.equal(pushes.length, 2);
+  assert.deepEqual(
+    pushes.map((push) => push['badge']),
+    [7, 7],
+  );
+});
+
+test('createSystemNotification keeps in-app notification when APNs send throws', async () => {
+  const warnings: string[] = [];
+  let notificationCreated = false;
+  const emitted: Array<{ notification: Record<string, unknown>; userId?: string }> = [];
+  const service = new NotificationsService(
+    {
+      send: async () => {
+        throw new Error('APNs unavailable');
+      },
+    } as never,
+    {
+      userNotification: {
+        create: async ({ data }: Record<string, any>) => {
+          notificationCreated = true;
+          return {
+            id: 'personal-apns-fail-1',
+            userId: data.userId,
+            scope: NotificationScope.PERSONAL,
+            title: data.title,
+            body: data.body,
+            isRead: false,
+            createdAt: baseDate,
+            type: data.type,
+            payload: data.payload,
+          };
+        },
+      },
+      userDevice: {
+        findMany: async () => [
+          {
+            userId: 'user-1',
+            deviceToken: 'secret-device-token',
+          },
+        ],
+      },
+    } as never,
+    {
+      emitNotificationNew: (
+        notification: Record<string, unknown>,
+        userId?: string,
+      ) => {
+        emitted.push({ notification, userId });
+      },
+    } as never,
+  );
+  (service as unknown as { logger: { warn: (message: string) => void } }).logger = {
+    warn: (message: string) => warnings.push(message),
+  };
+
+  const item = await service.createSystemNotification({
+    userId: 'user-1',
+    title: 'Модерация',
+    body: 'Объявление одобрено',
+    type: NotificationType.MODERATION,
     payload: {
-      description: 'Подробности',
-      imageUrl: 'https://cdn.example.com/misc/notification.jpg',
-      actionUrl: 'https://t.me/atta_app',
+      actionType: 'listing_approved',
+      listingId: 'listing-1',
     },
   });
 
-  assert.equal(result.item.payload.description, 'Подробности');
-  assert.equal(result.item.payload.actionUrl, 'https://t.me/atta_app');
-  assert.equal(
-    result.item.payload.imageUrl,
-    'https://cdn.example.com/misc/notification.jpg',
+  assert.equal(notificationCreated, true);
+  assert.equal(item.id, 'personal-apns-fail-1');
+  assert.equal(emitted.length, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /unexpected send failure/);
+  assert.doesNotMatch(warnings[0], /secret-device-token/);
+});
+
+test('sendToAll returns success when APNs send throws', async () => {
+  const warnings: string[] = [];
+  const service = new NotificationsService(
+    {
+      send: async () => {
+        throw new Error('APNs unavailable');
+      },
+    } as never,
+    {
+      userNotification: {
+        create: async ({ data }: Record<string, any>) => ({
+          id: 'global-apns-fail-1',
+          userId: null,
+          scope: NotificationScope.GLOBAL,
+          title: data.title,
+          body: data.body,
+          isRead: false,
+          createdAt: baseDate,
+          type: NotificationType.GENERIC,
+          payload: data.payload,
+        }),
+      },
+      userDevice: {
+        findMany: async () => [
+          {
+            userId: 'user-1',
+            deviceToken: 'secret-device-token-1',
+          },
+          {
+            userId: 'user-2',
+            deviceToken: 'secret-device-token-2',
+          },
+        ],
+      },
+    } as never,
+    {} as never,
   );
+  (service as unknown as { logger: { warn: (message: string) => void } }).logger = {
+    warn: (message: string) => warnings.push(message),
+  };
+
+  const result = await service.sendToAll({
+    title: 'Новость',
+    body: 'Глобальное уведомление',
+  });
+
+  assert.equal(result.item.id, 'global-apns-fail-1');
+  assert.equal(warnings.length, 1);
+  assert.doesNotMatch(warnings[0], /secret-device-token/);
+});
+
+test('chat message push returns when APNs send throws', async () => {
+  const warnings: string[] = [];
+  const service = new NotificationsService(
+    {
+      send: async () => {
+        throw new Error('APNs unavailable');
+      },
+    } as never,
+    {
+      userDevice: {
+        findMany: async () => [
+          {
+            userId: 'user-1',
+            deviceToken: 'secret-device-token',
+          },
+        ],
+      },
+    } as never,
+    {} as never,
+  );
+  (service as unknown as { logger: { warn: (message: string) => void } }).logger = {
+    warn: (message: string) => warnings.push(message),
+  };
+
+  await service.sendChatMessagePush({
+    recipientId: 'user-1',
+    message: {
+      id: 'message-1',
+      chatId: 'chat-1',
+      senderId: 'user-2',
+      text: 'Привет',
+      createdAt: baseDate.toISOString(),
+    },
+    chat: {
+      id: 'chat-1',
+    },
+    unreadTotal: 2,
+  });
+
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /unexpected send failure/);
+  assert.doesNotMatch(warnings[0], /secret-device-token/);
 });

@@ -46,6 +46,25 @@ void main() {
     expect(payload['reportId'], 'report-1');
   });
 
+  test('support_message payload opens support navigation', () {
+    final notification = <String, dynamic>{
+      'type': 'support',
+      'payload': <String, dynamic>{
+        'type': 'support_message',
+        'ticketId': 'ticket-1',
+      },
+    };
+
+    expect(
+      NotificationNavigationService.actionTypeForNotification(notification),
+      'support_message',
+    );
+    expect(
+      NotificationNavigationService.shouldNavigateForNotification(notification),
+      true,
+    );
+  });
+
   test('general notification does not require navigation', () {
     final shouldNavigate =
         NotificationNavigationService.shouldNavigateForNotification(

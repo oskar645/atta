@@ -66,6 +66,24 @@ export class AuthController {
     return this.authService.signupPhone(dto);
   }
 
+  @Post('referrals/open')
+  recordReferralOpen(
+    @Req() request: any,
+    @Body()
+    dto: {
+      referralCode?: string;
+      referral_code?: string;
+      appOpened?: boolean;
+      app_opened?: boolean;
+    },
+  ) {
+    this.rateLimitService.consumeOrThrow(this.rateKey(request, 'referrals-open'), {
+      limit: 30,
+      windowMs: 60 * 1000,
+    });
+    return this.authService.recordReferralAppOpen(dto);
+  }
+
   @Post('login-phone')
   loginPhone(@Req() request: any, @Body() dto: LoginPhoneDto) {
     this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login-phone'), {

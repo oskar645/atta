@@ -91,7 +91,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.data.userId = auth.userId;
       client.join(`user:${auth.userId}`);
       const presence = await this.presenceService.touchSocket(auth.userId, client.id);
-      this.emitPresenceChanged(presence);
+      this.emitPresenceChanged(presence, { force: true });
       this.logger.log(`Socket connected: ${client.id} user=${auth.userId}`);
     } catch (error) {
       this.logger.warn(`Socket rejected: ${client.id}`);
@@ -106,7 +106,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = (client.data.userId ?? '').toString();
     if (!userId) return;
     const presence = await this.presenceService.disconnectSocket(userId, client.id);
-    this.emitPresenceChanged(presence);
+    this.emitPresenceChanged(presence, { force: true });
   }
 
   @SubscribeMessage('chat.join')
@@ -170,6 +170,8 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       result.recipientChat,
       result.message,
       result.recipientId,
+      undefined,
+      result.recipientUnreadTotal,
     );
     return result;
   }
@@ -229,7 +231,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       payload.isOnline,
     );
 
-    this.emitPresenceChanged(next);
+    this.emitPresenceChanged(next, { force: true });
     return next;
   }
 
@@ -239,11 +241,13 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     message: Record<string, unknown>,
     recipientId: string,
     notification?: Record<string, unknown>,
+    recipientUnreadTotal?: number,
   ) {
     const chatId = (senderChat['id'] ?? '').toString();
     this.server.to(`user:${recipientId}`).emit('message.new', {
       chat: recipientChat,
       message,
+      ...(recipientUnreadTotal == null ? {} : { unreadTotal: recipientUnreadTotal }),
     });
     this.server.to(`chat:${chatId}`).emit('message.new', {
       message,
@@ -259,7 +263,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     this.emitChatUpdatedToUser((message['senderId'] ?? '').toString(), senderChat);
     this.emitChatUpdatedToUser(recipientId, recipientChat);
-    this.emitUnreadChanged(recipientId, recipientChat);
+    this.emitUnreadChanged(recipientId, recipientChat, recipientUnreadTotal);
   }
 
   emitChatUpdated(chat: Record<string, unknown>) {
@@ -281,10 +285,15 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
   }
 
-  emitUnreadChanged(userId: string, chat: Record<string, unknown>) {
+  emitUnreadChanged(
+    userId: string,
+    chat: Record<string, unknown>,
+    unreadTotal?: number,
+  ) {
     this.server.to(`user:${userId}`).emit('unread.changed', {
       chatId: chat['id'],
       unreadCount: chat['unreadCount'],
+      ...(unreadTotal == null ? {} : { unreadTotal }),
     });
   }
 
@@ -380,8 +389,11 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
-  emitPresenceChanged(presence: Record<string, unknown>) {
-    if (presence['changed'] === false) {
+  emitPresenceChanged(
+    presence: Record<string, unknown>,
+    options: { force?: boolean } = {},
+  ) {
+    if (presence['changed'] === false && options.force !== true) {
       return;
     }
     const payload = { ...presence };

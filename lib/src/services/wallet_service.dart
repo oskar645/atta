@@ -4,6 +4,7 @@ import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/wallet_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void _debugWalletLog(String message) {
   assert(() {
@@ -20,6 +21,8 @@ class WalletService {
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
+  static const String _pendingTopUpPaymentIdKey =
+      'wallet_pending_yookassa_payment_id';
 
   final WalletApi _api;
   String? _activeUserId;
@@ -32,6 +35,8 @@ class WalletService {
   final Map<String, Future<Wallet>> _walletFutures = <String, Future<Wallet>>{};
   final Map<String, Future<List<WalletTransaction>>> _transactionsFutures =
       <String, Future<List<WalletTransaction>>>{};
+  final Map<String, Future<WalletTopUpStatusResult>> _topUpStatusFutures =
+      <String, Future<WalletTopUpStatusResult>>{};
   bool _lastAccrualAwarded = false;
 
   bool get lastAccrualAwarded => _lastAccrualAwarded;
@@ -207,6 +212,59 @@ class WalletService {
     }
   }
 
+  Future<WalletTopUpStartResult> startWalletTopUp(int amountRub) async {
+    final response = await _api.startYookassaTopUp(amountRub);
+    final paymentId = (response['paymentId'] ?? '').toString().trim();
+    final confirmationUrlRaw =
+        (response['confirmationUrl'] ?? '').toString().trim();
+    final confirmationUrl = Uri.tryParse(confirmationUrlRaw);
+    if (paymentId.isEmpty ||
+        confirmationUrl == null ||
+        !confirmationUrl.hasScheme) {
+      throw StateError('Invalid payment response');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_pendingTopUpPaymentIdKey, paymentId);
+    return WalletTopUpStartResult(
+      paymentId: paymentId,
+      confirmationUrl: confirmationUrl,
+    );
+  }
+
+  Future<WalletTopUpStatusResult?> checkPendingTopUpStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final paymentId = prefs.getString(_pendingTopUpPaymentIdKey)?.trim();
+    if (paymentId == null || paymentId.isEmpty) {
+      return null;
+    }
+
+    final existing = _topUpStatusFutures[paymentId];
+    final future = existing ?? _fetchTopUpStatus(paymentId);
+    _topUpStatusFutures[paymentId] = future;
+    WalletTopUpStatusResult result;
+    try {
+      result = await future;
+    } finally {
+      if (identical(_topUpStatusFutures[paymentId], future)) {
+        _topUpStatusFutures.remove(paymentId);
+      }
+    }
+    if (result.status == WalletTopUpStatus.succeeded ||
+        result.status == WalletTopUpStatus.canceled) {
+      await prefs.remove(_pendingTopUpPaymentIdKey);
+    }
+    if (result.status == WalletTopUpStatus.succeeded) {
+      await getWallet(forceRefresh: true);
+      await getTransactions(forceRefresh: true);
+    }
+    return result;
+  }
+
+  Future<void> clearPendingTopUp() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pendingTopUpPaymentIdKey);
+  }
+
   Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
     if (!ApiConfig.useTimewebBackend) {
       return getWallet(forceRefresh: forceRefresh);
@@ -298,5 +356,57 @@ class WalletService {
     } finally {
       _debugWalletLog('Wallet finally loading=false user=$userId');
     }
+  }
+
+  Future<WalletTopUpStatusResult> _fetchTopUpStatus(String paymentId) async {
+    final response = await _api.getPaymentStatus(paymentId);
+    return WalletTopUpStatusResult.fromMap(response);
+  }
+}
+
+class WalletTopUpStartResult {
+  const WalletTopUpStartResult({
+    required this.paymentId,
+    required this.confirmationUrl,
+  });
+
+  final String paymentId;
+  final Uri confirmationUrl;
+}
+
+enum WalletTopUpStatus {
+  pending,
+  succeeded,
+  canceled,
+}
+
+class WalletTopUpStatusResult {
+  const WalletTopUpStatusResult({
+    required this.paymentId,
+    required this.status,
+    required this.pointsAmount,
+    required this.credited,
+    this.balance,
+  });
+
+  final String paymentId;
+  final WalletTopUpStatus status;
+  final int pointsAmount;
+  final bool credited;
+  final int? balance;
+
+  factory WalletTopUpStatusResult.fromMap(Map<String, dynamic> map) {
+    final rawStatus = (map['status'] ?? '').toString().trim();
+    return WalletTopUpStatusResult(
+      paymentId: (map['paymentId'] ?? '').toString(),
+      status: switch (rawStatus) {
+        'succeeded' => WalletTopUpStatus.succeeded,
+        'canceled' => WalletTopUpStatus.canceled,
+        _ => WalletTopUpStatus.pending,
+      },
+      pointsAmount: (map['pointsAmount'] as num?)?.toInt() ?? 0,
+      credited: map['credited'] == true,
+      balance: (map['balance'] as num?)?.toInt(),
+    );
   }
 }

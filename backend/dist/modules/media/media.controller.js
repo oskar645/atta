@@ -78,11 +78,12 @@ let MediaController = MediaController_1 = class MediaController {
             windowMs: 60 * 1000,
         });
         return this.chatsService.uploadImage(authUser, chatId, this.requireImage(file, 2 * 1024 * 1024)).then(async (result) => {
-            this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId);
+            this.chatsGateway.emitOutgoingMessage(result.chat, result.recipientChat, result.message, result.recipientId, undefined, result.recipientUnreadTotal);
             await this.notificationsService.sendChatMessagePush({
                 recipientId: result.recipientId,
                 message: result.message,
                 chat: result.recipientChat,
+                unreadTotal: result.recipientUnreadTotal,
             });
             return result;
         });
