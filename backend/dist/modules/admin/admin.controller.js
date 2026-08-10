@@ -22,7 +22,9 @@ const list_admin_bonus_analytics_dto_1 = require("./dto/list-admin-bonus-analyti
 const list_admin_listings_dto_1 = require("./dto/list-admin-listings.dto");
 const list_admin_points_purchases_dto_1 = require("./dto/list-admin-points-purchases.dto");
 const list_admin_promotions_dto_1 = require("./dto/list-admin-promotions.dto");
+const list_admin_blocks_dto_1 = require("./dto/list-admin-blocks.dto");
 const list_admin_wallet_transactions_dto_1 = require("./dto/list-admin-wallet-transactions.dto");
+const list_admin_users_dto_1 = require("./dto/list-admin-users.dto");
 const moderate_listing_dto_1 = require("./dto/moderate-listing.dto");
 const archive_listing_dto_1 = require("../listings/dto/archive-listing.dto");
 const block_user_dto_1 = require("./dto/block-user.dto");
@@ -36,8 +38,8 @@ let AdminController = class AdminController {
     getDashboardStats() {
         return this.adminService.getDashboardStats();
     }
-    listUsers() {
-        return this.adminService.listUsers();
+    listUsers(query) {
+        return this.adminService.listUsers(query);
     }
     listOnlineUsers() {
         return this.adminService.listOnlineUsers();
@@ -62,8 +64,8 @@ let AdminController = class AdminController {
     blockUser(id, authUser, dto) {
         return this.adminService.blockUser(id, authUser, dto);
     }
-    listBlocks(status) {
-        return this.adminService.listBlocks(status);
+    listBlocks(query) {
+        return this.adminService.listBlocks(query);
     }
     unblockUserBlock(id, authUser, dto) {
         return this.adminService.unblockUserBlock(id, authUser, dto);
@@ -75,10 +77,10 @@ let AdminController = class AdminController {
         return this.adminService.deleteUser(id, authUser);
     }
     getModerationQueue(query) {
-        return this.adminService.getModerationQueue(query.status ?? 'pending');
+        return this.adminService.getModerationQueue(query);
     }
     getListingsAlias(query) {
-        return this.adminService.listListings(query.status);
+        return this.adminService.listListings(query);
     }
     listPromotions(query) {
         return this.adminService.listPromotions(query);
@@ -89,8 +91,8 @@ let AdminController = class AdminController {
     cancelPromotion(id, authUser) {
         return this.adminService.cancelPromotion(id, authUser);
     }
-    listWallets() {
-        return this.adminService.listWallets();
+    listWallets(query) {
+        return this.adminService.listWallets(query);
     }
     listWalletTransactions(query) {
         return this.adminService.listWalletTransactions(query);
@@ -153,8 +155,9 @@ __decorate([
 ], AdminController.prototype, "getDashboardStats", null);
 __decorate([
     (0, common_1.Get)('users'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [list_admin_users_dto_1.ListAdminUsersDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listUsers", null);
 __decorate([
@@ -203,9 +206,9 @@ __decorate([
 ], AdminController.prototype, "blockUser", null);
 __decorate([
     (0, common_1.Get)('blocks'),
-    __param(0, (0, common_1.Query)('status')),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [list_admin_blocks_dto_1.ListAdminBlocksDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listBlocks", null);
 __decorate([
@@ -271,8 +274,9 @@ __decorate([
 ], AdminController.prototype, "cancelPromotion", null);
 __decorate([
     (0, common_1.Get)('wallets'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [list_admin_users_dto_1.ListAdminUsersDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listWallets", null);
 __decorate([
@@ -314,7 +318,7 @@ __decorate([
     (0, common_1.Get)('referrals'),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [list_admin_bonus_analytics_dto_1.ListAdminBonusAnalyticsDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listReferrals", null);
 __decorate([

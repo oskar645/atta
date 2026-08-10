@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import 'package:atta/src/models/feed_ad.dart';
+import 'package:atta/src/utils/media_url.dart';
+
+const double feedAdBannerAspectRatio = 2.9;
 
 class FeedAdBanner extends StatelessWidget {
   final FeedAd ad;
@@ -19,6 +22,10 @@ class FeedAdBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.circular(16);
+    final imageUrl = resolvePublicMediaUrl(
+      ad.imageUrl,
+      categoryHint: 'feed-ads',
+    );
 
     return ClipRRect(
       borderRadius: borderRadius,
@@ -27,12 +34,12 @@ class FeedAdBanner extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           child: AspectRatio(
-            aspectRatio: 2.9,
+            aspectRatio: feedAdBannerAspectRatio,
             child: Stack(
               fit: StackFit.expand,
               children: [
                 CachedNetworkImage(
-                  imageUrl: ad.imageUrl,
+                  imageUrl: imageUrl,
                   fit: BoxFit.cover,
                   placeholder: (_, __) => Container(
                     color:

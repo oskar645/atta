@@ -104,7 +104,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen>
   }
 }
 
-class _ReportsTab extends StatelessWidget {
+class _ReportsTab extends StatefulWidget {
   const _ReportsTab({
     required this.stream,
     required this.emptyText,
@@ -118,9 +118,55 @@ class _ReportsTab extends StatelessWidget {
   final bool isProcessedTab;
 
   @override
+  State<_ReportsTab> createState() => _ReportsTabState();
+}
+
+class _ReportsTabState extends State<_ReportsTab> {
+  final ScrollController _scrollController = ScrollController();
+  bool _loadingMore = false;
+  Object? _loadMoreError;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_maybeLoadMore);
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients || _loadingMore) return;
+    if (_scrollController.position.extentAfter > 700) return;
+    final reports = context.read<ReportsService>();
+    if (!reports.canLoadMoreReports) return;
+    _loadMore();
+  }
+
+  Future<void> _loadMore() async {
+    setState(() {
+      _loadingMore = true;
+      _loadMoreError = null;
+    });
+    try {
+      await context.read<ReportsService>().loadMoreReports();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _loadMoreError = error);
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: stream,
+      stream: widget.stream,
       initialData: context.read<ReportsService>().peekAllReports(),
       builder: (context, snap) {
         if (snap.connectionState == ConnectionState.waiting &&
@@ -136,26 +182,55 @@ class _ReportsTab extends StatelessWidget {
           final isOpen = ReportsService.isOpenStatusValue(
             (item['status'] ?? '').toString(),
           );
-          return isProcessedTab ? !isOpen : isOpen;
+          return widget.isProcessedTab ? !isOpen : isOpen;
         }).toList(growable: false);
         if (items.isEmpty) {
-          return Center(child: Text(emptyText));
+          return Center(child: Text(widget.emptyText));
         }
 
         return RefreshIndicator(
-          onRefresh: () => context.read<ReportsService>().refreshReports(
-                force: true,
-              ),
+          onRefresh: () async {
+            await context.read<ReportsService>().refreshReports(force: true);
+          },
           child: ListView.separated(
+            controller: _scrollController,
             padding: const EdgeInsets.all(12),
-            itemCount: items.length,
+            itemCount: items.length + 1,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, index) => _ReportCard(
-              report: items[index],
-              highlight: initialReportId.trim().isNotEmpty &&
-                  (items[index]['id'] ?? '').toString().trim() ==
-                      initialReportId.trim(),
-            ),
+            itemBuilder: (_, index) {
+              if (index == items.length) {
+                if (_loadingMore) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
+                  );
+                }
+                if (_loadMoreError != null) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Center(
+                      child: Text(
+                        'Не удалось догрузить: $_loadMoreError',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+                return const SizedBox(height: 12);
+              }
+              return _ReportCard(
+                report: items[index],
+                highlight: widget.initialReportId.trim().isNotEmpty &&
+                    (items[index]['id'] ?? '').toString().trim() ==
+                        widget.initialReportId.trim(),
+              );
+            },
           ),
         );
       },

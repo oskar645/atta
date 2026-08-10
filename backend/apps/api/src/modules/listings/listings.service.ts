@@ -254,17 +254,6 @@ const getPaidFeedRank = (promotions?: PromotionLike[] | null): PaidFeedRank => {
 const comparePaidFeedListings = (a: FeedListingLike, b: FeedListingLike) => {
   const aRank = getPaidFeedRank(a.promotions);
   const bRank = getPaidFeedRank(b.promotions);
-  const tierWeight = {
-    turbo: 0,
-    vip: 1,
-    bump: 2,
-    none: 3,
-  } satisfies Record<PaidFeedRank['tier'], number>;
-
-  const tierDiff = tierWeight[aRank.tier] - tierWeight[bRank.tier];
-  if (tierDiff !== 0) {
-    return tierDiff;
-  }
 
   const activatedDiff =
     (bRank.activatedAt?.getTime() ?? 0) - (aRank.activatedAt?.getTime() ?? 0);
@@ -280,61 +269,24 @@ const buildPublicFeedOrder = <T extends FeedListingLike>(
   headSize = PROTECTED_FEED_HEAD_SIZE,
 ) => {
   const freshnessSorted = [...listings].sort(compareFeedByFreshness);
-  const naturalTop = freshnessSorted.slice(0, headSize);
+  const promotionInsertIndex = Math.max(0, headSize - 1);
   const movedPaid = freshnessSorted
     .slice(headSize)
-    .filter((listing) => getPaidFeedRank(listing.promotions).tier !== 'none');
+    .filter((listing) => getPaidFeedRank(listing.promotions).tier !== 'none')
+    .sort(comparePaidFeedListings);
 
   if (movedPaid.length === 0) {
     return freshnessSorted;
   }
 
   const movedIds = new Set(movedPaid.map((listing) => listing.id));
-  const placedIds = new Set<string>();
-  const protectedHead: Array<T | null> = Array.from({ length: headSize }, () => null);
-
-  for (const [index, listing] of naturalTop.entries()) {
-    if (getPaidFeedRank(listing.promotions).tier !== 'none') {
-      protectedHead[index] = listing;
-      placedIds.add(listing.id);
-    }
-  }
-
-  const availableSlots = protectedHead
-    .map((listing, index) => (listing == null ? index : -1))
-    .filter((index) => index >= 0)
-    .slice(-Math.min(movedPaid.length, protectedHead.filter((listing) => listing == null).length));
-
-  for (const [index, slot] of availableSlots.entries()) {
-    const listing = movedPaid[index];
-    if (listing == null) {
-      break;
-    }
-    protectedHead[slot] = listing;
-    placedIds.add(listing.id);
-  }
-
-  const naturalRest = freshnessSorted.filter(
-    (listing) => !movedIds.has(listing.id) && !placedIds.has(listing.id),
-  );
-  let regularIndex = 0;
-  for (let index = 0; index < protectedHead.length; index += 1) {
-    if (protectedHead[index] == null) {
-      protectedHead[index] = naturalRest[regularIndex] ?? null;
-      if (naturalRest[regularIndex] != null) {
-        placedIds.add(naturalRest[regularIndex]!.id);
-      }
-      regularIndex += 1;
-    }
-  }
-
   return [
-    ...protectedHead.filter((listing): listing is T => listing != null),
-    ...movedPaid.slice(availableSlots.length),
-    ...freshnessSorted.filter((listing) => !placedIds.has(listing.id)),
-  ].filter((listing, index, items) =>
-    items.findIndex((candidate) => candidate.id === listing.id) === index,
-  );
+    ...freshnessSorted.slice(0, promotionInsertIndex),
+    ...movedPaid,
+    ...freshnessSorted
+      .slice(promotionInsertIndex)
+      .filter((listing) => !movedIds.has(listing.id)),
+  ];
 };
 
 const toFeedCursorPayload = (listing: FeedListingLike): FeedCursorPayload => ({
@@ -807,22 +759,31 @@ export class ListingsService {
       moved AS (
         SELECT
           ranked.*,
-          SUM(
-            CASE
-              WHEN promoted_at IS NOT NULL
-                AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
-                THEN 1
-              ELSE 0
-            END
-          ) OVER (
-            ORDER BY natural_rank ASC
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-          ) AS moved_rank,
           COUNT(*) FILTER (
             WHERE promoted_at IS NOT NULL
               AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
           ) OVER () AS moved_count
         FROM ranked
+      ),
+      queued AS (
+        SELECT
+          moved.*,
+          CASE
+            WHEN promoted_at IS NOT NULL
+              AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+              THEN ROW_NUMBER() OVER (
+                PARTITION BY (
+                  promoted_at IS NOT NULL
+                    AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+                )
+                ORDER BY
+                  promoted_at DESC,
+                  created_at DESC,
+                  "id" DESC
+              )
+            ELSE NULL
+          END AS promotion_queue_rank
+        FROM moved
       ),
       ordered AS (
         SELECT
@@ -833,18 +794,18 @@ export class ListingsService {
           CASE
             WHEN promoted_at IS NOT NULL
               AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
-              THEN ${PROTECTED_FEED_HEAD_SIZE}
-                - LEAST(moved_count, ${PROTECTED_FEED_HEAD_SIZE})
-                + moved_rank
-            WHEN natural_rank >= (
-              ${PROTECTED_FEED_HEAD_SIZE}
-                - LEAST(moved_count, ${PROTECTED_FEED_HEAD_SIZE})
-                + 1
-            ) THEN natural_rank + LEAST(moved_count, ${PROTECTED_FEED_HEAD_SIZE})
+              THEN ${PROTECTED_FEED_HEAD_SIZE} + promotion_queue_rank - 1
+            WHEN natural_rank >= ${PROTECTED_FEED_HEAD_SIZE}
+              THEN natural_rank + moved_count
             ELSE natural_rank
           END AS sort_group,
-          COALESCE("published_at", "created_at") AS sort_at
-        FROM moved
+          CASE
+            WHEN promoted_at IS NOT NULL
+              AND natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+              THEN promoted_at
+            ELSE COALESCE("published_at", "created_at")
+          END AS sort_at
+        FROM queued
       )
       SELECT
         "id",

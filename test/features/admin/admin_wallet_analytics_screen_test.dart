@@ -25,7 +25,11 @@ void main() {
 
 class _FakeAdminWalletService extends AdminService {
   @override
-  Future<Map<String, dynamic>> wallets({bool forceRefresh = false}) async {
+  Future<Map<String, dynamic>> wallets({
+    bool forceRefresh = false,
+    int? limit,
+    String? cursor,
+  }) async {
     return <String, dynamic>{
       'items': <Map<String, dynamic>>[
         <String, dynamic>{
@@ -42,6 +46,8 @@ class _FakeAdminWalletService extends AdminService {
     String? type,
     String? reason,
     String? userId,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
   }) async {
     return <String, dynamic>{
@@ -69,6 +75,53 @@ class _FakeAdminWalletService extends AdminService {
         'promotion_vip': 0,
         'promotion_turbo': 0,
       },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> referralSummary({
+    String? period,
+    String? from,
+    String? to,
+    bool forceRefresh = false,
+  }) async {
+    return <String, dynamic>{
+      'newRegistrationsByInvite': 1,
+      'rewardedReferralBonuses': 1,
+      'referralPointsAwarded': 50,
+      'unfinishedInvites': 0,
+      'rewardFailures': 0,
+      'pointsPurchased': 0,
+      'pointsSpent': 0,
+      'dailyBonusesAwarded': 0,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> referrals({
+    String? period,
+    String? from,
+    String? to,
+    String? search,
+    String? userId,
+    int? limit,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    return <String, dynamic>{
+      'items': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'inviter': <String, dynamic>{
+            'id': 'user-1',
+            'name': 'Seller',
+          },
+          'referralCode': 'USER1',
+          'referralPoints': 50,
+          'invitations': const <Map<String, dynamic>>[],
+        },
+      ],
+      'hasMore': false,
+      'nextCursor': null,
     };
   }
 }

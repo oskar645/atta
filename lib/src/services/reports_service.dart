@@ -27,7 +27,10 @@ class ReportsService {
       StreamController<List<Map<String, dynamic>>>.broadcast();
   List<Map<String, dynamic>> _reportsCache = const <Map<String, dynamic>>[];
   Future<List<Map<String, dynamic>>>? _reportsInFlight;
+  Future<List<Map<String, dynamic>>>? _reportsLoadMoreInFlight;
   DateTime? _lastReportsFetchAt;
+  String? _reportsNextCursor;
+  bool _reportsHasMore = true;
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -125,9 +128,15 @@ class ReportsService {
       return existing;
     }
     final future = () async {
-      final response = await _api.listAdmin();
+      final response = await _api.listAdmin(limit: 50);
       final items = _extractItems(response).toList(growable: false);
       _reportsCache = items;
+      _reportsNextCursor =
+          (response['nextCursor'] ?? '').toString().trim().isEmpty
+              ? null
+              : (response['nextCursor'] ?? '').toString().trim();
+      _reportsHasMore =
+          response['hasMore'] == true || _reportsNextCursor != null;
       _lastReportsFetchAt = DateTime.now();
       _reportsController.add(List<Map<String, dynamic>>.from(items));
       return items;
@@ -138,6 +147,44 @@ class ReportsService {
     } finally {
       if (identical(_reportsInFlight, future)) {
         _reportsInFlight = null;
+      }
+    }
+  }
+
+  bool get canLoadMoreReports => _reportsHasMore && _reportsNextCursor != null;
+
+  Future<List<Map<String, dynamic>>> loadMoreReports() async {
+    final cursor = _reportsNextCursor;
+    if (!_reportsHasMore || cursor == null) {
+      return List<Map<String, dynamic>>.from(_reportsCache);
+    }
+    final existing = _reportsLoadMoreInFlight;
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.listAdmin(limit: 50, cursor: cursor);
+      final nextItems = _extractItems(response);
+      final seen =
+          _reportsCache.map((item) => (item['id'] ?? '').toString()).toSet();
+      _reportsCache = <Map<String, dynamic>>[
+        ..._reportsCache,
+        ...nextItems.where(
+          (item) => seen.add((item['id'] ?? '').toString()),
+        ),
+      ];
+      final nextCursor = (response['nextCursor'] ?? '').toString().trim();
+      _reportsNextCursor = nextCursor.isEmpty ? null : nextCursor;
+      _reportsHasMore =
+          response['hasMore'] == true || _reportsNextCursor != null;
+      _lastReportsFetchAt = DateTime.now();
+      _reportsController.add(List<Map<String, dynamic>>.from(_reportsCache));
+      return List<Map<String, dynamic>>.from(_reportsCache);
+    }();
+    _reportsLoadMoreInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_reportsLoadMoreInFlight, future)) {
+        _reportsLoadMoreInFlight = null;
       }
     }
   }

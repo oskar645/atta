@@ -19,20 +19,25 @@ class AdminAdsTab extends StatefulWidget {
 }
 
 class _AdminAdsTabState extends State<AdminAdsTab> {
-  int _reloadNonce = 0;
+  late Future<List<FeedAd>> _adsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _adsFuture = context.read<FeedAdsService>().loadAllAds();
+  }
 
   void _refreshAds() {
     if (!mounted) return;
-    setState(() => _reloadNonce++);
+    setState(() {
+      _adsFuture = context.read<FeedAdsService>().loadAllAds();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final ads = context.read<FeedAdsService>();
-
-    return StreamBuilder<List<FeedAd>>(
-      key: ValueKey(_reloadNonce),
-      stream: ads.streamAllAds(),
+    return FutureBuilder<List<FeedAd>>(
+      future: _adsFuture,
       builder: (context, snap) {
         if (snap.hasError) {
           return Center(child: Text('Ошибка загрузки рекламы: ${snap.error}'));
@@ -65,6 +70,14 @@ class _AdminAdsTabState extends State<AdminAdsTab> {
             Text(
               'Показывается только одна активная реклама. Новая активная запись автоматически выключает предыдущую. После окончания срока баннер сам исчезает с главной.',
               style: TextStyle(color: Theme.of(context).colorScheme.outline),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'После сохранения новая реклама остается выключенной. Чтобы показать ее на главной, нажмите «Включить» в карточке.',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 16),
             if (items.isEmpty)
@@ -140,9 +153,18 @@ class _AdCard extends StatelessWidget {
               onTap: ad.hasLink
                   ? () async {
                       final uri = Uri.tryParse(ad.targetUrl);
-                      if (uri == null) return;
-                      await launchUrl(uri,
-                          mode: LaunchMode.externalApplication);
+                      if (uri == null ||
+                          !uri.hasScheme ||
+                          !uri.hasAuthority ||
+                          (uri.scheme != 'http' && uri.scheme != 'https')) {
+                        return;
+                      }
+                      try {
+                        await launchUrl(
+                          uri,
+                          mode: LaunchMode.externalApplication,
+                        );
+                      } catch (_) {}
                     }
                   : null,
             ),
@@ -198,19 +220,21 @@ class _AdCard extends StatelessWidget {
               runSpacing: 8,
               children: [
                 FilledButton.tonalIcon(
-                  onPressed: () async {
-                    try {
-                      await ads.activateAd(ad.id);
-                      onChanged();
-                      if (!context.mounted) return;
-                      showAppSnack(context, 'Реклама включена');
-                    } catch (e) {
-                      if (!context.mounted) return;
-                      showAppSnack(context, 'Ошибка: $e', isError: true);
-                    }
-                  },
+                  onPressed: ad.isVisibleNow
+                      ? null
+                      : () async {
+                          try {
+                            await ads.activateAd(ad.id);
+                            onChanged();
+                            if (!context.mounted) return;
+                            showAppSnack(context, 'Реклама включена');
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            showAppSnack(context, 'Ошибка: $e', isError: true);
+                          }
+                        },
                   icon: const Icon(Icons.play_arrow),
-                  label: const Text('Включить'),
+                  label: Text(ad.isVisibleNow ? 'Включена' : 'Включить'),
                 ),
                 OutlinedButton.icon(
                   onPressed: ad.isActive
@@ -233,7 +257,10 @@ class _AdCard extends StatelessWidget {
                   onPressed: () async {
                     final changed = await showDialog<bool>(
                       context: context,
-                      builder: (_) => _AdEditorDialog(existing: ad),
+                      builder: (_) => _AdEditorDialog(
+                        existing: ad,
+                        onUploadedImage: onChanged,
+                      ),
                     );
                     if (changed == true) onChanged();
                   },
@@ -313,8 +340,12 @@ class _MetaPill extends StatelessWidget {
 
 class _AdEditorDialog extends StatefulWidget {
   final FeedAd? existing;
+  final VoidCallback? onUploadedImage;
 
-  const _AdEditorDialog({this.existing});
+  const _AdEditorDialog({
+    this.existing,
+    this.onUploadedImage,
+  });
 
   @override
   State<_AdEditorDialog> createState() => _AdEditorDialogState();
@@ -333,6 +364,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
   late int _durationDays = widget.existing?.durationDays ?? 10;
   bool _saving = false;
   bool _uploadingImage = false;
+  _EditedAdImage? _pendingImage;
 
   @override
   void dispose() {
@@ -346,22 +378,27 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
     final title = _titleCtrl.text.trim();
     final imageUrl = _imageCtrl.text.trim();
     final targetUrl = _linkCtrl.text.trim();
+    final pendingImage = _pendingImage;
 
-    if (imageUrl.isEmpty) {
+    if (imageUrl.isEmpty && pendingImage == null) {
       showAppSnack(context, 'Укажи ссылку на картинку', isError: true);
       return;
     }
 
-    final imageUri = Uri.tryParse(imageUrl);
-    if (imageUri == null || !(imageUri.hasScheme && imageUri.hasAuthority)) {
-      showAppSnack(context, 'Ссылка на картинку некорректна', isError: true);
-      return;
+    if (imageUrl.isNotEmpty) {
+      final imageUri = Uri.tryParse(imageUrl);
+      if (imageUri == null || !(imageUri.hasScheme && imageUri.hasAuthority)) {
+        showAppSnack(context, 'Ссылка на картинку некорректна', isError: true);
+        return;
+      }
     }
 
     if (targetUrl.isNotEmpty) {
       final targetUri = Uri.tryParse(targetUrl);
       if (targetUri == null ||
-          !(targetUri.hasScheme && targetUri.hasAuthority)) {
+          !targetUri.hasScheme ||
+          !targetUri.hasAuthority ||
+          (targetUri.scheme != 'http' && targetUri.scheme != 'https')) {
         showAppSnack(context, 'Ссылка перехода некорректна', isError: true);
         return;
       }
@@ -371,14 +408,18 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
     setState(() => _saving = true);
     try {
       if (widget.existing == null) {
-        await ads.createAd(
-          FeedAd.createDraft(
-            title: title,
-            imageUrl: imageUrl,
-            targetUrl: targetUrl,
-            durationDays: _durationDays,
-          ),
+        final draft = FeedAd.createDraft(
+          title: title,
+          imageUrl: imageUrl,
+          targetUrl: targetUrl,
+          durationDays: _durationDays,
         );
+        final saved = await ads.createAdWithImage(
+          ad: draft,
+          imageBytes: pendingImage?.bytes,
+          imageContentType: pendingImage?.contentType ?? 'image/jpeg',
+        );
+        _imageCtrl.text = saved.imageUrl;
       } else {
         await ads.updateAd(
           adId: widget.existing!.id,
@@ -416,16 +457,27 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
       if (edited == null || !mounted) return;
 
       final ads = context.read<FeedAdsService>();
+      final existingId = widget.existing?.id;
+      if (existingId == null) {
+        _pendingImage = edited;
+        _imageCtrl.clear();
+        setState(() {});
+        showAppSnack(context, 'Картинка будет загружена при сохранении');
+        return;
+      }
+
       setState(() => _uploadingImage = true);
       final url = await ads.uploadAdImage(
-        feedAdId: widget.existing?.id,
+        feedAdId: existingId,
         bytes: edited.bytes,
         contentType: edited.contentType,
       );
       if (!mounted) return;
 
+      _pendingImage = null;
       _imageCtrl.text = url;
       setState(() {});
+      widget.onUploadedImage?.call();
       showAppSnack(context, 'Картинка загружена');
     } catch (e) {
       if (!mounted) return;
@@ -500,7 +552,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
                   labelText: 'Ссылка на картинку',
                   border: OutlineInputBorder(),
                 ),
-                onChanged: (_) => setState(() {}),
+                onChanged: (_) => setState(() => _pendingImage = null),
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -529,6 +581,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
                       onPressed: (_saving || _uploadingImage)
                           ? null
                           : () {
+                              _pendingImage = null;
                               _imageCtrl.clear();
                               setState(() {});
                             },
@@ -538,7 +591,9 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
               ),
               const SizedBox(height: 4),
               Text(
-                'Можно оставить ссылку вручную или загрузить свою картинку из галереи/камеры.',
+                _pendingImage == null
+                    ? 'Можно оставить ссылку вручную или загрузить свою картинку из галереи/камеры.'
+                    : 'Выбранная картинка будет загружена после создания записи.',
                 style: TextStyle(color: Theme.of(context).colorScheme.outline),
               ),
               const SizedBox(height: 12),
@@ -573,7 +628,13 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
                 style: TextStyle(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 8),
-              FeedAdBanner(ad: preview, showBadge: true),
+              if (_pendingImage == null)
+                FeedAdBanner(ad: preview, showBadge: true)
+              else
+                _PendingAdPreview(
+                  image: _pendingImage!,
+                  title: preview.displayTitle,
+                ),
             ],
           ),
         ),
@@ -604,6 +665,81 @@ class _EditedAdImage {
   });
 }
 
+class _PendingAdPreview extends StatelessWidget {
+  const _PendingAdPreview({
+    required this.image,
+    required this.title,
+  });
+
+  final _EditedAdImage image;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: AspectRatio(
+        aspectRatio: feedAdBannerAspectRatio,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(image.bytes, fit: BoxFit.cover),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withValues(alpha: 0.54),
+                    Colors.black.withValues(alpha: 0.12),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.9),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Реклама',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      height: 1.08,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _AdImageEditorScreen extends StatefulWidget {
   final Uint8List initialBytes;
 
@@ -616,7 +752,7 @@ class _AdImageEditorScreen extends StatefulWidget {
 }
 
 class _AdImageEditorScreenState extends State<_AdImageEditorScreen> {
-  static const double _bannerAspectRatio = 2.15;
+  static const double _bannerAspectRatio = feedAdBannerAspectRatio;
   static const double _maxScale = 4.0;
 
   final TransformationController _controller = TransformationController();

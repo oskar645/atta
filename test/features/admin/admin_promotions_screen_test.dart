@@ -73,6 +73,8 @@ class _FakeAdminService extends AdminService {
     String? type,
     String? userId,
     String? listingId,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
   }) async {
     promotionsCalls += 1;

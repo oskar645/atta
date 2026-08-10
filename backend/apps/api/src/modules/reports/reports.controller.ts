@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -8,6 +8,7 @@ import { ChatsGateway } from '../chats/chats.gateway';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { CreateReportDto } from './dto/create-report.dto';
 import { ModerateReportDto } from './dto/moderate-report.dto';
+import { ListAdminReportsDto } from './dto/list-admin-reports.dto';
 import { ReportsService } from './reports.service';
 
 @Controller('reports')
@@ -58,8 +59,8 @@ export class AdminReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get()
-  list() {
-    return this.reportsService.listForAdmin();
+  list(@Query() query: ListAdminReportsDto) {
+    return this.reportsService.listForAdmin(query);
   }
 
   @Patch(':id/resolve')

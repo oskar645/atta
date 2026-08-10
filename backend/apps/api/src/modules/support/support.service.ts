@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { normalizeStoredMediaUrl } from '../../common/serializers';
+import { ListAdminSupportTicketsDto } from './dto/list-admin-support-tickets.dto';
 
 @Injectable()
 export class SupportService {
@@ -26,6 +27,30 @@ export class SupportService {
     private readonly notificationsService: NotificationsService,
     private readonly storageService: StorageService,
   ) {}
+
+  private pageLimit(value: number | undefined, fallback = 50) {
+    const parsed = Number(value ?? fallback);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(Math.max(Math.trunc(parsed), 1), 100);
+  }
+
+  private encodeAdminCursor(value: Record<string, string>) {
+    return Buffer.from(JSON.stringify(value)).toString('base64url');
+  }
+
+  private decodeAdminCursor(cursor?: string) {
+    const normalized = cursor?.trim();
+    if (!normalized) return null;
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(normalized, 'base64url').toString('utf8'),
+      );
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed as Record<string, string>;
+    } catch {
+      return null;
+    }
+  }
 
   private decodeContent(rawText: string | null | undefined) {
     const text = rawText?.trim() ?? '';
@@ -212,8 +237,23 @@ export class SupportService {
     };
   }
 
-  async listTickets() {
+  async listTickets(query: ListAdminSupportTicketsDto = {}) {
+    const limit = this.pageLimit(query.limit);
+    const decoded = this.decodeAdminCursor(query.cursor);
+    const rawUpdatedAt = decoded?.updatedAt;
+    const cursorDate = rawUpdatedAt ? new Date(rawUpdatedAt) : null;
+    const cursorId = decoded?.id;
     const items = await this.prisma.supportTicket.findMany({
+      where: {
+        ...(cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
+          ? {
+              OR: [
+                { updatedAt: { lt: cursorDate } },
+                { updatedAt: cursorDate, id: { lt: cursorId } },
+              ],
+            }
+          : {}),
+      },
       include: {
         messages: {
           orderBy: {
@@ -222,14 +262,23 @@ export class SupportService {
           take: 1,
         },
       },
-      orderBy: {
-        updatedAt: 'desc',
-      },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const pageItems = items.slice(0, limit);
+    const last = items.length > limit ? pageItems[pageItems.length - 1] : null;
 
     return {
       source: 'timeweb',
-      items: items.map((ticket) => this.serializeTicket(ticket)),
+      items: pageItems.map((ticket) => this.serializeTicket(ticket)),
+      nextCursor: last
+        ? this.encodeAdminCursor({
+            updatedAt: last.updatedAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+      hasMore: items.length > limit,
+      limit,
     };
   }
 

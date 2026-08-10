@@ -17,14 +17,29 @@ class SavedSearch {
   final String category;
   final String search;
   final String subcategory;
+  final int? priceFrom;
+  final int? priceTo;
   final String location;
   final bool preferLocationFirst;
   final int? radiusKm;
   final String autoBrand;
   final String autoModel;
   final String autoCondition;
+  final int? autoYearFrom;
+  final int? autoYearTo;
+  final int? autoMileageFrom;
   final int? autoMileageTo;
+  final String autoTransmission;
+  final String autoDrive;
+  final String autoBodyType;
+  final String autoFuel;
+  final String autoColor;
+  final double? autoEngineVolumeFrom;
+  final double? autoEngineVolumeTo;
+  final int? autoOwners;
+  final bool? autoCleared;
   final bool onlyUncrashed;
+  final bool onlyWithPhoto;
   final bool alertsEnabled;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -37,14 +52,29 @@ class SavedSearch {
     required this.category,
     required this.search,
     required this.subcategory,
+    required this.priceFrom,
+    required this.priceTo,
     required this.location,
     required this.preferLocationFirst,
     required this.radiusKm,
     required this.autoBrand,
     required this.autoModel,
     required this.autoCondition,
+    required this.autoYearFrom,
+    required this.autoYearTo,
+    required this.autoMileageFrom,
     required this.autoMileageTo,
+    required this.autoTransmission,
+    required this.autoDrive,
+    required this.autoBodyType,
+    required this.autoFuel,
+    required this.autoColor,
+    required this.autoEngineVolumeFrom,
+    required this.autoEngineVolumeTo,
+    required this.autoOwners,
+    required this.autoCleared,
     required this.onlyUncrashed,
+    required this.onlyWithPhoto,
     required this.alertsEnabled,
     required this.createdAt,
     required this.updatedAt,
@@ -64,22 +94,40 @@ class SavedSearch {
       return int.tryParse((raw ?? '').toString());
     }
 
+    final queryKey = (row['query_key'] ?? '').toString();
+    final keyFilters = _filtersFromQueryKey(queryKey);
+
     return SavedSearch(
       id: (row['id'] ?? '').toString(),
       userId: (row['user_id'] ?? '').toString(),
       title: (row['title'] ?? '').toString(),
-      queryKey: (row['query_key'] ?? '').toString(),
+      queryKey: queryKey,
       category: (row['category'] ?? '').toString(),
       search: (row['search'] ?? '').toString(),
       subcategory: (row['subcategory'] ?? '').toString(),
+      priceFrom: keyFilters?.priceFrom,
+      priceTo: keyFilters?.priceTo,
       location: (row['location'] ?? '').toString(),
       preferLocationFirst: row['prefer_location_first'] == true,
       radiusKm: parseNullableInt(row['radius_km']),
       autoBrand: (row['auto_brand'] ?? '').toString(),
       autoModel: (row['auto_model'] ?? '').toString(),
       autoCondition: (row['auto_condition'] ?? '').toString(),
+      autoYearFrom: keyFilters?.autoYearFrom,
+      autoYearTo: keyFilters?.autoYearTo,
+      autoMileageFrom: keyFilters?.autoMileageFrom,
       autoMileageTo: parseNullableInt(row['auto_mileage_to']),
+      autoTransmission: keyFilters?.autoTransmission ?? '',
+      autoDrive: keyFilters?.autoDrive ?? '',
+      autoBodyType: keyFilters?.autoBodyType ?? '',
+      autoFuel: keyFilters?.autoFuel ?? '',
+      autoColor: keyFilters?.autoColor ?? '',
+      autoEngineVolumeFrom: keyFilters?.autoEngineVolumeFrom,
+      autoEngineVolumeTo: keyFilters?.autoEngineVolumeTo,
+      autoOwners: keyFilters?.autoOwners,
+      autoCleared: keyFilters?.autoCleared,
       onlyUncrashed: row['only_uncrashed'] == true,
+      onlyWithPhoto: keyFilters?.onlyWithPhoto ?? false,
       alertsEnabled: row['alerts_enabled'] != false,
       createdAt: parseDate(row['created_at']),
       updatedAt: parseDate(row['updated_at']),
@@ -91,14 +139,62 @@ class SavedSearch {
       category: category,
       search: search,
       subcategory: subcategory,
+      priceFrom: priceFrom,
+      priceTo: priceTo,
       location: location,
       preferLocationFirst: preferLocationFirst,
       radiusKm: radiusKm,
       autoBrand: autoBrand,
       autoModel: autoModel,
       autoCondition: autoCondition,
+      autoYearFrom: autoYearFrom,
+      autoYearTo: autoYearTo,
+      autoMileageFrom: autoMileageFrom,
       autoMileageTo: autoMileageTo,
+      autoTransmission: autoTransmission,
+      autoDrive: autoDrive,
+      autoBodyType: autoBodyType,
+      autoFuel: autoFuel,
+      autoColor: autoColor,
+      autoEngineVolumeFrom: autoEngineVolumeFrom,
+      autoEngineVolumeTo: autoEngineVolumeTo,
+      autoOwners: autoOwners,
+      autoCleared: autoCleared,
       onlyUncrashed: onlyUncrashed,
+      onlyWithPhoto: onlyWithPhoto,
+    );
+  }
+
+  static ListingFeedFilters? _filtersFromQueryKey(String queryKey) {
+    final parts = queryKey.split('|');
+    if (parts.length != 26) return null;
+    return ListingFeedFilters(
+      category: parts[1],
+      search: parts[0],
+      subcategory: parts[2],
+      priceFrom: int.tryParse(parts[3]),
+      priceTo: int.tryParse(parts[4]),
+      location: parts[5],
+      preferLocationFirst: parts[6] == '1',
+      radiusKm: int.tryParse(parts[7]),
+      autoBrand: parts[8],
+      autoModel: parts[9],
+      autoCondition: parts[10],
+      autoYearFrom: int.tryParse(parts[11]),
+      autoYearTo: int.tryParse(parts[12]),
+      autoMileageFrom: int.tryParse(parts[13]),
+      autoMileageTo: int.tryParse(parts[14]),
+      autoTransmission: parts[15],
+      autoDrive: parts[16],
+      autoBodyType: parts[17],
+      autoFuel: parts[18],
+      autoColor: parts[19],
+      autoEngineVolumeFrom: double.tryParse(parts[20]),
+      autoEngineVolumeTo: double.tryParse(parts[21]),
+      autoOwners: int.tryParse(parts[22]),
+      autoCleared: parts[23].isEmpty ? null : parts[23] == 'true',
+      onlyUncrashed: parts[24] == '1',
+      onlyWithPhoto: parts[25] == '1',
     );
   }
 }
@@ -194,18 +290,65 @@ class SavedSearchService {
     String norm(String value) =>
         value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 
+    final hasExtendedFilters = filters.priceFrom != null ||
+        filters.priceTo != null ||
+        filters.autoYearFrom != null ||
+        filters.autoYearTo != null ||
+        filters.autoMileageFrom != null ||
+        filters.autoTransmission.trim().isNotEmpty ||
+        filters.autoDrive.trim().isNotEmpty ||
+        filters.autoBodyType.trim().isNotEmpty ||
+        filters.autoFuel.trim().isNotEmpty ||
+        filters.autoColor.trim().isNotEmpty ||
+        filters.autoEngineVolumeFrom != null ||
+        filters.autoEngineVolumeTo != null ||
+        filters.autoOwners != null ||
+        filters.autoCleared != null ||
+        filters.onlyWithPhoto;
+
+    if (!hasExtendedFilters) {
+      return [
+        norm(search),
+        norm(filters.category),
+        norm(filters.subcategory),
+        norm(filters.location),
+        filters.preferLocationFirst ? '1' : '0',
+        filters.radiusKm?.toString() ?? '',
+        norm(filters.autoBrand),
+        norm(filters.autoModel),
+        norm(filters.autoCondition),
+        filters.autoMileageTo?.toString() ?? '',
+        filters.onlyUncrashed ? '1' : '0',
+      ].join('|');
+    }
+
     return [
       norm(search),
       norm(filters.category),
       norm(filters.subcategory),
+      filters.priceFrom?.toString() ?? '',
+      filters.priceTo?.toString() ?? '',
       norm(filters.location),
       filters.preferLocationFirst ? '1' : '0',
       filters.radiusKm?.toString() ?? '',
       norm(filters.autoBrand),
       norm(filters.autoModel),
       norm(filters.autoCondition),
+      filters.autoYearFrom?.toString() ?? '',
+      filters.autoYearTo?.toString() ?? '',
+      filters.autoMileageFrom?.toString() ?? '',
       filters.autoMileageTo?.toString() ?? '',
+      norm(filters.autoTransmission),
+      norm(filters.autoDrive),
+      norm(filters.autoBodyType),
+      norm(filters.autoFuel),
+      norm(filters.autoColor),
+      filters.autoEngineVolumeFrom?.toString() ?? '',
+      filters.autoEngineVolumeTo?.toString() ?? '',
+      filters.autoOwners?.toString() ?? '',
+      filters.autoCleared?.toString() ?? '',
       filters.onlyUncrashed ? '1' : '0',
+      filters.onlyWithPhoto ? '1' : '0',
     ].join('|');
   }
 
@@ -217,12 +360,27 @@ class SavedSearchService {
         (filters.category.trim().isNotEmpty && filters.category != 'Все') ||
         (filters.subcategory.trim().isNotEmpty &&
             filters.subcategory != 'Все') ||
+        filters.priceFrom != null ||
+        filters.priceTo != null ||
         filters.location.trim().isNotEmpty ||
         filters.autoBrand.trim().isNotEmpty ||
         filters.autoModel.trim().isNotEmpty ||
         filters.autoCondition.trim().isNotEmpty ||
+        filters.autoYearFrom != null ||
+        filters.autoYearTo != null ||
+        filters.autoMileageFrom != null ||
         filters.autoMileageTo != null ||
-        filters.onlyUncrashed;
+        filters.autoTransmission.trim().isNotEmpty ||
+        filters.autoDrive.trim().isNotEmpty ||
+        filters.autoBodyType.trim().isNotEmpty ||
+        filters.autoFuel.trim().isNotEmpty ||
+        filters.autoColor.trim().isNotEmpty ||
+        filters.autoEngineVolumeFrom != null ||
+        filters.autoEngineVolumeTo != null ||
+        filters.autoOwners != null ||
+        filters.autoCleared != null ||
+        filters.onlyUncrashed ||
+        filters.onlyWithPhoto;
   }
 
   String buildTitle({
@@ -273,8 +431,34 @@ class SavedSearchService {
     if (filters.autoCondition.trim().isNotEmpty) {
       parts.add(filters.autoCondition);
     }
+    if (filters.priceFrom != null || filters.priceTo != null) {
+      parts.add(
+        '${filters.priceFrom == null ? '' : 'от ${filters.priceFrom} ₽'}'
+                ' ${filters.priceTo == null ? '' : 'до ${filters.priceTo} ₽'}'
+            .trim(),
+      );
+    }
+    if (filters.autoYearFrom != null || filters.autoYearTo != null) {
+      parts.add(
+        '${filters.autoYearFrom == null ? '' : 'от ${filters.autoYearFrom} г.'}'
+                ' ${filters.autoYearTo == null ? '' : 'до ${filters.autoYearTo} г.'}'
+            .trim(),
+      );
+    }
+    if (filters.autoMileageFrom != null) {
+      parts.add('от ${filters.autoMileageFrom} км');
+    }
     if (filters.autoMileageTo != null) {
       parts.add('до ${filters.autoMileageTo} км');
+    }
+    if (filters.autoTransmission.trim().isNotEmpty) {
+      parts.add(filters.autoTransmission);
+    }
+    if (filters.autoDrive.trim().isNotEmpty) {
+      parts.add(filters.autoDrive);
+    }
+    if (filters.onlyWithPhoto) {
+      parts.add('с фото');
     }
     if (filters.onlyUncrashed) {
       parts.add('не битые');

@@ -31,6 +31,7 @@ import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/utils/share_texts.dart';
 import 'package:atta/src/utils/vehicle_specs.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
@@ -1791,11 +1792,19 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        _sellerName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _sellerName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          AdminCopyUserIdButton(userId: widget.sellerId),
+                        ],
                       ),
                       const SizedBox(height: 6),
                       Text(

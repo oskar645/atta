@@ -35,7 +35,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('225 бонусов', findRichText: true), findsOneWidget);
-    expect(find.text('Ежедневный бонус: +25 бонусов'), findsOneWidget);
+    expect(find.text('Ежедневный бонус: +15 бонусов'), findsOneWidget);
     expect(
       find.text(
         'Приглашение друга: получите 100 бонусов, когда приглашённый пользователь зарегистрируется в ATTA.',
@@ -142,7 +142,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('225 бонусов', findRichText: true), findsOneWidget);
-    expect(find.text('Начислено 25 бонусов за вход'), findsOneWidget);
+    expect(find.text('Начислено 15 бонусов за вход'), findsOneWidget);
 
     await tester.drag(find.byType(RefreshIndicator), const Offset(0, 300));
     await tester.pump();
@@ -371,7 +371,7 @@ class _FakeWalletService extends WalletService {
       'balance': 225,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 25,
+      'dailyBonusAmount': 15,
       'lastDailyBonusAt': '2026-06-19T10:00:00.000Z',
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
@@ -395,7 +395,7 @@ List<WalletTransaction> _singleTransaction() {
       'user_id': 'user-1',
       'wallet_id': 'wallet-1',
       'type': 'accrual',
-      'amount': 25,
+      'amount': 15,
       'reason': 'daily_login_bonus',
       'created_at': '2026-06-19T10:00:00.000Z',
     }),
@@ -421,7 +421,7 @@ class _TransactionsFailingWalletService extends _FakeWalletService {
         'balance': 225,
         'maxBalance': 1000,
         'welcomeBonus': 200,
-        'dailyBonusAmount': 25,
+        'dailyBonusAmount': 15,
         'canClaimDailyBonus': false,
       });
 
@@ -450,7 +450,7 @@ class _RefreshingWalletService extends WalletService {
       'balance': balance,
       'maxBalance': 10000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 25,
+      'dailyBonusAmount': 15,
       'lastDailyBonusAt': '2026-06-19T10:00:00.000Z',
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
@@ -524,7 +524,7 @@ class _SucceededTopUpWalletService extends WalletService {
       'balance': _walletFetches == 1 ? 225 : 325,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 25,
+      'dailyBonusAmount': 15,
       'canClaimDailyBonus': false,
     });
   }
@@ -558,7 +558,7 @@ class _CachedThenRefreshingWalletService extends WalletService {
         'balance': 225,
         'maxBalance': 1000,
         'welcomeBonus': 200,
-        'dailyBonusAmount': 25,
+        'dailyBonusAmount': 15,
         'canClaimDailyBonus': false,
       });
 
@@ -569,7 +569,7 @@ class _CachedThenRefreshingWalletService extends WalletService {
       'balance': 325,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 25,
+      'dailyBonusAmount': 15,
       'canClaimDailyBonus': false,
     });
   }

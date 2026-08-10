@@ -1,4 +1,5 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 const listingStatuses = [
   'pending',
@@ -15,4 +16,15 @@ export class ListAdminListingsDto {
   @IsString()
   @IsIn(listingStatuses)
   status?: (typeof listingStatuses)[number];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @Type(() => Number)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  cursor?: string;
 }

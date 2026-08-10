@@ -43,11 +43,11 @@ class Wallet {
               .toInt()
           : 500,
       dailyBonusAmount:
-          (map['dailyBonusAmount'] ?? map['daily_bonus_amount'] ?? 25) is num
-              ? ((map['dailyBonusAmount'] ?? map['daily_bonus_amount'] ?? 25)
+          (map['dailyBonusAmount'] ?? map['daily_bonus_amount'] ?? 15) is num
+              ? ((map['dailyBonusAmount'] ?? map['daily_bonus_amount'] ?? 15)
                       as num)
                   .toInt()
-              : 25,
+              : 15,
       lastDailyBonusAt: _parseDate(
         map['lastDailyBonusAt'] ?? map['last_daily_bonus_at'],
       ),

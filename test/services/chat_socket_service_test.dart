@@ -181,7 +181,7 @@ void main() {
     expect(service.reconnectScheduleCount, 1);
   });
 
-  test('server initiated disconnect does not schedule reconnect loop',
+  test('server initiated disconnect schedules first controlled retry',
       () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -196,12 +196,24 @@ void main() {
 
     socket.emitDisconnect('io server disconnect');
 
-    expect(service.hasPendingReconnect, isFalse);
-    expect(service.reconnectScheduleCount, 0);
+    expect(service.hasPendingReconnect, isTrue);
+    expect(service.reconnectScheduleCount, 1);
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains(
+          'reconnect scheduled after server disconnect delay=1s',
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      service.debugHistory.any((entry) => entry.contains('cooldown=30s')),
+      isFalse,
+    );
   });
 
   test(
-      'server initiated disconnect sets cooldown and suppresses new connect attempts',
+      'server initiated disconnect keeps connect non-blocking while retry is scheduled',
       () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -221,7 +233,7 @@ void main() {
     expect(factory.createdSockets, hasLength(1));
     expect(
       service.debugHistory.where(
-        (entry) => entry.contains('cooldown after server disconnect'),
+        (entry) => entry.contains('reconnect already scheduled'),
       ),
       hasLength(2),
     );
@@ -246,8 +258,8 @@ void main() {
     await service.ping(reason: 'presence.heartbeat');
 
     expect(factory.createdSockets, hasLength(1));
-    expect(service.hasPendingReconnect, isFalse);
-    expect(service.reconnectScheduleCount, 0);
+    expect(service.hasPendingReconnect, isTrue);
+    expect(service.reconnectScheduleCount, 1);
     expect(
       service.debugHistory.where(
         (entry) => entry.contains('reason=presence.heartbeat'),
@@ -281,6 +293,167 @@ void main() {
             entry.contains('reason=presence.heartbeat'),
       ),
       isEmpty,
+    );
+  });
+
+  test('successive server disconnects use 1s 2s 3s retry before cooldown',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+    expect(
+      service.debugHistory.any((entry) => entry.contains('delay=1s')),
+      isTrue,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(factory.createdSockets, hasLength(2));
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+    expect(
+      service.debugHistory.any((entry) => entry.contains('delay=2s')),
+      isTrue,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 2100));
+    expect(factory.createdSockets, hasLength(3));
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+    expect(
+      service.debugHistory.any((entry) => entry.contains('delay=3s')),
+      isTrue,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 3100));
+    expect(factory.createdSockets, hasLength(4));
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+
+    expect(service.hasPendingReconnect, isFalse);
+    expect(
+      service.debugHistory.last,
+      contains('cooldown=5s'),
+    );
+  });
+
+  test('protective server disconnect cooldown backs off after more rejects',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    for (final delay in const <Duration>[
+      Duration(milliseconds: 1100),
+      Duration(milliseconds: 2100),
+      Duration(milliseconds: 3100),
+    ]) {
+      factory.createdSockets.last.emitDisconnect('io server disconnect');
+      await Future<void>.delayed(delay);
+    }
+
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+    expect(service.debugHistory.last, contains('cooldown=5s'));
+
+    await Future<void>.delayed(const Duration(milliseconds: 5100));
+    await service.forceReconnect(reason: 'presence.resume');
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+
+    expect(service.debugHistory.last, contains('cooldown=10s'));
+  });
+
+  test('stable connection resets server disconnect retry counter', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(factory.createdSockets, hasLength(2));
+
+    await Future<void>.delayed(const Duration(milliseconds: 8200));
+    factory.createdSockets.last.emitDisconnect('io server disconnect');
+
+    expect(
+      service.debugHistory
+          .where(
+            (entry) => entry.contains(
+              'reconnect scheduled after server disconnect delay=1s',
+            ),
+          )
+          .length,
+      2,
+    );
+  });
+
+  test('concurrent resume recoveries share one reconnect attempt', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+    factory.createdSockets.single.ackError =
+        TimeoutException('stale transport');
+
+    final first = service.recoverAfterResume(reason: 'presence.resume');
+    final second = service.recoverAfterResume(reason: 'chat.handleAppResumed');
+    await Future.wait<void>(<Future<void>>[first, second]);
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connectCalls, 1);
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains('Socket resume recovery joined'),
+      ),
+      isTrue,
+    );
+  });
+
+  test('auth rejection suppresses automatic server disconnect retry', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: false);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    final connect = service.connect(reason: 'login');
+    await Future<void>.delayed(Duration.zero);
+    final socket = factory.createdSockets.single;
+
+    socket.emitError(<String, dynamic>{
+      'message': 'Access token is invalid or expired',
+    });
+    socket.emitDisconnect('io server disconnect');
+    await connect;
+    await service.connect(reason: 'chat.ensureReady');
+
+    expect(service.hasPendingReconnect, isFalse);
+    expect(service.reconnectScheduleCount, 0);
+    expect(factory.createdSockets, hasLength(1));
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains('server disconnect auth_or_missing_user'),
+      ),
+      isTrue,
     );
   });
 
@@ -747,6 +920,12 @@ class _FakeChatSocketClient implements ChatSocketClient {
   void emitConnectError(Object error) {
     for (final handler
         in List<void Function(dynamic)>.from(_connectErrorHandlers)) {
+      handler(error);
+    }
+  }
+
+  void emitError(Object error) {
+    for (final handler in List<void Function(dynamic)>.from(_errorHandlers)) {
       handler(error);
     }
   }

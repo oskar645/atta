@@ -263,7 +263,7 @@ Map<String, dynamic> _walletFixture() {
     'balance': 100,
     'max_balance': 1000,
     'welcome_bonus': 100,
-    'daily_bonus_amount': 25,
+    'daily_bonus_amount': 15,
     'can_claim_daily_bonus': false,
     'days_until_next_accrual': 0,
     'seconds_until_next_accrual': 0,

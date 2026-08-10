@@ -12,6 +12,7 @@ import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -55,10 +56,83 @@ void main() {
 
     expect(find.text('Новое объявление'), findsOneWidget);
   });
+
+  testWidgets('admin can copy seller userId from public profile',
+      (tester) async {
+    String? clipboardText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          final data = Map<String, dynamic>.from(call.arguments as Map);
+          clipboardText = data['text'] as String?;
+          return null;
+        }
+        if (call.method == 'Clipboard.getData') {
+          return <String, dynamic>{'text': clipboardText};
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildApp(
+        listings: _FakeSellerListingsService(),
+        auth: _FakeAuthService(isAdmin: true),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('admin_copy_user_id_button')),
+        findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('admin_copy_user_id_button')));
+    await tester.pump();
+
+    final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+    expect(clipboard?.text, 'seller-1');
+    expect(find.text('ID скопирован'), findsOneWidget);
+  });
+
+  testWidgets('regular user does not see seller userId copy button',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildApp(
+        listings: _FakeSellerListingsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+        find.byKey(const ValueKey('admin_copy_user_id_button')), findsNothing);
+  });
+
+  testWidgets('empty seller userId does not show copy button', (tester) async {
+    await tester.pumpWidget(
+      _buildApp(
+        listings: _FakeSellerListingsService(),
+        auth: _FakeAuthService(isAdmin: true),
+        sellerId: '',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+        find.byKey(const ValueKey('admin_copy_user_id_button')), findsNothing);
+    expect(find.text('Продавец'), findsOneWidget);
+  });
 }
 
 Widget _buildApp({
   required _FakeSellerListingsService listings,
+  _FakeAuthService? auth,
+  String sellerId = 'seller-1',
 }) {
   return MultiProvider(
     providers: [
@@ -69,11 +143,11 @@ Widget _buildApp({
       Provider<FollowService>.value(value: _FakeFollowService()),
       Provider<PresenceService>.value(value: _FakePresenceService()),
       Provider<AdminService>.value(value: _FakeAdminService()),
-      Provider<AuthService>.value(value: _FakeAuthService()),
+      Provider<AuthService>.value(value: auth ?? _FakeAuthService()),
     ],
-    child: const MaterialApp(
+    child: MaterialApp(
       home: SellerPublicProfileScreen(
-        sellerId: 'seller-1',
+        sellerId: sellerId,
         initialSellerName: 'Продавец',
       ),
     ),
@@ -183,11 +257,20 @@ class _FakePresenceService extends PresenceService {
   }
 }
 
-class _FakeAdminService extends AdminService {}
+class _FakeAdminService extends AdminService {
+  @override
+  Stream<bool> streamIsAdmin(String uid) {
+    return Stream<bool>.value(false);
+  }
+}
 
 class _FakeAuthService extends AuthService {
+  _FakeAuthService({this.isAdmin = false});
+
+  final bool isAdmin;
+
   @override
-  AuthUser? get currentUser => const AuthUser(uid: 'viewer-1');
+  AuthUser? get currentUser => AuthUser(uid: 'viewer-1', isAdmin: isAdmin);
 }
 
 Listing _listing(String id, String title) {

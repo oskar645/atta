@@ -181,6 +181,8 @@ class ChatSocketService {
   ChatSocketClient? _socket;
   Timer? _pingTimer;
   Timer? _reconnectTimer;
+  Timer? _stableConnectionTimer;
+  Future<void>? _resumeRecoveryInFlight;
   bool _connecting = false;
   bool _disconnecting = false;
   bool _disconnectRequested = false;
@@ -191,7 +193,8 @@ class ChatSocketService {
   DateTime? _serverDisconnectCooldownUntil;
   String? _serverDisconnectCooldownUserId;
   String? _serverDisconnectBlockedUserId;
-  Duration _nextServerDisconnectCooldown = _serverDisconnectCooldownMin;
+  int _serverDisconnectRetryAttempt = 0;
+  int _serverDisconnectProtectiveAttempt = 0;
   String? _socketOwnerUserId;
   String? _reconnectReason;
   String? _reconnectUserId;
@@ -217,9 +220,18 @@ class ChatSocketService {
   static const Duration _connectRetryCooldown = Duration(seconds: 5);
   static const Duration _connectAttemptTimeout = Duration(seconds: 10);
   static const Duration _transportProbeTimeout = Duration(seconds: 3);
-  static const Duration _serverDisconnectCooldownMin = Duration(seconds: 30);
-  static const Duration _serverDisconnectCooldownMax = Duration(minutes: 5);
+  static const Duration _stableConnectionResetDelay = Duration(seconds: 8);
   static const Duration _skipLogThrottle = Duration(seconds: 45);
+  static const List<Duration> _serverDisconnectQuickRetrySteps = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 3),
+  ];
+  static const List<Duration> _serverDisconnectProtectiveSteps = <Duration>[
+    Duration(seconds: 5),
+    Duration(seconds: 10),
+    Duration(seconds: 30),
+  ];
   static const List<Duration> _reconnectBackoffSteps = <Duration>[
     Duration(seconds: 2),
     Duration(seconds: 5),
@@ -306,16 +318,20 @@ class ChatSocketService {
   }
 
   void _resetServerDisconnectBackoff() {
-    _nextServerDisconnectCooldown = _serverDisconnectCooldownMin;
+    _serverDisconnectRetryAttempt = 0;
+    _serverDisconnectProtectiveAttempt = 0;
   }
 
   Duration _consumeServerDisconnectCooldown() {
-    final cooldown = _nextServerDisconnectCooldown;
-    final nextSeconds = (cooldown.inSeconds * 2).clamp(
-      _serverDisconnectCooldownMin.inSeconds,
-      _serverDisconnectCooldownMax.inSeconds,
+    final step = _serverDisconnectProtectiveAttempt.clamp(
+      0,
+      _serverDisconnectProtectiveSteps.length - 1,
     );
-    _nextServerDisconnectCooldown = Duration(seconds: nextSeconds);
+    final cooldown = _serverDisconnectProtectiveSteps[step];
+    if (_serverDisconnectProtectiveAttempt <
+        _serverDisconnectProtectiveSteps.length - 1) {
+      _serverDisconnectProtectiveAttempt += 1;
+    }
     return cooldown;
   }
 
@@ -326,6 +342,33 @@ class ChatSocketService {
       _reconnectReason = null;
       _reconnectUserId = null;
     }
+  }
+
+  void _cancelStableConnectionTimer() {
+    _stableConnectionTimer?.cancel();
+    _stableConnectionTimer = null;
+  }
+
+  void _armStableConnectionReset(ChatSocketClient socket) {
+    _cancelStableConnectionTimer();
+    _stableConnectionTimer = Timer(_stableConnectionResetDelay, () {
+      if (!identical(_socket, socket) || !socket.connected) return;
+      _resetServerDisconnectBackoff();
+      _debugLog(
+        'Socket stable connection reset server disconnect backoff window=${_stableConnectionResetDelay.inSeconds}s',
+      );
+    });
+  }
+
+  bool _isAuthRejectionError(Object? error) {
+    final text = error?.toString().toLowerCase() ?? '';
+    return text.contains('access token is missing') ||
+        text.contains('access token is invalid') ||
+        text.contains('access token is expired') ||
+        text.contains('invalid or expired') ||
+        text.contains('session is not active') ||
+        text.contains('socket authentication failed') ||
+        text.contains('unauthorized');
   }
 
   void _completeConnectAttempt() {
@@ -420,6 +463,14 @@ class ChatSocketService {
       );
       return;
     }
+    if (_isServerReconnectBlockedFor(userId)) {
+      _logConnectSkip(
+        reason: reason,
+        skip: 'server disconnect requires explicit recovery',
+        userId: userId,
+      );
+      return;
+    }
 
     final connectCompleter = Completer<void>();
     _connectCompleter = connectCompleter;
@@ -496,7 +547,6 @@ class ChatSocketService {
         _socket = socket;
         _disconnecting = false;
         _reconnectAttempt = 0;
-        _resetServerDisconnectBackoff();
         _clearServerDisconnectCooldown();
         _clearServerReconnectBlock();
         _debugLog('Socket[$socketInstanceId] connected');
@@ -505,6 +555,7 @@ class ChatSocketService {
           _safeEmit('chat.join', {'chatId': chatId});
         }
         _startPing();
+        _armStableConnectionReset(socket);
         _completeConnectAttempt();
       });
       socket.onDisconnect((socketReason) {
@@ -517,6 +568,9 @@ class ChatSocketService {
       });
       socket.onConnectError((error) {
         _logFailedConnection(error);
+        if (_isAuthRejectionError(error)) {
+          _serverDisconnectBlockedUserId = _socketOwnerUserId;
+        }
         _handleSocketClosed(
           socket,
           socketInstanceId: socketInstanceId,
@@ -526,6 +580,9 @@ class ChatSocketService {
       });
       socket.onError((error) {
         _logFailedConnection(error);
+        if (_isAuthRejectionError(error)) {
+          _serverDisconnectBlockedUserId = _socketOwnerUserId;
+        }
       });
 
       for (final eventName in const [
@@ -600,6 +657,7 @@ class ChatSocketService {
     _cancelReconnectTimer();
     _reconnectAttempt = 0;
     _stopPing();
+    _cancelStableConnectionTimer();
     _lastConnectAttemptAt = null;
     _clearServerDisconnectCooldown();
     _resetServerDisconnectBackoff();
@@ -627,6 +685,7 @@ class ChatSocketService {
   Future<void> resetSession() async {
     _joinedChats.clear();
     _lastPresenceByUser.clear();
+    _cancelStableConnectionTimer();
     await disconnect();
   }
 
@@ -645,6 +704,23 @@ class ChatSocketService {
 
   Future<void> recoverAfterResume({String reason = 'resume'}) async {
     if (_disposed || _disconnecting) return;
+    final existing = _resumeRecoveryInFlight;
+    if (existing != null) {
+      _debugLog('Socket resume recovery joined reason=$reason');
+      return existing;
+    }
+    final future = _recoverAfterResume(reason: reason);
+    _resumeRecoveryInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_resumeRecoveryInFlight, future)) {
+        _resumeRecoveryInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _recoverAfterResume({required String reason}) async {
     final socket = _socket;
     final socketInstanceId = _socketInstanceSequence;
     _debugLog(
@@ -703,6 +779,15 @@ class ChatSocketService {
       );
       return;
     }
+    final existingAttempt = _connectCompleter;
+    if (force && existingAttempt != null) {
+      _logConnectSkip(
+        reason: reason,
+        skip: 'connect already in flight',
+        userId: userId,
+      );
+      return existingAttempt.future;
+    }
     if ((_connecting && !force) || (!force && isConnected)) {
       _logConnectSkip(
         reason: reason,
@@ -711,7 +796,7 @@ class ChatSocketService {
       );
       return;
     }
-    if (_reconnectTimer != null) {
+    if (_reconnectTimer != null && !force) {
       _logConnectSkip(
         reason: reason,
         skip: 'reconnect already scheduled',
@@ -735,6 +820,7 @@ class ChatSocketService {
     }
     _cancelReconnectTimer();
     _stopPing();
+    _cancelStableConnectionTimer();
     _runSocketOperation(
       () => _socket?.clearListeners(),
       debugContext: 'reconnect.clear-listeners',
@@ -905,6 +991,7 @@ class ChatSocketService {
   void _scheduleReconnect({
     String reason = 'auto',
     required String userId,
+    Duration? delayOverride,
   }) {
     final normalizedUserId = userId.trim();
     if (normalizedUserId.isEmpty) {
@@ -934,10 +1021,14 @@ class ChatSocketService {
       );
       return;
     }
-    final delay = _reconnectBackoffSteps[
-        _reconnectAttempt.clamp(0, _reconnectBackoffSteps.length - 1)];
-    final attemptNumber = _reconnectAttempt + 1;
-    if (_reconnectAttempt < _reconnectBackoffSteps.length - 1) {
+    final delay = delayOverride ??
+        _reconnectBackoffSteps[
+            _reconnectAttempt.clamp(0, _reconnectBackoffSteps.length - 1)];
+    final attemptNumber = delayOverride == null
+        ? _reconnectAttempt + 1
+        : _serverDisconnectRetryAttempt;
+    if (delayOverride == null &&
+        _reconnectAttempt < _reconnectBackoffSteps.length - 1) {
       _reconnectAttempt += 1;
     }
     _reconnectScheduleCount += 1;
@@ -1024,6 +1115,7 @@ class ChatSocketService {
     Object? details,
   }) {
     _stopPing();
+    _cancelStableConnectionTimer();
     final ownerUserId = _socketOwnerUserId;
     if (identical(_socket, socket)) {
       _socket = null;
@@ -1042,10 +1134,33 @@ class ChatSocketService {
         isServerInitiatedDisconnectReason(details)) {
       _cancelReconnectTimer();
       _reconnectAttempt = 0;
+      final userId = ownerUserId ?? '';
+      final authRejected =
+          userId.isNotEmpty && _isServerReconnectBlockedFor(userId);
+      if (userId.isEmpty || authRejected) {
+        _debugLog(
+          'Socket[$socketInstanceId] reconnect suppressed after server disconnect auth_or_missing_user',
+        );
+        return;
+      }
+      if (_serverDisconnectRetryAttempt <
+          _serverDisconnectQuickRetrySteps.length) {
+        final delay =
+            _serverDisconnectQuickRetrySteps[_serverDisconnectRetryAttempt];
+        _serverDisconnectRetryAttempt += 1;
+        _debugLog(
+          'Socket[$socketInstanceId] reconnect scheduled after server disconnect delay=${delay.inSeconds}s quickAttempt=$_serverDisconnectRetryAttempt',
+        );
+        _scheduleReconnect(
+          reason: 'server_disconnect',
+          userId: userId,
+          delayOverride: delay,
+        );
+        return;
+      }
       final cooldown = _consumeServerDisconnectCooldown();
       _serverDisconnectCooldownUntil = DateTime.now().add(cooldown);
-      _serverDisconnectCooldownUserId = ownerUserId;
-      _serverDisconnectBlockedUserId = ownerUserId;
+      _serverDisconnectCooldownUserId = userId;
       _debugLog(
         'Socket[$socketInstanceId] reconnect suppressed after server disconnect cooldown=${cooldown.inSeconds}s',
       );

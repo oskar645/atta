@@ -36,6 +36,7 @@ const _requiredPopularRaw = <String>[
   'BAIC',
   'JAC',
   'DongFeng',
+  'GWM',
   'BYD',
   'Zeekr',
   'LiXiang',
@@ -44,6 +45,9 @@ const _requiredPopularRaw = <String>[
   'Москвич',
   'УАЗ',
   'ГАЗ',
+  'Bestune',
+  'Belgee',
+  'Rox',
 ];
 
 const _requiredTailRaw = <String>[
@@ -67,8 +71,10 @@ const _requiredTailRaw = <String>[
   'BAIC',
   'Bajaj',
   'Baltijas Dzips',
+  'Belgee',
   'Bentley',
   'Bertone',
+  'Bestune',
   'Bilenkin',
   'Bio auto',
   'Bitter',
@@ -139,6 +145,7 @@ const _requiredTailRaw = <String>[
   'Gordon',
   'GP',
   'Great Wall',
+  'GWM',
   'Hafei',
   'Haima',
   'Hanomag',
@@ -233,6 +240,7 @@ const _requiredTailRaw = <String>[
   'Ravon',
   'Reliant',
   'Renaissance',
+  'Rox',
   'Renault',
   'Renault Samsung',
   'Rezvani',
@@ -448,6 +456,7 @@ void main() {
     expect(
         autoModelsForBrand('Chery'),
         containsAll(<String>[
+          'Tiggo 7',
           'Tiggo 4 Pro',
           'Tiggo 7L',
           'Tiggo 8 Pro Max',
@@ -459,6 +468,7 @@ void main() {
         containsAll(<String>[
           'Jolion',
           'Dargo',
+          'Dargo X',
           'H3',
           'H5',
           'H7',
@@ -484,5 +494,17 @@ void main() {
       kAutoBrandsPopular.where((brand) => brand == 'Dongfeng'),
       hasLength(1),
     );
+  });
+
+  test('requested market brands expose canonical models', () {
+    expect(autoModelsForBrand('Mercedes-Benz'), contains('GLB'));
+    expect(autoModelsForBrand('BMW'), contains('XM'));
+    expect(autoModelsForBrand('GWM'), containsAll(<String>['Poer', 'Ora 03']));
+    expect(autoModelsForBrand('Bestune'), contains('T90'));
+    expect(autoModelsForBrand('Belgee'), contains('X50'));
+    expect(autoModelsForBrand('Rox'), contains('01'));
+
+    expect(autoGenerationsForBrandModel('BMW', 'XM'), contains('G09'));
+    expect(autoGenerationsForBrandModel('Rox', '01'), contains('I'));
   });
 }

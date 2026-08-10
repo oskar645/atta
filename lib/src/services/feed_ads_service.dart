@@ -9,9 +9,11 @@ import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:flutter/foundation.dart';
 
 class FeedAdsService {
-  FeedAdsService()
-      : _api = FeedAdsApi(_apiClient),
-        _mediaApi = MediaApi(_apiClient);
+  FeedAdsService({
+    FeedAdsApi? api,
+    MediaApi? mediaApi,
+  })  : _api = api ?? FeedAdsApi(_apiClient),
+        _mediaApi = mediaApi ?? MediaApi(_apiClient);
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -55,30 +57,33 @@ class FeedAdsService {
         .toList();
   }
 
-  Stream<List<FeedAd>> streamAllAds({String placement = 'home'}) {
+  Future<List<FeedAd>> loadAllAds({String placement = 'home'}) async {
     _debugSource('FeedAds source: Timeweb');
     if (_timewebFeedAdsUnavailable) {
-      return Stream<List<FeedAd>>.value(const <FeedAd>[]);
+      return const <FeedAd>[];
     }
-    return Stream<int>.periodic(
-      const Duration(seconds: 8),
-      (tick) => tick,
-    ).asyncMap((_) async {
-      try {
-        final response = await _api.adminList(placement: placement);
-        final items = _extractItems(response);
-        items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-        return items;
-      } on ApiException catch (error) {
-        if (error.isNotFound) {
-          _markTimewebUnavailable(
-            'FeedAds source: Timeweb unavailable (404). Falling back to empty state until backend is updated.',
-          );
-          return const <FeedAd>[];
-        }
-        rethrow;
+
+    try {
+      final response = await _api.adminList(placement: placement);
+      final items = _extractItems(response);
+      items.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return items;
+    } on ApiException catch (error) {
+      if (error.isNotFound) {
+        _markTimewebUnavailable(
+          'FeedAds source: Timeweb unavailable (404). Falling back to empty state until backend is updated.',
+        );
+        return const <FeedAd>[];
       }
-    }).startWith(const <FeedAd>[]);
+      rethrow;
+    }
+  }
+
+  Stream<List<FeedAd>> streamAllAds({
+    String placement = 'home',
+    Duration pollingInterval = const Duration(seconds: 8),
+  }) {
+    return Stream<List<FeedAd>>.fromFuture(loadAllAds(placement: placement));
   }
 
   Stream<FeedAd?> streamActiveAd({String placement = 'home'}) {
@@ -132,12 +137,49 @@ class FeedAdsService {
     }
   }
 
-  Future<void> createAd(FeedAd ad) async {
-    _debugSource('FeedAds source: Timeweb');
-    await _api.create(ad.toMap());
+  FeedAd _extractAd(Map<String, dynamic> response, {FeedAd? fallback}) {
+    final raw = response['ad'];
+    if (raw is Map) {
+      return FeedAd.fromMap(Map<String, dynamic>.from(raw));
+    }
+    if (fallback != null) return fallback;
+    throw StateError('Feed ad response does not contain ad.');
   }
 
-  Future<void> updateAd({
+  Future<FeedAd> createAd(FeedAd ad) async {
+    _debugSource('FeedAds source: Timeweb');
+    final response = await _api.create(ad.toMap());
+    return _extractAd(response, fallback: ad);
+  }
+
+  Future<FeedAd> createAdWithImage({
+    required FeedAd ad,
+    Uint8List? imageBytes,
+    String imageContentType = 'image/jpeg',
+  }) async {
+    final created = await createAd(ad);
+    if (imageBytes == null) return created;
+
+    try {
+      final imageUrl = await uploadAdImage(
+        feedAdId: created.id,
+        bytes: imageBytes,
+        contentType: imageContentType,
+      );
+      final uploadedUrl = imageUrl.trim();
+      if (uploadedUrl.isEmpty) {
+        throw StateError('Feed ad image upload did not return image URL.');
+      }
+      return created.copyWith(imageUrl: uploadedUrl);
+    } catch (error) {
+      try {
+        await deleteAd(created.id);
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  Future<FeedAd> updateAd({
     required String adId,
     required String title,
     required String imageUrl,
@@ -145,22 +187,36 @@ class FeedAdsService {
     required int durationDays,
   }) async {
     _debugSource('FeedAds source: Timeweb');
-    await _api.update(adId, {
+    final response = await _api.update(adId, {
       'title': title.trim(),
       'image_url': imageUrl.trim(),
       'target_url': targetUrl.trim(),
       'duration_days': durationDays,
     });
+    return _extractAd(response);
   }
 
-  Future<void> activateAd(String adId, {String placement = 'home'}) async {
+  Future<FeedAd> activateAd(String adId, {String placement = 'home'}) async {
     _debugSource('FeedAds source: Timeweb');
-    await _api.activate(adId);
+    final response = await _api.activate(adId);
+    final ad = _extractAd(response);
+    if (ad.placement == placement) {
+      _cachedActiveAd = ad;
+      _cachedActiveAdAt = DateTime.now();
+      _activeAdController.add(ad);
+    }
+    return ad;
   }
 
-  Future<void> deactivateAd(String adId) async {
+  Future<void> deactivateAd(String adId, {String placement = 'home'}) async {
     _debugSource('FeedAds source: Timeweb');
-    await _api.deactivate(adId);
+    final response = await _api.deactivate(adId);
+    final ad = _extractAd(response);
+    if (ad.placement == placement && _cachedActiveAd?.id == ad.id) {
+      _cachedActiveAd = null;
+      _cachedActiveAdAt = DateTime.now();
+      _activeAdController.add(null);
+    }
   }
 
   Future<void> deleteAd(String adId) async {

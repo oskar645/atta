@@ -569,7 +569,7 @@ class _ProfileWalletSuccessService extends WalletService {
       'balance': 150,
       'maxBalance': 1000,
       'welcomeBonus': 100,
-      'dailyBonusAmount': 25,
+      'dailyBonusAmount': 15,
       'canClaimDailyBonus': false,
     });
   }
@@ -625,7 +625,7 @@ Wallet _wallet({required int balance}) {
     'balance': balance,
     'maxBalance': 1000,
     'welcomeBonus': 200,
-    'dailyBonusAmount': 25,
+    'dailyBonusAmount': 15,
     'canClaimDailyBonus': false,
   });
 }

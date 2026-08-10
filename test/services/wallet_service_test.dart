@@ -55,6 +55,22 @@ void main() {
     expect(wallets[1].balance, 225);
   });
 
+  test('accrual snack amount comes from backend response', () async {
+    final api = _FakeWalletApi();
+    final service = WalletService(api: api);
+    service.activateSession('user-1');
+    api.checkAccrualHandler = () async => <String, dynamic>{
+          'awarded': true,
+          'amount': 15,
+          'wallet': _walletMap(balance: 115),
+        };
+
+    await service.checkAccrual(forceRefresh: true);
+
+    expect(service.lastAccrualAwarded, isTrue);
+    expect(service.lastAccrualAmount, 15);
+  });
+
   test('network error does not clear old balance', () async {
     final api = _FakeWalletApi();
     final service = WalletService(api: api);
@@ -202,7 +218,7 @@ Map<String, dynamic> _walletMap({required int balance}) {
     'balance': balance,
     'max_balance': null,
     'welcome_bonus': 500,
-    'daily_bonus_amount': 25,
+    'daily_bonus_amount': 15,
     'can_claim_daily_bonus': false,
     'days_until_next_accrual': 0,
     'seconds_until_next_accrual': 0,

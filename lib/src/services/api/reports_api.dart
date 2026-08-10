@@ -24,8 +24,15 @@ class ReportsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> listAdmin() async {
-    final response = await _client.get('/admin/reports', authorized: true);
+  Future<Map<String, dynamic>> listAdmin({int? limit, String? cursor}) async {
+    final response = await _client.get(
+      '/admin/reports',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 

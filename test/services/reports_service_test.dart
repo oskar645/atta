@@ -118,7 +118,7 @@ class _FakeReportsApi extends ReportsApi {
   }
 
   @override
-  Future<Map<String, dynamic>> listAdmin() async {
+  Future<Map<String, dynamic>> listAdmin({int? limit, String? cursor}) async {
     return <String, dynamic>{
       'items': _items,
     };

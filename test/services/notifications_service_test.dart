@@ -124,6 +124,31 @@ void main() {
     expect(results[5], 1);
   });
 
+  test('personal unread count is available after personal list stream exists',
+      () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'personal-1',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'title': 'Personal',
+          'created_at': '2026-06-18T13:05:00.000Z',
+          'is_read': false,
+        },
+      ],
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+
+    expect(await service.streamPersonal('user-1').first, hasLength(1));
+
+    final count = await service.streamUnreadPersonalCount('user-1').first;
+
+    expect(count, 1);
+    expect(api.listCalls, 1);
+  });
+
   test('sendPersonal uses Timeweb endpoint', () async {
     final api =
         _FakeInAppNotificationsApi(items: const <Map<String, dynamic>>[]);
@@ -252,6 +277,84 @@ void main() {
     expect(api.markAllSeenCalls, 1);
     expect(await service.streamUnreadPersonalCount('user-1').first, 0);
     expect(await service.streamUnreadGlobalCount('user-1').first, 0);
+  });
+
+  test('markAllSeen keeps unread count until delayed retry succeeds', () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'personal-1',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'title': 'Personal',
+          'created_at': '2026-06-18T11:00:00.000Z',
+          'is_read': false,
+        },
+      ],
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+    final emittedCounts = <int>[];
+    final sub = service.streamUnreadPersonalCount('user-1').listen(
+          emittedCounts.add,
+        );
+
+    await service.preload('user-1');
+    await Future<void>.delayed(Duration.zero);
+    expect(emittedCounts.last, 1);
+
+    api.markAllSeenCompleter = Completer<void>();
+    final markSeen = service.markAllSeen('user-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(emittedCounts.last, 1);
+
+    api.markAllSeenCompleter!.complete();
+    await markSeen;
+    await Future<void>.delayed(Duration.zero);
+
+    expect(emittedCounts.last, 0);
+    await sub.cancel();
+  });
+
+  test('personal unread count stays positive while unread personal remains',
+      () async {
+    final api = _FakeInAppNotificationsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'personal-1',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'title': 'Личное 1',
+          'created_at': '2026-06-18T11:00:00.000Z',
+          'is_read': false,
+        },
+        <String, dynamic>{
+          'id': 'personal-2',
+          'scope': 'personal',
+          'user_id': 'user-1',
+          'title': 'Личное 2',
+          'created_at': '2026-06-18T12:00:00.000Z',
+          'is_read': false,
+        },
+      ],
+    );
+    final service = NotificationsService(api: api);
+    service.activateSession('user-1');
+    final emittedCounts = <int>[];
+    final sub = service.streamUnreadPersonalCount('user-1').listen(
+          emittedCounts.add,
+        );
+
+    await service.preload('user-1');
+    await Future<void>.delayed(Duration.zero);
+    expect(emittedCounts.last, 2);
+
+    await service.markPersonalReadById('personal-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(emittedCounts.last, 1);
+    await sub.cancel();
   });
 
   test('mark read clears one personal unread immediately from cached list',
@@ -614,6 +717,7 @@ class _FakeInAppNotificationsApi extends InAppNotificationsApi {
   final Object? listError;
   String? globalSeenAt;
   Completer<void>? listCompleter;
+  Completer<void>? markAllSeenCompleter;
   int listCalls = 0;
   String? sentUserId;
   String? sentTitle;
@@ -685,6 +789,10 @@ class _FakeInAppNotificationsApi extends InAppNotificationsApi {
   @override
   Future<Map<String, dynamic>> markAllSeen() async {
     markAllSeenCalls++;
+    if (markAllSeenCompleter != null) {
+      await markAllSeenCompleter!.future;
+      markAllSeenCompleter = null;
+    }
     globalSeenAt = DateTime.utc(2026, 6, 18, 12, 30).toIso8601String();
     for (final item in items) {
       if (item['scope'] == 'personal') {

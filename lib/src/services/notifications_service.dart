@@ -288,12 +288,27 @@ class NotificationsService {
   }
 
   Stream<int> streamUnreadPersonalCount(String userId) {
+    final normalized = userId.trim();
+    if (_activeUserId == null || _activeUserId != normalized) {
+      return Stream<int>.value(0);
+    }
     _debugSource('Notifications source: Timeweb');
-    return streamPersonal(userId)
-        .map(
-          (rows) => rows.where((row) => row['is_read'] != true).length,
-        )
-        .asBroadcastStream();
+    return _timewebCountStreams.putIfAbsent(
+      'personal:$normalized',
+      () => _createTimewebNotificationsStream(
+        key: 'personal-unread:$normalized',
+        filter: (rows) => rows
+            .where((row) =>
+                (row['scope'] ?? '').toString() == 'personal' &&
+                row['user_id']?.toString() == normalized &&
+                !_isExcludedNotification(row))
+            .toList(),
+      )
+          .map(
+            (rows) => rows.where((row) => row['is_read'] != true).length,
+          )
+          .asBroadcastStream(),
+    );
   }
 
   Stream<int> streamUnreadGlobalCount(String userId) {

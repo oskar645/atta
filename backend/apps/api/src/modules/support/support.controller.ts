@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UseGuards,
@@ -20,6 +21,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
+import { ListAdminSupportTicketsDto } from './dto/list-admin-support-tickets.dto';
 import { SendSupportMessageDto } from './dto/send-support-message.dto';
 import { SupportService } from './support.service';
 
@@ -150,8 +152,8 @@ export class AdminSupportController {
   ) {}
 
   @Get()
-  listTickets() {
-    return this.supportService.listTickets();
+  listTickets(@Query() query: ListAdminSupportTicketsDto) {
+    return this.supportService.listTickets(query);
   }
 
   @Get(':id')

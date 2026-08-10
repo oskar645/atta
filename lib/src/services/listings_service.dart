@@ -18,26 +18,56 @@ class ListingFeedFilters {
   final String category;
   final String search;
   final String subcategory;
+  final int? priceFrom;
+  final int? priceTo;
   final String location;
   final bool preferLocationFirst;
   final int? radiusKm;
   final String autoBrand;
   final String autoModel;
   final String autoCondition;
+  final int? autoYearFrom;
+  final int? autoYearTo;
+  final int? autoMileageFrom;
   final int? autoMileageTo;
+  final String autoTransmission;
+  final String autoDrive;
+  final String autoBodyType;
+  final String autoFuel;
+  final String autoColor;
+  final double? autoEngineVolumeFrom;
+  final double? autoEngineVolumeTo;
+  final int? autoOwners;
+  final bool? autoCleared;
   final bool onlyUncrashed;
+  final bool onlyWithPhoto;
   const ListingFeedFilters({
     required this.category,
     required this.search,
     this.subcategory = 'Все',
+    this.priceFrom,
+    this.priceTo,
     this.location = '',
     this.preferLocationFirst = false,
     this.radiusKm,
     this.autoBrand = '',
     this.autoModel = '',
     this.autoCondition = '',
+    this.autoYearFrom,
+    this.autoYearTo,
+    this.autoMileageFrom,
     this.autoMileageTo,
+    this.autoTransmission = '',
+    this.autoDrive = '',
+    this.autoBodyType = '',
+    this.autoFuel = '',
+    this.autoColor = '',
+    this.autoEngineVolumeFrom,
+    this.autoEngineVolumeTo,
+    this.autoOwners,
+    this.autoCleared,
     this.onlyUncrashed = false,
+    this.onlyWithPhoto = false,
   });
 }
 
@@ -302,17 +332,7 @@ class ListingsService {
           search: search,
         );
     final requestKey = [
-      effectiveFilters.category.trim(),
-      effectiveFilters.search.trim(),
-      effectiveFilters.subcategory.trim(),
-      effectiveFilters.location.trim(),
-      effectiveFilters.preferLocationFirst,
-      effectiveFilters.radiusKm ?? '',
-      effectiveFilters.autoBrand.trim(),
-      effectiveFilters.autoModel.trim(),
-      effectiveFilters.autoCondition.trim(),
-      effectiveFilters.autoMileageTo ?? '',
-      effectiveFilters.onlyUncrashed,
+      _filtersCacheKey(effectiveFilters),
       limit,
       (cursor ?? '').trim(),
     ].join('|');
@@ -331,6 +351,10 @@ class ListingsService {
             'search': effectiveFilters.search.trim(),
           if (effectiveFilters.location.trim().isNotEmpty)
             'city': effectiveFilters.location.trim(),
+          if (effectiveFilters.priceFrom != null)
+            'minPrice': effectiveFilters.priceFrom,
+          if (effectiveFilters.priceTo != null)
+            'maxPrice': effectiveFilters.priceTo,
           'limit': limit,
           if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
         },
@@ -368,19 +392,7 @@ class ListingsService {
           category: category,
           search: search,
         );
-    final key = [
-      effectiveFilters.category,
-      effectiveFilters.search,
-      effectiveFilters.subcategory,
-      effectiveFilters.location,
-      effectiveFilters.preferLocationFirst,
-      effectiveFilters.radiusKm,
-      effectiveFilters.autoBrand,
-      effectiveFilters.autoModel,
-      effectiveFilters.autoCondition,
-      effectiveFilters.autoMileageTo,
-      effectiveFilters.onlyUncrashed,
-    ].join('|');
+    final key = _filtersCacheKey(effectiveFilters);
     return List<Listing>.from(_timewebCache[key] ?? const <Listing>[]);
   }
 
@@ -885,6 +897,7 @@ class ListingsService {
     }
 
     if (!_matchesSearch(listing, filters.search)) return false;
+    if (!_matchesPriceFilters(listing, filters)) return false;
     if (!_matchesAutoFilters(listing, filters)) return false;
     if (!_matchesLocationFilter(listing, filters)) return false;
 
@@ -901,13 +914,31 @@ class ListingsService {
 
   bool _matchesAutoFilters(Listing listing, ListingFeedFilters filters) {
     final car = listing.car;
-    final hasAutoFilters = filters.autoBrand.trim().isNotEmpty ||
+    final hasAutoSpecFilters = filters.autoBrand.trim().isNotEmpty ||
         filters.autoModel.trim().isNotEmpty ||
         filters.autoCondition.trim().isNotEmpty ||
+        filters.autoYearFrom != null ||
+        filters.autoYearTo != null ||
+        filters.autoMileageFrom != null ||
         filters.autoMileageTo != null ||
+        filters.autoTransmission.trim().isNotEmpty ||
+        filters.autoDrive.trim().isNotEmpty ||
+        filters.autoBodyType.trim().isNotEmpty ||
+        filters.autoFuel.trim().isNotEmpty ||
+        filters.autoColor.trim().isNotEmpty ||
+        filters.autoEngineVolumeFrom != null ||
+        filters.autoEngineVolumeTo != null ||
+        filters.autoOwners != null ||
+        filters.autoCleared != null ||
         filters.onlyUncrashed;
 
-    if (!hasAutoFilters) return true;
+    if (filters.onlyWithPhoto &&
+        listing.photoUrls.isEmpty &&
+        listing.photoItems.isEmpty) {
+      return false;
+    }
+
+    if (!hasAutoSpecFilters) return true;
     if (car == null) return false;
 
     if (filters.autoBrand.trim().isNotEmpty &&
@@ -925,8 +956,70 @@ class ListingsService {
       return false;
     }
 
+    if (filters.autoYearFrom != null &&
+        (car.year == null || car.year! < filters.autoYearFrom!)) {
+      return false;
+    }
+
+    if (filters.autoYearTo != null &&
+        (car.year == null || car.year! > filters.autoYearTo!)) {
+      return false;
+    }
+
+    if (filters.autoMileageFrom != null &&
+        (car.mileageKm == null || car.mileageKm! < filters.autoMileageFrom!)) {
+      return false;
+    }
+
     if (filters.autoMileageTo != null &&
         (car.mileageKm == null || car.mileageKm! > filters.autoMileageTo!)) {
+      return false;
+    }
+
+    if (filters.autoTransmission.trim().isNotEmpty &&
+        !_containsNormalized(
+            car.transmission ?? '', filters.autoTransmission)) {
+      return false;
+    }
+
+    if (filters.autoDrive.trim().isNotEmpty &&
+        !_containsNormalized(car.drive ?? '', filters.autoDrive)) {
+      return false;
+    }
+
+    if (filters.autoBodyType.trim().isNotEmpty &&
+        !_containsNormalized(car.bodyType ?? '', filters.autoBodyType)) {
+      return false;
+    }
+
+    if (filters.autoFuel.trim().isNotEmpty &&
+        !_containsNormalized(car.fuel ?? '', filters.autoFuel)) {
+      return false;
+    }
+
+    if (filters.autoColor.trim().isNotEmpty &&
+        !_containsNormalized(car.color ?? '', filters.autoColor)) {
+      return false;
+    }
+
+    if (filters.autoEngineVolumeFrom != null &&
+        (car.engineVolume == null ||
+            car.engineVolume! < filters.autoEngineVolumeFrom!)) {
+      return false;
+    }
+
+    if (filters.autoEngineVolumeTo != null &&
+        (car.engineVolume == null ||
+            car.engineVolume! > filters.autoEngineVolumeTo!)) {
+      return false;
+    }
+
+    if (filters.autoOwners != null &&
+        (car.owners == null || car.owners! != filters.autoOwners!)) {
+      return false;
+    }
+
+    if (filters.autoCleared != null && car.isCleared != filters.autoCleared) {
       return false;
     }
 
@@ -1095,20 +1188,49 @@ class ListingsService {
     return value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  Future<List<Listing>> _fetchListings(ListingFeedFilters filters) async {
-    final key = [
+  bool _matchesPriceFilters(Listing listing, ListingFeedFilters filters) {
+    if (filters.priceFrom != null && listing.price < filters.priceFrom!) {
+      return false;
+    }
+    if (filters.priceTo != null && listing.price > filters.priceTo!) {
+      return false;
+    }
+    return true;
+  }
+
+  String _filtersCacheKey(ListingFeedFilters filters) {
+    return [
       filters.category,
       filters.search,
       filters.subcategory,
+      filters.priceFrom ?? '',
+      filters.priceTo ?? '',
       filters.location,
       filters.preferLocationFirst,
       filters.radiusKm,
       filters.autoBrand,
       filters.autoModel,
       filters.autoCondition,
-      filters.autoMileageTo,
+      filters.autoYearFrom ?? '',
+      filters.autoYearTo ?? '',
+      filters.autoMileageFrom ?? '',
+      filters.autoMileageTo ?? '',
+      filters.autoTransmission,
+      filters.autoDrive,
+      filters.autoBodyType,
+      filters.autoFuel,
+      filters.autoColor,
+      filters.autoEngineVolumeFrom ?? '',
+      filters.autoEngineVolumeTo ?? '',
+      filters.autoOwners ?? '',
+      filters.autoCleared ?? '',
       filters.onlyUncrashed,
+      filters.onlyWithPhoto,
     ].join('|');
+  }
+
+  Future<List<Listing>> _fetchListings(ListingFeedFilters filters) async {
+    final key = _filtersCacheKey(filters);
     final cached = _timewebCache[key];
     final cachedAt = _timewebCachedAt[key];
     if (cached != null &&
@@ -1422,19 +1544,49 @@ class ListingsService {
 
   ListingFeedFilters? _filtersFromKey(String key) {
     final parts = key.split('|');
-    if (parts.length != 11) return null;
+    if (parts.length == 11) {
+      return ListingFeedFilters(
+        category: parts[0],
+        search: parts[1],
+        subcategory: parts[2],
+        location: parts[3],
+        preferLocationFirst: parts[4] == 'true',
+        radiusKm: int.tryParse(parts[5]),
+        autoBrand: parts[6],
+        autoModel: parts[7],
+        autoCondition: parts[8],
+        autoMileageTo: int.tryParse(parts[9]),
+        onlyUncrashed: parts[10] == 'true',
+      );
+    }
+    if (parts.length != 26) return null;
     return ListingFeedFilters(
       category: parts[0],
       search: parts[1],
       subcategory: parts[2],
-      location: parts[3],
-      preferLocationFirst: parts[4] == 'true',
-      radiusKm: int.tryParse(parts[5]),
-      autoBrand: parts[6],
-      autoModel: parts[7],
-      autoCondition: parts[8],
-      autoMileageTo: int.tryParse(parts[9]),
-      onlyUncrashed: parts[10] == 'true',
+      priceFrom: int.tryParse(parts[3]),
+      priceTo: int.tryParse(parts[4]),
+      location: parts[5],
+      preferLocationFirst: parts[6] == 'true',
+      radiusKm: int.tryParse(parts[7]),
+      autoBrand: parts[8],
+      autoModel: parts[9],
+      autoCondition: parts[10],
+      autoYearFrom: int.tryParse(parts[11]),
+      autoYearTo: int.tryParse(parts[12]),
+      autoMileageFrom: int.tryParse(parts[13]),
+      autoMileageTo: int.tryParse(parts[14]),
+      autoTransmission: parts[15],
+      autoDrive: parts[16],
+      autoBodyType: parts[17],
+      autoFuel: parts[18],
+      autoColor: parts[19],
+      autoEngineVolumeFrom: double.tryParse(parts[20]),
+      autoEngineVolumeTo: double.tryParse(parts[21]),
+      autoOwners: int.tryParse(parts[22]),
+      autoCleared: parts[23].isEmpty ? null : parts[23] == 'true',
+      onlyUncrashed: parts[24] == 'true',
+      onlyWithPhoto: parts[25] == 'true',
     );
   }
 

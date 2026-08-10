@@ -41,6 +41,9 @@ import { ListAdminBonusAnalyticsDto } from './dto/list-admin-bonus-analytics.dto
 import { ListAdminPointsPurchasesDto } from './dto/list-admin-points-purchases.dto';
 import { ListAdminPromotionsDto } from './dto/list-admin-promotions.dto';
 import { ListAdminWalletTransactionsDto } from './dto/list-admin-wallet-transactions.dto';
+import { ListAdminBlocksDto } from './dto/list-admin-blocks.dto';
+import { ListAdminListingsDto } from './dto/list-admin-listings.dto';
+import { ListAdminUsersDto } from './dto/list-admin-users.dto';
 
 const promotionStatusFromInput = (
   value?: string,
@@ -104,6 +107,62 @@ export class AdminService {
     private readonly storageService: StorageService,
     private readonly userBlocksService: UserBlocksService,
   ) {}
+
+  private pageLimit(value: number | undefined, fallback: number, max = 100) {
+    const parsed = Number(value ?? fallback);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(Math.max(Math.trunc(parsed), 1), max);
+  }
+
+  private encodeAdminCursor(value: Record<string, string>) {
+    return Buffer.from(JSON.stringify(value)).toString('base64url');
+  }
+
+  private decodeAdminCursor(cursor?: string) {
+    const normalized = cursor?.trim();
+    if (!normalized) return null;
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(normalized, 'base64url').toString('utf8'),
+      );
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed as Record<string, string>;
+    } catch {
+      return null;
+    }
+  }
+
+  private dateIdCursorWhere(
+    field: 'createdAt' | 'updatedAt' | 'startsAt',
+    cursor?: string,
+  ) {
+    const decoded = this.decodeAdminCursor(cursor);
+    const rawDate = decoded?.[field];
+    const id = decoded?.id;
+    if (!rawDate || !id) return {};
+    const date = new Date(rawDate);
+    if (Number.isNaN(date.getTime())) return {};
+    return {
+      OR: [
+        { [field]: { lt: date } },
+        { [field]: date, id: { lt: id } },
+      ],
+    };
+  }
+
+  private pageInfo<T extends { id: string }>(
+    rows: T[],
+    limit: number,
+    cursorFor: (row: T) => Record<string, string>,
+  ) {
+    const items = rows.slice(0, limit);
+    const last = rows.length > limit ? items[items.length - 1] : null;
+    return {
+      items,
+      hasMore: rows.length > limit,
+      nextCursor: last ? this.encodeAdminCursor(cursorFor(last)) : null,
+    };
+  }
 
   async getDashboardStats() {
     const now = new Date();
@@ -248,26 +307,52 @@ export class AdminService {
     };
   }
 
-  async listUsers() {
+  async listUsers(query: ListAdminUsersDto = {}) {
+    const limit = this.pageLimit(query.limit, 100);
+    const search = query.search?.trim();
+    const phoneDigits = (search ?? '').replace(/\D/g, '');
+    const cursorWhere = this.dateIdCursorWhere('createdAt', query.cursor);
+    const where: Prisma.UserWhereInput = {
+      deletedAt: null,
+      status: {
+        not: UserStatus.DELETED,
+      },
+      ...(Object.keys(cursorWhere).length > 0 ? { AND: [cursorWhere] } : {}),
+      ...(search
+        ? {
+            OR: [
+              ...(this.isUuid(search) ? [{ id: search }] : []),
+              { displayName: { contains: search, mode: 'insensitive' } },
+              { name: { contains: search, mode: 'insensitive' } },
+              { phone: { contains: search } },
+              ...(phoneDigits.length >= 4
+                ? [{ phone: { contains: phoneDigits } }]
+                : []),
+            ],
+          }
+        : {}),
+    };
     const users = await this.prisma.user.findMany({
       where: {
-        deletedAt: null,
-        status: {
-          not: UserStatus.DELETED,
-        },
+        ...where,
       },
       include: {
         adminProfile: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 100,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(users, limit, (user) => ({
+      createdAt: user.createdAt.toISOString(),
+      id: user.id,
+    }));
 
     return {
       source: 'timeweb',
-      items: users.map((user) => serializeUser(user, { includePrivate: true })),
+      items: page.items.map((user) => serializeUser(user, { includePrivate: true })),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 
@@ -398,7 +483,10 @@ export class AdminService {
     };
   }
 
-  async listBlocks(status?: string) {
+  async listBlocks(query: ListAdminBlocksDto | string = {}) {
+    const status = typeof query === 'string' ? query : query.status;
+    const limit = this.pageLimit(typeof query === 'string' ? undefined : query.limit, 100);
+    const cursor = typeof query === 'string' ? undefined : query.cursor;
     const now = new Date();
     await this.prisma.userBlock.updateMany({
       where: {
@@ -418,18 +506,21 @@ export class AdminService {
       const tickets = await this.prisma.supportTicket.findMany({
         where: {
           isBlockAppeal: true,
+          ...this.dateIdCursorWhere('updatedAt', cursor),
         },
         include: {
           userBlock: true,
         },
-        orderBy: {
-          updatedAt: 'desc',
-        },
-        take: 100,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
       });
+      const page = this.pageInfo(tickets, limit, (ticket) => ({
+        updatedAt: ticket.updatedAt.toISOString(),
+        id: ticket.id,
+      }));
       return {
         source: 'timeweb',
-        items: tickets.map((ticket) => ({
+        items: page.items.map((ticket) => ({
           id: ticket.id,
           ticket_id: ticket.id,
           user_id: ticket.userId,
@@ -442,6 +533,9 @@ export class AdminService {
           updated_at: ticket.updatedAt.toISOString(),
           block: this.userBlocksService.serializeBlock(ticket.userBlock),
         })),
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+        limit,
       };
     }
     const where: Prisma.UserBlockWhereInput =
@@ -456,7 +550,10 @@ export class AdminService {
               : { status: UserBlockStatus.ACTIVE };
 
     const blocks = await this.prisma.userBlock.findMany({
-      where,
+      where: {
+        ...where,
+        ...this.dateIdCursorWhere('startsAt', cursor),
+      },
       include: {
         user: {
           include: {
@@ -493,15 +590,20 @@ export class AdminService {
           },
         },
       },
-      orderBy: {
-        startsAt: 'desc',
-      },
-      take: 100,
+      orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(blocks, limit, (block) => ({
+      startsAt: block.startsAt.toISOString(),
+      id: block.id,
+    }));
 
     return {
       source: 'timeweb',
-      items: blocks.map((block) => this.serializeAdminBlock(block)),
+      items: page.items.map((block) => this.serializeAdminBlock(block)),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 
@@ -851,17 +953,24 @@ export class AdminService {
     };
   }
 
-  async getModerationQueue(status?: string) {
-    return this.listListings(status);
+  async getModerationQueue(query: ListAdminListingsDto | string = {}) {
+    if (typeof query === 'string') {
+      return this.listListings(query);
+    }
+    return this.listListings({ ...query, status: query.status ?? 'pending' });
   }
 
-  async listListings(status?: string) {
+  async listListings(query: ListAdminListingsDto | string = {}) {
+    const status = typeof query === 'string' ? query : query.status;
+    const limit = this.pageLimit(typeof query === 'string' ? undefined : query.limit, 100);
+    const cursor = typeof query === 'string' ? undefined : query.cursor;
     const normalizedStatus = (status ?? '').trim().toLowerCase();
     const isPending =
       normalizedStatus === 'pending' || normalizedStatus.length === 0;
     const where: Prisma.ListingWhereInput = {
       deletedAt: null,
       ...(isPending ? { archivedAt: null } : {}),
+      ...this.dateIdCursorWhere('createdAt', cursor),
       ...(normalizedStatus == 'all' || normalizedStatus.length === 0
         ? {}
         : { status: listingStatusFromInput(normalizedStatus) }),
@@ -881,10 +990,8 @@ export class AdminService {
             },
           },
         },
-        orderBy: {
-          createdAt: 'desc',
-        },
-        take: 100,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: limit + 1,
       }),
       this.prisma.listing.count({ where }),
       this.prisma.listing.count({
@@ -895,13 +1002,20 @@ export class AdminService {
         },
       }),
     ]);
+    const page = this.pageInfo(items, limit, (listing) => ({
+      createdAt: listing.createdAt.toISOString(),
+      id: listing.id,
+    }));
 
     return {
       source: 'timeweb',
-      items: items.map((listing) => serializeListing(listing)),
+      items: page.items.map((listing) => serializeListing(listing)),
       total,
       pendingModeration,
       pending_moderation: pendingModeration,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
       statuses: [
         'pending',
         'approved',
@@ -916,6 +1030,7 @@ export class AdminService {
   async listPromotions(query: ListAdminPromotionsDto) {
     await this.expirePromotionsByTime();
 
+    const limit = this.pageLimit(query.limit, 50);
     const range = this.resolveRange({
       from: query.from,
       to: query.to,
@@ -931,6 +1046,7 @@ export class AdminService {
           ? { listingId: query.listingId.trim() }
           : {}),
         ...(range ? { createdAt: range } : {}),
+        ...this.dateIdCursorWhere('createdAt', query.cursor),
       },
       include: {
         listing: {
@@ -948,16 +1064,18 @@ export class AdminService {
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 200,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(items, limit, (promotion) => ({
+      createdAt: promotion.createdAt.toISOString(),
+      id: promotion.id,
+    }));
 
     const now = Date.now();
     return {
       source: 'timeweb',
-      items: items.map((promotion) => ({
+      items: page.items.map((promotion) => ({
         promotionId: promotion.id,
         type: promotionTypeToResponse(promotion.type),
         status: promotion.status.toLowerCase(),
@@ -979,6 +1097,9 @@ export class AdminService {
         clicksCount: promotion.clicksCount,
         createdAt: promotion.createdAt.toISOString(),
       })),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 
@@ -1099,8 +1220,12 @@ export class AdminService {
     };
   }
 
-  async listWallets() {
+  async listWallets(query: ListAdminUsersDto = {}) {
+    const limit = this.pageLimit(query.limit, 100);
     const wallets = await this.prisma.wallet.findMany({
+      where: {
+        ...this.dateIdCursorWhere('updatedAt', query.cursor),
+      },
       include: {
         user: {
           include: {
@@ -1108,15 +1233,17 @@ export class AdminService {
           },
         },
       },
-      orderBy: {
-        updatedAt: 'desc',
-      },
-      take: 200,
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(wallets, limit, (wallet) => ({
+      updatedAt: wallet.updatedAt.toISOString(),
+      id: wallet.id,
+    }));
 
     return {
       source: 'timeweb',
-      items: wallets.map((wallet) => ({
+      items: page.items.map((wallet) => ({
         userId: wallet.userId,
         userName: wallet.user.displayName || wallet.user.name,
         userPhone: wallet.user.phone,
@@ -1124,10 +1251,14 @@ export class AdminService {
         lastBonusAccrualAt: toIsoString(wallet.lastBonusAccrualAt),
         createdAt: wallet.createdAt.toISOString(),
       })),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 
   async listWalletTransactions(query: ListAdminWalletTransactionsDto) {
+    const limit = this.pageLimit(query.limit, 50);
     const range = this.resolveRange({
       from: query.from,
       to: query.to,
@@ -1140,6 +1271,7 @@ export class AdminService {
         ...(reason ? { reason } : {}),
         ...(query.userId?.trim() ? { userId: query.userId.trim() } : {}),
         ...(range ? { createdAt: range } : {}),
+        ...this.dateIdCursorWhere('createdAt', query.cursor),
       },
       include: {
         user: {
@@ -1148,15 +1280,17 @@ export class AdminService {
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 300,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(items, limit, (item) => ({
+      createdAt: item.createdAt.toISOString(),
+      id: item.id,
+    }));
 
     return {
       source: 'timeweb',
-      items: items.map((item) => ({
+      items: page.items.map((item) => ({
         transactionId: item.id,
         userId: item.userId,
         userName: item.user.displayName || item.user.name,
@@ -1167,6 +1301,9 @@ export class AdminService {
         metadata: item.metadata,
         createdAt: item.createdAt.toISOString(),
       })),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 
@@ -1421,10 +1558,7 @@ export class AdminService {
     };
   }
 
-  async listReferrals(query: ListAdminBonusAnalyticsDto & {
-    search?: string;
-    userId?: string;
-  }) {
+  async listReferrals(query: ListAdminBonusAnalyticsDto) {
     const range = this.resolveAnalyticsRange(query);
     const search = query.search?.trim();
     const userId = query.userId?.trim();
@@ -1432,9 +1566,11 @@ export class AdminService {
       return this.listReferralUsers(query, range);
     }
 
+    const limit = this.pageLimit(query.limit, 50);
     const referrals = await this.prisma.referral.findMany({
       where: {
         createdAt: range,
+        ...this.dateIdCursorWhere('createdAt', query.cursor),
       },
       include: {
         inviter: {
@@ -1448,18 +1584,23 @@ export class AdminService {
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 500,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(referrals, limit, (referral) => ({
+      createdAt: referral.createdAt.toISOString(),
+      id: referral.id,
+    }));
 
     return {
       source: 'timeweb',
       period: (query.period ?? 'month').trim().toLowerCase() || 'month',
       from: this.dateFilterValueToIso(range.gte),
       to: this.dateFilterValueToIso(range.lte),
-      items: this.buildReferralUserItemsFromReferrals(referrals),
+      items: this.buildReferralUserItemsFromReferrals(page.items),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 
@@ -1496,10 +1637,7 @@ export class AdminService {
   }
 
   private async listReferralUsers(
-    query: ListAdminBonusAnalyticsDto & {
-      search?: string;
-      userId?: string;
-    },
+    query: ListAdminBonusAnalyticsDto,
     range: { gte: string | Date; lte: string | Date },
   ) {
     const search = query.search?.trim();
@@ -1507,6 +1645,7 @@ export class AdminService {
     const searchLooksLikeUuid = search ? this.isUuid(search) : false;
     const decodedReferralUserId = search ? resolveReferralUserId(search) : null;
     const phoneDigits = (search ?? '').replace(/\D/g, '');
+    const cursorWhere = this.dateIdCursorWhere('createdAt', query.cursor);
     const userSearchOr: Prisma.UserWhereInput[] = [
       ...(userId && this.isUuid(userId) ? [{ id: userId }] : []),
       ...(searchLooksLikeUuid ? [{ id: search }] : []),
@@ -1520,12 +1659,14 @@ export class AdminService {
         : []),
       ...(phoneDigits.length >= 4 ? [{ phone: { contains: phoneDigits } }] : []),
     ];
+    const limit = this.pageLimit(query.limit, 25);
     const matchingUsers = await this.prisma.user.findMany({
       where: {
         deletedAt: null,
         status: {
           not: UserStatus.DELETED,
         },
+        ...(Object.keys(cursorWhere).length > 0 ? { AND: [cursorWhere] } : {}),
         ...(userSearchOr.length > 0
           ? { OR: userSearchOr }
           : { id: '00000000-0000-0000-0000-000000000000' }),
@@ -1533,11 +1674,13 @@ export class AdminService {
       include: {
         adminProfile: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
-      take: 25,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const page = this.pageInfo(matchingUsers, limit, (user) => ({
+      createdAt: user.createdAt.toISOString(),
+      id: user.id,
+    }));
 
     return {
       source: 'timeweb',
@@ -1545,8 +1688,11 @@ export class AdminService {
       from: this.dateFilterValueToIso(range.gte),
       to: this.dateFilterValueToIso(range.lte),
       items: await Promise.all(
-        matchingUsers.map((user) => this.buildReferralUserItem(user, range)),
+        page.items.map((user) => this.buildReferralUserItem(user, range)),
       ),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+      limit,
     };
   }
 

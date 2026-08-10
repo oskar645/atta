@@ -135,6 +135,8 @@ class _FakeBlocksAdminService extends AdminService {
   @override
   Future<Map<String, dynamic>> blocks({
     String? status,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
   }) async {
     blocksCalls += 1;

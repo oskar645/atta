@@ -13,10 +13,17 @@ class AdminWalletAnalyticsScreen extends StatefulWidget {
 
 class _AdminWalletAnalyticsScreenState
     extends State<AdminWalletAnalyticsScreen> {
+  static const int _pageLimit = 50;
+
   late Future<_AdminWalletAnalyticsData> _future;
   String _period = 'month';
   DateTimeRange? _customRange;
   final TextEditingController _searchController = TextEditingController();
+  String? _referralsNextCursor;
+  bool _referralsHasMore = true;
+  bool _referralsLoadingMore = false;
+  int _requestSerial = 0;
+  _AdminWalletAnalyticsData? _data;
 
   @override
   void initState() {
@@ -33,7 +40,11 @@ class _AdminWalletAnalyticsScreenState
   Future<_AdminWalletAnalyticsData> _load({
     bool forceRefresh = false,
     String? search,
+    String? referralsCursor,
+    bool appendReferrals = false,
+    int? serial,
   }) async {
+    final requestSerial = serial ?? ++_requestSerial;
     final admin = context.read<AdminService>();
     final referralSearch = (search ?? _searchController.text).trim();
     final from = _period == 'custom'
@@ -42,32 +53,71 @@ class _AdminWalletAnalyticsScreenState
     final to = _period == 'custom'
         ? _customRange?.end.toUtc().toIso8601String()
         : null;
-    final walletsResponse = await admin.wallets(forceRefresh: forceRefresh);
-    final transactionsResponse =
-        await admin.walletTransactions(forceRefresh: forceRefresh);
-    final analyticsResponse =
-        await admin.bonusAnalytics(period: _period, forceRefresh: forceRefresh);
-    final referralSummaryResponse = await admin.referralSummary(
-      period: _period,
-      from: from,
-      to: to,
-      forceRefresh: forceRefresh,
-    );
+    final walletsResponse = appendReferrals
+        ? Future<Map<String, dynamic>>.value({'items': _data?.wallets ?? []})
+        : admin.wallets(forceRefresh: forceRefresh, limit: _pageLimit);
+    final transactionsResponse = appendReferrals
+        ? Future<Map<String, dynamic>>.value(
+            {'items': _data?.transactions ?? []},
+          )
+        : admin.walletTransactions(
+            forceRefresh: forceRefresh,
+            limit: _pageLimit,
+          );
+    final analyticsResponse = appendReferrals
+        ? Future<Map<String, dynamic>>.value(_data?.analytics ?? {})
+        : admin.bonusAnalytics(period: _period, forceRefresh: forceRefresh);
+    final referralSummaryResponse = appendReferrals
+        ? Future<Map<String, dynamic>>.value(_data?.referralSummary ?? {})
+        : admin.referralSummary(
+            period: _period,
+            from: from,
+            to: to,
+            forceRefresh: forceRefresh,
+          );
     final referralsResponse = await admin.referrals(
       period: _period,
       from: from,
       to: to,
       search: referralSearch,
+      limit: _pageLimit,
+      cursor: referralsCursor,
       forceRefresh: forceRefresh,
     );
-    return _AdminWalletAnalyticsData(
-      wallets: _extractItems(walletsResponse),
-      transactions: _extractItems(transactionsResponse),
-      analytics: Map<String, dynamic>.from(analyticsResponse),
-      referralSummary: Map<String, dynamic>.from(referralSummaryResponse),
-      referralUsers: _extractItems(referralsResponse),
+    if (requestSerial != _requestSerial) {
+      return _data ??
+          const _AdminWalletAnalyticsData(
+            wallets: <Map<String, dynamic>>[],
+            transactions: <Map<String, dynamic>>[],
+            analytics: <String, dynamic>{},
+            referralSummary: <String, dynamic>{},
+            referralUsers: <Map<String, dynamic>>[],
+            referralSearch: '',
+          );
+    }
+    final nextCursor =
+        (referralsResponse['nextCursor'] ?? '').toString().trim();
+    final nextReferralUsers = _extractItems(referralsResponse);
+    final data = _AdminWalletAnalyticsData(
+      wallets: _extractItems(await walletsResponse),
+      transactions: _extractItems(await transactionsResponse),
+      analytics: Map<String, dynamic>.from(await analyticsResponse),
+      referralSummary: Map<String, dynamic>.from(await referralSummaryResponse),
+      referralUsers: appendReferrals
+          ? _appendReferralUsers(_data?.referralUsers ?? [], nextReferralUsers)
+          : nextReferralUsers,
       referralSearch: referralSearch,
     );
+    if (mounted) {
+      setState(() {
+        _data = data;
+        _referralsNextCursor = nextCursor.isEmpty ? null : nextCursor;
+        _referralsHasMore =
+            referralsResponse['hasMore'] == true || nextCursor.isNotEmpty;
+        _referralsLoadingMore = false;
+      });
+    }
+    return data;
   }
 
   List<Map<String, dynamic>> _extractItems(Map<String, dynamic> response) {
@@ -80,7 +130,13 @@ class _AdminWalletAnalyticsScreenState
   }
 
   Future<void> _refresh() async {
-    final next = _load(forceRefresh: true);
+    final serial = ++_requestSerial;
+    setState(() {
+      _referralsNextCursor = null;
+      _referralsHasMore = true;
+      _referralsLoadingMore = false;
+    });
+    final next = _load(forceRefresh: true, serial: serial);
     setState(() {
       _future = next;
     });
@@ -89,9 +145,13 @@ class _AdminWalletAnalyticsScreenState
 
   void _setPeriod(String period) {
     if (_period == period) return;
+    final serial = ++_requestSerial;
     setState(() {
       _period = period;
-      _future = _load(forceRefresh: true);
+      _referralsNextCursor = null;
+      _referralsHasMore = true;
+      _referralsLoadingMore = false;
+      _future = _load(forceRefresh: true, serial: serial);
     });
   }
 
@@ -126,15 +186,49 @@ class _AdminWalletAnalyticsScreenState
         ),
       );
       _period = 'custom';
-      _future = _load(forceRefresh: true);
+      _referralsNextCursor = null;
+      _referralsHasMore = true;
+      _referralsLoadingMore = false;
+      _future = _load(forceRefresh: true, serial: ++_requestSerial);
     });
   }
 
   void _runSearch() {
     final search = _searchController.text.trim();
+    final serial = ++_requestSerial;
     setState(() {
-      _future = _load(forceRefresh: true, search: search);
+      _referralsNextCursor = null;
+      _referralsHasMore = true;
+      _referralsLoadingMore = false;
+      _future = _load(forceRefresh: true, search: search, serial: serial);
     });
+  }
+
+  void _loadMoreReferrals() {
+    final cursor = _referralsNextCursor;
+    if (!_referralsHasMore || _referralsLoadingMore || cursor == null) return;
+    setState(() => _referralsLoadingMore = true);
+    _load(
+      referralsCursor: cursor,
+      appendReferrals: true,
+      serial: _requestSerial,
+    );
+  }
+
+  List<Map<String, dynamic>> _appendReferralUsers(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    String idOf(Map<String, dynamic> item) {
+      final inviter = Map<String, dynamic>.from(item['inviter'] as Map? ?? {});
+      return (inviter['id'] ?? item['referralCode'] ?? '').toString();
+    }
+
+    final seen = current.map(idOf).toSet();
+    return <Map<String, dynamic>>[
+      ...current,
+      ...next.where((item) => seen.add(idOf(item))),
+    ];
   }
 
   @override
@@ -165,7 +259,7 @@ class _AdminWalletAnalyticsScreenState
               );
             }
 
-            final data = snap.data!;
+            final data = _data ?? snap.data!;
             return TabBarView(
               children: [
                 _OverviewTab(data: data, onRefresh: _refresh),
@@ -178,6 +272,10 @@ class _AdminWalletAnalyticsScreenState
                   onPickCustomRange: _pickCustomRange,
                   onSearch: _runSearch,
                   onRefresh: _refresh,
+                  canLoadMore:
+                      _referralsHasMore && _referralsNextCursor != null,
+                  loadingMore: _referralsLoadingMore,
+                  onLoadMore: _loadMoreReferrals,
                 ),
               ],
             );
@@ -284,6 +382,9 @@ class _ReferralsTab extends StatelessWidget {
     required this.onPickCustomRange,
     required this.onSearch,
     required this.onRefresh,
+    required this.canLoadMore,
+    required this.loadingMore,
+    required this.onLoadMore,
   });
 
   final _AdminWalletAnalyticsData data;
@@ -294,6 +395,9 @@ class _ReferralsTab extends StatelessWidget {
   final VoidCallback onPickCustomRange;
   final VoidCallback onSearch;
   final Future<void> Function() onRefresh;
+  final bool canLoadMore;
+  final bool loadingMore;
+  final VoidCallback onLoadMore;
 
   @override
   Widget build(BuildContext context) {
@@ -301,91 +405,113 @@ class _ReferralsTab extends StatelessWidget {
     final hasSearch = data.referralSearch.trim().isNotEmpty;
     return RefreshIndicator(
       onRefresh: onRefresh,
-      child: ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(value: 'day', label: Text('Сегодня')),
-              ButtonSegment(value: 'week', label: Text('7 дней')),
-              ButtonSegment(value: 'month', label: Text('Месяц')),
-              ButtonSegment(value: 'custom', label: Text('Период')),
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          final metrics = notification.metrics;
+          if (canLoadMore && !loadingMore && metrics.extentAfter < 700) {
+            onLoadMore();
+          }
+          return false;
+        },
+        child: ListView(
+          padding: const EdgeInsets.all(12),
+          children: [
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(value: 'day', label: Text('Сегодня')),
+                ButtonSegment(value: 'week', label: Text('7 дней')),
+                ButtonSegment(value: 'month', label: Text('Месяц')),
+                ButtonSegment(value: 'custom', label: Text('Период')),
+              ],
+              selected: {period},
+              onSelectionChanged: (value) {
+                final next = value.first;
+                if (next == 'custom') {
+                  onPickCustomRange();
+                } else {
+                  onPeriodChanged(next);
+                }
+              },
+            ),
+            if (period == 'custom' && customRange != null) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: onPickCustomRange,
+                icon: const Icon(Icons.date_range),
+                label: Text(
+                  '${_formatDate(customRange!.start)} - ${_formatDate(customRange!.end)}',
+                ),
+              ),
             ],
-            selected: {period},
-            onSelectionChanged: (value) {
-              final next = value.first;
-              if (next == 'custom') {
-                onPickCustomRange();
-              } else {
-                onPeriodChanged(next);
-              }
-            },
-          ),
-          if (period == 'custom' && customRange != null) ...[
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: onPickCustomRange,
-              icon: const Icon(Icons.date_range),
-              label: Text(
-                '${_formatDate(customRange!.start)} - ${_formatDate(customRange!.end)}',
+            const SizedBox(height: 10),
+            TextField(
+              controller: searchController,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => onSearch(),
+              decoration: InputDecoration(
+                labelText: 'Поиск по имени, телефону, коду, userId',
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.search),
+                  tooltip: 'Найти',
+                  onPressed: onSearch,
+                ),
               ),
             ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                _WalletSummaryCard(
+                    title: 'Регистрации',
+                    value: '${summary['newRegistrationsByInvite'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Бонусов',
+                    value: '${summary['rewardedReferralBonuses'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Баллов',
+                    value: '${summary['referralPointsAwarded'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Не завершено',
+                    value: '${summary['unfinishedInvites'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Отказы',
+                    value: '${summary['rewardFailures'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Куплено',
+                    value: '${summary['pointsPurchased'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Потрачено',
+                    value: '${summary['pointsSpent'] ?? 0}'),
+                _WalletSummaryCard(
+                    title: 'Ежедневные',
+                    value: '${summary['dailyBonusesAwarded'] ?? 0}'),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ...data.referralUsers.map((user) => _ReferralUserTile(item: user)),
+            if (data.referralUsers.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  hasSearch
+                      ? 'Пользователь не найден'
+                      : 'За выбранный период реферальных записей нет.',
+                ),
+              ),
+            if (loadingMore)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
           ],
-          const SizedBox(height: 10),
-          TextField(
-            controller: searchController,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => onSearch(),
-            decoration: InputDecoration(
-              labelText: 'Поиск по имени, телефону, коду, userId',
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.search),
-                tooltip: 'Найти',
-                onPressed: onSearch,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _WalletSummaryCard(
-                  title: 'Регистрации',
-                  value: '${summary['newRegistrationsByInvite'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Бонусов',
-                  value: '${summary['rewardedReferralBonuses'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Баллов',
-                  value: '${summary['referralPointsAwarded'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Не завершено',
-                  value: '${summary['unfinishedInvites'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Отказы', value: '${summary['rewardFailures'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Куплено',
-                  value: '${summary['pointsPurchased'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Потрачено', value: '${summary['pointsSpent'] ?? 0}'),
-              _WalletSummaryCard(
-                  title: 'Ежедневные',
-                  value: '${summary['dailyBonusesAwarded'] ?? 0}'),
-            ],
-          ),
-          const SizedBox(height: 16),
-          ...data.referralUsers.map((user) => _ReferralUserTile(item: user)),
-          if (data.referralUsers.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(
-                hasSearch
-                    ? 'Пользователь не найден'
-                    : 'За выбранный период реферальных записей нет.',
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }

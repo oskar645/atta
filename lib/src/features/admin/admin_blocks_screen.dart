@@ -16,6 +16,9 @@ class AdminBlocksScreen extends StatefulWidget {
 }
 
 class _AdminBlocksScreenState extends State<AdminBlocksScreen> {
+  static const int _pageLimit = 50;
+
+  final ScrollController _scrollController = ScrollController();
   static const _filters = <_BlockFilter>[
     _BlockFilter('active', 'Активные'),
     _BlockFilter('temporary', 'Временные'),
@@ -28,23 +31,67 @@ class _AdminBlocksScreenState extends State<AdminBlocksScreen> {
   String _status = 'active';
   bool _busy = false;
   List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
+  String? _nextCursor;
+  bool _hasMore = true;
+  bool _loadingMore = false;
+  int _requestSerial = 0;
   late Future<List<Map<String, dynamic>>> _future = _load(forceRefresh: true);
 
-  Future<List<Map<String, dynamic>>> _load({bool forceRefresh = false}) async {
-    final response = await context
-        .read<AdminService>()
-        .blocks(status: _status, forceRefresh: forceRefresh);
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_maybeLoadMore);
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<List<Map<String, dynamic>>> _load({
+    bool forceRefresh = false,
+    String? cursor,
+    bool append = false,
+    int? serial,
+  }) async {
+    final requestSerial = serial ?? ++_requestSerial;
+    final response = await context.read<AdminService>().blocks(
+          status: _status,
+          forceRefresh: forceRefresh,
+          limit: _pageLimit,
+          cursor: cursor,
+        );
+    if (requestSerial != _requestSerial) return _items;
     final raw = response['items'];
-    return raw is List
+    final items = raw is List
         ? raw
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList(growable: false)
         : const <Map<String, dynamic>>[];
+    final nextCursor = (response['nextCursor'] ?? '').toString().trim();
+    if (mounted) {
+      setState(() {
+        _items = append ? _appendDeduped(_items, items) : items;
+        _nextCursor = nextCursor.isEmpty ? null : nextCursor;
+        _hasMore = response['hasMore'] == true || nextCursor.isNotEmpty;
+        _loadingMore = false;
+      });
+    }
+    return append ? _items : items;
   }
 
   Future<void> _refresh() async {
-    final next = _load(forceRefresh: true);
+    final serial = ++_requestSerial;
+    setState(() {
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+    });
+    final next = _load(forceRefresh: true, serial: serial);
     if (!mounted) return;
     setState(() => _future = next);
     await next;
@@ -78,10 +125,45 @@ class _AdminBlocksScreenState extends State<AdminBlocksScreen> {
 
   void _setFilter(String status) {
     if (_status == status) return;
+    final serial = ++_requestSerial;
     setState(() {
       _status = status;
-      _future = _load(forceRefresh: true);
+      _items = const <Map<String, dynamic>>[];
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+      _future = _load(forceRefresh: true, serial: serial);
     });
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients ||
+        !_hasMore ||
+        _loadingMore ||
+        _busy ||
+        _nextCursor == null) {
+      return;
+    }
+    if (_scrollController.position.extentAfter > 700) return;
+    final cursor = _nextCursor;
+    if (cursor == null) return;
+    setState(() => _loadingMore = true);
+    _load(cursor: cursor, append: true, serial: _requestSerial);
+  }
+
+  List<Map<String, dynamic>> _appendDeduped(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    final seen = current
+        .map((item) => _value(_blockValue(item), const ['id', 'block_id']))
+        .toSet();
+    return <Map<String, dynamic>>[
+      ...current,
+      ...next.where(
+        (item) => seen.add(_value(_blockValue(item), const ['id', 'block_id'])),
+      ),
+    ];
   }
 
   Future<String?> _askText(String title, String label) async {
@@ -263,20 +345,38 @@ class _AdminBlocksScreenState extends State<AdminBlocksScreen> {
               return RefreshIndicator(
                 onRefresh: _refresh,
                 child: ListView.builder(
+                  controller: _scrollController,
                   padding: const EdgeInsets.all(12),
-                  itemCount: items.length,
-                  itemBuilder: (context, index) => _BlockCard(
-                    item: items[index],
-                    busy: _busy,
-                    onUnblock: () => _unblock(items[index]),
-                    onExtend: () =>
-                        _changeDuration(items[index], permanent: false),
-                    onPermanent: () =>
-                        _changeDuration(items[index], permanent: true),
-                    onOpenUser: () => _openUser(items[index]),
-                    onOpenListing: () => _openListing(items[index]),
-                    onOpenAppeal: () => _openAppeal(items[index]),
-                  ),
+                  itemCount: items.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == items.length) {
+                      return _loadingMore
+                          ? const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            )
+                          : const SizedBox(height: 12);
+                    }
+                    return _BlockCard(
+                      item: items[index],
+                      busy: _busy,
+                      onUnblock: () => _unblock(items[index]),
+                      onExtend: () =>
+                          _changeDuration(items[index], permanent: false),
+                      onPermanent: () =>
+                          _changeDuration(items[index], permanent: true),
+                      onOpenUser: () => _openUser(items[index]),
+                      onOpenListing: () => _openListing(items[index]),
+                      onOpenAppeal: () => _openAppeal(items[index]),
+                    );
+                  },
                 ),
               );
             },

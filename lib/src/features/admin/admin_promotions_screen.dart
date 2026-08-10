@@ -13,40 +13,82 @@ class AdminPromotionsScreen extends StatefulWidget {
 }
 
 class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
+  static const int _pageLimit = 50;
+
+  final ScrollController _scrollController = ScrollController();
   String _filter = 'all';
   late Future<_AdminPromotionsData> _future;
   _AdminPromotionsData _data = const _AdminPromotionsData(
     items: <Map<String, dynamic>>[],
     summary: <String, dynamic>{},
   );
+  String? _nextCursor;
+  bool _hasMore = true;
+  bool _loadingMore = false;
+  int _requestSerial = 0;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_maybeLoadMore);
     _future = _load();
   }
 
-  Future<_AdminPromotionsData> _load() async {
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<_AdminPromotionsData> _load({
+    String? cursor,
+    bool append = false,
+    int? serial,
+  }) async {
+    final requestSerial = serial ?? ++_requestSerial;
     final admin = context.read<AdminService>();
     final itemsResponse = await admin.promotions(
       status: _statusForFilter(_filter),
       type: _typeForFilter(_filter),
+      limit: _pageLimit,
+      cursor: cursor,
     );
-    final summaryResponse = await admin.promotionsSummary();
+    if (requestSerial != _requestSerial) return _data;
+    final summaryResponse =
+        append ? _data.summary : await admin.promotionsSummary();
     final itemsRaw = itemsResponse['items'];
-    return _AdminPromotionsData(
-      items: itemsRaw is List
-          ? itemsRaw
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList(growable: false)
-          : const <Map<String, dynamic>>[],
+    final nextItems = itemsRaw is List
+        ? itemsRaw
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final nextCursor = (itemsResponse['nextCursor'] ?? '').toString().trim();
+    final data = _AdminPromotionsData(
+      items: append ? _appendDeduped(_data.items, nextItems) : nextItems,
       summary: Map<String, dynamic>.from(summaryResponse),
     );
+    if (mounted) {
+      setState(() {
+        _data = data;
+        _nextCursor = nextCursor.isEmpty ? null : nextCursor;
+        _hasMore = itemsResponse['hasMore'] == true || nextCursor.isNotEmpty;
+        _loadingMore = false;
+      });
+    }
+    return data;
   }
 
   Future<void> _refresh() async {
-    final next = _load();
+    final serial = ++_requestSerial;
+    setState(() {
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+    });
+    final next = _load(serial: serial);
     if (!mounted) return;
     setState(() {
       _future = next;
@@ -83,10 +125,44 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
   }
 
   Future<void> _setFilter(String value) async {
+    final serial = ++_requestSerial;
     setState(() {
       _filter = value;
-      _future = _load();
+      _data = const _AdminPromotionsData(
+        items: <Map<String, dynamic>>[],
+        summary: <String, dynamic>{},
+      );
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+      _future = _load(serial: serial);
     });
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients ||
+        !_hasMore ||
+        _loadingMore ||
+        _nextCursor == null) {
+      return;
+    }
+    if (_scrollController.position.extentAfter > 700) return;
+    final cursor = _nextCursor;
+    if (cursor == null) return;
+    setState(() => _loadingMore = true);
+    _load(cursor: cursor, append: true, serial: _requestSerial);
+  }
+
+  List<Map<String, dynamic>> _appendDeduped(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    final seen =
+        current.map((item) => (item['promotionId'] ?? '').toString()).toSet();
+    return <Map<String, dynamic>>[
+      ...current,
+      ...next.where((item) => seen.add((item['promotionId'] ?? '').toString())),
+    ];
   }
 
   String? _statusForFilter(String value) {
@@ -210,6 +286,7 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
           return RefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
+              controller: _scrollController,
               padding: const EdgeInsets.all(12),
               children: [
                 Text(
@@ -352,6 +429,17 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
                     child: Center(child: Text('Продвижений пока нет')),
+                  ),
+                if (_loadingMore)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    ),
                   ),
               ],
             ),

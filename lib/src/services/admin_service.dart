@@ -214,8 +214,20 @@ class AdminService {
     return (raw as num?)?.toInt() ?? int.tryParse('$raw') ?? 0;
   }
 
-  Future<Map<String, dynamic>> users({bool forceRefresh = false}) =>
-      _cached('users', _api.users, forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> users({
+    bool forceRefresh = false,
+    int? limit,
+    String? cursor,
+    String? search,
+  }) {
+    if (limit != null ||
+        (cursor != null && cursor.trim().isNotEmpty) ||
+        (search != null && search.trim().isNotEmpty)) {
+      return _api.users(limit: limit, cursor: cursor, search: search);
+    }
+    return _cached('users', _api.users, forceRefresh: forceRefresh);
+  }
+
   Future<Map<String, dynamic>> onlineUsers({bool forceRefresh = false}) =>
       _cached('onlineUsers', _api.onlineUsers, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> todayVisits({bool forceRefresh = false}) =>
@@ -255,15 +267,31 @@ class AdminService {
 
   Future<Map<String, dynamic>> listings({
     String? status,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
-  }) =>
-      _cached(
-        'listings:${status ?? 'all'}',
-        () => _api.listings(status: status),
-        forceRefresh: forceRefresh,
-      );
-  Future<Map<String, dynamic>> reports({bool forceRefresh = false}) =>
-      _cached('reports', _api.reports, forceRefresh: forceRefresh);
+  }) {
+    if (limit != null || (cursor != null && cursor.trim().isNotEmpty)) {
+      return _api.listings(status: status, limit: limit, cursor: cursor);
+    }
+    return _cached(
+      'listings:${status ?? 'all'}',
+      () => _api.listings(status: status),
+      forceRefresh: forceRefresh,
+    );
+  }
+
+  Future<Map<String, dynamic>> reports({
+    bool forceRefresh = false,
+    int? limit,
+    String? cursor,
+  }) {
+    if (limit != null || (cursor != null && cursor.trim().isNotEmpty)) {
+      return _api.reports(limit: limit, cursor: cursor);
+    }
+    return _cached('reports', _api.reports, forceRefresh: forceRefresh);
+  }
+
   Future<Map<String, dynamic>> support({bool forceRefresh = false}) =>
       _cached('support', _api.support, forceRefresh: forceRefresh);
   Future<Map<String, dynamic>> promotions({
@@ -271,6 +299,8 @@ class AdminService {
     String? type,
     String? userId,
     String? listingId,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
   }) =>
       _api.promotions(
@@ -278,6 +308,8 @@ class AdminService {
         type: type,
         userId: userId,
         listingId: listingId,
+        limit: limit,
+        cursor: cursor,
       );
   Future<Map<String, dynamic>> promotionsSummary({bool forceRefresh = false}) =>
       _cached(
@@ -287,23 +319,45 @@ class AdminService {
       );
   Future<Map<String, dynamic>> cancelPromotion(String promotionId) =>
       _api.cancelPromotion(promotionId);
-  Future<Map<String, dynamic>> wallets({bool forceRefresh = false}) =>
-      _cached('wallets', _api.wallets, forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> wallets({
+    bool forceRefresh = false,
+    int? limit,
+    String? cursor,
+  }) {
+    if (limit != null || (cursor != null && cursor.trim().isNotEmpty)) {
+      return _api.wallets(limit: limit, cursor: cursor);
+    }
+    return _cached('wallets', _api.wallets, forceRefresh: forceRefresh);
+  }
+
   Future<Map<String, dynamic>> walletTransactions({
     String? type,
     String? reason,
     String? userId,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
-  }) =>
-      _cached(
-        'walletTransactions:${type ?? 'all'}:${reason ?? 'all'}:${userId ?? 'all'}',
-        () => _api.walletTransactions(
-          type: type,
-          reason: reason,
-          userId: userId,
-        ),
-        forceRefresh: forceRefresh,
+  }) {
+    if (limit != null || (cursor != null && cursor.trim().isNotEmpty)) {
+      return _api.walletTransactions(
+        type: type,
+        reason: reason,
+        userId: userId,
+        limit: limit,
+        cursor: cursor,
       );
+    }
+    return _cached(
+      'walletTransactions:${type ?? 'all'}:${reason ?? 'all'}:${userId ?? 'all'}',
+      () => _api.walletTransactions(
+        type: type,
+        reason: reason,
+        userId: userId,
+      ),
+      forceRefresh: forceRefresh,
+    );
+  }
+
   Future<Map<String, dynamic>> bonusAnalytics({
     String? period,
     bool forceRefresh = false,
@@ -364,19 +418,34 @@ class AdminService {
     String? to,
     String? search,
     String? userId,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
-  }) =>
-      _cached(
-        'referrals:${period ?? 'default'}:${from ?? ''}:${to ?? ''}:${search ?? ''}:${userId ?? ''}',
-        () => _api.referrals(
-          period: period,
-          from: from,
-          to: to,
-          search: search,
-          userId: userId,
-        ),
-        forceRefresh: forceRefresh,
+  }) {
+    if (limit != null || (cursor != null && cursor.trim().isNotEmpty)) {
+      return _api.referrals(
+        period: period,
+        from: from,
+        to: to,
+        search: search,
+        userId: userId,
+        limit: limit,
+        cursor: cursor,
       );
+    }
+    return _cached(
+      'referrals:${period ?? 'default'}:${from ?? ''}:${to ?? ''}:${search ?? ''}:${userId ?? ''}',
+      () => _api.referrals(
+        period: period,
+        from: from,
+        to: to,
+        search: search,
+        userId: userId,
+      ),
+      forceRefresh: forceRefresh,
+    );
+  }
+
   Future<Map<String, dynamic>> userReferrals(
     String userId, {
     String? period,
@@ -403,13 +472,19 @@ class AdminService {
 
   Future<Map<String, dynamic>> blocks({
     String? status,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
-  }) =>
-      _cached(
-        'blocks:${status ?? 'active'}',
-        () => _api.blocks(status: status),
-        forceRefresh: forceRefresh,
-      );
+  }) {
+    if (limit != null || (cursor != null && cursor.trim().isNotEmpty)) {
+      return _api.blocks(status: status, limit: limit, cursor: cursor);
+    }
+    return _cached(
+      'blocks:${status ?? 'active'}',
+      () => _api.blocks(status: status),
+      forceRefresh: forceRefresh,
+    );
+  }
 
   Future<Map<String, dynamic>> blockUser(
     String userId, {

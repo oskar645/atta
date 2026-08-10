@@ -23,6 +23,29 @@ let SupportService = SupportService_1 = class SupportService {
         this.notificationsService = notificationsService;
         this.storageService = storageService;
     }
+    pageLimit(value, fallback = 50) {
+        const parsed = Number(value ?? fallback);
+        if (!Number.isFinite(parsed))
+            return fallback;
+        return Math.min(Math.max(Math.trunc(parsed), 1), 100);
+    }
+    encodeAdminCursor(value) {
+        return Buffer.from(JSON.stringify(value)).toString('base64url');
+    }
+    decodeAdminCursor(cursor) {
+        const normalized = cursor?.trim();
+        if (!normalized)
+            return null;
+        try {
+            const parsed = JSON.parse(Buffer.from(normalized, 'base64url').toString('utf8'));
+            if (!parsed || typeof parsed !== 'object')
+                return null;
+            return parsed;
+        }
+        catch {
+            return null;
+        }
+    }
     decodeContent(rawText) {
         const text = rawText?.trim() ?? '';
         if (!text.startsWith(SupportService_1.contentPrefix)) {
@@ -166,8 +189,23 @@ let SupportService = SupportService_1 = class SupportService {
             items: items.map((ticket) => this.serializeTicket(ticket)),
         };
     }
-    async listTickets() {
+    async listTickets(query = {}) {
+        const limit = this.pageLimit(query.limit);
+        const decoded = this.decodeAdminCursor(query.cursor);
+        const rawUpdatedAt = decoded?.updatedAt;
+        const cursorDate = rawUpdatedAt ? new Date(rawUpdatedAt) : null;
+        const cursorId = decoded?.id;
         const items = await this.prisma.supportTicket.findMany({
+            where: {
+                ...(cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
+                    ? {
+                        OR: [
+                            { updatedAt: { lt: cursorDate } },
+                            { updatedAt: cursorDate, id: { lt: cursorId } },
+                        ],
+                    }
+                    : {}),
+            },
             include: {
                 messages: {
                     orderBy: {
@@ -176,13 +214,22 @@ let SupportService = SupportService_1 = class SupportService {
                     take: 1,
                 },
             },
-            orderBy: {
-                updatedAt: 'desc',
-            },
+            orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
         });
+        const pageItems = items.slice(0, limit);
+        const last = items.length > limit ? pageItems[pageItems.length - 1] : null;
         return {
             source: 'timeweb',
-            items: items.map((ticket) => this.serializeTicket(ticket)),
+            items: pageItems.map((ticket) => this.serializeTicket(ticket)),
+            nextCursor: last
+                ? this.encodeAdminCursor({
+                    updatedAt: last.updatedAt.toISOString(),
+                    id: last.id,
+                })
+                : null,
+            hasMore: items.length > limit,
+            limit,
         };
     }
     async openTicketForAdminContact(params) {

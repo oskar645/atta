@@ -55,12 +55,14 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   Stream<List<Map<String, dynamic>>>? _personalStream;
   Future<void>? _preloadFuture;
   Future<void>? _markSeenFuture;
+  bool _markedCurrentPersonalTabVisit = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tab = TabController(length: 2, vsync: this);
+    _tab.addListener(_handleTabChanged);
     timeago.setLocaleMessages('ru', timeago.RuMessages());
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -70,17 +72,40 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       _globalStream ??= notifications.streamGlobal();
       _personalStream ??= notifications.streamPersonal(me.uid);
       _preloadFuture ??= notifications.preload(me.uid);
-      _markSeenFuture ??= _preloadFuture!.then((_) {
-        return notifications.markAllSeen(me.uid);
-      });
+      if (_tab.index == 1) {
+        _markPersonalTabSeen();
+      }
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _tab.removeListener(_handleTabChanged);
     _tab.dispose();
     super.dispose();
+  }
+
+  void _handleTabChanged() {
+    if (_tab.index != 1) {
+      _markedCurrentPersonalTabVisit = false;
+      return;
+    }
+    if (_markedCurrentPersonalTabVisit) return;
+    _markedCurrentPersonalTabVisit = true;
+    _markPersonalTabSeen();
+  }
+
+  void _markPersonalTabSeen() {
+    final me = context.read<AuthService>().currentUser;
+    if (me == null) return;
+    final notifications = context.read<NotificationsService>();
+    _preloadFuture ??= notifications.preload(me.uid);
+    _markSeenFuture ??= _preloadFuture!.then((_) {
+      return notifications.markAllSeen(me.uid);
+    }).whenComplete(() {
+      _markSeenFuture = null;
+    });
   }
 
   @override
@@ -229,6 +254,8 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                           _NotificationTab(
                             text: 'Личные',
                             hasUnread: (personalSnap.data ?? 0) > 0,
+                            unreadDotKey:
+                                const ValueKey('personal_tab_unread_dot'),
                           ),
                         ],
                       );
@@ -626,10 +653,12 @@ class _NotificationTab extends StatelessWidget {
   const _NotificationTab({
     required this.text,
     required this.hasUnread,
+    this.unreadDotKey,
   });
 
   final String text;
   final bool hasUnread;
+  final Key? unreadDotKey;
 
   @override
   Widget build(BuildContext context) {
@@ -642,6 +671,7 @@ class _NotificationTab extends StatelessWidget {
           if (hasUnread) ...[
             const SizedBox(width: 6),
             Container(
+              key: unreadDotKey,
               width: 8,
               height: 8,
               decoration: const BoxDecoration(

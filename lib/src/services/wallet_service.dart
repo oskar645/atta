@@ -38,8 +38,10 @@ class WalletService {
   final Map<String, Future<WalletTopUpStatusResult>> _topUpStatusFutures =
       <String, Future<WalletTopUpStatusResult>>{};
   bool _lastAccrualAwarded = false;
+  int _lastAccrualAmount = 0;
 
   bool get lastAccrualAwarded => _lastAccrualAwarded;
+  int get lastAccrualAmount => _lastAccrualAmount;
   Wallet? get cachedWallet {
     final userId = _currentUserId;
     if (userId == null) {
@@ -138,7 +140,7 @@ class WalletService {
             balance: 0,
             maxBalance: 0,
             welcomeBonus: 500,
-            dailyBonusAmount: 25,
+            dailyBonusAmount: 15,
             lastDailyBonusAt: null,
             canClaimDailyBonus: true,
             nextDailyBonusAt: null,
@@ -155,7 +157,7 @@ class WalletService {
             balance: 0,
             maxBalance: 0,
             welcomeBonus: 500,
-            dailyBonusAmount: 25,
+            dailyBonusAmount: 15,
             lastDailyBonusAt: null,
             canClaimDailyBonus: true,
             nextDailyBonusAt: null,
@@ -339,6 +341,8 @@ class WalletService {
     try {
       final response = await _api.checkAccrual();
       _lastAccrualAwarded = response['awarded'] == true;
+      _lastAccrualAmount =
+          response['amount'] is num ? (response['amount'] as num).toInt() : 0;
       final walletMap = response['wallet'];
       final normalized = walletMap is Map
           ? walletMap.map((key, value) => MapEntry(key.toString(), value))
@@ -351,6 +355,7 @@ class WalletService {
       return wallet;
     } catch (error) {
       _lastAccrualAwarded = false;
+      _lastAccrualAmount = 0;
       _debugWalletLog('Wallet refresh error message=$error user=$userId');
       rethrow;
     } finally {

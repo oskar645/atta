@@ -13,8 +13,20 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> users() async {
-    final response = await client.get('/admin/users', authorized: true);
+  Future<Map<String, dynamic>> users({
+    int? limit,
+    String? cursor,
+    String? search,
+  }) async {
+    final response = await client.get(
+      '/admin/users',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -55,11 +67,17 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> blocks({String? status}) async {
+  Future<Map<String, dynamic>> blocks({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) async {
     final response = await client.get(
       '/admin/blocks',
       queryParameters: {
         if (status != null && status.trim().isNotEmpty) 'status': status.trim(),
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       },
       authorized: true,
     );
@@ -132,10 +150,18 @@ class AdminApi {
     return <String, dynamic>{'ok': true};
   }
 
-  Future<Map<String, dynamic>> listings({String? status}) async {
+  Future<Map<String, dynamic>> listings({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) async {
     final response = await client.get(
       '/admin/listings',
-      queryParameters: status == null ? null : {'status': status},
+      queryParameters: {
+        if (status != null && status.trim().isNotEmpty) 'status': status,
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      },
       authorized: true,
     );
     return Map<String, dynamic>.from(response as Map);
@@ -199,8 +225,15 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> reports() async {
-    final response = await client.get('/admin/reports', authorized: true);
+  Future<Map<String, dynamic>> reports({int? limit, String? cursor}) async {
+    final response = await client.get(
+      '/admin/reports',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -214,6 +247,8 @@ class AdminApi {
     String? type,
     String? userId,
     String? listingId,
+    int? limit,
+    String? cursor,
   }) async {
     final response = await client.get(
       '/admin/promotions',
@@ -224,6 +259,8 @@ class AdminApi {
         if (userId != null && userId.trim().isNotEmpty) 'userId': userId.trim(),
         if (listingId != null && listingId.trim().isNotEmpty)
           'listingId': listingId.trim(),
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -245,8 +282,15 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> wallets() async {
-    final response = await client.get('/admin/wallets', authorized: true);
+  Future<Map<String, dynamic>> wallets({int? limit, String? cursor}) async {
+    final response = await client.get(
+      '/admin/wallets',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -254,6 +298,8 @@ class AdminApi {
     String? type,
     String? reason,
     String? userId,
+    int? limit,
+    String? cursor,
   }) async {
     final response = await client.get(
       '/admin/wallet-transactions',
@@ -262,6 +308,8 @@ class AdminApi {
         if (type != null && type.trim().isNotEmpty) 'type': type.trim(),
         if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
         if (userId != null && userId.trim().isNotEmpty) 'userId': userId.trim(),
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -312,8 +360,7 @@ class AdminApi {
         if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
         if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         if (limit != null) 'limit': '$limit',
-        if (cursor != null && cursor.trim().isNotEmpty)
-          'cursor': cursor.trim(),
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -342,6 +389,8 @@ class AdminApi {
     String? to,
     String? search,
     String? userId,
+    int? limit,
+    String? cursor,
   }) async {
     final response = await client.get(
       '/admin/referrals',
@@ -352,6 +401,8 @@ class AdminApi {
         if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
         if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         if (userId != null && userId.trim().isNotEmpty) 'userId': userId.trim(),
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);

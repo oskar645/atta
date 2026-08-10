@@ -20,6 +20,7 @@ const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_support_ticket_dto_1 = require("./dto/create-support-ticket.dto");
+const list_admin_support_tickets_dto_1 = require("./dto/list-admin-support-tickets.dto");
 const send_support_message_dto_1 = require("./dto/send-support-message.dto");
 const support_service_1 = require("./support.service");
 const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
@@ -152,8 +153,8 @@ let AdminSupportController = class AdminSupportController {
         this.supportService = supportService;
         this.rateLimitService = rateLimitService;
     }
-    listTickets() {
-        return this.supportService.listTickets();
+    listTickets(query) {
+        return this.supportService.listTickets(query);
     }
     getTicket(ticketId) {
         return this.supportService.getTicketForAdmin(ticketId);
@@ -181,8 +182,9 @@ let AdminSupportController = class AdminSupportController {
 exports.AdminSupportController = AdminSupportController;
 __decorate([
     (0, common_1.Get)(),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [list_admin_support_tickets_dto_1.ListAdminSupportTicketsDto]),
     __metadata("design:returntype", void 0)
 ], AdminSupportController.prototype, "listTickets", null);
 __decorate([

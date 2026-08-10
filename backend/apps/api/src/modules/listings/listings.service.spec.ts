@@ -116,6 +116,17 @@ function withPromotion<T extends ReturnType<typeof createApprovedListing>>(
   };
 }
 
+function withPromotionAt<T extends ReturnType<typeof createApprovedListing>>(
+  listing: T,
+  type: PromotionType,
+  createdAt: string,
+) {
+  return {
+    ...listing,
+    promotions: [createPromotion(type, createdAt)],
+  };
+}
+
 function createService(overrides?: {
   findOwnerById?: () => Promise<unknown>;
   create?: (args: Record<string, unknown>) => Promise<unknown>;
@@ -332,7 +343,7 @@ function rawRowForListing(
   sortGroup: number,
   promotedAt: Date | null = null,
 ): RawFeedRow {
-  const sortAt = listing.publishedAt ?? listing.createdAt;
+  const sortAt = promotedAt ?? listing.publishedAt ?? listing.createdAt;
   return {
     id: listing.id,
     promoted_at: promotedAt,
@@ -341,6 +352,126 @@ function rawRowForListing(
     published_at: listing.publishedAt,
     created_at: listing.createdAt,
   };
+}
+
+function promotionActivatedAt(listing: TestApprovedListing) {
+  const now = Date.now();
+  let latest: Date | null = null;
+
+  for (const promotion of listing.promotions ?? []) {
+    if (
+      typeof promotion !== 'object' ||
+      promotion == null ||
+      !('status' in promotion) ||
+      !('type' in promotion) ||
+      !('createdAt' in promotion) ||
+      !('endsAt' in promotion)
+    ) {
+      continue;
+    }
+
+    const promo = promotion as {
+      status?: PromotionStatus;
+      type?: PromotionType;
+      createdAt?: Date | string | null;
+      endsAt?: Date | string | null;
+    };
+    if (
+      promo.status !== PromotionStatus.ACTIVE ||
+      (
+        promo.type !== PromotionType.VIP &&
+        promo.type !== PromotionType.BUMP &&
+        promo.type !== PromotionType.TURBO
+      )
+    ) {
+      continue;
+    }
+
+    const endsAt = promo.endsAt instanceof Date
+      ? promo.endsAt
+      : promo.endsAt == null
+        ? null
+        : new Date(promo.endsAt);
+    const createdAt = promo.createdAt instanceof Date
+      ? promo.createdAt
+      : promo.createdAt == null
+        ? null
+        : new Date(promo.createdAt);
+    if (
+      endsAt == null ||
+      createdAt == null ||
+      Number.isNaN(endsAt.getTime()) ||
+      Number.isNaN(createdAt.getTime()) ||
+      endsAt.getTime() <= now
+    ) {
+      continue;
+    }
+
+    if (latest == null || createdAt.getTime() > latest.getTime()) {
+      latest = createdAt;
+    }
+  }
+
+  return latest;
+}
+
+function compareNaturalListings(a: TestApprovedListing, b: TestApprovedListing) {
+  const publishedDiff =
+    (b.publishedAt?.getTime() ?? 0) - (a.publishedAt?.getTime() ?? 0);
+  if (publishedDiff !== 0) {
+    return publishedDiff;
+  }
+
+  const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
+  if (createdDiff !== 0) {
+    return createdDiff;
+  }
+
+  return b.id.localeCompare(a.id);
+}
+
+function buildRankedRawRows(
+  listings: TestApprovedListing[],
+  promotedIds?: Record<string, string>,
+) {
+  const natural = [...listings].sort(compareNaturalListings);
+  const promotedAtById = new Map<string, Date>();
+  for (const listing of natural) {
+    const promotedAt = promotedIds?.[listing.id] != null
+      ? new Date(promotedIds[listing.id]!)
+      : promotionActivatedAt(listing);
+    if (promotedAt != null && !Number.isNaN(promotedAt.getTime())) {
+      promotedAtById.set(listing.id, promotedAt);
+    }
+  }
+
+  const movedPromoted = natural
+    .slice(10)
+    .filter((listing) => promotedAtById.has(listing.id))
+    .sort((a, b) => {
+      const promotedDiff =
+        promotedAtById.get(b.id)!.getTime() - promotedAtById.get(a.id)!.getTime();
+      if (promotedDiff !== 0) {
+        return promotedDiff;
+      }
+
+      const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
+      if (createdDiff !== 0) {
+        return createdDiff;
+      }
+
+      return b.id.localeCompare(a.id);
+    });
+  const movedIds = new Set(movedPromoted.map((listing) => listing.id));
+  const ordered = [
+    ...natural.slice(0, 9),
+    ...movedPromoted,
+    ...natural.slice(9).filter((listing) => !movedIds.has(listing.id)),
+  ];
+
+  return ordered.map((listing, index) =>
+    rawRowForListing(listing, index + 1, promotedAtById.get(listing.id) ?? null),
+  );
 }
 
 function uuidFromNumber(value: number) {
@@ -356,15 +487,7 @@ function createRawFeedHarness(
   const listingsById = new Map(
     orderedListings.map((listing) => [listing.id, listing]),
   );
-  const orderedRows = orderedListings.map((listing, index) =>
-    rawRowForListing(
-      listing,
-      index + 1,
-      options?.promotedIds?.[listing.id] != null
-        ? new Date(options.promotedIds[listing.id]!)
-        : null,
-    ),
-  );
+  const orderedRows = buildRankedRawRows(orderedListings, options?.promotedIds);
   const rawCalls: Array<{ text: string; values: unknown[]; cursorId: unknown }> = [];
 
   const service = createService({
@@ -1230,7 +1353,8 @@ test('simultaneous promotions stay deterministic without duplicates or losses', 
   const response = await service.findAll({ limit: 15 });
   const ids = response.items.map((item: { id: string }) => item.id);
 
-  assert.deepEqual(ids.slice(8, 10), ['listing-12', 'listing-13']);
+  assert.deepEqual(ids.slice(0, 9), listings.slice(0, 9).map((listing) => listing.id));
+  assert.deepEqual(ids.slice(9, 11), ['listing-12', 'listing-13']);
   assert.equal(new Set(ids).size, 15);
   assert.deepEqual(ids.sort(), listings.map((listing) => listing.id).sort());
 });
@@ -1504,14 +1628,14 @@ test('public feed $queryRaw cursor pages through old UUID listings without dupli
   assert.match(rawCalls[1]!.text, /"id"\s*<\s*\$\d+::uuid/);
 });
 
-test('public feed $queryRaw cursor remains stable with protected top-10 and many active promotions', async () => {
-  const regularHead = Array.from({ length: 9 }, (_, index) =>
+test('public feed $queryRaw cursor remains stable with top insert slot and more than 20 active promotions', async () => {
+  const regularHead = Array.from({ length: 10 }, (_, index) =>
     createApprovedListing(
       uuidFromNumber(300 - index),
       `2026-07-02T11:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
     ),
   );
-  const promoted = Array.from({ length: 12 }, (_, index) => ({
+  const promoted = Array.from({ length: 22 }, (_, index) => ({
     ...createApprovedListing(
       uuidFromNumber(200 - index),
       `2026-07-02T08:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
@@ -1531,7 +1655,7 @@ test('public feed $queryRaw cursor remains stable with protected top-10 and many
       ),
     ],
   }));
-  const orderedListings = [...regularHead, ...promoted, ...expired];
+  const orderedListings = [...regularHead, ...expired, ...promoted];
   const { service, rawCalls } = createRawFeedHarness(orderedListings, {
     promotedIds: Object.fromEntries(
       promoted.map((listing) => [listing.id, '2026-07-02T12:00:00.000Z']),
@@ -1547,25 +1671,87 @@ test('public feed $queryRaw cursor remains stable with protected top-10 and many
     limit: 10,
     cursor: secondPage.nextCursor ?? undefined,
   });
+  const fourthPage = await service.findAll({
+    limit: 10,
+    cursor: thirdPage.nextCursor ?? undefined,
+  });
 
   const ids = [
     ...firstPage.items.map((item: { id: string }) => item.id),
     ...secondPage.items.map((item: { id: string }) => item.id),
     ...thirdPage.items.map((item: { id: string }) => item.id),
+    ...fourthPage.items.map((item: { id: string }) => item.id),
   ];
 
-  assert.deepEqual(firstPage.items.slice(0, 9).map((item: { id: string }) => item.id), regularHead.map((listing) => listing.id));
+  assert.deepEqual(firstPage.items.slice(0, 9).map((item: { id: string }) => item.id), regularHead.slice(0, 9).map((listing) => listing.id));
   assert.equal(firstPage.items[9]!.id, promoted[0]!.id);
   assert.ok(secondPage.items.some((item: { id: string }) => item.id === promoted[10]!.id));
-  assert.ok(thirdPage.items.some((item: { id: string }) => item.id === expired[0]!.id));
+  assert.ok(thirdPage.items.some((item: { id: string }) => item.id === promoted[20]!.id));
+  assert.ok(fourthPage.items.some((item: { id: string }) => item.id === expired[0]!.id));
   assert.equal(firstPage.hasMore, true);
   assert.equal(secondPage.hasMore, true);
-  assert.equal(thirdPage.hasMore, false);
+  assert.equal(thirdPage.hasMore, true);
+  assert.equal(fourthPage.hasMore, false);
   assert.equal(ids.length, orderedListings.length);
   assert.equal(new Set(ids).size, orderedListings.length);
-  assert.deepEqual(ids, orderedListings.map((listing) => listing.id));
-  assert.match(rawCalls[0]!.text, /PROTECTED_FEED_HEAD_SIZE|natural_rank|moved_count|promoted_at/);
+  assert.deepEqual(ids, [
+    ...regularHead.slice(0, 9).map((listing) => listing.id),
+    ...promoted.map((listing) => listing.id),
+    regularHead[9]!.id,
+    ...expired.map((listing) => listing.id),
+  ]);
+  assert.match(rawCalls[0]!.text, /natural_rank|moved_count|promotion_queue_rank|promoted_at/);
   assert.match(rawCalls[1]!.text, /"id"\s*<\s*\$\d+::uuid/);
+});
+
+test('public feed $queryRaw keeps top-10 promotions in place and inserts old VIP/BUMP purchases at position 10', async () => {
+  const listings = createFreshListings(60).map((listing, index) => {
+    if (index === 0) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:00:00.000Z');
+    }
+    if (index === 4) {
+      return withPromotionAt(listing, PromotionType.BUMP, '2026-07-02T12:01:00.000Z');
+    }
+    if (index === 49) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:02:00.000Z');
+    }
+    return listing;
+  });
+  const { service } = createRawFeedHarness(listings);
+
+  const response = await service.findAll({ limit: 60 });
+  const ids = response.items.map((item: { id: string }) => item.id);
+
+  assert.equal(ids[0], 'listing-1');
+  assert.equal(ids[4], 'listing-5');
+  assert.equal(ids[9], 'listing-50');
+  assert.equal(ids[10], 'listing-10');
+});
+
+test('public feed $queryRaw uses one newest-first VIP/BUMP promotion queue from position 10', async () => {
+  const listings = createFreshListings(40).map((listing, index) => {
+    if (index === 14) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:00:00.000Z');
+    }
+    if (index === 15) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:01:00.000Z');
+    }
+    if (index === 16) {
+      return withPromotionAt(listing, PromotionType.BUMP, '2026-07-02T12:02:00.000Z');
+    }
+    if (index === 17) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:03:00.000Z');
+    }
+    return listing;
+  });
+  const { service } = createRawFeedHarness(listings);
+
+  const response = await service.findAll({ limit: 40 });
+
+  assert.deepEqual(
+    response.items.slice(9, 13).map((item: { id: string }) => item.id),
+    ['listing-18', 'listing-17', 'listing-16', 'listing-15'],
+  );
 });
 
 test('public feed $queryRaw search and category filters keep working with cursor', async () => {

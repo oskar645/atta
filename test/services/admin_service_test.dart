@@ -210,7 +210,11 @@ class _FakeAdminApi extends AdminApi {
   ];
 
   @override
-  Future<Map<String, dynamic>> listings({String? status}) async {
+  Future<Map<String, dynamic>> listings({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) async {
     listingsCalls += 1;
     return <String, dynamic>{
       'items': pendingItems,
@@ -220,7 +224,7 @@ class _FakeAdminApi extends AdminApi {
   }
 
   @override
-  Future<Map<String, dynamic>> reports() async {
+  Future<Map<String, dynamic>> reports({int? limit, String? cursor}) async {
     reportsCalls += 1;
     return <String, dynamic>{'items': const <Map<String, dynamic>>[]};
   }
@@ -238,6 +242,8 @@ class _FakeAdminApi extends AdminApi {
     String? to,
     String? search,
     String? userId,
+    int? limit,
+    String? cursor,
   }) async {
     final key = (search?.trim().isNotEmpty ?? false)
         ? search!.trim()

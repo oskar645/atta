@@ -21,6 +21,7 @@ const chats_gateway_1 = require("../chats/chats.gateway");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_report_dto_1 = require("./dto/create-report.dto");
 const moderate_report_dto_1 = require("./dto/moderate-report.dto");
+const list_admin_reports_dto_1 = require("./dto/list-admin-reports.dto");
 const reports_service_1 = require("./reports.service");
 let ReportsController = class ReportsController {
     constructor(reportsService, chatsGateway, rateLimitService) {
@@ -73,8 +74,8 @@ let AdminReportsController = class AdminReportsController {
     constructor(reportsService) {
         this.reportsService = reportsService;
     }
-    list() {
-        return this.reportsService.listForAdmin();
+    list(query) {
+        return this.reportsService.listForAdmin(query);
     }
     resolve(reportId, authUser, body) {
         return this.reportsService.resolve(reportId, authUser, body.comment);
@@ -92,8 +93,9 @@ let AdminReportsController = class AdminReportsController {
 exports.AdminReportsController = AdminReportsController;
 __decorate([
     (0, common_1.Get)(),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [list_admin_reports_dto_1.ListAdminReportsDto]),
     __metadata("design:returntype", void 0)
 ], AdminReportsController.prototype, "list", null);
 __decorate([

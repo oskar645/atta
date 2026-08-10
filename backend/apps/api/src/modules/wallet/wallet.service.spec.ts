@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 
 import { WalletService } from './wallet.service';
+import { WALLET_DAILY_BONUS_AMOUNT } from './wallet.constants';
 
 const DAILY_LOGIN_BONUS_REASON =
   WalletTransactionReason.DAILY_LOGIN_BONUS;
@@ -277,14 +278,26 @@ test('signup bonus 500 is granted once on first wallet bootstrap', async () => {
 });
 
 test('daily bonus is granted only once per day', async () => {
-  const { service } = createService();
+  const { service, state } = createService();
 
   await service.ensureWalletAndBonuses('user-1');
   const firstWallet = await service.checkAndAccrueDailyBonus('user-1');
   const secondWallet = await service.checkAndAccrueDailyBonus('user-1');
 
-  assert.equal(firstWallet.bonusBalance, 525);
-  assert.equal(secondWallet.bonusBalance, 525);
+  assert.equal(firstWallet.bonusBalance, 500 + WALLET_DAILY_BONUS_AMOUNT);
+  assert.equal(secondWallet.bonusBalance, 500 + WALLET_DAILY_BONUS_AMOUNT);
+  assert.equal(
+    state.transactions.filter(
+      (item) => item.reason === DAILY_LOGIN_BONUS_REASON,
+    ).length,
+    1,
+  );
+  assert.equal(
+    state.transactions.find(
+      (item) => item.reason === DAILY_LOGIN_BONUS_REASON,
+    )?.amount,
+    WALLET_DAILY_BONUS_AMOUNT,
+  );
 });
 
 test('daily bonus is skipped on registration calendar day', async () => {
@@ -329,7 +342,7 @@ test('skipped day does not accrue retroactively', async () => {
 
   const wallet = await service.checkAndAccrueDailyBonus('user-1');
 
-  assert.equal(wallet.bonusBalance, 275);
+  assert.equal(wallet.bonusBalance, 250 + WALLET_DAILY_BONUS_AMOUNT);
 });
 
 test('daily bonus does not respect old max balance cap', async () => {
@@ -354,14 +367,14 @@ test('daily bonus does not respect old max balance cap', async () => {
 
   const wallet = await service.checkAndAccrueDailyBonus('user-1');
 
-  assert.equal(wallet.bonusBalance, 1015);
+  assert.equal(wallet.bonusBalance, 990 + WALLET_DAILY_BONUS_AMOUNT);
 });
 
 test('daily bonus credits balances at 1000, 5000 and 1000000', async () => {
   for (const [balance, expected] of [
-    [1000, 1025],
-    [5000, 5025],
-    [1000000, 1000025],
+    [1000, 1000 + WALLET_DAILY_BONUS_AMOUNT],
+    [5000, 5000 + WALLET_DAILY_BONUS_AMOUNT],
+    [1000000, 1000000 + WALLET_DAILY_BONUS_AMOUNT],
   ] as const) {
     const { service } = createService({
       wallet: {
@@ -412,8 +425,8 @@ test('concurrent accrual does not double credit and stores daily_login_bonus rea
     service.checkAndAccrueDailyBonus('user-1'),
   ]);
 
-  assert.equal(first.bonusBalance, 125);
-  assert.equal(second.bonusBalance, 125);
+  assert.equal(first.bonusBalance, 100 + WALLET_DAILY_BONUS_AMOUNT);
+  assert.equal(second.bonusBalance, 100 + WALLET_DAILY_BONUS_AMOUNT);
   assert.equal(
     state.transactions.filter(
       (item) => item.reason === DAILY_LOGIN_BONUS_REASON,
@@ -591,7 +604,7 @@ test('getWallet returns wallet payload for authorized user without throwing', as
   });
 
   assert.equal(response.balance, 500);
-  assert.equal(response.dailyBonusAmount, 25);
+  assert.equal(response.dailyBonusAmount, WALLET_DAILY_BONUS_AMOUNT);
 });
 
 test('checkAccrual returns wallet envelope without throwing', async () => {
@@ -604,8 +617,8 @@ test('checkAccrual returns wallet envelope without throwing', async () => {
   });
 
   assert.equal(response.awarded, true);
-  assert.equal(response.amount, 25);
-  assert.equal(response.wallet.balance, 525);
+  assert.equal(response.amount, WALLET_DAILY_BONUS_AMOUNT);
+  assert.equal(response.wallet.balance, 500 + WALLET_DAILY_BONUS_AMOUNT);
 });
 
 test('resolveSpendReason keeps promotion reason when enum value exists in database', async () => {

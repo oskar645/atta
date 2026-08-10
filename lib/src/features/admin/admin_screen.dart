@@ -24,6 +24,7 @@ import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 
@@ -1989,15 +1990,25 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (ownerName.trim().isNotEmpty)
-                  _AdminInfoRow(label: 'Имя', value: ownerName),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _AdminInfoRow(label: 'Имя', value: ownerName),
+                      ),
+                      AdminCopyUserIdButton(userId: ownerId),
+                    ],
+                  )
+                else
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: AdminCopyUserIdButton(userId: ownerId),
+                  ),
                 if (phone.trim().isNotEmpty)
                   _AdminInfoRow(label: 'Телефон', value: phoneDisplay),
                 if (createdAt.trim().isNotEmpty)
                   _AdminInfoRow(
                       label: 'Создано',
                       value: _formatModerationDate(createdAt)),
-                if (ownerId.trim().isNotEmpty)
-                  _AdminInfoRow(label: 'owner_id', value: ownerId),
               ],
             ),
           ),

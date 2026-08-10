@@ -12,23 +12,51 @@ class AdminListingsScreen extends StatefulWidget {
 }
 
 class _AdminListingsScreenState extends State<AdminListingsScreen> {
+  static const int _pageLimit = 50;
+
+  final ScrollController _scrollController = ScrollController();
   String _status = 'all';
   bool _busy = false;
   late Future<List<Map<String, dynamic>>> _future;
   List<Map<String, dynamic>>? _items;
   String? _errorText;
   bool _loading = true;
+  String? _nextCursor;
+  bool _hasMore = true;
+  bool _loadingMore = false;
+  int _requestSerial = 0;
 
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_maybeLoadMore);
     _future = _load();
   }
 
-  Future<List<Map<String, dynamic>>> _load() async {
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<List<Map<String, dynamic>>> _load({
+    String? cursor,
+    bool append = false,
+    int? serial,
+  }) async {
+    final requestSerial = serial ?? ++_requestSerial;
     try {
-      final response =
-          await context.read<AdminService>().listings(status: _status);
+      final response = await context.read<AdminService>().listings(
+            status: _status,
+            limit: _pageLimit,
+            cursor: cursor,
+            forceRefresh: true,
+          );
+      if (requestSerial != _requestSerial) {
+        return _items ?? const <Map<String, dynamic>>[];
+      }
       final raw = response['items'];
       final items = raw is! List
           ? const <Map<String, dynamic>>[]
@@ -36,19 +64,28 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
               .whereType<Map>()
               .map((item) => Map<String, dynamic>.from(item))
               .toList(growable: false);
+      final nextCursor = (response['nextCursor'] ?? '').toString().trim();
       if (mounted) {
         setState(() {
-          _items = items;
+          _items = append ? _appendDeduped(_items ?? const [], items) : items;
+          _nextCursor = nextCursor.isEmpty ? null : nextCursor;
+          _hasMore = response['hasMore'] == true || nextCursor.isNotEmpty;
+          _loadingMore = false;
           _errorText = null;
           _loading = false;
         });
       }
-      return items;
+      return _items ?? items;
     } catch (error) {
       if (mounted) {
         setState(() {
-          _errorText = 'Не удалось загрузить объявления.\n$error';
+          if (!append) {
+            _errorText = 'Не удалось загрузить объявления.\n$error';
+          } else {
+            _errorText = null;
+          }
           _loading = false;
+          _loadingMore = false;
         });
       }
       return List<Map<String, dynamic>>.from(
@@ -57,8 +94,12 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
   }
 
   Future<void> _refresh() async {
+    final serial = ++_requestSerial;
     setState(() {
-      _future = _load();
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+      _future = _load(serial: serial);
       _errorText = null;
       _loading = _items == null;
     });
@@ -66,12 +107,32 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
   }
 
   Future<void> _setStatus(String status) async {
+    final serial = ++_requestSerial;
     setState(() {
       _status = status;
-      _future = _load();
+      _items = null;
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+      _future = _load(serial: serial);
       _errorText = null;
-      _loading = _items == null;
+      _loading = true;
     });
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients ||
+        !_hasMore ||
+        _loadingMore ||
+        _busy ||
+        _nextCursor == null) {
+      return;
+    }
+    if (_scrollController.position.extentAfter > 700) return;
+    final cursor = _nextCursor;
+    if (cursor == null) return;
+    setState(() => _loadingMore = true);
+    _load(cursor: cursor, append: true, serial: _requestSerial);
   }
 
   String _id(Map<String, dynamic> item) => (item['id'] ?? '').toString();
@@ -83,6 +144,17 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
       _items =
           items.where((item) => _id(item) != listingId).toList(growable: false);
     });
+  }
+
+  List<Map<String, dynamic>> _appendDeduped(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    final seen = current.map(_id).toSet();
+    return <Map<String, dynamic>>[
+      ...current,
+      ...next.where((item) => seen.add(_id(item))),
+    ];
   }
 
   Future<void> _approve(Map<String, dynamic> item) async {
@@ -214,9 +286,26 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
                 return RefreshIndicator(
                   onRefresh: _refresh,
                   child: ListView.builder(
+                    controller: _scrollController,
                     padding: const EdgeInsets.all(12),
-                    itemCount: items.length,
+                    itemCount: items.length + 1,
                     itemBuilder: (context, index) {
+                      if (index == items.length) {
+                        return _loadingMore
+                            ? const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : const SizedBox(height: 12);
+                      }
                       final item = items[index];
                       final status = (item['status'] ?? '').toString();
                       return Card(

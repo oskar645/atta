@@ -9,7 +9,9 @@ import { ListAdminBonusAnalyticsDto } from './dto/list-admin-bonus-analytics.dto
 import { ListAdminListingsDto } from './dto/list-admin-listings.dto';
 import { ListAdminPointsPurchasesDto } from './dto/list-admin-points-purchases.dto';
 import { ListAdminPromotionsDto } from './dto/list-admin-promotions.dto';
+import { ListAdminBlocksDto } from './dto/list-admin-blocks.dto';
 import { ListAdminWalletTransactionsDto } from './dto/list-admin-wallet-transactions.dto';
+import { ListAdminUsersDto } from './dto/list-admin-users.dto';
 import { ModerateListingDto } from './dto/moderate-listing.dto';
 import { ArchiveListingDto } from '../listings/dto/archive-listing.dto';
 import { BlockUserDto, UnblockUserDto, UpdateUserBlockDto } from './dto/block-user.dto';
@@ -30,8 +32,8 @@ export class AdminController {
   }
 
   @Get('users')
-  listUsers() {
-    return this.adminService.listUsers();
+  listUsers(@Query() query: ListAdminUsersDto) {
+    return this.adminService.listUsers(query);
   }
 
   @Get('online-users')
@@ -80,8 +82,8 @@ export class AdminController {
   }
 
   @Get('blocks')
-  listBlocks(@Query('status') status?: string) {
-    return this.adminService.listBlocks(status);
+  listBlocks(@Query() query: ListAdminBlocksDto) {
+    return this.adminService.listBlocks(query);
   }
 
   @Post('blocks/:id/unblock')
@@ -112,12 +114,12 @@ export class AdminController {
 
   @Get('listings/moderation')
   getModerationQueue(@Query() query: ListAdminListingsDto) {
-    return this.adminService.getModerationQueue(query.status ?? 'pending');
+    return this.adminService.getModerationQueue(query);
   }
 
   @Get('listings')
   getListingsAlias(@Query() query: ListAdminListingsDto) {
-    return this.adminService.listListings(query.status);
+    return this.adminService.listListings(query);
   }
 
   @Get('promotions')
@@ -139,8 +141,8 @@ export class AdminController {
   }
 
   @Get('wallets')
-  listWallets() {
-    return this.adminService.listWallets();
+  listWallets(@Query() query: ListAdminUsersDto) {
+    return this.adminService.listWallets(query);
   }
 
   @Get('wallet-transactions')
@@ -169,7 +171,7 @@ export class AdminController {
   }
 
   @Get('referrals')
-  listReferrals(@Query() query: ListAdminBonusAnalyticsDto & { search?: string; userId?: string }) {
+  listReferrals(@Query() query: ListAdminBonusAnalyticsDto) {
     return this.adminService.listReferrals(query);
   }
 

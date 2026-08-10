@@ -14,6 +14,7 @@ import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
+import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
@@ -300,6 +301,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     ),
                                   ),
                                 ),
+                                AdminCopyUserIdButton(userId: widget.sellerId),
                               ],
                             ),
                             const SizedBox(height: 6),

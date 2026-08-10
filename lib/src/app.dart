@@ -605,7 +605,10 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
           mounted &&
           context != null &&
           context.mounted) {
-        showAppSnack(context, 'Ежедневный бонус: +25');
+        showAppSnack(
+          context,
+          'Ежедневный бонус: +${_walletService.lastAccrualAmount}',
+        );
       }
     });
   }

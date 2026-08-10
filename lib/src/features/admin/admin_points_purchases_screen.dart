@@ -17,6 +17,7 @@ class _AdminPointsPurchasesScreenState
     extends State<AdminPointsPurchasesScreen> {
   static const int _pageLimit = 30;
 
+  final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   String _period = 'month';
   DateTimeRange? _customRange;
@@ -30,11 +31,15 @@ class _AdminPointsPurchasesScreenState
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_maybeLoadMore);
     _load(reset: true);
   }
 
   @override
   void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -150,6 +155,17 @@ class _AdminPointsPurchasesScreenState
 
   Future<void> _refresh() => _load(reset: true);
 
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients ||
+        _loading ||
+        _loadingMore ||
+        _nextCursor == null) {
+      return;
+    }
+    if (_scrollController.position.extentAfter > 700) return;
+    _load(reset: false);
+  }
+
   void _runSearch() {
     _load(reset: true);
   }
@@ -170,7 +186,8 @@ class _AdminPointsPurchasesScreenState
     setState(() {
       _period = 'custom';
       _customRange = DateTimeRange(
-        start: DateTime(picked.start.year, picked.start.month, picked.start.day),
+        start:
+            DateTime(picked.start.year, picked.start.month, picked.start.day),
         end: DateTime(
           picked.end.year,
           picked.end.month,
@@ -215,18 +232,18 @@ class _AdminPointsPurchasesScreenState
         MaterialPageRoute(
           builder: (_) => SellerPublicProfileScreen(
             sellerId: userId,
-            initialSellerName:
-                (details['display_name'] ?? details['displayName'] ??
-                        details['name'] ??
-                        item['displayName'] ??
-                        'Пользователь')
-                    .toString(),
+            initialSellerName: (details['display_name'] ??
+                    details['displayName'] ??
+                    details['name'] ??
+                    item['displayName'] ??
+                    'Пользователь')
+                .toString(),
             initialSellerAvatar:
-                (details['avatar_url'] ?? details['avatarUrl'] ?? '').toString(),
+                (details['avatar_url'] ?? details['avatarUrl'] ?? '')
+                    .toString(),
             initialSellerPhone:
                 (details['phone'] ?? item['phone'] ?? '').toString(),
-            initialStatusLabel:
-                (details['status'] ?? 'Активен').toString(),
+            initialStatusLabel: (details['status'] ?? 'Активен').toString(),
             initialIsAdmin:
                 details['is_admin'] == true || details['isAdmin'] == true,
             showAdminFields: true,
@@ -251,6 +268,7 @@ class _AdminPointsPurchasesScreenState
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
+          controller: _scrollController,
           padding: const EdgeInsets.all(12),
           children: [
             SegmentedButton<String>(
@@ -318,19 +336,21 @@ class _AdminPointsPurchasesScreenState
                 ),
               if (_nextCursor != null) ...[
                 const SizedBox(height: 8),
-                Center(
-                  child: OutlinedButton(
-                    onPressed:
-                        _loadingMore ? null : () => _load(reset: false),
-                    child: _loadingMore
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Загрузить ещё'),
+                if (_loadingMore)
+                  const Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  Center(
+                    child: OutlinedButton(
+                      onPressed: () => _load(reset: false),
+                      child: const Text('Загрузить ещё'),
+                    ),
                   ),
-                ),
               ],
             ],
           ],

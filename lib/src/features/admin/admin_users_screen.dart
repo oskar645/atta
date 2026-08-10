@@ -17,9 +17,18 @@ class AdminUsersScreen extends StatefulWidget {
 }
 
 class _AdminUsersScreenState extends State<AdminUsersScreen> {
+  static const int _pageLimit = 50;
+
+  final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
   late Future<List<Map<String, dynamic>>> _future;
   bool _busy = false;
   List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
+  String? _nextCursor;
+  bool _hasMore = true;
+  bool _loadingMore = false;
+  Object? _loadMoreError;
+  int _requestSerial = 0;
 
   static const Set<String> _protectedAdminPhones = <String>{
     '79288888645',
@@ -29,12 +38,35 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_maybeLoadMore);
     _future = _load();
   }
 
-  Future<List<Map<String, dynamic>>> _load({bool forceRefresh = false}) async {
-    final response =
-        await context.read<AdminService>().users(forceRefresh: forceRefresh);
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<List<Map<String, dynamic>>> _load({
+    bool forceRefresh = false,
+    String? cursor,
+    bool append = false,
+    int? serial,
+  }) async {
+    final requestSerial = serial ?? ++_requestSerial;
+    final response = await context.read<AdminService>().users(
+          forceRefresh: forceRefresh,
+          limit: _pageLimit,
+          cursor: cursor,
+          search: _searchController.text.trim(),
+        );
+    if (requestSerial != _requestSerial) {
+      return _items;
+    }
     final raw = response['items'];
     final items = raw is! List
         ? const <Map<String, dynamic>>[]
@@ -42,22 +74,93 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList(growable: false);
+    final nextCursor = (response['nextCursor'] ?? '').toString().trim();
+    final hasMore = response['hasMore'] == true || nextCursor.isNotEmpty;
     if (mounted) {
       setState(() {
-        _items = items;
+        _items = append ? _appendDeduped(_items, items) : items;
+        _nextCursor = nextCursor.isEmpty ? null : nextCursor;
+        _hasMore = hasMore;
+        _loadingMore = false;
+        _loadMoreError = null;
       });
     } else {
-      _items = items;
+      _items = append ? _appendDeduped(_items, items) : items;
+      _nextCursor = nextCursor.isEmpty ? null : nextCursor;
+      _hasMore = hasMore;
+      _loadingMore = false;
     }
-    return items;
+    return _items;
   }
 
   Future<void> _refresh() async {
-    final next = _load(forceRefresh: true);
+    final serial = ++_requestSerial;
+    setState(() {
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+      _loadMoreError = null;
+    });
+    final next = _load(forceRefresh: true, serial: serial);
     setState(() {
       _future = next;
     });
     await next;
+  }
+
+  void _runSearch() {
+    final serial = ++_requestSerial;
+    setState(() {
+      _items = const <Map<String, dynamic>>[];
+      _nextCursor = null;
+      _hasMore = true;
+      _loadingMore = false;
+      _loadMoreError = null;
+      _future = _load(forceRefresh: true, serial: serial);
+    });
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients ||
+        !_hasMore ||
+        _loadingMore ||
+        _busy ||
+        _nextCursor == null) {
+      return;
+    }
+    final position = _scrollController.position;
+    if (position.extentAfter > 700) return;
+    _loadMore();
+  }
+
+  Future<void> _loadMore() async {
+    final cursor = _nextCursor;
+    if (cursor == null || _loadingMore || !_hasMore) return;
+    final serial = _requestSerial;
+    setState(() {
+      _loadingMore = true;
+      _loadMoreError = null;
+    });
+    try {
+      await _load(cursor: cursor, append: true, serial: serial);
+    } catch (error) {
+      if (!mounted || serial != _requestSerial) return;
+      setState(() {
+        _loadingMore = false;
+        _loadMoreError = error;
+      });
+    }
+  }
+
+  List<Map<String, dynamic>> _appendDeduped(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    final seen = current.map((item) => _value(item, const ['id'])).toSet();
+    return <Map<String, dynamic>>[
+      ...current,
+      ...next.where((item) => seen.add(_value(item, const ['id']))),
+    ];
   }
 
   Future<void> _deleteUser(Map<String, dynamic> item) async {
@@ -256,158 +359,217 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Пользователи')),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError && _items.isEmpty) {
-            return _AdminStateView(
-              message: 'Не удалось загрузить пользователей.\n${snap.error}',
-              onRetry: _refresh,
-            );
-          }
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: TextField(
+              controller: _searchController,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _runSearch(),
+              decoration: InputDecoration(
+                labelText: 'Поиск по имени, телефону, userId',
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.search),
+                  tooltip: 'Найти',
+                  onPressed: _runSearch,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: _future,
+              builder: (context, snap) {
+                if (snap.connectionState != ConnectionState.done) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snap.hasError && _items.isEmpty) {
+                  return _AdminStateView(
+                    message:
+                        'Не удалось загрузить пользователей.\n${snap.error}',
+                    onRetry: _refresh,
+                  );
+                }
 
-          final items = _items.isNotEmpty
-              ? _items
-              : (snap.data ?? const <Map<String, dynamic>>[]);
-          if (items.isEmpty) {
-            return _AdminStateView(
-              message: 'Пользователи пока не получены из Timeweb.',
-              onRetry: _refresh,
-              showButton: false,
-            );
-          }
+                final items = _items.isNotEmpty
+                    ? _items
+                    : (snap.data ?? const <Map<String, dynamic>>[]);
+                if (items.isEmpty) {
+                  return _AdminStateView(
+                    message: 'Пользователи пока не получены из Timeweb.',
+                    onRetry: _refresh,
+                    showButton: false,
+                  );
+                }
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final name = _value(
-                  item,
-                  const ['display_name', 'name', 'email', 'phone'],
-                );
-                final isAdmin =
-                    item['is_admin'] == true || item['isAdmin'] == true;
-                final isProtectedAdmin = _isProtectedAdmin(item);
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: _busy ? null : () => _openUser(item),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              RemoteAvatar(
-                                imageUrl: _avatarUrl(item),
-                                fallbackText:
-                                    name.isEmpty ? 'Пользователь' : name,
-                                radius: 20,
+                return RefreshIndicator(
+                  onRefresh: _refresh,
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: items.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == items.length) {
+                        if (_loadingMore) {
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                            ),
+                          );
+                        }
+                        if (_loadMoreError != null) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Center(
+                              child: Text(
+                                'Не удалось догрузить: $_loadMoreError',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          );
+                        }
+                        return const SizedBox(height: 12);
+                      }
+                      final item = items[index];
+                      final name = _value(
+                        item,
+                        const ['display_name', 'name', 'email', 'phone'],
+                      );
+                      final isAdmin =
+                          item['is_admin'] == true || item['isAdmin'] == true;
+                      final isProtectedAdmin = _isProtectedAdmin(item);
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: _busy ? null : () => _openUser(item),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
                                   children: [
-                                    Text(
-                                      name.isEmpty ? 'Пользователь' : name,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
+                                    RemoteAvatar(
+                                      imageUrl: _avatarUrl(item),
+                                      fallbackText:
+                                          name.isEmpty ? 'Пользователь' : name,
+                                      radius: 20,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            name.isEmpty
+                                                ? 'Пользователь'
+                                                : name,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            _statusLabel(item),
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .outline,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _statusLabel(item),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline,
+                                    const Icon(Icons.chevron_right),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Телефон: ${formatRussianPhone(_value(item, const [
+                                        'phone'
+                                      ]))}',
+                                ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        'User ID: ${_value(item, const [
+                                              'id'
+                                            ])}',
                                       ),
+                                    ),
+                                    IconButton(
+                                      visualDensity: VisualDensity.compact,
+                                      tooltip: 'Скопировать ID',
+                                      onPressed: _busy
+                                          ? null
+                                          : () => _copyUserId(
+                                                _value(item, const ['id']),
+                                              ),
+                                      icon: const Icon(Icons.copy, size: 18),
                                     ),
                                   ],
                                 ),
-                              ),
-                              const Icon(Icons.chevron_right),
-                            ],
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Телефон: ${formatRussianPhone(_value(item, const [
-                                  'phone'
-                                ]))}',
-                          ),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'User ID: ${_value(item, const ['id'])}',
-                                ),
-                              ),
-                              IconButton(
-                                visualDensity: VisualDensity.compact,
-                                tooltip: 'Скопировать ID',
-                                onPressed: _busy
-                                    ? null
-                                    : () => _copyUserId(
-                                          _value(item, const ['id']),
+                                Text('Дата регистрации: ${_value(item, const [
+                                      'created_at'
+                                    ])}'),
+                                Text('Last seen: ${_value(item, const [
+                                      'last_seen',
+                                      'last_login_at'
+                                    ])}'),
+                                Text('Admin: ${isAdmin ? 'да' : 'нет'}'),
+                                if (isProtectedAdmin)
+                                  const Text('Защита: включена'),
+                                const SizedBox(height: 10),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    alignment: WrapAlignment.end,
+                                    children: [
+                                      FilledButton.tonalIcon(
+                                        onPressed: _busy
+                                            ? null
+                                            : () => _writeSupportMessage(item),
+                                        icon: const Icon(Icons.support_agent),
+                                        label: const Text('Написать'),
+                                      ),
+                                      OutlinedButton(
+                                        onPressed: _busy || isProtectedAdmin
+                                            ? null
+                                            : () => _deleteUser(item),
+                                        child: Text(
+                                          isProtectedAdmin
+                                              ? 'Защищён'
+                                              : 'Удалить',
                                         ),
-                                icon: const Icon(Icons.copy, size: 18),
-                              ),
-                            ],
-                          ),
-                          Text('Дата регистрации: ${_value(item, const [
-                                'created_at'
-                              ])}'),
-                          Text('Last seen: ${_value(item, const [
-                                'last_seen',
-                                'last_login_at'
-                              ])}'),
-                          Text('Admin: ${isAdmin ? 'да' : 'нет'}'),
-                          if (isProtectedAdmin) const Text('Защита: включена'),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              alignment: WrapAlignment.end,
-                              children: [
-                                FilledButton.tonalIcon(
-                                  onPressed: _busy
-                                      ? null
-                                      : () => _writeSupportMessage(item),
-                                  icon: const Icon(Icons.support_agent),
-                                  label: const Text('Написать'),
-                                ),
-                                OutlinedButton(
-                                  onPressed: _busy || isProtectedAdmin
-                                      ? null
-                                      : () => _deleteUser(item),
-                                  child: Text(
-                                    isProtectedAdmin ? 'Защищён' : 'Удалить',
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    },
                   ),
                 );
               },
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
   }

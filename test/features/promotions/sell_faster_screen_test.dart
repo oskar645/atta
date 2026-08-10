@@ -163,7 +163,7 @@ class _FakeWalletService extends WalletService {
       'balance': _balance,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 25,
+      'dailyBonusAmount': 15,
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
     });

@@ -182,7 +182,7 @@ void main() {
           tester.getRect(find.byKey(const ValueKey('home_showcase_card:2')));
 
       expect(first.width, greaterThanOrEqualTo(120));
-      expect(first.width, lessThanOrEqualTo(126));
+      expect(first.width, lessThanOrEqualTo(122));
       expect(second.left, greaterThan(first.left));
       expect(third.left, lessThan(390));
       expect(third.right, greaterThan(390));
@@ -742,8 +742,7 @@ void main() {
     expect(find.byType(FeedAdBanner), findsNothing);
   });
 
-  testWidgets('home active promo banner renders above listing grid',
-      (tester) async {
+  testWidgets('active feed ad renders above active showcase', (tester) async {
     final listings = _FakeListingsService(
       onGetListingsPage: (_) async => ListingsFeedPage(
         items: <Listing>[
@@ -780,6 +779,230 @@ void main() {
     final bannerTopLeft = tester.getTopLeft(find.byType(FeedAdBanner));
     final showcaseTopLeft = tester.getTopLeft(find.text('Витрина'));
     expect(bannerTopLeft.dy, lessThan(showcaseTopLeft.dy));
+  });
+
+  testWidgets(
+      'successful feed ad deactivate hides banner immediately and stops impressions',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'listing-1', title: 'Первая карточка'),
+          _listing(id: 'listing-2', title: 'Вторая карточка'),
+        ],
+        hasMore: false,
+      ),
+    );
+    final feedAds = _MutableFeedAdsService(ad: _feedAd(id: 'ad-1'));
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        feedAds: feedAds,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FeedAdBanner), findsOneWidget);
+    expect(feedAds.impressionIds, <String>['ad-1']);
+
+    await feedAds.deactivateAd('ad-1');
+    await tester.pump();
+
+    expect(find.byType(FeedAdBanner), findsNothing);
+    expect(feedAds.impressionIds, <String>['ad-1']);
+
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FeedAdBanner), findsNothing);
+    expect(feedAds.impressionIds, <String>['ad-1']);
+    expect(find.text('Витрина'), findsOneWidget);
+    expect(find.text('Первая карточка'), findsOneWidget);
+  });
+
+  testWidgets('feed ad deactivate error keeps banner visible', (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'listing-1', title: 'Первая карточка'),
+          _listing(id: 'listing-2', title: 'Вторая карточка'),
+        ],
+        hasMore: false,
+      ),
+    );
+    final feedAds = _MutableFeedAdsService(
+      ad: _feedAd(id: 'ad-1'),
+      failDeactivate: true,
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        feedAds: feedAds,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await expectLater(feedAds.deactivateAd('ad-1'), throwsException);
+    await tester.pump();
+
+    expect(find.byType(FeedAdBanner), findsOneWidget);
+    expect(find.text('Витрина'), findsOneWidget);
+  });
+
+  testWidgets('feed ad becomes first promo block when showcase is absent',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'listing-1', title: 'Первая карточка'),
+          _listing(id: 'listing-2', title: 'Вторая карточка'),
+        ],
+        hasMore: false,
+      ),
+    );
+    final feedAds = _FakeFeedAdsService(ad: _feedAd(id: 'ad-1'));
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        feedAds: feedAds,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Витрина'), findsNothing);
+    expect(find.byType(FeedAdBanner), findsOneWidget);
+    final bannerTopLeft = tester.getTopLeft(find.byType(FeedAdBanner));
+    final listingTopLeft = tester.getTopLeft(find.text('Первая карточка'));
+    expect(bannerTopLeft.dy, lessThan(listingTopLeft.dy));
+  });
+
+  testWidgets('feed ad stays before showcase when showcase appears',
+      (tester) async {
+    final showcaseCompleter = Completer<List<ShowcaseItem>>();
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'listing-1', title: 'Первая карточка'),
+          _listing(id: 'listing-2', title: 'Вторая карточка'),
+        ],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(
+          items: const <ShowcaseItem>[],
+          onGetHomeShowcase: (_) => showcaseCompleter.future,
+        ),
+        feedAds: _FakeFeedAdsService(ad: _feedAd(id: 'ad-1')),
+      ),
+    );
+    await tester.pump();
+
+    showcaseCompleter.complete(<ShowcaseItem>[
+      _showcaseItem(
+        promotionId: 'promo-appeared',
+        listingId: 'listing-showcase',
+        title: 'Витрина',
+      ),
+    ]);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final showcaseTopLeft = tester.getTopLeft(find.text('Витрина'));
+    final bannerTopLeft = tester.getTopLeft(find.byType(FeedAdBanner));
+    expect(bannerTopLeft.dy, lessThan(showcaseTopLeft.dy));
+  });
+
+  testWidgets('home feed never renders more than one feed ad banner',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (request) async {
+        if (request.cursor == null) {
+          return ListingsFeedPage(
+            items: List<Listing>.generate(
+              20,
+              (index) => _listing(
+                id: 'listing-$index',
+                title: 'Товар $index',
+              ),
+            ),
+            hasMore: true,
+            nextCursor: 'cursor-1',
+          );
+        }
+        return ListingsFeedPage(
+          items: List<Listing>.generate(
+            20,
+            (index) => _listing(
+              id: 'listing-${index + 20}',
+              title: 'Еще товар $index',
+            ),
+          ),
+          hasMore: false,
+        );
+      },
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        feedAds: _FakeFeedAdsService(ad: _feedAd(id: 'ad-1')),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(FeedAdBanner), findsOneWidget);
+
+    await tester.fling(
+      find.byType(CustomScrollView),
+      const Offset(0, -8000),
+      20000,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(listings.requests.length, 2);
+    expect(
+      find.byType(FeedAdBanner).evaluate().length,
+      lessThanOrEqualTo(1),
+    );
+  });
+
+  testWidgets('regular listing grid works without showcase and feed ad',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'listing-1', title: 'Первая карточка'),
+          _listing(id: 'listing-2', title: 'Вторая карточка'),
+        ],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        feedAds: _FakeFeedAdsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FeedAdBanner), findsNothing);
+    expect(find.text('Витрина'), findsNothing);
+    expect(find.text('Первая карточка'), findsOneWidget);
+    expect(find.text('Вторая карточка'), findsOneWidget);
   });
 
   testWidgets(
@@ -1054,6 +1277,44 @@ class _DelayedFeedAdsService extends FeedAdsService {
   Future<void> recordClick(String adId) async {}
 }
 
+class _MutableFeedAdsService extends FeedAdsService {
+  _MutableFeedAdsService({
+    FeedAd? ad,
+    this.failDeactivate = false,
+  }) : _ad = ad;
+
+  FeedAd? _ad;
+  final bool failDeactivate;
+  final StreamController<FeedAd?> _controller =
+      StreamController<FeedAd?>.broadcast();
+  final List<String> impressionIds = <String>[];
+
+  @override
+  Stream<FeedAd?> streamActiveAd({String placement = 'home'}) async* {
+    yield _ad;
+    yield* _controller.stream;
+  }
+
+  @override
+  Future<void> deactivateAd(String adId, {String placement = 'home'}) async {
+    if (failDeactivate) {
+      throw Exception('deactivate failed');
+    }
+    if (_ad?.id == adId) {
+      _ad = null;
+      _controller.add(null);
+    }
+  }
+
+  @override
+  Future<void> recordImpression(String adId) async {
+    impressionIds.add(adId);
+  }
+
+  @override
+  Future<void> recordClick(String adId) async {}
+}
+
 class _ErrorFeedAdsService extends FeedAdsService {
   @override
   Stream<FeedAd?> streamActiveAd({String placement = 'home'}) async* {
@@ -1065,6 +1326,18 @@ class _ErrorFeedAdsService extends FeedAdsService {
 
   @override
   Future<void> recordClick(String adId) async {}
+}
+
+FeedAd _feedAd({required String id}) {
+  return FeedAd.fromMap(<String, dynamic>{
+    'id': id,
+    'title': 'Промо баннер',
+    'image_url': 'https://example.com/ad.jpg',
+    'target_url': 'https://example.com',
+    'is_active': true,
+    'placement': 'home',
+    'created_at': '2026-07-03T10:00:00.000Z',
+  });
 }
 
 class _FakeShowcaseService extends ShowcaseService {

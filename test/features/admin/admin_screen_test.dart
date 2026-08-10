@@ -514,6 +514,8 @@ class _FakeAdminService extends AdminService {
   @override
   Future<Map<String, dynamic>> listings({
     String? status,
+    int? limit,
+    String? cursor,
     bool forceRefresh = false,
   }) async {
     listingsCalls += 1;

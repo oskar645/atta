@@ -4,6 +4,7 @@ import { NotificationType } from '@prisma/client';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ListAdminReportsDto } from './dto/list-admin-reports.dto';
 
 @Injectable()
 export class ReportsService {
@@ -13,6 +14,30 @@ export class ReportsService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  private pageLimit(value: number | undefined, fallback = 50) {
+    const parsed = Number(value ?? fallback);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(Math.max(Math.trunc(parsed), 1), 100);
+  }
+
+  private encodeAdminCursor(value: Record<string, string>) {
+    return Buffer.from(JSON.stringify(value)).toString('base64url');
+  }
+
+  private decodeAdminCursor(cursor?: string) {
+    const normalized = cursor?.trim();
+    if (!normalized) return null;
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(normalized, 'base64url').toString('utf8'),
+      );
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed as Record<string, string>;
+    } catch {
+      return null;
+    }
+  }
 
   private serialize(report: {
     id: string;
@@ -115,12 +140,25 @@ export class ReportsService {
     };
   }
 
-  async listForAdmin() {
+  async listForAdmin(query: ListAdminReportsDto = {}) {
+    const limit = this.pageLimit(query.limit);
+    const decoded = this.decodeAdminCursor(query.cursor);
+    const rawCreatedAt = decoded?.createdAt;
+    const cursorDate = rawCreatedAt ? new Date(rawCreatedAt) : null;
+    const cursorId = decoded?.id;
     const items = await this.prisma.report.findMany({
       where: {
         status: {
           notIn: [...ReportsService.hiddenStatuses],
         },
+        ...(cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
+          ? {
+              OR: [
+                { createdAt: { lt: cursorDate } },
+                { createdAt: cursorDate, id: { lt: cursorId } },
+              ],
+            }
+          : {}),
       },
       include: {
         listing: {
@@ -137,14 +175,23 @@ export class ReportsService {
         listingOwner: true,
         reporter: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const pageItems = items.slice(0, limit);
+    const last = items.length > limit ? pageItems[pageItems.length - 1] : null;
 
     return {
       source: 'timeweb',
-      items: items.map((report) => this.serialize(report)),
+      items: pageItems.map((report) => this.serialize(report)),
+      nextCursor: last
+        ? this.encodeAdminCursor({
+            createdAt: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+      hasMore: items.length > limit,
+      limit,
     };
   }
 

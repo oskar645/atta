@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/listings_api.dart';
@@ -256,6 +257,70 @@ void main() {
     );
 
     expect(items.map((item) => item.id).toList(), ['new', 'old']);
+  });
+
+  test('matches feed filters by price and supported car specs', () {
+    final service = ListingsService(api: _FakeListingsApi());
+    final listing = Listing.fromMap(
+      _listingMap(
+        const <String>['https://example.com/car.jpg'],
+        status: 'approved',
+        category: 'Авто',
+        subcategory: 'Легковые автомобили',
+        price: 1200000,
+        car: const CarSpecs(
+          brand: 'Haval',
+          model: 'Dargo X',
+          generation: 'I',
+          year: 2024,
+          mileageKm: 18000,
+          transmission: 'Робот',
+          drive: 'Полный',
+          fuel: 'Бензин',
+          engineVolume: 2,
+          owners: 1,
+          isCleared: true,
+        ),
+      ),
+    );
+
+    expect(
+      service.matchesFeedFilters(
+        listing,
+        const ListingFeedFilters(
+          category: 'Авто',
+          search: '',
+          priceFrom: 1000000,
+          priceTo: 1300000,
+          autoBrand: 'Haval',
+          autoModel: 'Dargo X',
+          autoYearFrom: 2023,
+          autoYearTo: 2025,
+          autoMileageFrom: 10000,
+          autoMileageTo: 20000,
+          autoTransmission: 'Робот',
+          autoDrive: 'Полный',
+          autoFuel: 'Бензин',
+          autoEngineVolumeFrom: 1.8,
+          autoEngineVolumeTo: 2.2,
+          autoOwners: 1,
+          autoCleared: true,
+          onlyWithPhoto: true,
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      service.matchesFeedFilters(
+        listing,
+        const ListingFeedFilters(
+          category: 'Авто',
+          search: '',
+          autoDrive: 'Передний',
+        ),
+      ),
+      isFalse,
+    );
   });
 
   test('opening old listing does not move it to top locally', () async {
@@ -1142,6 +1207,8 @@ Map<String, dynamic> _listingMap(
   String category = 'Электроника',
   String subcategory = 'Телефоны',
   String? clothesSize,
+  int price = 1000,
+  CarSpecs? car,
   Map<String, dynamic>? promotions,
 }) =>
     <String, dynamic>{
@@ -1152,7 +1219,7 @@ Map<String, dynamic> _listingMap(
       'category': category,
       'subcategory': subcategory,
       'clothes_size': clothesSize,
-      'price': 1000,
+      'price': price,
       'city': 'Москва',
       'address': 'Москва',
       'phone': '+79990000000',
@@ -1165,6 +1232,7 @@ Map<String, dynamic> _listingMap(
       'favorites_count': favoriteCount,
       'promotions': promotions ?? const <String, dynamic>{},
       'delivery': const <String, bool>{'pickup': true},
+      if (car != null) 'car': car.toMap(),
       'owner': <String, dynamic>{'id': ownerId},
       'photo_urls': photoUrls,
       'photo_items': [
