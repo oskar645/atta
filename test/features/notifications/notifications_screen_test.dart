@@ -237,7 +237,8 @@ void main() {
     );
   });
 
-  testWidgets('personal unread dot clears after delayed seen-all retry succeeds',
+  testWidgets(
+      'personal unread dot clears after delayed seen-all retry succeeds',
       (tester) async {
     final notifications = _FakeNotificationsService(
       globalItems: const <Map<String, dynamic>>[],

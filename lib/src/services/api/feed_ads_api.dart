@@ -13,10 +13,18 @@ class FeedAdsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> active({String placement = 'home'}) async {
+  Future<Map<String, dynamic>> active({
+    String placement = 'home',
+    String? afterId,
+  }) async {
+    final query = <String, dynamic>{'placement': placement};
+    final cursor = (afterId ?? '').trim();
+    if (cursor.isNotEmpty) {
+      query['after_id'] = cursor;
+    }
     final response = await _client.get(
       '/feed-ads/active',
-      queryParameters: {'placement': placement},
+      queryParameters: query,
     );
     return Map<String, dynamic>.from(response as Map);
   }

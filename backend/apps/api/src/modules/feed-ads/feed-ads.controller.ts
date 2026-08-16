@@ -16,8 +16,11 @@ export class FeedAdsController {
   }
 
   @Get('feed-ads/active')
-  active(@Query('placement') placement?: string) {
-    return this.feedAdsService.getActive(placement);
+  active(
+    @Query('placement') placement?: string,
+    @Query('after_id') afterId?: string,
+  ) {
+    return this.feedAdsService.getActive(placement, afterId);
   }
 
   @Post('feed-ads/:id/impression')

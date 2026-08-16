@@ -25,8 +25,8 @@ let FeedAdsController = class FeedAdsController {
     list(placement) {
         return this.feedAdsService.listAll(placement);
     }
-    active(placement) {
-        return this.feedAdsService.getActive(placement);
+    active(placement, afterId) {
+        return this.feedAdsService.getActive(placement, afterId);
     }
     impression(id) {
         return this.feedAdsService.recordImpression(id);
@@ -64,8 +64,9 @@ __decorate([
 __decorate([
     (0, common_1.Get)('feed-ads/active'),
     __param(0, (0, common_1.Query)('placement')),
+    __param(1, (0, common_1.Query)('after_id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], FeedAdsController.prototype, "active", null);
 __decorate([

@@ -16,6 +16,7 @@ function createController() {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
   );
 }
 
@@ -38,4 +39,3 @@ test('media controller rejects non-image upload', () => {
       error.message === 'Поддерживаются JPG, PNG, WEBP и HEIC/HEIF',
   );
 });
-

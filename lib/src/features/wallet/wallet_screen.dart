@@ -410,10 +410,6 @@ class _WalletScreenState extends State<WalletScreen>
                       Text(
                         'Ежедневный бонус: +${bundle.wallet.dailyBonusAmount} бонусов',
                       ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'Приглашение друга: получите 100 бонусов, когда приглашённый пользователь зарегистрируется в ATTA.',
-                      ),
                       if (bundle.wallet.lastDailyBonusAt != null) ...[
                         const SizedBox(height: 4),
                         Text(

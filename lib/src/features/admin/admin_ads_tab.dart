@@ -11,6 +11,9 @@ import 'package:atta/src/services/feed_ads_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 
+const String _feedAdRecommendedImageSizeLabel =
+    'Рекомендуемый размер: 1450 × 500 px';
+
 class AdminAdsTab extends StatefulWidget {
   const AdminAdsTab({super.key});
 
@@ -379,6 +382,9 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
     final imageUrl = _imageCtrl.text.trim();
     final targetUrl = _linkCtrl.text.trim();
     final pendingImage = _pendingImage;
+    final existingTargetUrl = widget.existing?.targetUrl.trim();
+    final targetUrlChanged =
+        widget.existing == null || targetUrl != (existingTargetUrl ?? '');
 
     if (imageUrl.isEmpty && pendingImage == null) {
       showAppSnack(context, 'Укажи ссылку на картинку', isError: true);
@@ -393,7 +399,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
       }
     }
 
-    if (targetUrl.isNotEmpty) {
+    if (targetUrlChanged && targetUrl.isNotEmpty) {
       final targetUri = Uri.tryParse(targetUrl);
       if (targetUri == null ||
           !targetUri.hasScheme ||
@@ -421,12 +427,14 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
         );
         _imageCtrl.text = saved.imageUrl;
       } else {
-        await ads.updateAd(
+        await ads.updateAdWithImage(
           adId: widget.existing!.id,
           title: title,
           imageUrl: imageUrl,
-          targetUrl: targetUrl,
+          targetUrl: targetUrlChanged ? targetUrl : null,
           durationDays: _durationDays,
+          imageBytes: pendingImage?.bytes,
+          imageContentType: pendingImage?.contentType ?? 'image/jpeg',
         );
       }
       if (!mounted) return;
@@ -456,9 +464,7 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
       );
       if (edited == null || !mounted) return;
 
-      final ads = context.read<FeedAdsService>();
-      final existingId = widget.existing?.id;
-      if (existingId == null) {
+      if (widget.existing == null) {
         _pendingImage = edited;
         _imageCtrl.clear();
         setState(() {});
@@ -466,19 +472,10 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
         return;
       }
 
-      setState(() => _uploadingImage = true);
-      final url = await ads.uploadAdImage(
-        feedAdId: existingId,
-        bytes: edited.bytes,
-        contentType: edited.contentType,
-      );
-      if (!mounted) return;
-
-      _pendingImage = null;
-      _imageCtrl.text = url;
+      _pendingImage = edited;
+      _imageCtrl.clear();
       setState(() {});
-      widget.onUploadedImage?.call();
-      showAppSnack(context, 'Картинка загружена');
+      showAppSnack(context, 'Картинка будет заменена при сохранении');
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Не удалось загрузить картинку: $e', isError: true);
@@ -623,9 +620,27 @@ class _AdEditorDialogState extends State<_AdEditorDialog> {
                 ),
               ),
               const SizedBox(height: 14),
-              const Text(
-                'Предпросмотр',
-                style: TextStyle(fontWeight: FontWeight.w800),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Предпросмотр рекламы',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  Flexible(
+                    child: Text(
+                      _feedAdRecommendedImageSizeLabel,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.outline,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               if (_pendingImage == null)

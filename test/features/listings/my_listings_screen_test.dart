@@ -4,6 +4,7 @@ import 'package:atta/src/features/listings/my_listings_screen.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +20,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -40,6 +42,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -62,6 +65,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -87,6 +91,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -118,6 +123,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -151,6 +157,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -176,6 +183,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -205,6 +213,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -230,6 +239,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -265,6 +275,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -291,6 +302,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -324,6 +336,7 @@ void main() {
         MultiProvider(
           providers: [
             Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<FollowService>.value(value: _FakeFollowService()),
             Provider<ListingsService>.value(value: _ListingsWithItemService()),
           ],
           child: const MaterialApp(home: MyListingsScreen()),
@@ -362,6 +375,9 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(
+            value: _FakeFollowService(followersCount: 3),
+          ),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -375,7 +391,16 @@ void main() {
       find.byKey(const ValueKey('my_listing_favorite_count:listing-3')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('my_listing_followers_icon:listing-3')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('my_listing_followers_count:listing-3')),
+      findsOneWidget,
+    );
     expect(find.text('2'), findsOneWidget);
+    expect(find.text('3'), findsOneWidget);
 
     final viewsRect = tester.getRect(find.text('Просмотров: 7'));
     final favoriteIconRect = tester.getRect(
@@ -384,11 +409,62 @@ void main() {
     final favoriteCountRect = tester.getRect(
       find.byKey(const ValueKey('my_listing_favorite_count:listing-3')),
     );
+    final followersIconRect = tester.getRect(
+      find.byKey(const ValueKey('my_listing_followers_icon:listing-3')),
+    );
+    final followersCountRect = tester.getRect(
+      find.byKey(const ValueKey('my_listing_followers_count:listing-3')),
+    );
 
     expect(favoriteIconRect.left - viewsRect.right, lessThanOrEqualTo(8));
+    expect(
+        followersIconRect.left - favoriteCountRect.right, lessThanOrEqualTo(8));
     expect(favoriteCountRect.right, lessThanOrEqualTo(320));
+    expect(followersCountRect.right, lessThanOrEqualTo(320));
     expect(tester.takeException(), isNull);
   });
+
+  for (final entry in <String, int>{
+    'zero followers': 0,
+    'one follower': 1,
+    'several followers': 7,
+  }.entries) {
+    testWidgets('active listing shows ${entry.key} as person icon and count',
+        (tester) async {
+      final listingsService = _ListingsWithFavoriteCountService();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<AuthService>.value(value: _FakeAuthService()),
+            Provider<FollowService>.value(
+              value: _FakeFollowService(followersCount: entry.value),
+            ),
+            Provider<ListingsService>.value(value: listingsService),
+          ],
+          child: const MaterialApp(home: MyListingsScreen()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('my_listing_followers_icon:listing-3')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('my_listing_followers_count:listing-3')),
+        findsOneWidget,
+      );
+      expect(find.text('${entry.value}'), findsOneWidget);
+      expect(find.text('Просмотров: 7'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('my_listing_favorite_count:listing-3')),
+        findsOneWidget,
+      );
+      expect(find.text('2'), findsOneWidget);
+    });
+  }
 
   testWidgets('non-active tabs do not show favorite count', (tester) async {
     final listingsService = _ListingsWithPendingFavoriteCountService();
@@ -397,6 +473,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -410,6 +487,10 @@ void main() {
       find.byKey(const ValueKey('my_listing_favorite_count:listing-4')),
       findsNothing,
     );
+    expect(
+      find.byKey(const ValueKey('my_listing_followers_count:listing-4')),
+      findsNothing,
+    );
   });
 
   testWidgets('non-active listing hides sell faster button', (tester) async {
@@ -419,6 +500,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -439,6 +521,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -464,6 +547,7 @@ void main() {
       MultiProvider(
         providers: [
           Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
           Provider<ListingsService>.value(value: listingsService),
         ],
         child: const MaterialApp(home: MyListingsScreen()),
@@ -488,6 +572,17 @@ void main() {
 class _FakeAuthService extends AuthService {
   @override
   AuthUser? get currentUser => const AuthUser(uid: 'user-1');
+}
+
+class _FakeFollowService extends FollowService {
+  _FakeFollowService({this.followersCount = 0});
+
+  final int followersCount;
+
+  @override
+  Stream<int> streamFollowersCount(String sellerId) {
+    return Stream<int>.value(followersCount);
+  }
 }
 
 class _DelayedListingsService extends ListingsService {

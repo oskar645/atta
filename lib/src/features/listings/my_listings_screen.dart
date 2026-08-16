@@ -6,6 +6,7 @@ import 'package:atta/src/features/promotions/sell_faster_screen.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:flutter/material.dart';
@@ -661,6 +662,30 @@ class _MyListingTile extends StatelessWidget {
                               key: ValueKey(
                                 'my_listing_favorite_count:${listing.id}',
                               ),
+                            ),
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.person_outline,
+                              key: ValueKey(
+                                'my_listing_followers_icon:${listing.id}',
+                              ),
+                              size: 14,
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                            const SizedBox(width: 4),
+                            StreamBuilder<int>(
+                              stream: context
+                                  .read<FollowService>()
+                                  .streamFollowersCount(listing.ownerId),
+                              builder: (context, snapshot) {
+                                final count = snapshot.data ?? 0;
+                                return Text(
+                                  '$count',
+                                  key: ValueKey(
+                                    'my_listing_followers_count:${listing.id}',
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ],

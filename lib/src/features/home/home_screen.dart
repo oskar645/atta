@@ -271,10 +271,13 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   Future<void> _handleRefresh() async {
     final showcaseFuture = _refreshShowcase();
+    final feedAdFuture =
+        context.read<FeedAdsService>().refreshActiveAd(rotate: true);
 
     await Future.wait([
-      _reloadFeed(reset: true),
+      _reloadFeed(reset: true, clearExistingItems: false),
       showcaseFuture,
+      feedAdFuture,
       Future<void>.delayed(const Duration(milliseconds: 350)),
     ]);
   }
@@ -344,7 +347,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     return merged;
   }
 
-  Future<void> _reloadFeed({required bool reset}) async {
+  Future<void> _reloadFeed({
+    required bool reset,
+    bool clearExistingItems = true,
+  }) async {
     final listings = context.read<ListingsService>();
     final requestId = ++_feedRequestSerial;
 
@@ -355,7 +361,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         _hasMore = true;
         _nextCursor = null;
         _feedError = null;
-        _feedItems = const <Listing>[];
+        if (clearExistingItems) {
+          _feedItems = const <Listing>[];
+        }
       } else {
         _isLoadingMore = true;
         _feedError = null;
@@ -659,6 +667,7 @@ class _HomeFeedView extends StatefulWidget {
 class _HomeFeedViewState extends State<_HomeFeedView> {
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _adKey = GlobalKey();
+  FeedAd? _displayedAd;
   bool _adVisible = false;
   bool _trackingImpression = false;
 
@@ -672,6 +681,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   @override
   void initState() {
     super.initState();
+    _displayedAd = widget.ad;
     _scrollController.addListener(_scheduleVisibilityCheck);
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
   }
@@ -679,8 +689,11 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   @override
   void didUpdateWidget(covariant _HomeFeedView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.ad?.id != widget.ad?.id) {
+    if (widget.ad == null) {
+      _displayedAd = null;
       _adVisible = false;
+    } else if (oldWidget.ad == null && _displayedAd == null) {
+      _displayedAd = widget.ad;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
   }
@@ -711,7 +724,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
 
   Future<void> _checkAdVisibility() async {
     if (!mounted) return;
-    final ad = widget.ad;
+    final ad = _displayedAd;
     if (ad == null || !ad.isVisibleNow) {
       _adVisible = false;
       return;
@@ -762,6 +775,15 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     } catch (_) {}
   }
 
+  void _handleDisplayedAdChanged(FeedAd ad) {
+    if (_displayedAd?.id == ad.id && _displayedAd?.imageUrl == ad.imageUrl) {
+      return;
+    }
+    _displayedAd = ad;
+    _adVisible = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+  }
+
   Future<void> _openShowcaseItem(ShowcaseItem item) async {
     try {
       await context.read<ShowcaseService>().recordClick(item.promotionId);
@@ -807,10 +829,15 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         SliverToBoxAdapter(
           child: Padding(
             key: _adKey,
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 2),
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
             child: FeedAdBanner(
               ad: widget.ad!,
-              onTap: widget.ad!.hasLink ? () => _openAd(widget.ad!) : null,
+              onTapAd: (ad) {
+                if (ad.hasLink) {
+                  unawaited(_openAd(ad));
+                }
+              },
+              onDisplayedAdChanged: _handleDisplayedAdChanged,
             ),
           ),
         ),
@@ -885,7 +912,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
           showcaseItems: showcaseItems,
         ),
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+          padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
           sliver: SliverGrid(
             gridDelegate: _gridDelegate,
             delegate: SliverChildBuilderDelegate(
@@ -940,7 +967,7 @@ class _ShowcaseSectionSkeleton extends StatelessWidget {
       builder: (context, constraints) {
         final cardWidth = _homeShowcaseCardWidth(constraints.maxWidth - 24);
         return Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -999,7 +1026,7 @@ class _ShowcaseSectionState extends State<_ShowcaseSection> {
       builder: (context, constraints) {
         final cardWidth = _homeShowcaseCardWidth(constraints.maxWidth - 24);
         return Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -1018,7 +1045,7 @@ class _ShowcaseSectionState extends State<_ShowcaseSection> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 2),
               SizedBox(
                 height: _homeShowcaseCardHeight(cardWidth),
                 child: ListView.separated(

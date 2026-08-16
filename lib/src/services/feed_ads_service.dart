@@ -101,12 +101,19 @@ class FeedAdsService {
         .asyncExpand((ad) => _activeAdController.stream.startWith(ad));
   }
 
-  Future<FeedAd?> refreshActiveAd({String placement = 'home'}) async {
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
     final existing = _activeAdInFlight;
-    if (existing != null) return existing;
+    if (existing != null && !rotate) return existing;
+    final afterId = rotate ? _cachedActiveAd?.id : null;
     final future = () async {
       try {
-        final response = await _api.active(placement: placement);
+        final response = await _api.active(
+          placement: placement,
+          afterId: afterId,
+        );
         final raw = response['ad'];
         final ad =
             raw is! Map ? null : FeedAd.fromMap(Map<String, dynamic>.from(raw));
@@ -183,17 +190,62 @@ class FeedAdsService {
     required String adId,
     required String title,
     required String imageUrl,
-    required String targetUrl,
+    String? targetUrl,
     required int durationDays,
   }) async {
     _debugSource('FeedAds source: Timeweb');
-    final response = await _api.update(adId, {
+    final body = <String, dynamic>{
       'title': title.trim(),
       'image_url': imageUrl.trim(),
-      'target_url': targetUrl.trim(),
       'duration_days': durationDays,
-    });
-    return _extractAd(response);
+    };
+    if (targetUrl != null) {
+      body['target_url'] = targetUrl.trim();
+    }
+    final response = await _api.update(adId, body);
+    final ad = _extractAd(response);
+    if (_cachedActiveAd?.id == ad.id) {
+      _cachedActiveAd = ad.isVisibleNow ? ad : null;
+      _cachedActiveAdAt = DateTime.now();
+      _activeAdController.add(_cachedActiveAd);
+    }
+    return ad;
+  }
+
+  Future<FeedAd> updateAdWithImage({
+    required String adId,
+    required String title,
+    required String imageUrl,
+    String? targetUrl,
+    required int durationDays,
+    Uint8List? imageBytes,
+    String imageContentType = 'image/jpeg',
+  }) async {
+    final updated = await updateAd(
+      adId: adId,
+      title: title,
+      imageUrl: imageUrl,
+      targetUrl: targetUrl,
+      durationDays: durationDays,
+    );
+    if (imageBytes == null) return updated;
+
+    final uploadedUrl = await uploadAdImage(
+      feedAdId: adId,
+      bytes: imageBytes,
+      contentType: imageContentType,
+    );
+    final normalizedUrl = uploadedUrl.trim();
+    if (normalizedUrl.isEmpty) {
+      throw StateError('Feed ad image upload did not return image URL.');
+    }
+    final ad = updated.copyWith(imageUrl: normalizedUrl);
+    if (_cachedActiveAd?.id == ad.id) {
+      _cachedActiveAd = ad.isVisibleNow ? ad : null;
+      _cachedActiveAdAt = DateTime.now();
+      _activeAdController.add(_cachedActiveAd);
+    }
+    return ad;
   }
 
   Future<FeedAd> activateAd(String adId, {String placement = 'home'}) async {
@@ -201,9 +253,9 @@ class FeedAdsService {
     final response = await _api.activate(adId);
     final ad = _extractAd(response);
     if (ad.placement == placement) {
-      _cachedActiveAd = ad;
+      _cachedActiveAd ??= ad;
       _cachedActiveAdAt = DateTime.now();
-      _activeAdController.add(ad);
+      _activeAdController.add(_cachedActiveAd);
     }
     return ad;
   }
@@ -222,6 +274,11 @@ class FeedAdsService {
   Future<void> deleteAd(String adId) async {
     _debugSource('FeedAds source: Timeweb');
     await _api.remove(adId);
+    if (_cachedActiveAd?.id == adId) {
+      _cachedActiveAd = null;
+      _cachedActiveAdAt = DateTime.now();
+      _activeAdController.add(null);
+    }
   }
 
   Future<void> recordImpression(String adId) async {

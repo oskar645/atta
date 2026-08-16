@@ -36,12 +36,6 @@ void main() {
 
     expect(find.text('225 бонусов', findRichText: true), findsOneWidget);
     expect(find.text('Ежедневный бонус: +15 бонусов'), findsOneWidget);
-    expect(
-      find.text(
-        'Приглашение друга: получите 100 бонусов, когда приглашённый пользователь зарегистрируется в ATTA.',
-      ),
-      findsOneWidget,
-    );
     expect(find.text('Сегодняшний бонус уже начислен'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
   });

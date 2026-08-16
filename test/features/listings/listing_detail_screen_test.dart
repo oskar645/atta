@@ -42,10 +42,11 @@ void main() {
     );
 
     await tester.pumpAndSettle();
+    expect(find.text('Test listing'), findsOneWidget);
+
     await tester.drag(find.byType(ListView).first, const Offset(0, -2500));
     await tester.pumpAndSettle();
 
-    expect(find.text('Test listing'), findsOneWidget);
     expect(
         find.text('Не удалось загрузить похожие объявления'), findsOneWidget);
     expect(find.text('Что-то пошло не так'), findsNothing);
@@ -112,6 +113,42 @@ void main() {
     expect(find.text('Test listing'), findsOneWidget);
     expect(find.byType(SkeletonBox), findsNothing);
     expect(listingsService.refreshRequests, 1);
+  });
+
+  testWidgets('listing title is shown below photos and not in app bar',
+      (tester) async {
+    const longTitle =
+        'Очень длинное название объявления, которое должно переноситься на несколько строк и быть видно полностью';
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(title: longTitle),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.text(longTitle),
+      ),
+      findsNothing,
+    );
+    expect(find.text(longTitle), findsOneWidget);
+
+    final titleText = tester.widget<Text>(find.text(longTitle));
+    expect(titleText.maxLines, isNull);
+    expect(titleText.overflow, isNull);
+
+    final priceFinder = find.textContaining('₽');
+    expect(priceFinder, findsOneWidget);
+
+    final titleTop = tester.getTopLeft(find.text(longTitle)).dy;
+    final priceTop = tester.getTopLeft(priceFinder).dy;
+    expect(titleTop, lessThan(priceTop));
   });
 
   testWidgets('owner can open sell faster even when listing cannot be promoted',
@@ -391,6 +428,7 @@ Widget _buildTestApp({
 }
 
 Listing _listingFixture({
+  String title = 'Test listing',
   String? description,
   bool canPromote = true,
   String ownerId = 'seller-1',
@@ -403,7 +441,7 @@ Listing _listingFixture({
     'owner_id': ownerId,
     'owner_email': 'seller@example.com',
     'owner_name': 'Seller',
-    'title': 'Test listing',
+    'title': title,
     'description': description ?? 'Описание объявления',
     'category': category,
     'subcategory': subcategory,

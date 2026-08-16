@@ -28,7 +28,7 @@ test('admin list excludes hidden reports', async () => {
 });
 
 test('hide marks report hidden without deleting it', async () => {
-  const updates: Array<Record<string, unknown>> = [];
+  const updates: Array<Record<string, any>> = [];
   const service = new ReportsService(
     {
       report: {

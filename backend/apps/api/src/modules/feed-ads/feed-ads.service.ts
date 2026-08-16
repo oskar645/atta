@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { FeedAdPlacement } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -53,6 +57,24 @@ export class FeedAdsService {
       : FeedAdPlacement.HOME;
   }
 
+  private normalizeTargetUrl(value: unknown) {
+    const targetUrl = (value ?? '').toString().trim();
+    if (!targetUrl) return '';
+
+    let parsed: URL;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      throw new BadRequestException('Некорректная ссылка');
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new BadRequestException('Некорректная ссылка');
+    }
+
+    return targetUrl;
+  }
+
   async listAll(placement?: string) {
     const items = await this.prisma.feedAd.findMany({
       where: {
@@ -69,16 +91,25 @@ export class FeedAdsService {
     };
   }
 
-  async getActive(placement?: string) {
+  async getActive(placement?: string, afterId?: string) {
     const now = new Date();
-    const item = await this.prisma.feedAd.findFirst({
+    const items = await this.prisma.feedAd.findMany({
       where: {
         placement: this.placementFromInput(placement),
         isActive: true,
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
-      orderBy: [{ activatedAt: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [{ activatedAt: 'asc' }, { createdAt: 'asc' }],
+      take: 3,
     });
+    const cursor = (afterId ?? '').trim();
+    const currentIndex = cursor
+      ? items.findIndex((item) => item.id === cursor)
+      : -1;
+    const item =
+      items.length === 0
+        ? null
+        : items[(currentIndex + 1 + items.length) % items.length];
 
     return {
       source: 'timeweb',
@@ -91,7 +122,7 @@ export class FeedAdsService {
       data: {
         title: (body['title'] ?? '').toString().trim(),
         imageUrl: (body['image_url'] ?? '').toString().trim(),
-        targetUrl: (body['target_url'] ?? '').toString().trim(),
+        targetUrl: this.normalizeTargetUrl(body['target_url']),
         durationDays: Number(body['duration_days'] ?? 0) || 0,
         isActive: body['is_active'] == true,
         placement: this.placementFromInput(body['placement']?.toString()),
@@ -111,7 +142,9 @@ export class FeedAdsService {
       where: { id },
       data: {
         title:
-          body['title'] == null ? undefined : (body['title'] ?? '').toString().trim(),
+          body['title'] == null
+            ? undefined
+            : (body['title'] ?? '').toString().trim(),
         imageUrl:
           body['image_url'] == null
             ? undefined
@@ -119,7 +152,7 @@ export class FeedAdsService {
         targetUrl:
           body['target_url'] == null
             ? undefined
-            : (body['target_url'] ?? '').toString().trim(),
+            : this.normalizeTargetUrl(body['target_url']),
         durationDays:
           body['duration_days'] == null
             ? undefined
@@ -138,12 +171,20 @@ export class FeedAdsService {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ad.durationDays * 86400000);
 
-    await this.prisma.feedAd.updateMany({
-      where: { placement: ad.placement },
-      data: {
-        isActive: false,
-      },
-    });
+    if (!ad.isActive || (ad.expiresAt != null && ad.expiresAt <= now)) {
+      const activeCount = await this.prisma.feedAd.count({
+        where: {
+          id: { not: id },
+          placement: ad.placement,
+          isActive: true,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+      });
+
+      if (activeCount >= 3) {
+        throw new BadRequestException('Feed ads limit reached for placement');
+      }
+    }
 
     const updated = await this.prisma.feedAd.update({
       where: { id },

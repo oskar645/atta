@@ -1119,6 +1119,225 @@ void main() {
       expect(find.text('Витрина'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'home rebuild after loading state creates a fresh feed ad stream',
+    (tester) async {
+      var pageLoadCount = 0;
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) {
+          pageLoadCount += 1;
+          if (pageLoadCount > 1) {
+            return Future<ListingsFeedPage>.delayed(
+              const Duration(milliseconds: 30),
+              () => ListingsFeedPage(
+                items: <Listing>[
+                  _listing(
+                    id: 'updated-1',
+                    title: 'Обновленная карточка',
+                  ),
+                ],
+                hasMore: false,
+              ),
+            );
+          }
+
+          return Future<ListingsFeedPage>.value(
+            ListingsFeedPage(
+              items: <Listing>[
+                _listing(id: 'listing-1', title: 'Первая карточка'),
+              ],
+              hasMore: false,
+            ),
+          );
+        },
+      );
+      final feedAds = _SingleSubscriptionFeedAdsService(_feedAd(id: 'ad-1'));
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          feedAds: feedAds,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(feedAds.maxActiveSubscriptions, 1);
+
+      await tester.enterText(find.byType(TextField), 'обновить');
+      await tester.pump();
+
+      expect(find.byType(FeedAdBanner), findsNothing);
+      expect(feedAds.activeSubscriptions, 0);
+
+      await tester.pump(const Duration(milliseconds: 40));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(pageLoadCount, greaterThanOrEqualTo(2));
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(feedAds.streamCreateCalls, greaterThanOrEqualTo(2));
+      expect(feedAds.maxActiveSubscriptions, 1);
+
+      final refreshTarget = pageLoadCount + 1;
+      for (var index = 0; index < 3; index += 1) {
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, 800));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 700));
+      }
+
+      expect(pageLoadCount, greaterThanOrEqualTo(refreshTarget));
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(feedAds.maxActiveSubscriptions, 1);
+    },
+  );
+
+  testWidgets(
+    'feed ad refresh cross-fades after image is ready without empty state',
+    (tester) async {
+      final imageCompleters = <String, Completer<void>>{
+        'ad-b.jpg': Completer<void>(),
+        'ad-c.jpg': Completer<void>(),
+        'ad-a.jpg': Completer<void>(),
+      };
+      FeedAdBanner.debugImageReadyResolver = (_, imageUrl) {
+        for (final entry in imageCompleters.entries) {
+          if (imageUrl.contains(entry.key) && !entry.value.isCompleted) {
+            return entry.value.future;
+          }
+        }
+        return Future<void>.value();
+      };
+      FeedAdBanner.debugImageBuilder = (_, __) {
+        return const ColoredBox(color: Colors.black);
+      };
+      addTearDown(() {
+        FeedAdBanner.debugImageReadyResolver = null;
+        FeedAdBanner.debugImageBuilder = null;
+      });
+
+      final listings = _FakeListingsService(
+        onGetListingsPage: (_) async => ListingsFeedPage(
+          items: <Listing>[
+            _listing(id: 'listing-1', title: 'Первая карточка'),
+          ],
+          hasMore: false,
+        ),
+      );
+      final feedAds = _RotatingFeedAdsService(
+        ads: <FeedAd>[
+          _feedAd(
+            id: 'ad-a',
+            title: 'Реклама A',
+            imageUrl: 'https://example.com/ad-a.jpg',
+            targetUrl: 'https://example.com/a',
+          ),
+          _feedAd(
+            id: 'ad-b',
+            title: 'Реклама B',
+            imageUrl: 'https://example.com/ad-b.jpg',
+            targetUrl: '',
+          ),
+          _feedAd(
+            id: 'ad-c',
+            title: 'Реклама C',
+            imageUrl: 'https://example.com/ad-c.jpg',
+            targetUrl: 'https://example.com/c',
+          ),
+          _feedAd(
+            id: 'ad-a',
+            title: 'Реклама A',
+            imageUrl: 'https://example.com/ad-a.jpg',
+            targetUrl: 'https://example.com/a',
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          feedAds: feedAds,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(find.text('Реклама A'), findsOneWidget);
+      expect(feedAds.impressionIds, <String>['ad-a']);
+      final bannerSize = tester.getSize(find.byType(FeedAdBanner));
+      final bannerTopLeft = tester.getTopLeft(find.byType(FeedAdBanner));
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 300));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(tester.getSize(find.byType(FeedAdBanner)), bannerSize);
+      expect(tester.getTopLeft(find.byType(FeedAdBanner)), bannerTopLeft);
+      expect(find.text('Реклама A'), findsOneWidget);
+      expect(find.text('Реклама B'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(FeedAdBanner),
+          matching: find.byType(CircularProgressIndicator),
+        ),
+        findsNothing,
+      );
+      expect(feedAds.impressionIds, <String>['ad-a']);
+
+      imageCompleters['ad-b.jpg']!.complete();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(tester.getSize(find.byType(FeedAdBanner)), bannerSize);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(tester.getSize(find.byType(FeedAdBanner)), bannerSize);
+      expect(find.text('Реклама B'), findsOneWidget);
+      expect(feedAds.impressionIds, <String>['ad-a', 'ad-b']);
+      expect(feedAds.refreshRotateCalls, 1);
+
+      await tester.tap(find.byType(FeedAdBanner));
+      await tester.pump();
+      expect(feedAds.clickIds, isEmpty);
+      expect(feedAds.clickedTargetUrls, isEmpty);
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 300));
+      await tester.pump();
+      expect(find.text('Реклама B'), findsOneWidget);
+      expect(find.text('Реклама C'), findsNothing);
+      expect(tester.getSize(find.byType(FeedAdBanner)), bannerSize);
+
+      imageCompleters['ad-c.jpg']!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Реклама C'), findsOneWidget);
+      expect(feedAds.impressionIds, <String>['ad-a', 'ad-b', 'ad-c']);
+
+      await tester.tap(find.byType(FeedAdBanner));
+      await tester.pump();
+      expect(feedAds.clickIds, <String>['ad-c']);
+      expect(feedAds.clickedTargetUrls, <String>['https://example.com/c']);
+
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 300));
+      await tester.pump();
+      expect(find.text('Реклама C'), findsOneWidget);
+      expect(find.text('Реклама A'), findsNothing);
+
+      imageCompleters['ad-a.jpg']!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('Реклама A'), findsOneWidget);
+      expect(tester.getSize(find.byType(FeedAdBanner)), bannerSize);
+      expect(
+        feedAds.impressionIds,
+        <String>['ad-a', 'ad-b', 'ad-c', 'ad-a'],
+      );
+      expect(feedAds.refreshRotateCalls, 3);
+    },
+  );
 }
 
 Widget _buildHomeTestApp({
@@ -1250,6 +1469,14 @@ class _FakeFeedAdsService extends FeedAdsService {
   }
 
   @override
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
+    return ad;
+  }
+
+  @override
   Future<void> recordImpression(String adId) async {}
 
   @override
@@ -1266,8 +1493,58 @@ class _DelayedFeedAdsService extends FeedAdsService {
     return _controller.stream;
   }
 
+  @override
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
+    return null;
+  }
+
   void emit(FeedAd? ad) {
     _controller.add(ad);
+  }
+
+  @override
+  Future<void> recordImpression(String adId) async {}
+
+  @override
+  Future<void> recordClick(String adId) async {}
+}
+
+class _SingleSubscriptionFeedAdsService extends FeedAdsService {
+  _SingleSubscriptionFeedAdsService(this.ad);
+
+  final FeedAd ad;
+  int activeSubscriptions = 0;
+  int maxActiveSubscriptions = 0;
+  int streamCreateCalls = 0;
+
+  @override
+  Stream<FeedAd?> streamActiveAd({String placement = 'home'}) {
+    streamCreateCalls += 1;
+    late StreamController<FeedAd?> controller;
+    controller = StreamController<FeedAd?>(
+      onListen: () {
+        activeSubscriptions += 1;
+        if (activeSubscriptions > maxActiveSubscriptions) {
+          maxActiveSubscriptions = activeSubscriptions;
+        }
+        controller.add(ad);
+      },
+      onCancel: () {
+        activeSubscriptions -= 1;
+      },
+    );
+    return controller.stream;
+  }
+
+  @override
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
+    return ad;
   }
 
   @override
@@ -1296,6 +1573,14 @@ class _MutableFeedAdsService extends FeedAdsService {
   }
 
   @override
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
+    return _ad;
+  }
+
+  @override
   Future<void> deactivateAd(String adId, {String placement = 'home'}) async {
     if (failDeactivate) {
       throw Exception('deactivate failed');
@@ -1315,10 +1600,67 @@ class _MutableFeedAdsService extends FeedAdsService {
   Future<void> recordClick(String adId) async {}
 }
 
+class _RotatingFeedAdsService extends FeedAdsService {
+  _RotatingFeedAdsService({
+    required List<FeedAd> ads,
+  })  : assert(ads.isNotEmpty),
+        _ads = ads,
+        _ad = ads.first;
+
+  FeedAd _ad;
+  final List<FeedAd> _ads;
+  int _index = 0;
+  final StreamController<FeedAd?> _controller =
+      StreamController<FeedAd?>.broadcast();
+  final List<String> impressionIds = <String>[];
+  final List<String> clickIds = <String>[];
+  final List<String> clickedTargetUrls = <String>[];
+  int refreshRotateCalls = 0;
+
+  @override
+  Stream<FeedAd?> streamActiveAd({String placement = 'home'}) async* {
+    yield _ad;
+    yield* _controller.stream;
+  }
+
+  @override
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
+    if (rotate) {
+      refreshRotateCalls += 1;
+      _index = (_index + 1) % _ads.length;
+      _ad = _ads[_index];
+      _controller.add(_ad);
+    }
+    return _ad;
+  }
+
+  @override
+  Future<void> recordImpression(String adId) async {
+    impressionIds.add(adId);
+  }
+
+  @override
+  Future<void> recordClick(String adId) async {
+    clickIds.add(adId);
+    clickedTargetUrls.add(_ads.firstWhere((ad) => ad.id == adId).targetUrl);
+  }
+}
+
 class _ErrorFeedAdsService extends FeedAdsService {
   @override
   Stream<FeedAd?> streamActiveAd({String placement = 'home'}) async* {
     throw Exception('feed ads failed');
+  }
+
+  @override
+  Future<FeedAd?> refreshActiveAd({
+    String placement = 'home',
+    bool rotate = false,
+  }) async {
+    return null;
   }
 
   @override
@@ -1328,12 +1670,17 @@ class _ErrorFeedAdsService extends FeedAdsService {
   Future<void> recordClick(String adId) async {}
 }
 
-FeedAd _feedAd({required String id}) {
+FeedAd _feedAd({
+  required String id,
+  String title = 'Промо баннер',
+  String imageUrl = 'https://example.com/ad.jpg',
+  String targetUrl = 'https://example.com',
+}) {
   return FeedAd.fromMap(<String, dynamic>{
     'id': id,
-    'title': 'Промо баннер',
-    'image_url': 'https://example.com/ad.jpg',
-    'target_url': 'https://example.com',
+    'title': title,
+    'image_url': imageUrl,
+    'target_url': targetUrl,
     'is_active': true,
     'placement': 'home',
     'created_at': '2026-07-03T10:00:00.000Z',

@@ -813,8 +813,6 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             return Scaffold(
               appBar: AppBar(
                 centerTitle: false,
-                title: Text(listing.title,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
                 actions: [
                   IconButton(
                     tooltip: 'Поделиться',
@@ -979,9 +977,17 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                       ),
                     ),
                   ],
-                  const SizedBox(height: 12),
+                  if (status != 'approved') const SizedBox(height: 12),
                   _Photos(photoUrls: listing.photoUrls),
                   const SizedBox(height: 14),
+                  Text(
+                    listing.title,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Text(
                     '${formatPrice(listing.price)} ₽',
                     style: const TextStyle(
