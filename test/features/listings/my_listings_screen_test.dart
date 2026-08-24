@@ -567,6 +567,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Самокат'), findsOneWidget);
   });
+
+  testWidgets('my listings load more appends pages and keeps tabs independent',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 520));
+    final listingsService = _PagedMyListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(listingsService.requestsFor('approved'), <String?>[null]);
+    expect(find.text('active-0'), findsOneWidget);
+    expect(find.text('active-5'), findsNothing);
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(listingsService.requestsFor('approved'), <String?>[null, 'a2']);
+    expect(find.text('active-5'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(
+      listingsService.requestsFor('approved'),
+      <String?>[null, 'a2', 'a3'],
+    );
+    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(
+      listingsService.requestsFor('approved'),
+      <String?>[null, 'a2', 'a3'],
+    );
+    await tester.tap(find.text('На модерации'));
+    await tester.pumpAndSettle();
+    expect(listingsService.requestsFor('pending'), <String?>[null]);
+    expect(find.text('pending-0'), findsOneWidget);
+    expect(find.text('active-0'), findsNothing);
+  });
 }
 
 class _FakeAuthService extends AuthService {
@@ -1040,6 +1086,74 @@ class _ModerationReactiveListingsService extends ListingsService {
       'status': 'approved',
     });
     _refreshes.add(null);
+  }
+}
+
+class _PagedMyListingsService extends ListingsService {
+  final Map<String, List<String?>> requests = <String, List<String?>>{};
+
+  List<String?> requestsFor(String status) => requests[status] ?? <String?>[];
+
+  @override
+  Future<MyListingsPage> getMyListingsPageByStatuses(
+    String uid, {
+    required Set<String> statuses,
+    int limit = 20,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    final status = statuses.contains('pending') ? 'pending' : 'approved';
+    requests.putIfAbsent(status, () => <String?>[]).add(cursor);
+    if (status == 'pending') {
+      return MyListingsPage(
+        items: List<Listing>.generate(
+          6,
+          (index) => _listing(
+            id: 'pending-$index',
+            title: 'pending-$index',
+            status: 'pending',
+          ),
+        ),
+        hasMore: false,
+      );
+    }
+    if (cursor == null) {
+      return MyListingsPage(
+        items: List<Listing>.generate(
+          5,
+          (index) => _listing(
+            id: 'active-$index',
+            title: 'active-$index',
+            status: 'approved',
+          ),
+        ),
+        hasMore: true,
+        nextCursor: 'a2',
+      );
+    }
+    if (cursor == 'a2') {
+      return MyListingsPage(
+        items: <Listing>[
+          _listing(id: 'active-4', title: 'active-4', status: 'approved'),
+          ...List<Listing>.generate(
+            5,
+            (index) => _listing(
+              id: 'active-${index + 5}',
+              title: 'active-${index + 5}',
+              status: 'approved',
+            ),
+          ),
+        ],
+        hasMore: true,
+        nextCursor: 'a3',
+      );
+    }
+    return MyListingsPage(
+      items: <Listing>[
+        _listing(id: 'active-9', title: 'active-9', status: 'approved'),
+      ],
+      hasMore: false,
+    );
   }
 }
 

@@ -19,6 +19,12 @@ class _AdminWalletAnalyticsScreenState
   String _period = 'month';
   DateTimeRange? _customRange;
   final TextEditingController _searchController = TextEditingController();
+  String? _walletsNextCursor;
+  bool _walletsHasMore = true;
+  bool _walletsLoadingMore = false;
+  String? _transactionsNextCursor;
+  bool _transactionsHasMore = true;
+  bool _transactionsLoadingMore = false;
   String? _referralsNextCursor;
   bool _referralsHasMore = true;
   bool _referralsLoadingMore = false;
@@ -98,9 +104,11 @@ class _AdminWalletAnalyticsScreenState
     final nextCursor =
         (referralsResponse['nextCursor'] ?? '').toString().trim();
     final nextReferralUsers = _extractItems(referralsResponse);
+    final walletsResult = await walletsResponse;
+    final transactionsResult = await transactionsResponse;
     final data = _AdminWalletAnalyticsData(
-      wallets: _extractItems(await walletsResponse),
-      transactions: _extractItems(await transactionsResponse),
+      wallets: _extractItems(walletsResult),
+      transactions: _extractItems(transactionsResult),
       analytics: Map<String, dynamic>.from(await analyticsResponse),
       referralSummary: Map<String, dynamic>.from(await referralSummaryResponse),
       referralUsers: appendReferrals
@@ -111,6 +119,21 @@ class _AdminWalletAnalyticsScreenState
     if (mounted) {
       setState(() {
         _data = data;
+        if (!appendReferrals) {
+          final walletsCursor =
+              (walletsResult['nextCursor'] ?? '').toString().trim();
+          _walletsNextCursor = walletsCursor.isEmpty ? null : walletsCursor;
+          _walletsHasMore =
+              walletsResult['hasMore'] == true || walletsCursor.isNotEmpty;
+          final transactionsCursor =
+              (transactionsResult['nextCursor'] ?? '').toString().trim();
+          _transactionsNextCursor =
+              transactionsCursor.isEmpty ? null : transactionsCursor;
+          _transactionsHasMore = transactionsResult['hasMore'] == true ||
+              transactionsCursor.isNotEmpty;
+          _walletsLoadingMore = false;
+          _transactionsLoadingMore = false;
+        }
         _referralsNextCursor = nextCursor.isEmpty ? null : nextCursor;
         _referralsHasMore =
             referralsResponse['hasMore'] == true || nextCursor.isNotEmpty;
@@ -135,6 +158,12 @@ class _AdminWalletAnalyticsScreenState
       _referralsNextCursor = null;
       _referralsHasMore = true;
       _referralsLoadingMore = false;
+      _walletsNextCursor = null;
+      _walletsHasMore = true;
+      _walletsLoadingMore = false;
+      _transactionsNextCursor = null;
+      _transactionsHasMore = true;
+      _transactionsLoadingMore = false;
     });
     final next = _load(forceRefresh: true, serial: serial);
     setState(() {
@@ -151,6 +180,12 @@ class _AdminWalletAnalyticsScreenState
       _referralsNextCursor = null;
       _referralsHasMore = true;
       _referralsLoadingMore = false;
+      _walletsNextCursor = null;
+      _walletsHasMore = true;
+      _walletsLoadingMore = false;
+      _transactionsNextCursor = null;
+      _transactionsHasMore = true;
+      _transactionsLoadingMore = false;
       _future = _load(forceRefresh: true, serial: serial);
     });
   }
@@ -189,6 +224,12 @@ class _AdminWalletAnalyticsScreenState
       _referralsNextCursor = null;
       _referralsHasMore = true;
       _referralsLoadingMore = false;
+      _walletsNextCursor = null;
+      _walletsHasMore = true;
+      _walletsLoadingMore = false;
+      _transactionsNextCursor = null;
+      _transactionsHasMore = true;
+      _transactionsLoadingMore = false;
       _future = _load(forceRefresh: true, serial: ++_requestSerial);
     });
   }
@@ -200,6 +241,12 @@ class _AdminWalletAnalyticsScreenState
       _referralsNextCursor = null;
       _referralsHasMore = true;
       _referralsLoadingMore = false;
+      _walletsNextCursor = null;
+      _walletsHasMore = true;
+      _walletsLoadingMore = false;
+      _transactionsNextCursor = null;
+      _transactionsHasMore = true;
+      _transactionsLoadingMore = false;
       _future = _load(forceRefresh: true, search: search, serial: serial);
     });
   }
@@ -213,6 +260,79 @@ class _AdminWalletAnalyticsScreenState
       appendReferrals: true,
       serial: _requestSerial,
     );
+  }
+
+  Future<void> _loadMoreWallets() async {
+    final cursor = _walletsNextCursor;
+    if (!_walletsHasMore ||
+        _walletsLoadingMore ||
+        cursor == null ||
+        _data == null) {
+      return;
+    }
+    setState(() => _walletsLoadingMore = true);
+    try {
+      final response = await context.read<AdminService>().wallets(
+            limit: _pageLimit,
+            cursor: cursor,
+          );
+      final nextItems = _extractItems(response);
+      final nextCursor = (response['nextCursor'] ?? '').toString().trim();
+      setState(() {
+        _data = _data!.copyWith(
+          wallets: _appendById(_data!.wallets, nextItems),
+        );
+        _walletsNextCursor = nextCursor.isEmpty ? null : nextCursor;
+        _walletsHasMore = response['hasMore'] == true || nextCursor.isNotEmpty;
+        _walletsLoadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _walletsLoadingMore = false);
+    }
+  }
+
+  Future<void> _loadMoreTransactions() async {
+    final cursor = _transactionsNextCursor;
+    if (!_transactionsHasMore ||
+        _transactionsLoadingMore ||
+        cursor == null ||
+        _data == null) {
+      return;
+    }
+    setState(() => _transactionsLoadingMore = true);
+    try {
+      final response = await context.read<AdminService>().walletTransactions(
+            limit: _pageLimit,
+            cursor: cursor,
+          );
+      final nextItems = _extractItems(response);
+      final nextCursor = (response['nextCursor'] ?? '').toString().trim();
+      setState(() {
+        _data = _data!.copyWith(
+          transactions: _appendById(_data!.transactions, nextItems),
+        );
+        _transactionsNextCursor = nextCursor.isEmpty ? null : nextCursor;
+        _transactionsHasMore =
+            response['hasMore'] == true || nextCursor.isNotEmpty;
+        _transactionsLoadingMore = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _transactionsLoadingMore = false);
+    }
+  }
+
+  List<Map<String, dynamic>> _appendById(
+    List<Map<String, dynamic>> current,
+    List<Map<String, dynamic>> next,
+  ) {
+    String idOf(Map<String, dynamic> item) =>
+        (item['id'] ?? item['walletId'] ?? item['transactionId'] ?? '')
+            .toString();
+    final seen = current.map(idOf).toSet();
+    return <Map<String, dynamic>>[
+      ...current,
+      ...next.where((item) => seen.add(idOf(item))),
+    ];
   }
 
   List<Map<String, dynamic>> _appendReferralUsers(
@@ -262,7 +382,18 @@ class _AdminWalletAnalyticsScreenState
             final data = _data ?? snap.data!;
             return TabBarView(
               children: [
-                _OverviewTab(data: data, onRefresh: _refresh),
+                _OverviewTab(
+                  data: data,
+                  onRefresh: _refresh,
+                  canLoadMoreWallets:
+                      _walletsHasMore && _walletsNextCursor != null,
+                  walletsLoadingMore: _walletsLoadingMore,
+                  onLoadMoreWallets: _loadMoreWallets,
+                  canLoadMoreTransactions:
+                      _transactionsHasMore && _transactionsNextCursor != null,
+                  transactionsLoadingMore: _transactionsLoadingMore,
+                  onLoadMoreTransactions: _loadMoreTransactions,
+                ),
                 _ReferralsTab(
                   data: data,
                   period: _period,
@@ -290,10 +421,22 @@ class _OverviewTab extends StatelessWidget {
   const _OverviewTab({
     required this.data,
     required this.onRefresh,
+    required this.canLoadMoreWallets,
+    required this.walletsLoadingMore,
+    required this.onLoadMoreWallets,
+    required this.canLoadMoreTransactions,
+    required this.transactionsLoadingMore,
+    required this.onLoadMoreTransactions,
   });
 
   final _AdminWalletAnalyticsData data;
   final Future<void> Function() onRefresh;
+  final bool canLoadMoreWallets;
+  final bool walletsLoadingMore;
+  final VoidCallback onLoadMoreWallets;
+  final bool canLoadMoreTransactions;
+  final bool transactionsLoadingMore;
+  final VoidCallback onLoadMoreTransactions;
 
   @override
   Widget build(BuildContext context) {
@@ -338,35 +481,72 @@ class _OverviewTab extends StatelessWidget {
           const SizedBox(height: 16),
           Text('Кошельки', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          ...data.wallets.take(5).map(
-                (wallet) => Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: ListTile(
-                    title:
-                        Text((wallet['userName'] ?? 'Пользователь').toString()),
-                    subtitle: Text((wallet['userPhone'] ?? '').toString()),
-                    trailing: Text('${wallet['bonusBalance'] ?? 0}'),
-                  ),
-                ),
+          ...data.wallets.map(
+            (wallet) => Card(
+              margin: const EdgeInsets.only(bottom: 10),
+              child: ListTile(
+                title: Text((wallet['userName'] ?? 'Пользователь').toString()),
+                subtitle: Text((wallet['userPhone'] ?? '').toString()),
+                trailing: Text('${wallet['bonusBalance'] ?? 0}'),
               ),
+            ),
+          ),
+          if (walletsLoadingMore)
+            const _AdminLoadMoreSpinner()
+          else if (canLoadMoreWallets)
+            Center(
+              child: TextButton.icon(
+                onPressed: onLoadMoreWallets,
+                icon: const Icon(Icons.expand_more),
+                label: const Text('Показать ещё'),
+              ),
+            ),
           const SizedBox(height: 8),
           Text('Последние операции',
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          ...data.transactions.take(8).map(
-                (item) => Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: ListTile(
-                    title: Text((item['reason'] ?? '').toString()),
-                    subtitle: Text((item['userName'] ?? '').toString()),
-                    trailing: Text(
-                      '${item['amount'] ?? 0}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
+          ...data.transactions.map(
+            (item) => Card(
+              margin: const EdgeInsets.only(bottom: 10),
+              child: ListTile(
+                title: Text((item['reason'] ?? '').toString()),
+                subtitle: Text((item['userName'] ?? '').toString()),
+                trailing: Text(
+                  '${item['amount'] ?? 0}',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
+            ),
+          ),
+          if (transactionsLoadingMore)
+            const _AdminLoadMoreSpinner()
+          else if (canLoadMoreTransactions)
+            Center(
+              child: TextButton.icon(
+                onPressed: onLoadMoreTransactions,
+                icon: const Icon(Icons.expand_more),
+                label: const Text('Показать ещё'),
+              ),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+class _AdminLoadMoreSpinner extends StatelessWidget {
+  const _AdminLoadMoreSpinner();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
       ),
     );
   }
@@ -677,6 +857,20 @@ class _AdminWalletAnalyticsData {
   final Map<String, dynamic> referralSummary;
   final List<Map<String, dynamic>> referralUsers;
   final String referralSearch;
+
+  _AdminWalletAnalyticsData copyWith({
+    List<Map<String, dynamic>>? wallets,
+    List<Map<String, dynamic>>? transactions,
+  }) {
+    return _AdminWalletAnalyticsData(
+      wallets: wallets ?? this.wallets,
+      transactions: transactions ?? this.transactions,
+      analytics: analytics,
+      referralSummary: referralSummary,
+      referralUsers: referralUsers,
+      referralSearch: referralSearch,
+    );
+  }
 }
 
 class _WalletSummaryCard extends StatelessWidget {

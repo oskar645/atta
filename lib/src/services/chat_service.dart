@@ -29,6 +29,11 @@ class ChatService {
         _imagePreparationService = ImagePreparationService(),
         _socketReadyTimeout = socketReadyTimeout {
     _socketSub = _socketService?.events.listen(_handleSocketEvent);
+    _socketConnectionSub =
+        _socketService?.connectionChanges.listen((connected) {
+      if (!connected) return;
+      unawaited(_syncAfterSocketReconnect(reason: 'socket.connected'));
+    });
   }
   final _uuid = const Uuid();
   final ChatSocketService? _socketService;
@@ -40,6 +45,7 @@ class ChatService {
   final Duration _socketReadyTimeout;
 
   StreamSubscription<ChatSocketEvent>? _socketSub;
+  StreamSubscription<bool>? _socketConnectionSub;
   String? _activeUserId;
   bool _loadedChats = false;
   final Set<String> _loadedChatIds = <String>{};
@@ -54,13 +60,19 @@ class ChatService {
   final Map<String, int> _messageOrderByKey = {};
   final Map<String, Future<void>> _chatRefreshInFlight = {};
   final Map<String, Future<void>> _messagesRefreshInFlight = {};
+  final Map<String, Future<void>> _olderMessagesLoadInFlight = {};
   final Map<String, Future<void>> _markReadInFlight = {};
   final Map<String, Future<void>> _messageSendInFlight = {};
   final Map<String, Future<void>> _imageSendInFlight = {};
   final Set<String> _restoredCacheUserIds = <String>{};
   Future<void>? _refreshChatsInFlight;
+  Future<void>? _loadMoreChatsInFlight;
   Object? _lastChatsLoadError;
+  String? _chatsNextCursor;
+  bool _chatsHasMore = true;
   final Map<String, DateTime> _lastMarkReadAt = {};
+  final Map<String, String?> _messagesNextCursor = {};
+  final Map<String, bool> _messagesHasMore = {};
   DateTime? _lastAppResumeRefreshAt;
   final Set<String> _activeChatIds = <String>{};
   String? _foregroundChatId;
@@ -72,8 +84,14 @@ class ChatService {
   static const Duration _markReadCooldown = Duration(seconds: 2);
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
   static const Duration _sendRetryBackoff = Duration(milliseconds: 250);
+  static const int _chatPageSize = 30;
+  static const int _messagePageSize = 30;
 
   Object? get lastChatsLoadError => _lastChatsLoadError;
+  bool get hasMoreChats => _chatsHasMore;
+
+  bool hasMoreMessages(String chatId) =>
+      _messagesHasMore[chatId.trim()] ?? true;
 
   void _ensureSocketConnectedInBackground([String? uid]) {
     final normalizedUid = uid?.trim() ?? _activeUserId?.trim() ?? '';
@@ -108,13 +126,19 @@ class ChatService {
     _loadedMessageChatIds.clear();
     _chatRefreshInFlight.clear();
     _messagesRefreshInFlight.clear();
+    _olderMessagesLoadInFlight.clear();
     _markReadInFlight.clear();
     _messageSendInFlight.clear();
     _imageSendInFlight.clear();
     _restoredCacheUserIds.clear();
     _refreshChatsInFlight = null;
+    _loadMoreChatsInFlight = null;
     _lastChatsLoadError = null;
+    _chatsNextCursor = null;
+    _chatsHasMore = true;
     _lastMarkReadAt.clear();
+    _messagesNextCursor.clear();
+    _messagesHasMore.clear();
     _activeChatIds.clear();
     _foregroundChatId = null;
     _authoritativeUnreadTotal = null;
@@ -758,7 +782,7 @@ class ChatService {
     try {
       await _restoreCachedState(uid);
       // REST inbox loading must not inherit a pre-send auth/socket timeout.
-      final response = await _api.listChats();
+      final response = await _api.listChats(limit: _chatPageSize);
       final items = (response['items'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
@@ -766,6 +790,10 @@ class ChatService {
       _chatsById
         ..clear()
         ..addEntries(items.map((item) => MapEntry(item.id, item)));
+      _chatsNextCursor =
+          (response['nextCursor'] ?? response['next_cursor'])?.toString();
+      if ((_chatsNextCursor ?? '').trim().isEmpty) _chatsNextCursor = null;
+      _chatsHasMore = response['hasMore'] == true || _chatsNextCursor != null;
       final unreadTotal = response['unreadTotal'] ?? response['unread_total'];
       _authoritativeUnreadTotal = unreadTotal is num
           ? unreadTotal.toInt()
@@ -783,6 +811,40 @@ class ChatService {
       _debugSource('Chats load error message=$error user=$uid');
     } finally {
       _debugSource('Chats load finally loading=false user=$uid');
+    }
+  }
+
+  Future<void> loadMoreChats() async {
+    if (!_chatsHasMore || _chatsNextCursor == null) return;
+    final existing = _loadMoreChatsInFlight;
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.listChats(
+        limit: _chatPageSize,
+        cursor: _chatsNextCursor,
+      );
+      final items = (response['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
+          .toList();
+      for (final chat in items) {
+        _chatsById[chat.id] = chat;
+      }
+      _chatsNextCursor =
+          (response['nextCursor'] ?? response['next_cursor'])?.toString();
+      if ((_chatsNextCursor ?? '').trim().isEmpty) _chatsNextCursor = null;
+      _chatsHasMore = response['hasMore'] == true || _chatsNextCursor != null;
+      _lastChatsLoadError = null;
+      _emitChats();
+      unawaited(_persistCachedState());
+    }();
+    _loadMoreChatsInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_loadMoreChatsInFlight, future)) {
+        _loadMoreChatsInFlight = null;
+      }
     }
   }
 
@@ -834,7 +896,7 @@ class ChatService {
   }
 
   Future<void> _refreshMessagesInternal(String chatId) async {
-    final response = await _api.listMessages(chatId);
+    final response = await _api.listMessages(chatId, limit: _messagePageSize);
     final rawChat = response['chat'];
     if (rawChat is Map) {
       _upsertChat(Chat.fromMap(Map<String, dynamic>.from(rawChat)));
@@ -850,6 +912,13 @@ class ChatService {
     for (final message in incoming) {
       _upsertMessageIntoList(mergedMessages, message);
     }
+    _messagesNextCursor[chatId] =
+        (response['nextCursor'] ?? response['next_cursor'])?.toString();
+    if ((_messagesNextCursor[chatId] ?? '').trim().isEmpty) {
+      _messagesNextCursor[chatId] = null;
+    }
+    _messagesHasMore[chatId] =
+        response['hasMore'] == true || _messagesNextCursor[chatId] != null;
     _messagesByChat[chatId] = mergedMessages;
     for (final message in _messagesByChat[chatId] ?? const <ChatMessage>[]) {
       _messageOrderByKey.putIfAbsent(
@@ -860,6 +929,51 @@ class ChatService {
     _loadedMessageChatIds.add(chatId);
     _emitMessages(chatId);
     unawaited(_persistCachedState());
+  }
+
+  Future<void> loadOlderMessages(String chatId) async {
+    final id = chatId.trim();
+    if (id.isEmpty || !hasMoreMessages(id)) return;
+    final cursor = _messagesNextCursor[id];
+    if (cursor == null || cursor.trim().isEmpty) return;
+    final existing = _olderMessagesLoadInFlight[id];
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.listMessages(
+        id,
+        limit: _messagePageSize,
+        cursor: cursor,
+      );
+      final incoming = (response['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => ChatMessage.fromMap(Map<String, dynamic>.from(item)))
+          .toList()
+        ..sort(_compareMessagesNewestFirst);
+      final mergedMessages = List<ChatMessage>.from(
+        _messagesByChat[id] ?? const <ChatMessage>[],
+      );
+      for (final message in incoming) {
+        _upsertMessageIntoList(mergedMessages, message);
+      }
+      _messagesByChat[id] = mergedMessages;
+      _messagesNextCursor[id] =
+          (response['nextCursor'] ?? response['next_cursor'])?.toString();
+      if ((_messagesNextCursor[id] ?? '').trim().isEmpty) {
+        _messagesNextCursor[id] = null;
+      }
+      _messagesHasMore[id] =
+          response['hasMore'] == true || _messagesNextCursor[id] != null;
+      _emitMessages(id);
+      unawaited(_persistCachedState());
+    }();
+    _olderMessagesLoadInFlight[id] = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_olderMessagesLoadInFlight[id], future)) {
+        _olderMessagesLoadInFlight.remove(id);
+      }
+    }
   }
 
   Stream<List<Chat>> streamMyChats(String uid) {
@@ -935,6 +1049,24 @@ class ChatService {
     await refreshChats();
   }
 
+  Future<void> _syncAfterSocketReconnect({required String reason}) async {
+    final uid = _activeUserId?.trim() ?? '';
+    if (uid.isEmpty) return;
+    _debugSource('Chat socket sync start reason=$reason user=$uid');
+    await _restoreCachedState(uid);
+    await refreshChats();
+    for (final chatId in _activeChatIds.toList()) {
+      await _socketService?.joinChat(chatId, reason: 'chat.rejoinAfterSocket');
+      await _refreshChat(chatId);
+      await _refreshMessages(chatId);
+    }
+    final foregroundChatId = _foregroundChatId;
+    if (foregroundChatId != null && foregroundChatId.isNotEmpty) {
+      await markChatRead(chatId: foregroundChatId, uid: uid);
+    }
+    await retryFailedTextMessages(senderId: uid);
+  }
+
   Future<void> handleAppResumed(
     String uid, {
     bool recoverSocket = true,
@@ -989,7 +1121,7 @@ class ChatService {
       reason: 'chat.networkChanged',
     );
     if (reconnect != null) {
-      unawaited(reconnect.catchError((_) {}));
+      await reconnect.timeout(_socketReadyTimeout).catchError((_) {});
     }
     await refreshChats();
     for (final chatId in _activeChatIds.toList()) {
@@ -1171,14 +1303,15 @@ class ChatService {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     _activeUserId = senderId;
-    final sendKey = 'text|${chatId.trim()}|${senderId.trim()}|$trimmed';
-    final existing = _messageSendInFlight[sendKey];
-    if (existing != null) return existing;
+    final localClientMessageId = _uuid.v4();
+    final sendKey =
+        'text|${chatId.trim()}|${senderId.trim()}|$localClientMessageId';
 
     final future = _sendMessageInternal(
       chatId: chatId,
       senderId: senderId,
       text: trimmed,
+      clientMessageId: localClientMessageId,
     );
     _messageSendInFlight[sendKey] = future;
     try {
@@ -1543,6 +1676,32 @@ class ChatService {
     _emitChats();
   }
 
+  Future<void> hideChatForMe({
+    required String chatId,
+    required String uid,
+  }) async {
+    _activeUserId = uid;
+    await _api.hideChatForMe(chatId);
+    _chatsById.remove(chatId);
+    _chatControllers[chatId]?.add(null);
+    _emitChats();
+  }
+
+  Future<bool> peerBlockStatus(String chatId) async {
+    final response = await _api.peerBlockStatus(chatId);
+    return response['blocked'] == true;
+  }
+
+  Future<void> blockPeer(String chatId) async {
+    await _api.blockPeer(chatId);
+    await _refreshChat(chatId);
+  }
+
+  Future<void> unblockPeer(String chatId) async {
+    await _api.unblockPeer(chatId);
+    await _refreshChat(chatId);
+  }
+
   Future<void> deleteMessage({
     required String chatId,
     required String messageId,
@@ -1556,6 +1715,7 @@ class ChatService {
 
   Future<void> dispose() async {
     await _socketSub?.cancel();
+    await _socketConnectionSub?.cancel();
     await _chatsController.close();
     await _unreadController.close();
     for (final controller in _chatControllers.values) {
@@ -1598,29 +1758,6 @@ class ChatService {
     ].join('|');
   }
 
-  String _messageDedupSignature(ChatMessage message) {
-    final createdAt = message.createdAt.toUtc();
-    final normalizedCreatedAt = DateTime.utc(
-      createdAt.year,
-      createdAt.month,
-      createdAt.day,
-      createdAt.hour,
-      createdAt.minute,
-      createdAt.second,
-    ).toIso8601String();
-    final imageUrl = (message.imageUrl ?? '').trim();
-    final normalizedImage = imageUrl.startsWith('file://')
-        ? imageUrl.replaceFirst('file://', '')
-        : imageUrl;
-    return [
-      message.chatId.trim(),
-      message.senderId.trim(),
-      normalizedCreatedAt,
-      message.text.trim(),
-      normalizedImage,
-    ].join('|');
-  }
-
   void _upsertMessageIntoList(
     List<ChatMessage> items,
     ChatMessage message,
@@ -1646,7 +1783,6 @@ class ChatService {
   ) {
     final messageId = message.id.trim();
     final clientMessageId = message.clientMessageId?.trim() ?? '';
-    final dedupSignature = _messageDedupSignature(message);
     return items.indexWhere((entry) {
       if (messageId.isNotEmpty && entry.id == messageId) {
         return true;
@@ -1655,15 +1791,18 @@ class ChatService {
           (entry.clientMessageId?.trim() ?? '') == clientMessageId) {
         return true;
       }
-      if (_messageDedupSignature(entry) == dedupSignature) {
-        return true;
-      }
       return _isLikelyOptimisticMatch(entry, message);
     });
   }
 
   bool _isLikelyOptimisticMatch(ChatMessage existing, ChatMessage incoming) {
     final existingClientId = existing.clientMessageId?.trim() ?? '';
+    final incomingClientId = incoming.clientMessageId?.trim() ?? '';
+    if (existingClientId.isNotEmpty &&
+        incomingClientId.isNotEmpty &&
+        existingClientId != incomingClientId) {
+      return false;
+    }
     final isLocalPending = existingClientId.isNotEmpty ||
         existing.id.trim().startsWith('temp-') ||
         existing.status == 'pending';

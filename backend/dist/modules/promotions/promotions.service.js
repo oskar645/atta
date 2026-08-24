@@ -13,8 +13,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PromotionsService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
+const crypto_1 = require("crypto");
 const serializers_1 = require("../../common/serializers");
 const prisma_service_1 = require("../prisma/prisma.service");
+const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const wallet_service_1 = require("../wallet/wallet.service");
 const promotion_plans_constants_1 = require("./promotion-plans.constants");
 const promotableStatuses = new Set([
@@ -22,9 +24,13 @@ const promotableStatuses = new Set([
 ]);
 const MIN_RAISE_DAYS = 1;
 const MAX_RAISE_DAYS = 30;
+const MIN_PROMOTION_QUANTITY = 1;
+const MAX_PROMOTION_QUANTITY = 30;
 const RAISE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RAISE_WORKER_INTERVAL_MS = 60 * 1000;
 const RAISE_WORKER_BATCH_SIZE = 10;
+const SHOWCASE_IMPRESSION_DEBOUNCE_MS = 30 * 1000;
+const SHOWCASE_CLICK_DEBOUNCE_MS = 5 * 1000;
 const listingInclude = {
     owner: {
         include: {
@@ -46,9 +52,10 @@ const listingInclude = {
     },
 };
 let PromotionsService = PromotionsService_1 = class PromotionsService {
-    constructor(prisma, walletService) {
+    constructor(prisma, walletService, rateLimitService) {
         this.prisma = prisma;
         this.walletService = walletService;
+        this.rateLimitService = rateLimitService;
         this.logger = new common_1.Logger(PromotionsService_1.name);
         this.workerTimer = null;
         this.workerRunning = false;
@@ -103,7 +110,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
         const inputType = typeof input === 'string' ? input : input.type;
         const type = this.parsePromotionType(inputType);
         const plan = promotion_plans_constants_1.PROMOTION_PLANS[type];
-        const days = this.parseRaiseDays(type, typeof input === 'string' ? undefined : input.days);
+        const quantity = this.parsePromotionQuantity(type, typeof input === 'string' ? undefined : input.days);
         const requestIdempotencyKey = typeof input === 'string' ? undefined : input.idempotencyKey;
         const listing = await this.prisma.listing.findUnique({
             where: {
@@ -123,7 +130,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             return this.purchaseRaiseCampaign({
                 listingId,
                 authUser,
-                days,
+                days: quantity,
                 requestIdempotencyKey,
             });
         }
@@ -158,11 +165,12 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             };
         }
         const wallet = await this.walletService.ensureWalletAndBonuses(authUser.userId);
-        if (wallet.bonusBalance < plan.costBonus) {
+        const totalPrice = plan.costBonus * quantity;
+        if (wallet.bonusBalance < totalPrice) {
             throw new common_1.BadRequestException({
                 message: 'Недостаточно бонусов',
                 currentBalance: wallet.bonusBalance,
-                requiredBalance: plan.costBonus,
+                requiredBalance: totalPrice,
             });
         }
         const walletReason = await this.walletService.resolveSpendReason(plan.walletReason);
@@ -209,20 +217,23 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                     alreadyActive: true,
                 };
             }
-            const updatedWallet = await this.walletService.spendBonus(authUser.userId, plan.costBonus, walletReason, {
+            const updatedWallet = await this.walletService.spendBonus(authUser.userId, totalPrice, walletReason, {
                 listingId,
                 promotionType: (0, promotion_plans_constants_1.promotionTypeToResponse)(type),
+                quantity,
+                pricePerPeriod: plan.costBonus,
+                totalPrice,
                 requestedWalletReason: plan.walletReason.toLowerCase(),
                 walletReasonFallbackApplied: walletReason !== plan.walletReason,
             }, tx);
             const now = new Date();
-            const endsAt = new Date(now.getTime() + plan.durationMs);
+            const endsAt = new Date(now.getTime() + plan.durationMs * quantity);
             const promotion = await tx.promotion.create({
                 data: {
                     listingId,
                     userId: authUser.userId,
                     type,
-                    costBonus: plan.costBonus,
+                    costBonus: totalPrice,
                     startsAt: now,
                     endsAt,
                     status: client_1.PromotionStatus.ACTIVE,
@@ -360,11 +371,15 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             })),
         };
     }
-    async registerImpression(promotionId) {
-        return this.bumpMetric(promotionId, 'impressionsCount');
+    async registerImpression(promotionId, source) {
+        const shouldCount = await this.shouldCountCounterEvent('impression', promotionId, source, SHOWCASE_IMPRESSION_DEBOUNCE_MS);
+        return shouldCount
+            ? this.bumpMetric(promotionId, 'impressionsCount')
+            : { ok: true };
     }
-    async registerClick(promotionId) {
-        return this.bumpMetric(promotionId, 'clicksCount');
+    async registerClick(promotionId, source) {
+        const shouldCount = await this.shouldCountCounterEvent('click', promotionId, source, SHOWCASE_CLICK_DEBOUNCE_MS);
+        return shouldCount ? this.bumpMetric(promotionId, 'clicksCount') : { ok: true };
     }
     async expirePromotionsByTime() {
         await this.prisma.promotion.updateMany({
@@ -731,15 +746,19 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                 throw new common_1.BadRequestException('Unsupported promotion type');
         }
     }
-    parseRaiseDays(type, rawDays) {
-        if (type !== client_1.PromotionType.BUMP) {
+    parsePromotionQuantity(type, rawQuantity) {
+        if (type !== client_1.PromotionType.BUMP &&
+            type !== client_1.PromotionType.SHOWCASE &&
+            type !== client_1.PromotionType.VIP) {
             return 1;
         }
-        const days = rawDays ?? 1;
-        if (!Number.isInteger(days) || days < MIN_RAISE_DAYS || days > MAX_RAISE_DAYS) {
+        const quantity = rawQuantity ?? 1;
+        const min = type === client_1.PromotionType.BUMP ? MIN_RAISE_DAYS : MIN_PROMOTION_QUANTITY;
+        const max = type === client_1.PromotionType.BUMP ? MAX_RAISE_DAYS : MAX_PROMOTION_QUANTITY;
+        if (!Number.isInteger(quantity) || quantity < min || quantity > max) {
             throw new common_1.BadRequestException('days must be an integer from 1 to 30');
         }
-        return days;
+        return quantity;
     }
     buildRaisePurchaseIdempotencyKey(userId, listingId, days, requestIdempotencyKey) {
         const requestKey = requestIdempotencyKey?.trim();
@@ -803,11 +822,29 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             clicksCount: updated.clicksCount,
         };
     }
+    shouldCountCounterEvent(event, promotionId, source, windowMs) {
+        const sourceKey = this.counterSourceKey(source);
+        if (!sourceKey) {
+            return Promise.resolve(true);
+        }
+        return this.rateLimitService.debounce(`showcase:${event}:${promotionId}:${sourceKey}`, windowMs);
+    }
+    counterSourceKey(source) {
+        const ip = source?.ip?.trim();
+        const userAgent = source?.userAgent?.trim();
+        if (!ip && !userAgent) {
+            return '';
+        }
+        return (0, crypto_1.createHash)('sha256')
+            .update(`${ip || 'unknown'}:${userAgent || 'unknown'}`)
+            .digest('hex');
+    }
 };
 exports.PromotionsService = PromotionsService;
 exports.PromotionsService = PromotionsService = PromotionsService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        wallet_service_1.WalletService])
+        wallet_service_1.WalletService,
+        rate_limit_service_1.RateLimitService])
 ], PromotionsService);
 //# sourceMappingURL=promotions.service.js.map

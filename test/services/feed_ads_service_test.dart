@@ -136,7 +136,7 @@ void main() {
         title: 'Промо',
         isActive: true,
         activatedAt: '2026-08-10T10:00:00.000Z',
-        expiresAt: '2026-08-20T10:00:00.000Z',
+        expiresAt: '2026-09-20T10:00:00.000Z',
       );
     final service = FeedAdsService(api: api, mediaApi: _FakeMediaApi());
 
@@ -156,14 +156,14 @@ void main() {
           title: 'Промо 1',
           isActive: true,
           activatedAt: '2026-08-10T10:00:00.000Z',
-          expiresAt: '2026-08-20T10:00:00.000Z',
+          expiresAt: '2026-09-20T10:00:00.000Z',
         ),
         _feedAdMap(
           id: 'server-ad-2',
           title: 'Промо 2',
           isActive: true,
           activatedAt: '2026-08-10T11:00:00.000Z',
-          expiresAt: '2026-08-20T11:00:00.000Z',
+          expiresAt: '2026-09-20T11:00:00.000Z',
         ),
       ];
     final service = FeedAdsService(api: api, mediaApi: _FakeMediaApi());
@@ -422,7 +422,7 @@ class _FakeFeedAdsApi extends FeedAdsApi {
         title: 'Промо',
         isActive: true,
         activatedAt: '2026-08-10T10:00:00.000Z',
-        expiresAt: '2026-08-20T10:00:00.000Z',
+        expiresAt: '2026-09-20T10:00:00.000Z',
       ),
     };
   }

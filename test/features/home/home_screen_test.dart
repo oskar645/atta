@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:atta/src/app.dart';
 import 'package:atta/src/features/home/home_screen.dart';
+import 'package:atta/src/features/listings/vip_showcase_screen.dart';
 import 'package:atta/src/features/showcase/showcase_all_screen.dart';
 import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
 import 'package:atta/src/constants/categories.dart';
@@ -85,6 +86,558 @@ void main() {
       expect(showcase.homeShowcaseCalls, 1);
       expect(find.text('Дубль'), findsNothing);
       expect(find.text('Больше объявлений нет'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'home hides VIP showcase when there are no active VIP listings',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            20,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests.single.limit, 20);
+      expect(find.byKey(const ValueKey('home_vip_showcase_section')),
+          findsNothing);
+    },
+  );
+
+  testWidgets(
+    'home inserts VIP showcase after the first 12 listing cards',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            24,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async => ListingsFeedPage(
+          items: <Listing>[
+            _listing(id: 'vip-1', title: 'VIP товар', hasVip: true),
+          ],
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('VIP товар'), findsOneWidget);
+
+      await _dragHomeUntilVisible(tester, find.text('Товар 12'));
+      expect(find.text('Товар 12'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'home VIP preview exposes eleventh item and all button opens VIP screen',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            20,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            11,
+            (index) => _listing(
+              id: 'vip-$index',
+              title: 'VIP $index',
+              hasVip: true,
+            ),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests.single.limit, 20);
+
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollHomeVipUntilVisible(tester, find.text('VIP 10'));
+      expect(find.text('VIP 10'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Смотреть все').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Смотреть все').last);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(VipShowcaseScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'home VIP preview loads next page while swiping horizontally',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final allVip = List<Listing>.generate(
+        30,
+        (index) => _listing(
+          id: 'vip-$index',
+          title: 'VIP $index',
+          hasVip: true,
+        ),
+      );
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            12,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async {
+          if (request.cursor == 'vip-page-2') {
+            return ListingsFeedPage(
+              items: <Listing>[
+                allVip[19],
+                ...allVip.skip(20),
+              ],
+              hasMore: false,
+              nextCursor: null,
+            );
+          }
+          return ListingsFeedPage(
+            items: allVip.take(20).toList(growable: false),
+            hasMore: true,
+            nextCursor: 'vip-page-2',
+          );
+        },
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      await _scrollHomeVipUntilVisible(tester, find.text('VIP 29'));
+
+      expect(listings.vipRequests, hasLength(2));
+      expect(listings.vipRequests.first.cursor, isNull);
+      expect(listings.vipRequests.last.cursor, 'vip-page-2');
+      expect(find.text('VIP 29'), findsOneWidget);
+      expect(find.text('VIP duplicate'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'home VIP preview stops after last loaded VIP without looping',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            12,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            3,
+            (index) => _listing(
+              id: 'vip-$index',
+              title: 'VIP $index',
+              hasVip: true,
+            ),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      await _dragHomeVip(tester, const Offset(-1400, 0));
+      await tester.pumpAndSettle();
+
+      expect(_homeVipListView(tester).semanticChildCount, 3);
+      expect(find.byKey(const ValueKey('home_vip_card:3')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'home VIP preview keeps one VIP stable on pull to refresh',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            12,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async => ListingsFeedPage(
+          items: <Listing>[
+            _listing(id: 'vip-1', title: 'Единственный VIP', hasVip: true),
+          ],
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('home_vip_card:0')),
+          matching: find.text('Единственный VIP'),
+        ),
+        findsOneWidget,
+      );
+
+      await _pullHomeToRefresh(tester);
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests.length, 2);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('home_vip_card:0')),
+          matching: find.text('Единственный VIP'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'home VIP preview rotates active deduplicated pool on repeated refresh',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            12,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async => ListingsFeedPage(
+          items: <Listing>[
+            for (var index = 0; index < 11; index += 1)
+              _listing(id: 'vip-$index', title: 'VIP $index', hasVip: true),
+            _listing(id: 'vip-0', title: 'VIP duplicate', hasVip: true),
+            _listing(
+              id: 'vip-inactive',
+              title: 'VIP inactive',
+              hasVip: true,
+              vipStatus: 'expired',
+            ),
+          ],
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_homeVipListView(tester).semanticChildCount, 11);
+      expect(_homeVipCardHasTitle(0, 'VIP 0'), findsOneWidget);
+      expect(find.text('VIP duplicate'), findsNothing);
+      expect(find.text('VIP inactive'), findsNothing);
+
+      await _pullHomeToRefresh(tester);
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_homeVipListView(tester).semanticChildCount, 11);
+      expect(_homeVipCardHasTitle(0, 'VIP 1'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const ValueKey('home_vip_card:0')));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('home_vip_showcase_section')),
+              matching: find.byType(ListView),
+            )
+            .last,
+        const Offset(-1000, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('VIP 10'), findsOneWidget);
+      expect(find.text('VIP duplicate'), findsNothing);
+      expect(find.text('VIP inactive'), findsNothing);
+
+      await tester.drag(
+        find
+            .descendant(
+              of: find.byKey(const ValueKey('home_vip_showcase_section')),
+              matching: find.byType(ListView),
+            )
+            .last,
+        const Offset(1000, 0),
+      );
+      await tester.pumpAndSettle();
+
+      await _pullHomeToRefresh(tester);
+      await _dragHomeUntilVisible(
+        tester,
+        find.byKey(const ValueKey('home_vip_showcase_section')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_homeVipCardHasTitle(0, 'VIP 2'), findsOneWidget);
+      expect(listings.requests.where((request) => request.cursor == null),
+          hasLength(3));
+      expect(listings.vipRequests, hasLength(3));
+      expect(
+        listings.requests.where((request) => request.cursor != null),
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets(
+    'home keeps ordinary feed when VIP request fails',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: <Listing>[_listing(id: 'listing-1', title: 'Обычный товар')],
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async {
+          throw StateError('vip unavailable');
+        },
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Обычный товар'), findsOneWidget);
+      expect(find.byType(ListingCard), findsOneWidget);
+      expect(find.byKey(const ValueKey('home_vip_showcase_section')),
+          findsNothing);
+    },
+  );
+
+  testWidgets(
+    'VIP showcase screen paginates and deduplicates listings',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => const ListingsFeedPage(
+          items: <Listing>[],
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async {
+          if (request.cursor == null) {
+            return ListingsFeedPage(
+              items: List<Listing>.generate(
+                20,
+                (index) => _listing(
+                  id: 'vip-$index',
+                  title: 'VIP $index',
+                  hasVip: true,
+                ),
+              ),
+              hasMore: true,
+              nextCursor: 'vip-next',
+            );
+          }
+          return ListingsFeedPage(
+            items: <Listing>[
+              _listing(id: 'vip-19', title: 'VIP duplicate', hasVip: true),
+              _listing(id: 'vip-20', title: 'VIP 20', hasVip: true),
+            ],
+            hasMore: false,
+            nextCursor: null,
+          );
+        },
+      );
+
+      await tester.pumpWidget(
+        _buildVipScreenTestApp(listings: listings),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests.length, 1);
+      expect(find.text('VIP 0'), findsOneWidget);
+
+      await tester.fling(find.byType(GridView), const Offset(0, -8000), 20000);
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests.length, 2);
+      expect(listings.vipRequests.last.cursor, 'vip-next');
+      expect(find.text('VIP duplicate'), findsNothing);
+      expect(find.text('VIP 20'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'VIP showcase screen reloads first page when category changes',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => const ListingsFeedPage(
+          items: <Listing>[],
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (request) async {
+          if (request.category == 'Авто') {
+            return ListingsFeedPage(
+              items: <Listing>[
+                _listing(
+                  id: 'vip-auto',
+                  title: 'VIP авто',
+                  category: 'Авто',
+                  hasVip: true,
+                ),
+              ],
+              hasMore: true,
+              nextCursor: 'auto-next',
+            );
+          }
+          return ListingsFeedPage(
+            items: <Listing>[
+              _listing(id: 'vip-all', title: 'VIP все', hasVip: true),
+            ],
+            hasMore: true,
+            nextCursor: 'all-next',
+          );
+        },
+      );
+
+      await tester.pumpWidget(
+        _buildVipScreenTestApp(listings: listings),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Авто'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests.length, 2);
+      expect(listings.vipRequests.first.category, 'Все');
+      expect(listings.vipRequests.last.category, 'Авто');
+      expect(listings.vipRequests.last.cursor, isNull);
+      expect(find.text('VIP все'), findsNothing);
+      expect(find.text('VIP авто'), findsOneWidget);
     },
   );
 
@@ -1369,6 +1922,108 @@ Widget _buildHomeTestApp({
   );
 }
 
+Widget _buildVipScreenTestApp({
+  required _FakeListingsService listings,
+}) {
+  return MultiProvider(
+    providers: [
+      Provider<AuthService>.value(value: _FakeAuthService()),
+      Provider<ListingsService>.value(value: listings),
+      Provider<FavoritesService>.value(value: _FakeFavoritesService()),
+      Provider<ReviewsService>.value(value: _FakeReviewsService()),
+      ChangeNotifierProvider<ListingHistoryService>.value(
+        value: ListingHistoryService(),
+      ),
+    ],
+    child: const MaterialApp(
+      home: VipShowcaseScreen(),
+    ),
+  );
+}
+
+Future<void> _dragHomeUntilVisible(
+  WidgetTester tester,
+  Finder finder,
+) async {
+  for (var attempt = 0; attempt < 10; attempt++) {
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -700));
+    await tester.pumpAndSettle();
+  }
+}
+
+Future<void> _pullHomeToRefresh(WidgetTester tester) async {
+  await tester.fling(
+    find.byType(CustomScrollView),
+    const Offset(0, 8000),
+    20000,
+  );
+  await tester.pumpAndSettle();
+  await tester.drag(find.byType(CustomScrollView), const Offset(0, 600));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _dragHomeVip(WidgetTester tester, Offset offset) async {
+  await tester.ensureVisible(
+    find.byKey(const ValueKey('home_vip_showcase_section')),
+  );
+  await tester.pumpAndSettle();
+  await tester.drag(
+    find
+        .descendant(
+          of: find.byKey(const ValueKey('home_vip_showcase_section')),
+          matching: find.byType(ListView),
+        )
+        .last,
+    offset,
+  );
+  await tester.pumpAndSettle();
+}
+
+Future<void> _scrollHomeVipUntilVisible(
+  WidgetTester tester,
+  Finder target,
+) async {
+  await tester.ensureVisible(
+    find.byKey(const ValueKey('home_vip_showcase_section')),
+  );
+  await tester.pumpAndSettle();
+  await tester.scrollUntilVisible(
+    target,
+    450,
+    scrollable: find
+        .descendant(
+          of: find.byKey(const ValueKey('home_vip_showcase_section')),
+          matching: find.byType(Scrollable),
+        )
+        .last,
+    maxScrolls: 60,
+  );
+  await tester.pumpAndSettle();
+}
+
+ListView _homeVipListView(WidgetTester tester) {
+  return tester.widget<ListView>(
+    find
+        .descendant(
+          of: find.byKey(const ValueKey('home_vip_showcase_section')),
+          matching: find.byType(ListView),
+        )
+        .last,
+  );
+}
+
+Finder _homeVipCardHasTitle(int index, String title) {
+  return find.descendant(
+    of: find.byKey(ValueKey('home_vip_card:$index')),
+    matching: find.text(title),
+  );
+}
+
 class _PageRequest {
   const _PageRequest({
     required this.category,
@@ -1388,11 +2043,15 @@ class _PageRequest {
 class _FakeListingsService extends ListingsService {
   _FakeListingsService({
     required this.onGetListingsPage,
+    this.onGetVipListingsPage,
   });
 
   final Future<ListingsFeedPage> Function(_PageRequest request)
       onGetListingsPage;
+  final Future<ListingsFeedPage> Function(_VipPageRequest request)?
+      onGetVipListingsPage;
   final List<_PageRequest> requests = <_PageRequest>[];
+  final List<_VipPageRequest> vipRequests = <_VipPageRequest>[];
 
   @override
   Future<ListingsFeedPage> getListingsPage({
@@ -1412,6 +2071,40 @@ class _FakeListingsService extends ListingsService {
     requests.add(request);
     return onGetListingsPage(request);
   }
+
+  @override
+  Future<ListingsFeedPage> getVipListingsPage({
+    int limit = 20,
+    String? cursor,
+    String category = 'Все',
+  }) {
+    final request =
+        _VipPageRequest(limit: limit, cursor: cursor, category: category);
+    vipRequests.add(request);
+    final handler = onGetVipListingsPage;
+    if (handler != null) {
+      return handler(request);
+    }
+    return Future<ListingsFeedPage>.value(
+      const ListingsFeedPage(
+        items: <Listing>[],
+        hasMore: false,
+        nextCursor: null,
+      ),
+    );
+  }
+}
+
+class _VipPageRequest {
+  const _VipPageRequest({
+    required this.limit,
+    required this.cursor,
+    required this.category,
+  });
+
+  final int limit;
+  final String? cursor;
+  final String category;
 }
 
 class _FakeAuthService extends AuthService {
@@ -1746,7 +2439,18 @@ Listing _listing({
   required String id,
   required String title,
   String category = 'Все',
+  bool hasVip = false,
+  String vipStatus = 'active',
 }) {
+  final promotions = <String, dynamic>{
+    'activeVip': <String, dynamic>{
+      'type': 'vip',
+      'title': 'VIP',
+      'status': vipStatus,
+      'endsAt': '2099-07-01T10:00:00.000Z',
+      'costBonus': 150,
+    },
+  };
   return Listing.fromMap(<String, dynamic>{
     'id': id,
     'owner_id': 'user-1',
@@ -1764,6 +2468,7 @@ Listing _listing({
     'photo_urls': const <String>[],
     'view_count': 0,
     'status': 'approved',
+    if (hasVip) 'promotions': promotions,
     'rejection_reason': '',
     'can_promote': false,
     'created_at': '2026-07-01T10:00:00.000Z',

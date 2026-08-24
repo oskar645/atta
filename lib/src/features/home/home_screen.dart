@@ -12,6 +12,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/data/auto_catalog.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/features/listings/vip_showcase_screen.dart';
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/models/feed_ad.dart';
 import 'package:atta/src/models/listing.dart';
@@ -30,6 +31,8 @@ import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
+import 'package:atta/src/widgets/listing_price_row.dart';
+import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/add_listing_icon_button.dart';
 import 'package:atta/src/widgets/skeletons.dart';
@@ -66,6 +69,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with RouteAware {
   static const int _feedPageSize = 20;
+  static const int _vipPreviewPageSize = 20;
   static const Duration _showcaseStaleAfter = Duration(minutes: 5);
   String _category = 'Все';
   String _subcategory = 'Все';
@@ -74,10 +78,18 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   final GlobalKey<_HomeFeedViewState> _feedKey =
       GlobalKey<_HomeFeedViewState>();
   List<ShowcaseItem> _showcaseItems = const <ShowcaseItem>[];
+  List<Listing> _vipItems = const <Listing>[];
+  bool _vipHasMore = false;
+  bool _vipIsLoadingMore = false;
+  String? _vipNextCursor;
   bool _showcaseLoading = true;
   bool _showcaseLoadedOnce = false;
   DateTime? _showcaseRefreshedAt;
   Future<void>? _showcaseRefreshFuture;
+  Future<void>? _vipRefreshFuture;
+  Future<void>? _vipLoadMoreFuture;
+  int _vipHomeRotationOffset = 0;
+  int _vipHomeLoadCount = 0;
   ModalRoute<dynamic>? _route;
 
   // Avito-like location filter.
@@ -116,6 +128,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   void initState() {
     super.initState();
     unawaited(_refreshShowcase());
+    unawaited(_refreshVipShowcase());
     widget.controller?.attach(scrollToTop: _handleScrollToTop);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -159,6 +172,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   void didPopNext() {
     if (_showcaseNeedsRefresh) {
       unawaited(_refreshShowcase());
+    }
+    if (_showcaseNeedsRefresh) {
+      unawaited(_refreshVipShowcase());
     }
   }
 
@@ -271,12 +287,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   Future<void> _handleRefresh() async {
     final showcaseFuture = _refreshShowcase();
+    final vipFuture = _refreshVipShowcase();
     final feedAdFuture =
         context.read<FeedAdsService>().refreshActiveAd(rotate: true);
 
     await Future.wait([
       _reloadFeed(reset: true, clearExistingItems: false),
       showcaseFuture,
+      vipFuture,
       feedAdFuture,
       Future<void>.delayed(const Duration(milliseconds: 350)),
     ]);
@@ -320,6 +338,136 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     } finally {
       _showcaseRefreshFuture = null;
     }
+  }
+
+  Future<void> _refreshVipShowcase() async {
+    final inFlight = _vipRefreshFuture;
+    if (inFlight != null) return inFlight;
+
+    final future = _loadVipShowcase();
+    _vipRefreshFuture = future;
+    await future;
+  }
+
+  Future<void> _loadVipShowcase() async {
+    try {
+      final page = await context.read<ListingsService>().getVipListingsPage(
+            limit: _vipPreviewPageSize,
+          );
+      final items = _deduplicateVipItems(page.items);
+      final nextRotationOffset = _nextHomeVipRotationOffset(
+        itemCount: items.length,
+        homeLoadCount: _vipHomeLoadCount,
+        rotationOffset: _vipHomeRotationOffset,
+      );
+      if (!mounted) return;
+      setState(() {
+        _vipItems = items;
+        _vipHasMore = page.hasMore;
+        _vipNextCursor = page.nextCursor;
+        _vipHomeRotationOffset = nextRotationOffset;
+        _vipHomeLoadCount += 1;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _vipItems = const <Listing>[];
+        _vipHasMore = false;
+        _vipNextCursor = null;
+      });
+    } finally {
+      _vipRefreshFuture = null;
+    }
+  }
+
+  Future<void> _loadMoreVipShowcase() async {
+    if (!_vipHasMore || _vipIsLoadingMore) return;
+
+    final inFlight = _vipLoadMoreFuture;
+    if (inFlight != null) return inFlight;
+
+    final cursor = _vipNextCursor;
+    if ((cursor ?? '').trim().isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _vipHasMore = false;
+      });
+      return;
+    }
+
+    final future = () async {
+      setState(() {
+        _vipIsLoadingMore = true;
+      });
+      try {
+        final page = await context.read<ListingsService>().getVipListingsPage(
+              limit: _vipPreviewPageSize,
+              cursor: cursor,
+            );
+        if (!mounted) return;
+        setState(() {
+          _vipItems = _mergeUniqueVipItems(_vipItems, page.items);
+          _vipHasMore = page.hasMore;
+          _vipNextCursor = page.nextCursor;
+        });
+      } catch (_) {
+      } finally {
+        if (mounted) {
+          setState(() {
+            _vipIsLoadingMore = false;
+          });
+        }
+        _vipLoadMoreFuture = null;
+      }
+    }();
+
+    _vipLoadMoreFuture = future;
+    return future;
+  }
+
+  static int _nextHomeVipRotationOffset({
+    required int itemCount,
+    required int homeLoadCount,
+    required int rotationOffset,
+  }) {
+    if (itemCount <= 1) return rotationOffset;
+    final nextRotationOffset = homeLoadCount > 0
+        ? (rotationOffset + 1) % itemCount
+        : rotationOffset % itemCount;
+    return nextRotationOffset;
+  }
+
+  static List<Listing> _deduplicateVipItems(List<Listing> items) {
+    final seenIds = <String>{};
+    final result = <Listing>[];
+    for (final item in items) {
+      if (item.activeVip?.isActive != true) continue;
+      final id = item.id.trim();
+      if (id.isEmpty || !seenIds.add(id)) continue;
+      result.add(item);
+    }
+    return result;
+  }
+
+  static List<Listing> _mergeUniqueVipItems(
+    List<Listing> current,
+    List<Listing> incoming,
+  ) {
+    final seenIds = <String>{};
+    final result = <Listing>[];
+    for (final item in current) {
+      if (item.activeVip?.isActive != true) continue;
+      final id = item.id.trim();
+      if (id.isEmpty || !seenIds.add(id)) continue;
+      result.add(item);
+    }
+    for (final item in incoming) {
+      if (item.activeVip?.isActive != true) continue;
+      final id = item.id.trim();
+      if (id.isEmpty || !seenIds.add(id)) continue;
+      result.add(item);
+    }
+    return result;
   }
 
   void _selectCategory(String c) {
@@ -610,6 +758,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         items: _feedItems,
                         ad: adSnap.data,
                         showcaseItems: _showcaseItems,
+                        vipItems: _vipItems,
+                        vipHasMore: _vipHasMore,
+                        vipInitialIndex: _vipHomeRotationOffset,
                         showcaseLoading:
                             _showcaseLoading && !_showcaseLoadedOnce,
                         history: history,
@@ -619,6 +770,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         isLoadingMore: _isLoadingMore,
                         hasMore: _hasMore,
                         onLoadMore: _loadMoreFeed,
+                        onLoadMoreVip: _loadMoreVipShowcase,
                       );
                     },
                   );
@@ -636,6 +788,9 @@ class _HomeFeedView extends StatefulWidget {
   final List<Listing> items;
   final FeedAd? ad;
   final List<ShowcaseItem> showcaseItems;
+  final List<Listing> vipItems;
+  final bool vipHasMore;
+  final int vipInitialIndex;
   final bool showcaseLoading;
   final ListingHistoryService history;
   final ReviewsService reviews;
@@ -644,12 +799,16 @@ class _HomeFeedView extends StatefulWidget {
   final bool isLoadingMore;
   final bool hasMore;
   final Future<void> Function() onLoadMore;
+  final Future<void> Function() onLoadMoreVip;
 
   const _HomeFeedView({
     super.key,
     required this.items,
     required this.ad,
     required this.showcaseItems,
+    required this.vipItems,
+    required this.vipHasMore,
+    required this.vipInitialIndex,
     required this.showcaseLoading,
     required this.history,
     required this.reviews,
@@ -658,6 +817,7 @@ class _HomeFeedView extends StatefulWidget {
     required this.isLoadingMore,
     required this.hasMore,
     required this.onLoadMore,
+    required this.onLoadMoreVip,
   });
 
   @override
@@ -818,6 +978,14 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     );
   }
 
+  Future<void> _openVipItem(Listing item) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ListingDetailScreen(listingId: item.id),
+      ),
+    );
+  }
+
   List<Widget> _buildPromoSlivers({
     required bool visibleAd,
     required List<ShowcaseItem> showcaseItems,
@@ -899,6 +1067,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     }
 
     final showcaseItems = widget.showcaseItems;
+    final vipItems = widget.vipItems;
 
     return CustomScrollView(
       controller: _scrollController,
@@ -911,16 +1080,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
           visibleAd: visibleAd,
           showcaseItems: showcaseItems,
         ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-          sliver: SliverGrid(
-            gridDelegate: _gridDelegate,
-            delegate: SliverChildBuilderDelegate(
-              (context, index) => _buildCard(context, widget.items[index]),
-              childCount: widget.items.length,
-            ),
-          ),
-        ),
+        ..._buildListingSlivers(vipItems),
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(10, 0, 10, 18),
@@ -940,6 +1100,74 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         ),
       ],
     );
+  }
+
+  List<Widget> _buildListingSlivers(List<Listing> vipItems) {
+    const insertionIndex = 12;
+    final headCount = widget.items.length < insertionIndex
+        ? widget.items.length
+        : insertionIndex;
+    final tailCount = widget.items.length - headCount;
+    final slivers = <Widget>[
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
+        sliver: SliverGrid(
+          gridDelegate: _gridDelegate,
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => _buildCard(context, widget.items[index]),
+            childCount: headCount,
+          ),
+        ),
+      ),
+    ];
+
+    if (vipItems.isNotEmpty) {
+      slivers.add(
+        SliverToBoxAdapter(
+          child: _VipShowcaseSection(
+            items: vipItems,
+            hasMore: widget.vipHasMore,
+            initialIndex: widget.vipInitialIndex,
+            favoritesService: widget.favs,
+            userId: widget.userId,
+            onOpenAll: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const VipShowcaseScreen(),
+                ),
+              );
+            },
+            onOpenItem: _openVipItem,
+            onLoadMore: widget.onLoadMoreVip,
+            onError: (error) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                    content: Text('Не удалось изменить избранное: $error')),
+              );
+            },
+          ),
+        ),
+      );
+    }
+
+    if (tailCount > 0) {
+      slivers.add(
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          sliver: SliverGrid(
+            gridDelegate: _gridDelegate,
+            delegate: SliverChildBuilderDelegate(
+              (context, index) =>
+                  _buildCard(context, widget.items[headCount + index]),
+              childCount: tailCount,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return slivers;
   }
 }
 
@@ -1036,16 +1264,21 @@ class _ShowcaseSectionState extends State<_ShowcaseSection> {
                     child: Text(
                       'Витрина ATTA',
                       style:
-                          TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                          TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                     ),
                   ),
                   TextButton(
                     onPressed: widget.onOpenAll,
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 32),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
                     child: const Text('Смотреть все'),
                   ),
                 ],
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 1),
               SizedBox(
                 height: _homeShowcaseCardHeight(cardWidth),
                 child: ListView.separated(
@@ -1185,6 +1418,433 @@ class _ShowcaseCard extends StatelessWidget {
   }
 }
 
+class _VipShowcaseSection extends StatefulWidget {
+  const _VipShowcaseSection({
+    required this.items,
+    required this.hasMore,
+    required this.initialIndex,
+    required this.favoritesService,
+    required this.userId,
+    required this.onOpenAll,
+    required this.onOpenItem,
+    required this.onLoadMore,
+    this.onError,
+  });
+
+  final List<Listing> items;
+  final bool hasMore;
+  final int initialIndex;
+  final FavoritesService favoritesService;
+  final String userId;
+  final VoidCallback onOpenAll;
+  final ValueChanged<Listing> onOpenItem;
+  final Future<void> Function() onLoadMore;
+  final ValueChanged<Object>? onError;
+
+  @override
+  State<_VipShowcaseSection> createState() => _VipShowcaseSectionState();
+}
+
+class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
+  final ScrollController _scrollController = ScrollController();
+
+  static const double _loadMoreExtentAfter = 900;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant _VipShowcaseSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldFirstId =
+        oldWidget.items.isEmpty ? null : oldWidget.items.first.id;
+    final nextFirstId = widget.items.isEmpty ? null : widget.items.first.id;
+    if (oldWidget.initialIndex != widget.initialIndex ||
+        oldFirstId != nextFirstId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_scrollController.hasClients) return;
+        _scrollController.jumpTo(0);
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _handleScroll());
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_handleScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _handleScroll() {
+    if (!widget.hasMore || !_scrollController.hasClients) return;
+    if (_scrollController.position.extentAfter < _loadMoreExtentAfter) {
+      unawaited(widget.onLoadMore());
+    }
+  }
+
+  int get _startIndex {
+    final length = widget.items.length;
+    if (length <= 1) return 0;
+    return widget.initialIndex.clamp(0, length - 1);
+  }
+
+  List<Listing> get _visibleItems {
+    final items = widget.items;
+    if (items.length <= 1) return items;
+    final startIndex = _startIndex;
+    return <Listing>[
+      ...items.skip(startIndex),
+      ...items.take(startIndex),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const vipBlue = Color(0xFF2563D9);
+    const vipBlueDark = Color(0xFF163A8A);
+    return Padding(
+      key: const ValueKey('home_vip_showcase_section'),
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFFF8FBFF),
+              Color(0xFFEFF6FF),
+            ],
+          ),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: const Color(0xFF8BB8FF),
+            width: 1.2,
+          ),
+          boxShadow: [
+            const BoxShadow(
+              color: Color(0x262563D9),
+              blurRadius: 22,
+              spreadRadius: 1,
+              offset: Offset(0, 8),
+            ),
+            BoxShadow(
+              color: Colors.white.withValues(alpha: 0.72),
+              blurRadius: 10,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final cardWidth =
+                  _homeVipCardWidth(constraints.maxWidth).toDouble();
+              final visibleItems = _visibleItems;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 30,
+                              height: 30,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: vipBlue.withValues(alpha: 0.20),
+                                ),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x1A2563D9),
+                                    blurRadius: 10,
+                                    offset: Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: const Icon(
+                                Icons.workspace_premium_rounded,
+                                size: 18,
+                                color: vipBlue,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Flexible(
+                              child: Text(
+                                'Витрина VIP',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: vipBlueDark,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: vipAccentColor(context),
+                                borderRadius: BorderRadius.circular(999),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: vipAccentColor(context)
+                                        .withValues(alpha: 0.22),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: const Text(
+                                'VIP',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  height: 1,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: widget.onOpenAll,
+                        style: TextButton.styleFrom(
+                          foregroundColor: vipBlueDark,
+                          backgroundColor: Colors.white.withValues(alpha: 0.82),
+                          padding: const EdgeInsets.symmetric(horizontal: 11),
+                          minimumSize: const Size(0, 34),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          textStyle: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(999),
+                            side: BorderSide(
+                              color: vipBlue.withValues(alpha: 0.26),
+                            ),
+                          ),
+                        ),
+                        child: const Text('Смотреть все'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: _homeVipCardHeight(cardWidth),
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      scrollDirection: Axis.horizontal,
+                      padding: EdgeInsets.zero,
+                      itemCount: visibleItems.length,
+                      itemBuilder: (context, index) {
+                        final item = visibleItems[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: _VipPreviewCard(
+                            key: ValueKey('home_vip_card:$index'),
+                            width: cardWidth,
+                            listing: item,
+                            favoritesService: widget.favoritesService,
+                            userId: widget.userId,
+                            onTap: () => widget.onOpenItem(item),
+                            onError: widget.onError,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _VipPreviewCard extends StatelessWidget {
+  const _VipPreviewCard({
+    super.key,
+    required this.width,
+    required this.listing,
+    required this.favoritesService,
+    required this.userId,
+    required this.onTap,
+    this.onError,
+  });
+
+  final double width;
+  final Listing listing;
+  final FavoritesService favoritesService;
+  final String userId;
+  final VoidCallback onTap;
+  final ValueChanged<Object>? onError;
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = listing.firstPhotoUrl ?? '';
+    final cityShort = listing.cityShort.trim();
+    final scheme = Theme.of(context).colorScheme;
+    const vipBlue = Color(0xFF2563D9);
+    final compactTextScaler =
+        MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.05);
+
+    return SizedBox(
+      width: width,
+      child: Material(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        elevation: 2,
+        shadowColor: vipBlue.withValues(alpha: 0.16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Ink(
+            decoration: BoxDecoration(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: vipBlue.withValues(alpha: 0.18),
+              ),
+            ),
+            child: MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: compactTextScaler,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        ClipRRect(
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(14),
+                          ),
+                          child: SizedBox.expand(
+                            child: MediaPreviewBox(
+                              imageUrl: photo,
+                              categoryHint: 'listings',
+                              borderRadius: 0,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          left: 6,
+                          top: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: vipAccentColor(context),
+                              borderRadius: BorderRadius.circular(999),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: vipAccentColor(context)
+                                      .withValues(alpha: 0.22),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: const Text(
+                              'VIP',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          child: FavoriteToggleButton(
+                            favoritesService: favoritesService,
+                            userId: userId,
+                            listingId: listing.id,
+                            activeColor: Colors.red,
+                            onError: onError,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(7, 5, 7, 7),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          listing.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            height: 1.05,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: ListingPriceRow(
+                            listing: listing,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: vipBlue,
+                              height: 1.05,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          cityShort.isEmpty ? 'Город не указан' : cityShort,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.outline,
+                            height: 1.05,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 double _homeShowcaseCardWidth(double availableWidth) {
   final visibleCards = availableWidth < 340 ? 3.08 : 2.89;
   final width = (availableWidth - 16) / visibleCards;
@@ -1193,6 +1853,16 @@ double _homeShowcaseCardWidth(double availableWidth) {
 
 double _homeShowcaseCardHeight(double width) {
   return (width * 0.92).clamp(100.0, 116.0).toDouble();
+}
+
+double _homeVipCardWidth(double availableWidth) {
+  final visibleCards = availableWidth < 340 ? 2.58 : 2.92;
+  final width = (availableWidth - 16) / visibleCards;
+  return width.clamp(106.0, 132.0).toDouble();
+}
+
+double _homeVipCardHeight(double width) {
+  return (width * 1.28).clamp(138.0, 160.0).toDouble();
 }
 
 class _CategoryRow extends StatelessWidget {
@@ -1665,6 +2335,9 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
                         items: _items,
                         ad: adSnap.data,
                         showcaseItems: const <ShowcaseItem>[],
+                        vipItems: const <Listing>[],
+                        vipHasMore: false,
+                        vipInitialIndex: 0,
                         showcaseLoading: false,
                         history: history,
                         reviews: reviews,
@@ -1673,6 +2346,7 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
                         isLoadingMore: _isLoadingMore,
                         hasMore: _hasMore,
                         onLoadMore: _loadMore,
+                        onLoadMoreVip: () async {},
                       );
                     },
                   );

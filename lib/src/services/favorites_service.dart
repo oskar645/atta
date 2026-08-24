@@ -195,6 +195,47 @@ class FavoritesService {
     return refreshFavoriteIds(uid, reason: reason);
   }
 
+  Future<FavoriteIdsPage> getFavoriteIdsPage({
+    required String uid,
+    int limit = 50,
+    String? cursor,
+    bool resetCache = false,
+  }) async {
+    if (runtimeType != FavoritesService) {
+      if ((cursor ?? '').trim().isNotEmpty) {
+        return const FavoriteIdsPage(ids: <String>[], hasMore: false);
+      }
+      final ids = await refreshFavoriteIds(uid);
+      return FavoriteIdsPage(ids: ids.toList(growable: false), hasMore: false);
+    }
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) {
+      return const FavoriteIdsPage(
+        ids: <String>[],
+        hasMore: false,
+      );
+    }
+    try {
+      final response = await _api.list(limit: limit, cursor: cursor);
+      final ids = _extractFavoriteIds(response);
+      final current = resetCache
+          ? <String>{}
+          : Set<String>.from(_cache[normalizedUid] ?? const <String>{});
+      current.addAll(ids);
+      _publish(normalizedUid, current);
+      final nextCursor = _extractNextCursor(response);
+      return FavoriteIdsPage(
+        ids: ids,
+        nextCursor: nextCursor,
+        hasMore: response['hasMore'] == true && nextCursor != null,
+      );
+    } catch (error) {
+      _lastRefreshErrorByUser[normalizedUid] = error;
+      _debug('Favorites page load error message=$error user=$normalizedUid');
+      rethrow;
+    }
+  }
+
   Future<Set<String>> _refreshFavoriteIdsSafe(String normalizedUid) async {
     late final Set<String> fresh;
     try {
@@ -222,18 +263,37 @@ class FavoritesService {
   Future<Set<String>> _fetchFavoriteIds(String uid) async {
     try {
       // ApiClient starts the transport timeout only after the HTTP send.
-      final response = await _api.list();
-      final raw = response['favorite_ids'];
-      if (raw is List) {
-        return raw.map((item) => item.toString()).toSet();
+      final ids = <String>{};
+      String? cursor;
+      var hasMore = true;
+      while (hasMore) {
+        final response = await _api.list(limit: 100, cursor: cursor);
+        ids.addAll(_extractFavoriteIds(response));
+        cursor = _extractNextCursor(response);
+        hasMore = response['hasMore'] == true && cursor != null;
       }
-      return <String>{};
+      return ids;
     } catch (error) {
       _debug('Favorites load error message=$error user=$uid');
       rethrow;
     } finally {
       _debug('Favorites load finally loading=false user=$uid');
     }
+  }
+
+  List<String> _extractFavoriteIds(Map<String, dynamic> response) {
+    final raw = response['favorite_ids'];
+    if (raw is! List) return const <String>[];
+    return raw
+        .map((item) => item.toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String? _extractNextCursor(Map<String, dynamic> response) {
+    final cursor =
+        (response['nextCursor'] ?? response['next_cursor'])?.toString().trim();
+    return (cursor ?? '').isEmpty ? null : cursor;
   }
 
   StreamController<Set<String>> _controllerFor(String uid) {
@@ -350,4 +410,16 @@ class FavoritesService {
       return true;
     }());
   }
+}
+
+class FavoriteIdsPage {
+  const FavoriteIdsPage({
+    required this.ids,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<String> ids;
+  final bool hasMore;
+  final String? nextCursor;
 }

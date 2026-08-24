@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 
@@ -20,8 +21,15 @@ export class FavoritesController {
   constructor(private readonly favoritesService: FavoritesService) {}
 
   @Get()
-  list(@CurrentUser() authUser: AuthenticatedUser) {
-    return this.favoritesService.list(authUser);
+  list(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.favoritesService.list(authUser, {
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @Post()

@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -11,8 +11,15 @@ export class ViewedListingsController {
   constructor(private readonly viewedListingsService: ViewedListingsService) {}
 
   @Get()
-  list(@CurrentUser() authUser: AuthenticatedUser) {
-    return this.viewedListingsService.list(authUser);
+  list(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.viewedListingsService.list(authUser, {
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @Post(':listingId')

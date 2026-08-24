@@ -49,15 +49,15 @@ let MediaController = MediaController_1 = class MediaController {
         this.usersService = usersService;
         this.logger = new common_1.Logger(MediaController_1.name);
     }
-    uploadAvatar(authUser, file) {
-        this.rateLimitService.consumeOrThrow(`media:avatar:${authUser.userId}`, {
+    async uploadAvatar(authUser, file) {
+        await this.rateLimitService.consumeOrThrow(`media:avatar:${authUser.userId}`, {
             limit: 15,
             windowMs: 60 * 1000,
         });
         return this.usersService.uploadAvatar(authUser, this.requireImage(file, 2 * 1024 * 1024));
     }
-    uploadListingPhoto(authUser, listingId, request, file) {
-        this.rateLimitService.consumeOrThrow(`media:listing:${authUser.userId}`, {
+    async uploadListingPhoto(authUser, listingId, request, file) {
+        await this.rateLimitService.consumeOrThrow(`media:listing:${authUser.userId}`, {
             limit: 20,
             windowMs: 60 * 1000,
         });
@@ -72,8 +72,8 @@ let MediaController = MediaController_1 = class MediaController {
     deleteListingPhoto(authUser, listingId, photoId) {
         return this.listingsService.deletePhoto(authUser, listingId, photoId);
     }
-    uploadChatImage(authUser, chatId, file) {
-        this.rateLimitService.consumeOrThrow(`media:chat:${authUser.userId}`, {
+    async uploadChatImage(authUser, chatId, file) {
+        await this.rateLimitService.consumeOrThrow(`media:chat:${authUser.userId}`, {
             limit: 20,
             windowMs: 60 * 1000,
         });
@@ -106,13 +106,40 @@ let MediaController = MediaController_1 = class MediaController {
         response.setHeader('Cache-Control', 'private, max-age=300');
         response.send(bytes);
     }
+    async getSupportFileByKey(authUser, key, response) {
+        const normalizedKey = key?.trim() ?? '';
+        if (!normalizedKey) {
+            throw new common_1.BadRequestException('Файл не найден');
+        }
+        if (authUser.role !== 'admin') {
+            const message = await this.prisma.supportMessage.findFirst({
+                where: {
+                    text: {
+                        contains: normalizedKey,
+                    },
+                    ticket: {
+                        userId: authUser.userId,
+                    },
+                },
+                select: {
+                    id: true,
+                },
+            });
+            if (!message) {
+                throw new common_1.ForbiddenException('Нет доступа к файлу');
+            }
+        }
+        const bytes = await this.storageService.readStoredFile('support', normalizedKey, 's3');
+        this.debugProxyHit('support', normalizedKey, 's3', 200);
+        response.setHeader('Content-Type', this.detectMediaMime(normalizedKey));
+        response.setHeader('Cache-Control', 'private, max-age=300');
+        response.send(bytes);
+    }
     async getPublicObject(category, key, response) {
         const allowed = new Set([
             'avatars',
             'listings',
             'feed-ads',
-            'support',
-            'reports',
             'misc',
             'videos',
         ]);
@@ -122,21 +149,7 @@ let MediaController = MediaController_1 = class MediaController {
         const bytes = await this.storageService.readStoredFile(category, key, 's3');
         this.debugProxyHit(category, key, 's3', 200);
         const lowerKey = key.toLowerCase();
-        const mimeType = lowerKey.endsWith('.png')
-            ? 'image/png'
-            : lowerKey.endsWith('.webp')
-                ? 'image/webp'
-                : lowerKey.endsWith('.heic')
-                    ? 'image/heic'
-                    : lowerKey.endsWith('.heif')
-                        ? 'image/heif'
-                        : lowerKey.endsWith('.mp4')
-                            ? 'video/mp4'
-                            : lowerKey.endsWith('.mov')
-                                ? 'video/quicktime'
-                                : lowerKey.endsWith('.webm')
-                                    ? 'video/webm'
-                                    : 'image/jpeg';
+        const mimeType = this.detectMediaMime(lowerKey);
         response.setHeader('Content-Type', mimeType);
         response.setHeader('Cache-Control', 'public, max-age=300');
         response.send(bytes);
@@ -145,7 +158,7 @@ let MediaController = MediaController_1 = class MediaController {
         return this.feedAdsService.attachImage(authUser, feedAdId, this.requireImage(file, 5 * 1024 * 1024));
     }
     async uploadNotificationImage(authUser, file) {
-        this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
+        await this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
             limit: 20,
             windowMs: 60 * 1000,
         });
@@ -248,6 +261,24 @@ let MediaController = MediaController_1 = class MediaController {
         }
         return null;
     }
+    detectMediaMime(key) {
+        const lowerKey = key.toLowerCase();
+        return lowerKey.endsWith('.png')
+            ? 'image/png'
+            : lowerKey.endsWith('.webp')
+                ? 'image/webp'
+                : lowerKey.endsWith('.heic')
+                    ? 'image/heic'
+                    : lowerKey.endsWith('.heif')
+                        ? 'image/heif'
+                        : lowerKey.endsWith('.mp4')
+                            ? 'video/mp4'
+                            : lowerKey.endsWith('.mov')
+                                ? 'video/quicktime'
+                                : lowerKey.endsWith('.webm')
+                                    ? 'video/webm'
+                                    : 'image/jpeg';
+    }
     async authenticateRequest(request, queryToken) {
         const header = request?.headers?.authorization;
         const bearerHeader = typeof header === 'string' && header.startsWith('Bearer ')
@@ -298,7 +329,7 @@ __decorate([
     __param(1, (0, common_1.UploadedFile)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], MediaController.prototype, "uploadAvatar", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
@@ -310,7 +341,7 @@ __decorate([
     __param(3, (0, common_1.UploadedFile)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, Object, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], MediaController.prototype, "uploadListingPhoto", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
@@ -331,7 +362,7 @@ __decorate([
     __param(2, (0, common_1.UploadedFile)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], MediaController.prototype, "uploadChatImage", null);
 __decorate([
     (0, common_1.Get)('chats/:mediaId'),
@@ -353,6 +384,16 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, Object, Object]),
     __metadata("design:returntype", Promise)
 ], MediaController.prototype, "getChatImageByKey", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)('support/file'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('key')),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], MediaController.prototype, "getSupportFileByKey", null);
 __decorate([
     (0, common_1.Get)('object'),
     __param(0, (0, common_1.Query)('category')),

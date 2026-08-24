@@ -27,7 +27,6 @@ import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/listing_share_files.dart';
 import 'package:atta/src/utils/ru_phone.dart';
-import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/utils/share_texts.dart';
 import 'package:atta/src/utils/vehicle_specs.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
@@ -36,6 +35,7 @@ import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:atta/src/widgets/listing_card.dart';
+import 'package:atta/src/widgets/listing_price_row.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:flutter/foundation.dart';
@@ -988,10 +988,14 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    '${formatPrice(listing.price)} ₽',
-                    style: const TextStyle(
-                        fontSize: 26, fontWeight: FontWeight.w800),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: ListingPriceRow(
+                      listing: listing,
+                      style: const TextStyle(
+                          fontSize: 26, fontWeight: FontWeight.w800),
+                    ),
                   ),
                   if (listing.hasVipPromotion) ...[
                     const SizedBox(height: 8),

@@ -995,6 +995,185 @@ void main() {
     );
   });
 
+  test('paged my listings approved load is available through peek', () async {
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'active-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+      limit: 20,
+    );
+
+    expect(page.items.map((item) => item.id), <String>['active-1']);
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'approved'}).map((item) => item.id),
+      <String>['active-1'],
+    );
+  });
+
+  test('detail refresh event keeps loaded active my listings cache', () async {
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'active-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      ],
+      findByIdItems: <String, Map<String, dynamic>>{
+        'active-1': _listingMap(
+          const <String>[],
+          id: 'active-1',
+          status: 'approved',
+          ownerId: 'user-1',
+          viewCount: 2,
+        ),
+      },
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+    await service.refreshListingById('active-1');
+
+    final cached =
+        service.peekMyListingsByStatuses(statuses: const {'approved'});
+    expect(cached.map((item) => item.id), <String>['active-1']);
+    expect(cached.single.viewCount, 2);
+  });
+
+  test('paged my listings refresh and pagination update only requested status',
+      () async {
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'active-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'active-2',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'archive-1',
+          status: 'archived',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getMyListingsByStatuses(
+      'user-1',
+      statuses: const {'archived'},
+    );
+    final firstPage = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+      limit: 1,
+    );
+    await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+      limit: 1,
+      cursor: firstPage.nextCursor,
+    );
+
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'approved'}).map((item) => item.id),
+      unorderedEquals(<String>['active-1', 'active-2']),
+    );
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'archived'}).map((item) => item.id),
+      <String>['archive-1'],
+    );
+
+    api.myListItems
+      ..removeWhere((item) => item['id'] == 'active-1')
+      ..add(
+        _listingMap(
+          const <String>[],
+          id: 'active-3',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      );
+    await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+      limit: 20,
+      forceRefresh: true,
+    );
+
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'approved'}).map((item) => item.id),
+      unorderedEquals(<String>['active-2', 'active-3']),
+    );
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'archived'}).map((item) => item.id),
+      <String>['archive-1'],
+    );
+  });
+
+  test('archive after paged my listings load moves listing between statuses',
+      () async {
+    await TokenStorage().saveSession(
+      accessToken: 'token',
+      refreshToken: 'refresh',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'active-1',
+          status: 'approved',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+    await service.archiveListing(listingId: 'active-1', status: 'archived');
+
+    expect(
+      service.peekMyListingsByStatuses(statuses: const {'approved'}),
+      isEmpty,
+    );
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'archived'}).map((item) => item.id),
+      <String>['active-1'],
+    );
+  });
+
   test('getListingsPage returns first page with cursor metadata', () async {
     final api = _FakeListingsApi(
       listItems: List<Map<String, dynamic>>.generate(
@@ -1056,6 +1235,73 @@ void main() {
     expect(api.listQueries.last['search'], 'Товар');
     expect(api.listQueries.last['cursor'], firstPage.nextCursor);
   });
+
+  test('getVipListingsPage calls dedicated VIP endpoint with pagination',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: List<Map<String, dynamic>>.generate(
+        12,
+        (index) => _listingMap(
+          const <String>[],
+          id: 'vip-$index',
+          status: 'approved',
+          promotions: const <String, dynamic>{
+            'activeVip': <String, dynamic>{
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'endsAt': '2099-07-01T10:00:00.000Z',
+              'costBonus': 150,
+            },
+          },
+        ),
+      ),
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getVipListingsPage(limit: 10);
+    final nextPage = await service.getVipListingsPage(
+      limit: 10,
+      cursor: page.nextCursor,
+    );
+
+    expect(page.items, hasLength(10));
+    expect(page.items.first.hasVipPromotion, isTrue);
+    expect(page.hasMore, isTrue);
+    expect(nextPage.items, hasLength(2));
+    expect(api.vipQueries.first['limit'], 10);
+    expect(api.vipQueries.last['cursor'], page.nextCursor);
+  });
+
+  test('getVipListingsPage sends category filter without changing default call',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: List<Map<String, dynamic>>.generate(
+        2,
+        (index) => _listingMap(
+          const <String>[],
+          id: 'vip-$index',
+          status: 'approved',
+          promotions: const <String, dynamic>{
+            'activeVip': <String, dynamic>{
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'endsAt': '2099-07-01T10:00:00.000Z',
+              'costBonus': 150,
+            },
+          },
+        ),
+      ),
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getVipListingsPage(limit: 10);
+    await service.getVipListingsPage(limit: 10, category: 'Авто');
+
+    expect(api.vipQueries.first.containsKey('category'), isFalse);
+    expect(api.vipQueries.last['category'], 'Авто');
+  });
 }
 
 class _FakeListingsApi extends ListingsApi {
@@ -1069,6 +1315,8 @@ class _FakeListingsApi extends ListingsApi {
   final List<Map<String, dynamic>> myListItems;
   final Map<String, Map<String, dynamic>> findByIdItems;
   final List<Map<String, dynamic>> listQueries = <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> vipQueries = <Map<String, dynamic>>[];
+  final List<Map<String, dynamic>> myListingsQueries = <Map<String, dynamic>>[];
   Map<String, dynamic> lastCreateBody = const <String, dynamic>{};
   int myListingsCalls = 0;
   Object? myListingsError;
@@ -1129,15 +1377,58 @@ class _FakeListingsApi extends ListingsApi {
   }
 
   @override
-  Future<Map<String, dynamic>> myListings() async {
+  Future<Map<String, dynamic>> vipListings({
+    int? limit,
+    String? cursor,
+    String? category,
+  }) async {
+    final query = <String, dynamic>{
+      if (limit != null) 'limit': limit,
+      if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      if ((category ?? '').trim().isNotEmpty) 'category': category!.trim(),
+    };
+    vipQueries.add(query);
+    final start =
+        (cursor ?? '').trim().isEmpty ? 0 : int.tryParse(cursor!) ?? 0;
+    final effectiveLimit = limit ?? listItems.length;
+    final end = (start + effectiveLimit).clamp(0, listItems.length);
+    final slice = listItems.sublist(start, end);
+    return <String, dynamic>{
+      'items': slice,
+      'nextCursor': end < listItems.length ? '$end' : null,
+      'hasMore': end < listItems.length,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> myListings({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) async {
     myListingsCalls += 1;
+    myListingsQueries.add(<String, dynamic>{
+      if ((status ?? '').trim().isNotEmpty) 'status': status!.trim(),
+      if (limit != null) 'limit': limit,
+      if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+    });
     if (myListingsError != null) {
       throw myListingsError!;
     }
+    final filtered = (status ?? '').trim().isEmpty
+        ? myListItems
+        : myListItems
+            .where((item) => (item['status'] ?? '').toString() == status)
+            .toList();
+    final start =
+        (cursor ?? '').trim().isEmpty ? 0 : int.tryParse(cursor!) ?? 0;
+    final effectiveLimit = limit ?? filtered.length;
+    final end = (start + effectiveLimit).clamp(0, filtered.length);
+    final slice = filtered.sublist(start, end);
     return <String, dynamic>{
-      'items': myListItems,
-      'nextCursor': null,
-      'hasMore': false,
+      'items': slice,
+      'nextCursor': end < filtered.length ? '$end' : null,
+      'hasMore': end < filtered.length,
     };
   }
 }
@@ -1150,7 +1441,11 @@ class _DelayedMyListingsApi extends _FakeListingsApi {
   final Completer<Map<String, dynamic>> responseCompleter;
 
   @override
-  Future<Map<String, dynamic>> myListings() {
+  Future<Map<String, dynamic>> myListings({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) {
     myListingsCalls += 1;
     return responseCompleter.future;
   }

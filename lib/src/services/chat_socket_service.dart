@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:flutter/foundation.dart';
@@ -48,12 +49,7 @@ class _SocketIoChatSocketClient implements ChatSocketClient {
     required Map<String, dynamic> auth,
   }) : _socket = io.io(
           url,
-          io.OptionBuilder()
-              .setTransports(['websocket'])
-              .disableAutoConnect()
-              .disableReconnection()
-              .setAuth(auth)
-              .build(),
+          ChatSocketService._buildSocketOptions(auth),
         );
 
   final io.Socket _socket;
@@ -168,11 +164,15 @@ class ChatSocketService {
   ChatSocketService({
     TokenStorage? tokenStorage,
     ChatSocketClientFactory? socketFactory,
+    Duration? connectAttemptTimeout,
   })  : _tokenStorage = tokenStorage ?? TokenStorage(),
-        _socketFactory = socketFactory ?? _defaultSocketFactory;
+        _socketFactory = socketFactory ?? _defaultSocketFactory,
+        _connectAttemptTimeoutDuration =
+            connectAttemptTimeout ?? _connectAttemptTimeout;
 
   final TokenStorage _tokenStorage;
   final ChatSocketClientFactory _socketFactory;
+  final Duration _connectAttemptTimeoutDuration;
   final _events = StreamController<ChatSocketEvent>.broadcast();
   final _presence = StreamController<PresenceSnapshot>.broadcast();
   final _connected = StreamController<bool>.broadcast();
@@ -183,6 +183,7 @@ class ChatSocketService {
   Timer? _reconnectTimer;
   Timer? _stableConnectionTimer;
   Future<void>? _resumeRecoveryInFlight;
+  Future<void>? _authRecoveryInFlight;
   bool _connecting = false;
   bool _disconnecting = false;
   bool _disconnectRequested = false;
@@ -190,14 +191,10 @@ class ChatSocketService {
   bool _lastConnectionValue = false;
   DateTime? _lastConnectAttemptAt;
   DateTime? _lastFailureLoggedAt;
-  DateTime? _serverDisconnectCooldownUntil;
-  String? _serverDisconnectCooldownUserId;
   String? _serverDisconnectBlockedUserId;
   int _serverDisconnectRetryAttempt = 0;
-  int _serverDisconnectProtectiveAttempt = 0;
   String? _socketOwnerUserId;
   String? _reconnectReason;
-  String? _reconnectUserId;
   int _reconnectAttempt = 0;
   int _reconnectScheduleCount = 0;
   int _heartbeatTimerStartCount = 0;
@@ -217,6 +214,18 @@ class ChatSocketService {
     return _SocketIoChatSocketClient(url: url, auth: auth);
   }
 
+  static Map<String, dynamic> _buildSocketOptions(Map<String, dynamic> auth) {
+    return io.OptionBuilder()
+        .setTransports(['websocket'])
+        .disableAutoConnect()
+        .disableReconnection()
+        .enableForceNew()
+        .disableMultiplex()
+        .setTimeout(_connectAttemptTimeout.inMilliseconds)
+        .setAuth(auth)
+        .build();
+  }
+
   static const Duration _connectRetryCooldown = Duration(seconds: 5);
   static const Duration _connectAttemptTimeout = Duration(seconds: 10);
   static const Duration _transportProbeTimeout = Duration(seconds: 3);
@@ -226,11 +235,6 @@ class ChatSocketService {
     Duration(seconds: 1),
     Duration(seconds: 2),
     Duration(seconds: 3),
-  ];
-  static const List<Duration> _serverDisconnectProtectiveSteps = <Duration>[
-    Duration(seconds: 5),
-    Duration(seconds: 10),
-    Duration(seconds: 30),
   ];
   static const List<Duration> _reconnectBackoffSteps = <Duration>[
     Duration(seconds: 2),
@@ -293,22 +297,6 @@ class ChatSocketService {
     return 'disconnected';
   }
 
-  bool _isServerDisconnectCooldownActiveFor(String userId) {
-    final cooldownUntil = _serverDisconnectCooldownUntil;
-    if (cooldownUntil == null) return false;
-    if (DateTime.now().isAfter(cooldownUntil)) {
-      _serverDisconnectCooldownUntil = null;
-      _serverDisconnectCooldownUserId = null;
-      return false;
-    }
-    return _serverDisconnectCooldownUserId == userId;
-  }
-
-  void _clearServerDisconnectCooldown() {
-    _serverDisconnectCooldownUntil = null;
-    _serverDisconnectCooldownUserId = null;
-  }
-
   bool _isServerReconnectBlockedFor(String userId) {
     return _serverDisconnectBlockedUserId == userId;
   }
@@ -319,20 +307,6 @@ class ChatSocketService {
 
   void _resetServerDisconnectBackoff() {
     _serverDisconnectRetryAttempt = 0;
-    _serverDisconnectProtectiveAttempt = 0;
-  }
-
-  Duration _consumeServerDisconnectCooldown() {
-    final step = _serverDisconnectProtectiveAttempt.clamp(
-      0,
-      _serverDisconnectProtectiveSteps.length - 1,
-    );
-    final cooldown = _serverDisconnectProtectiveSteps[step];
-    if (_serverDisconnectProtectiveAttempt <
-        _serverDisconnectProtectiveSteps.length - 1) {
-      _serverDisconnectProtectiveAttempt += 1;
-    }
-    return cooldown;
   }
 
   void _cancelReconnectTimer({bool resetReason = true}) {
@@ -340,7 +314,6 @@ class ChatSocketService {
     _reconnectTimer = null;
     if (resetReason) {
       _reconnectReason = null;
-      _reconnectUserId = null;
     }
   }
 
@@ -408,6 +381,7 @@ class ChatSocketService {
       return;
     }
 
+    await ApiClient.ensureFreshAuthorizedSessionForRealtime(_tokenStorage);
     final currentUser = await _tokenStorage.readCurrentUser();
     final userId = currentUser?.uid.trim() ?? '';
     if (userId.isEmpty) {
@@ -452,16 +426,6 @@ class ChatSocketService {
         userId: userId,
       );
       return existingAttempt.future;
-    }
-    if (_isServerDisconnectCooldownActiveFor(userId)) {
-      final cooldownUntil = _serverDisconnectCooldownUntil!;
-      _logConnectSkip(
-        reason: reason,
-        skip:
-            'cooldown after server disconnect until=${cooldownUntil.toIso8601String()}',
-        userId: userId,
-      );
-      return;
     }
     if (_isServerReconnectBlockedFor(userId)) {
       _logConnectSkip(
@@ -520,6 +484,18 @@ class ChatSocketService {
         return;
       }
 
+      final authReady = await ApiClient.ensureFreshAuthorizedSessionForRealtime(
+        _tokenStorage,
+      );
+      if (!authReady) {
+        _logConnectSkip(
+          reason: reason,
+          skip: 'auth session not ready',
+          userId: userId,
+        );
+        _completeConnectAttempt();
+        return;
+      }
       final token = await _tokenStorage.readAccessToken();
       if (token == null || token.trim().isEmpty) {
         _logConnectSkip(
@@ -544,10 +520,14 @@ class ChatSocketService {
       );
 
       socket.onConnect((_) {
+        if (!identical(_socket, socket)) {
+          _debugLog('Socket[$socketInstanceId] stale connect ignored');
+          _abandonSocket(socket, reason: 'stale-connect');
+          return;
+        }
         _socket = socket;
         _disconnecting = false;
         _reconnectAttempt = 0;
-        _clearServerDisconnectCooldown();
         _clearServerReconnectBlock();
         _debugLog('Socket[$socketInstanceId] connected');
         _emitConnection(true);
@@ -570,6 +550,11 @@ class ChatSocketService {
         _logFailedConnection(error);
         if (_isAuthRejectionError(error)) {
           _serverDisconnectBlockedUserId = _socketOwnerUserId;
+          _startAuthRecovery(
+            socket,
+            socketInstanceId: socketInstanceId,
+            reason: 'connect_error',
+          );
         }
         _handleSocketClosed(
           socket,
@@ -582,6 +567,11 @@ class ChatSocketService {
         _logFailedConnection(error);
         if (_isAuthRejectionError(error)) {
           _serverDisconnectBlockedUserId = _socketOwnerUserId;
+          _startAuthRecovery(
+            socket,
+            socketInstanceId: socketInstanceId,
+            reason: 'error',
+          );
         }
       });
 
@@ -621,16 +611,16 @@ class ChatSocketService {
         );
       }
 
+      _socket = socket;
       _runSocketOperation(
         () => socket.connect(),
         debugContext: 'connect',
         ignoreExpectedCloseError: true,
       );
-      _socket = socket;
       // A socket attempt can otherwise remain "connecting" forever when a
       // VPN is disabled or the network route changes underneath it. Releasing
       // that attempt lets the normal exponential reconnect path take over.
-      unawaited(Future<void>.delayed(_connectAttemptTimeout, () {
+      unawaited(Future<void>.delayed(_connectAttemptTimeoutDuration, () {
         if (_socket != socket || connectCompleter.isCompleted) return;
         _handleSocketClosed(
           socket,
@@ -659,7 +649,6 @@ class ChatSocketService {
     _stopPing();
     _cancelStableConnectionTimer();
     _lastConnectAttemptAt = null;
-    _clearServerDisconnectCooldown();
     _resetServerDisconnectBackoff();
     final socket = _socket;
     _socket = null;
@@ -697,19 +686,31 @@ class ChatSocketService {
   Future<void> forceReconnect({String reason = 'manual'}) {
     // A foreground/network recovery is explicit. It may retry a socket the
     // server previously closed, unlike periodic presence heartbeats.
-    _clearServerDisconnectCooldown();
     _clearServerReconnectBlock();
-    return _reconnect(reason: reason, force: true);
+    return _runRecoverySerialized(
+      reason: reason,
+      action: () => _forceReconnectInternal(reason: reason),
+    );
   }
 
   Future<void> recoverAfterResume({String reason = 'resume'}) async {
+    return _runRecoverySerialized(
+      reason: reason,
+      action: () => _recoverAfterResume(reason: reason),
+    );
+  }
+
+  Future<void> _runRecoverySerialized({
+    required String reason,
+    required Future<void> Function() action,
+  }) async {
     if (_disposed || _disconnecting) return;
     final existing = _resumeRecoveryInFlight;
     if (existing != null) {
-      _debugLog('Socket resume recovery joined reason=$reason');
+      _debugLog('Socket recovery joined reason=$reason');
       return existing;
     }
-    final future = _recoverAfterResume(reason: reason);
+    final future = action();
     _resumeRecoveryInFlight = future;
     try {
       await future;
@@ -731,7 +732,7 @@ class ChatSocketService {
       'Socket[$socketInstanceId] transport probe result=$probeOk reason=$reason',
     );
     if (!probeOk) {
-      await forceReconnect(reason: '$reason.stale');
+      await _forceReconnectInternal(reason: '$reason.stale');
     } else {
       _emitConnection(true);
     }
@@ -804,14 +805,6 @@ class ChatSocketService {
       );
       return;
     }
-    if (_isServerDisconnectCooldownActiveFor(userId)) {
-      _logConnectSkip(
-        reason: reason,
-        skip: 'cooldown after server disconnect',
-        userId: userId,
-      );
-      return;
-    }
     _debugLog(
       'Socket forceReconnect start reason=$reason user=$userId state=${_stateLabel()} force=$force',
     );
@@ -841,10 +834,78 @@ class ChatSocketService {
     );
   }
 
+  Future<void> _forceReconnectInternal({required String reason}) {
+    _clearServerReconnectBlock();
+    return _reconnect(reason: reason, force: true);
+  }
+
+  void _startAuthRecovery(
+    ChatSocketClient socket, {
+    required int socketInstanceId,
+    required String reason,
+  }) {
+    if (!identical(_socket, socket)) {
+      _debugLog('Socket[$socketInstanceId] stale auth recovery ignored');
+      return;
+    }
+    final userId = _socketOwnerUserId?.trim() ?? '';
+    if (userId.isEmpty) {
+      return;
+    }
+    _queueAuthRecovery(userId: userId, reason: reason);
+  }
+
+  void _queueAuthRecovery({
+    required String userId,
+    required String reason,
+  }) {
+    final existing = _authRecoveryInFlight;
+    if (existing != null) {
+      _debugLog('Socket auth recovery joined reason=$reason');
+      return;
+    }
+    late final Future<void> future;
+    future = _runRecoverySerialized(
+      reason: 'auth.$reason',
+      action: () => _recoverAfterAuthRejection(userId: userId, reason: reason),
+    ).whenComplete(() {
+      if (identical(_authRecoveryInFlight, future)) {
+        _authRecoveryInFlight = null;
+      }
+    });
+    _authRecoveryInFlight = future;
+    unawaited(future);
+  }
+
+  Future<void> _recoverAfterAuthRejection({
+    required String userId,
+    required String reason,
+  }) async {
+    _debugLog('Socket auth recovery start reason=$reason user=$userId');
+    final refreshed = await ApiClient.refreshAuthorizedSessionForRealtime();
+    if (!refreshed) {
+      _debugLog('Socket auth recovery failed reason=$reason user=$userId');
+      return;
+    }
+    final currentUser = await _tokenStorage.readCurrentUser();
+    if (currentUser?.uid.trim() != userId) {
+      _debugLog('Socket auth recovery skipped user changed reason=$reason');
+      return;
+    }
+    _clearServerReconnectBlock();
+    await _forceReconnectInternal(reason: 'auth.$reason.refresh');
+    _debugLog('Socket auth recovery end reason=$reason user=$userId');
+  }
+
   Future<void> joinChat(String chatId, {String reason = 'chat.join'}) async {
     final id = chatId.trim();
     if (id.isEmpty) return;
     _joinedChats.add(id);
+    final recovery = _resumeRecoveryInFlight;
+    if (recovery != null) {
+      _debugLog('Socket join waits for recovery chat=$id reason=$reason');
+      await recovery;
+    }
     await connect(reason: reason);
     _debugLog('Socket join chat=$id reason=$reason connected=$isConnected');
     _safeEmit('chat.join', {'chatId': id});
@@ -859,6 +920,11 @@ class ChatSocketService {
 
   Future<void> setPresence(bool isOnline,
       {String reason = 'presence.set'}) async {
+    final recovery = _resumeRecoveryInFlight;
+    if (recovery != null) {
+      _debugLog('Socket presence.set waits for recovery reason=$reason');
+      await recovery;
+    }
     if (isConnected) {
       _debugLog('Socket presence.set online=$isOnline reason=$reason');
       _safeEmit('presence.set', {'isOnline': isOnline});
@@ -900,14 +966,6 @@ class ChatSocketService {
       _logConnectSkip(
         reason: reason,
         skip: 'server disconnect requires explicit recovery',
-        userId: userId,
-      );
-      return;
-    }
-    if (_isServerDisconnectCooldownActiveFor(userId)) {
-      _logConnectSkip(
-        reason: reason,
-        skip: 'cooldown after server disconnect',
         userId: userId,
       );
       return;
@@ -1013,14 +1071,6 @@ class ChatSocketService {
       );
       return;
     }
-    if (_isServerDisconnectCooldownActiveFor(normalizedUserId)) {
-      _logConnectSkip(
-        reason: reason,
-        skip: 'cooldown after server disconnect',
-        userId: normalizedUserId,
-      );
-      return;
-    }
     final delay = delayOverride ??
         _reconnectBackoffSteps[
             _reconnectAttempt.clamp(0, _reconnectBackoffSteps.length - 1)];
@@ -1033,23 +1083,13 @@ class ChatSocketService {
     }
     _reconnectScheduleCount += 1;
     _reconnectReason = reason;
-    _reconnectUserId = normalizedUserId;
     _debugLog(
       'Socket reconnect scheduled in ${delay.inSeconds}s attempt=$attemptNumber reason=$reason',
     );
     _reconnectTimer = Timer(delay, () async {
       final scheduledReason = _reconnectReason ?? reason;
-      final scheduledUserId = _reconnectUserId ?? normalizedUserId;
       _cancelReconnectTimer();
       if (_disconnectRequested || _disposed || isConnected || _connecting) {
-        return;
-      }
-      if (_isServerDisconnectCooldownActiveFor(scheduledUserId)) {
-        _logConnectSkip(
-          reason: scheduledReason,
-          skip: 'cooldown after server disconnect',
-          userId: scheduledUserId,
-        );
         return;
       }
       _lastConnectAttemptAt = null;
@@ -1116,18 +1156,31 @@ class ChatSocketService {
   }) {
     _stopPing();
     _cancelStableConnectionTimer();
-    final ownerUserId = _socketOwnerUserId;
-    if (identical(_socket, socket)) {
-      _socket = null;
-      _socketOwnerUserId = null;
+    if (!identical(_socket, socket)) {
+      _debugLog(
+        'Socket[$socketInstanceId] stale $debugContext ignored: ${details?.toString() ?? ''}',
+      );
+      _abandonSocket(socket, reason: 'stale:$debugContext');
+      return;
     }
+    final ownerUserId = _socketOwnerUserId;
+    _socket = null;
+    _socketOwnerUserId = null;
     _emitConnection(false);
     _debugLog(
       'Socket[$socketInstanceId] $debugContext: ${details?.toString() ?? ''}',
     );
-    _abandonSocket(socket, reason: debugContext);
+    _disposeSocket(socket, debugContext: debugContext);
     _completeConnectAttempt();
     if (_disconnectRequested || _disposed || _disconnecting) {
+      return;
+    }
+    if (debugContext != 'disconnect' &&
+        ownerUserId != null &&
+        _isServerReconnectBlockedFor(ownerUserId)) {
+      _debugLog(
+        'Socket[$socketInstanceId] reconnect suppressed after auth rejection',
+      );
       return;
     }
     if (debugContext == 'disconnect' &&
@@ -1141,6 +1194,9 @@ class ChatSocketService {
         _debugLog(
           'Socket[$socketInstanceId] reconnect suppressed after server disconnect auth_or_missing_user',
         );
+        if (authRejected && userId.isNotEmpty) {
+          _queueAuthRecovery(userId: userId, reason: 'server_disconnect');
+        }
         return;
       }
       if (_serverDisconnectRetryAttempt <
@@ -1158,11 +1214,12 @@ class ChatSocketService {
         );
         return;
       }
-      final cooldown = _consumeServerDisconnectCooldown();
-      _serverDisconnectCooldownUntil = DateTime.now().add(cooldown);
-      _serverDisconnectCooldownUserId = userId;
       _debugLog(
-        'Socket[$socketInstanceId] reconnect suppressed after server disconnect cooldown=${cooldown.inSeconds}s',
+        'Socket[$socketInstanceId] reconnect scheduled after server disconnect normal_backoff',
+      );
+      _scheduleReconnect(
+        reason: 'server_disconnect',
+        userId: userId,
       );
       return;
     }
@@ -1211,4 +1268,14 @@ class ChatSocketService {
 
   @visibleForTesting
   List<String> get debugHistory => List<String>.unmodifiable(_debugHistory);
+
+  @visibleForTesting
+  bool get hasRecoveryInFlight => _resumeRecoveryInFlight != null;
+
+  @visibleForTesting
+  static Map<String, dynamic> buildSocketOptionsForTesting(
+    Map<String, dynamic> auth,
+  ) {
+    return _buildSocketOptions(auth);
+  }
 }

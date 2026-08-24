@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req } from '@nestjs/common';
 
 import { CheckPhoneRegistrationDto } from './dto/check-phone-registration.dto';
 import { CheckPhoneVerificationDto } from './dto/check-phone-verification.dto';
@@ -17,10 +17,16 @@ export class PhoneVerificationController {
   }
 
   @Post('start')
-  start(@Body() dto: StartPhoneVerificationDto) {
+  start(@Req() request: any, @Body() dto: StartPhoneVerificationDto) {
     return this.phoneVerificationService.startCallVerification(
       dto.phone,
       dto.purpose,
+      {
+        deviceId: this.headerValue(request, 'x-device-id') ||
+          this.headerValue(request, 'x-client-device-id'),
+        ip: this.clientIp(request),
+        userAgent: this.headerValue(request, 'user-agent'),
+      },
     );
   }
 
@@ -30,6 +36,19 @@ export class PhoneVerificationController {
       dto.phone,
       dto.verificationId ?? dto.checkId ?? '',
       dto.purpose,
+    );
+  }
+
+  private headerValue(request: any, name: string) {
+    return `${request?.headers?.[name] ?? ''}`.trim();
+  }
+
+  private clientIp(request: any) {
+    const forwarded = this.headerValue(request, 'x-forwarded-for');
+    return (
+      `${request?.ip ?? ''}`.trim() ||
+      forwarded.split(',')[0]?.trim() ||
+      'unknown'
     );
   }
 }

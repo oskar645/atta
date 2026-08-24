@@ -65,6 +65,22 @@ const protectedAdminPhones = new Set([
     '79288888645',
     '79306939954',
 ]);
+const moderationDiffFields = [
+    'title',
+    'description',
+    'price',
+    'city',
+    'category',
+    'subcategory',
+    'address',
+    'phone_hidden',
+    'delivery',
+    'car',
+    'deal_type',
+    'real_estate_type',
+    'clothes_type',
+    'clothes_size',
+];
 let AdminService = class AdminService {
     constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService) {
         this.prisma = prisma;
@@ -881,6 +897,15 @@ let AdminService = class AdminService {
                             sortOrder: 'asc',
                         },
                     },
+                    moderationRevisions: {
+                        where: {
+                            resolvedAt: null,
+                        },
+                        orderBy: {
+                            createdAt: 'asc',
+                        },
+                        take: 1,
+                    },
                 },
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 take: limit + 1,
@@ -900,7 +925,7 @@ let AdminService = class AdminService {
         }));
         return {
             source: 'timeweb',
-            items: page.items.map((listing) => (0, serializers_1.serializeListing)(listing)),
+            items: page.items.map((listing) => this.serializeAdminListing(listing)),
             total,
             pendingModeration,
             pending_moderation: pendingModeration,
@@ -916,6 +941,202 @@ let AdminService = class AdminService {
                 'archived',
             ],
         };
+    }
+    serializeAdminListing(listing) {
+        const serialized = (0, serializers_1.serializeListing)(listing);
+        const revision = listing.moderationRevisions?.[0];
+        const diff = revision ? this.buildModerationDiff(serialized, revision.snapshot) : null;
+        return diff && diff.changed.length > 0
+            ? {
+                ...serialized,
+                moderation_diff: diff,
+            }
+            : serialized;
+    }
+    buildModerationDiff(current, snapshot) {
+        if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+            return null;
+        }
+        const before = snapshot;
+        const fields = moderationDiffFields
+            .map((field) => {
+            const previous = this.normalizeModerationValue(before[field]);
+            const next = this.normalizeModerationValue(current[field]);
+            if (this.stableJson(previous) === this.stableJson(next)) {
+                return null;
+            }
+            return {
+                field,
+                label: this.moderationFieldLabel(field),
+                before: before[field] ?? null,
+                after: current[field] ?? null,
+            };
+        })
+            .filter((item) => item != null);
+        const photoDiff = this.buildPhotoModerationDiff(before['photos'], current['photo_items']);
+        return {
+            changed: [
+                ...fields,
+                ...(photoDiff.changed ? [{
+                        field: 'photos',
+                        label: 'Фотографии',
+                        before: photoDiff.before,
+                        after: photoDiff.after,
+                        added: photoDiff.added,
+                        removed: photoDiff.removed,
+                    }] : []),
+            ],
+        };
+    }
+    buildPhotoModerationDiff(beforeRaw, afterRaw) {
+        const before = this.normalizePhotoSnapshot(beforeRaw);
+        const after = this.normalizePhotoSnapshot(afterRaw);
+        const beforeKeys = new Set(before.map((photo) => photo.key));
+        const afterKeys = new Set(after.map((photo) => photo.key));
+        const added = after.filter((photo) => !beforeKeys.has(photo.key));
+        const removed = before.filter((photo) => !afterKeys.has(photo.key));
+        const orderChanged = before.length === after.length &&
+            before.some((photo, index) => photo.key !== after[index]?.key);
+        return {
+            changed: added.length > 0 || removed.length > 0 || orderChanged,
+            before,
+            after,
+            added,
+            removed,
+        };
+    }
+    normalizePhotoSnapshot(value) {
+        if (!Array.isArray(value))
+            return [];
+        return value
+            .map((item, index) => {
+            if (!item || typeof item !== 'object')
+                return null;
+            const row = item;
+            const id = this.normalizeText(row['id']);
+            const storageKey = this.normalizeText(row['storage_key']) || this.normalizeText(row['storageKey']);
+            const url = this.normalizeText(row['url']);
+            const key = id || storageKey || url;
+            if (!key)
+                return null;
+            return {
+                id,
+                storage_key: storageKey,
+                url,
+                sort_order: Number(row['sort_order'] ?? row['sortOrder'] ?? index),
+                key,
+            };
+        })
+            .filter((item) => item != null)
+            .sort((a, b) => a.sort_order - b.sort_order || a.key.localeCompare(b.key));
+    }
+    normalizeModerationValue(value) {
+        if (value == null)
+            return null;
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            return trimmed.length === 0 ? null : trimmed;
+        }
+        if (typeof value === 'bigint')
+            return value.toString();
+        if (typeof value === 'number')
+            return Number.isFinite(value) ? value : null;
+        if (typeof value === 'boolean')
+            return value;
+        if (Array.isArray(value)) {
+            return value
+                .map((item) => this.normalizeModerationValue(item))
+                .filter((item) => item != null);
+        }
+        if (typeof value === 'object') {
+            const entries = Object.entries(value)
+                .map(([key, raw]) => [key, this.normalizeModerationValue(raw)])
+                .filter(([, normalized]) => normalized != null)
+                .sort(([left], [right]) => left.localeCompare(right));
+            return Object.fromEntries(entries);
+        }
+        return String(value);
+    }
+    stableJson(value) {
+        return JSON.stringify(value);
+    }
+    normalizeText(value) {
+        return typeof value === 'string' ? value.trim() : '';
+    }
+    moderationFieldLabel(field) {
+        const labels = {
+            title: 'Название',
+            description: 'Описание',
+            price: 'Цена',
+            city: 'Город',
+            category: 'Категория',
+            subcategory: 'Подкатегория',
+            address: 'Адрес',
+            phone_hidden: 'Телефон скрыт',
+            delivery: 'Доставка',
+            car: 'Характеристики',
+            deal_type: 'Тип сделки',
+            real_estate_type: 'Вид товара',
+            clothes_type: 'Тип одежды',
+            clothes_size: 'Размер одежды',
+        };
+        return labels[field] ?? field;
+    }
+    priceReductionDataOnApproval(listing, now) {
+        const revision = listing.moderationRevisions?.[0];
+        if (!revision || typeof revision.snapshot !== 'object' || Array.isArray(revision.snapshot)) {
+            return {};
+        }
+        const snapshot = revision.snapshot;
+        if (!Object.prototype.hasOwnProperty.call(snapshot, 'price')) {
+            return {};
+        }
+        const previous = this.parseModerationPrice(snapshot['price']);
+        const next = typeof listing.price === 'bigint'
+            ? listing.price
+            : BigInt(Math.trunc(Number(listing.price) || 0));
+        if (previous == null || previous === next) {
+            return {};
+        }
+        if (previous > next) {
+            return {
+                previousPrice: previous,
+                priceReducedAt: now,
+            };
+        }
+        return {
+            previousPrice: null,
+            priceReducedAt: null,
+        };
+    }
+    parseModerationPrice(value) {
+        if (typeof value === 'bigint')
+            return value;
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return BigInt(Math.trunc(value));
+        }
+        if (typeof value === 'string') {
+            const normalized = value.trim();
+            if (/^\d+$/.test(normalized)) {
+                return BigInt(normalized);
+            }
+        }
+        return null;
+    }
+    async resolveModerationRevisions(listingId, resolvedAt) {
+        const revisions = this.prisma.listingModerationRevision;
+        if (!revisions) {
+            return;
+        }
+        await revisions.updateMany({
+            where: {
+                listingId,
+                resolvedAt: null,
+            },
+            data: {
+                resolvedAt,
+            },
+        });
     }
     async listPromotions(query) {
         await this.expirePromotionsByTime();
@@ -1627,6 +1848,15 @@ let AdminService = class AdminService {
                         sortOrder: 'asc',
                     },
                 },
+                moderationRevisions: {
+                    where: {
+                        resolvedAt: null,
+                    },
+                    orderBy: {
+                        createdAt: 'asc',
+                    },
+                    take: 1,
+                },
             },
         });
         if (!listing) {
@@ -1647,6 +1877,7 @@ let AdminService = class AdminService {
                 publishedAt: listing.publishedAt ?? now,
                 archivedAt: null,
                 deletedAt: null,
+                ...this.priceReductionDataOnApproval(listing, now),
             },
             include: {
                 owner: {
@@ -1661,6 +1892,7 @@ let AdminService = class AdminService {
                 },
             },
         });
+        await this.resolveModerationRevisions(id, now);
         await this.notificationsService.createSystemNotification({
             userId: updated.ownerId,
             title: 'Объявление одобрено',
@@ -1678,6 +1910,7 @@ let AdminService = class AdminService {
     }
     async rejectListing(id, authUser, params) {
         await this.ensureListingExists(id);
+        const now = new Date();
         const updated = await this.prisma.listing.update({
             where: { id },
             data: {
@@ -1685,7 +1918,7 @@ let AdminService = class AdminService {
                 rejectionReason: params?.reason?.trim() || 'Rejected by moderator',
                 moderationNote: params?.moderationNote?.trim() || null,
                 moderatedBy: authUser.userId,
-                moderatedAt: new Date(),
+                moderatedAt: now,
                 publishedAt: null,
                 archivedAt: null,
                 deletedAt: null,
@@ -1703,6 +1936,7 @@ let AdminService = class AdminService {
                 },
             },
         });
+        await this.resolveModerationRevisions(id, now);
         await this.notificationsService.createSystemNotification({
             userId: updated.ownerId,
             title: 'Объявление отклонено',

@@ -15,8 +15,37 @@ class ListingsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> myListings() async {
-    final response = await client.get('/listings/my', authorized: true);
+  Future<Map<String, dynamic>> myListings({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) async {
+    final response = await client.get(
+      '/listings/my',
+      authorized: true,
+      queryParameters: {
+        if ((status ?? '').trim().isNotEmpty) 'status': status!.trim(),
+        if (limit != null) 'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> vipListings({
+    int? limit,
+    String? cursor,
+    String? category,
+  }) async {
+    final response = await client.get(
+      '/listings/vip',
+      sendAuthIfAvailable: true,
+      queryParameters: {
+        if (limit != null) 'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+        if ((category ?? '').trim().isNotEmpty) 'category': category!.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -80,6 +109,7 @@ class ListingsApi {
   }) async {
     final response = await client.post(
       '/listings/$id/view',
+      sendAuthIfAvailable: true,
       body: {
         if (viewerUserId != null && viewerUserId.trim().isNotEmpty)
           'viewer_user_id': viewerUserId.trim(),

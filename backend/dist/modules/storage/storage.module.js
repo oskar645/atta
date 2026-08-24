@@ -8,8 +8,10 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StorageModule = void 0;
 const common_1 = require("@nestjs/common");
+const auth_module_1 = require("../auth/auth.module");
 const prisma_module_1 = require("../prisma/prisma.module");
 const s3_module_1 = require("../s3/s3.module");
+const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const local_storage_provider_1 = require("./local-storage.provider");
 const media_storage_service_1 = require("./media-storage.service");
 const s3_storage_provider_1 = require("./s3-storage.provider");
@@ -20,7 +22,12 @@ let StorageModule = class StorageModule {
 exports.StorageModule = StorageModule;
 exports.StorageModule = StorageModule = __decorate([
     (0, common_1.Module)({
-        imports: [s3_module_1.S3Module, prisma_module_1.PrismaModule],
+        imports: [
+            (0, common_1.forwardRef)(() => auth_module_1.AuthModule),
+            s3_module_1.S3Module,
+            prisma_module_1.PrismaModule,
+            user_blocks_module_1.UserBlocksModule,
+        ],
         controllers: [storage_controller_1.StorageController],
         providers: [
             local_storage_provider_1.LocalStorageProvider,

@@ -37,6 +37,102 @@ const messageInclude = {
   },
 } satisfies Prisma.ChatMessageInclude;
 
+type ChatCursorPayload = {
+  lastMessageAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  id: string;
+};
+
+type MessageCursorPayload = {
+  createdAt: string;
+  id: string;
+};
+
+const pageLimit = (value: number | undefined, fallback: number, max: number) =>
+  Math.max(1, Math.min(Number.isFinite(value ?? NaN) ? value! : fallback, max));
+
+const encodeCursor = (payload: Record<string, unknown>) =>
+  Buffer.from(JSON.stringify(payload)).toString('base64url');
+
+const decodeCursor = <T extends Record<string, unknown>>(cursor?: string) => {
+  const raw = cursor?.trim();
+  if (!raw) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    return decoded && typeof decoded === 'object' ? (decoded as T) : null;
+  } catch {
+    return null;
+  }
+};
+
+const chatCursorWhere = (
+  cursor: ChatCursorPayload | null,
+): Prisma.ChatWhereInput | null => {
+  if (cursor == null) return null;
+  const createdAt = new Date(cursor.createdAt);
+  const updatedAt = new Date(cursor.updatedAt);
+  if (Number.isNaN(createdAt.getTime()) || Number.isNaN(updatedAt.getTime())) {
+    return null;
+  }
+  const tail = [
+    { createdAt: { lt: createdAt } },
+    { createdAt, updatedAt: { lt: updatedAt } },
+    { createdAt, updatedAt, id: { lt: cursor.id } },
+  ];
+  if (cursor.lastMessageAt == null) {
+    return {
+      lastMessageAt: null,
+      OR: tail,
+    };
+  }
+  const lastMessageAt = new Date(cursor.lastMessageAt);
+  if (Number.isNaN(lastMessageAt.getTime())) return null;
+  return {
+    OR: [
+      { lastMessageAt: { lt: lastMessageAt } },
+      {
+        lastMessageAt,
+        OR: tail,
+      },
+      { lastMessageAt: null },
+    ],
+  };
+};
+
+const messageCursorWhere = (
+  cursor: MessageCursorPayload | null,
+): Prisma.ChatMessageWhereInput | null => {
+  if (cursor == null) return null;
+  const createdAt = new Date(cursor.createdAt);
+  if (Number.isNaN(createdAt.getTime())) return null;
+  return {
+    OR: [
+      { createdAt: { lt: createdAt } },
+      { createdAt, id: { lt: cursor.id } },
+    ],
+  };
+};
+
+const compareChatsForList = (
+  a: Prisma.ChatGetPayload<{ include: typeof chatInclude }>,
+  b: Prisma.ChatGetPayload<{ include: typeof chatInclude }>,
+) => {
+  const aLast = a.lastMessageAt?.getTime();
+  const bLast = b.lastMessageAt?.getTime();
+  if (aLast != null || bLast != null) {
+    if (aLast == null) return 1;
+    if (bLast == null) return -1;
+    if (aLast !== bLast) return bLast - aLast;
+  }
+
+  const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
+  if (createdDiff !== 0) return createdDiff;
+  const updatedDiff = b.updatedAt.getTime() - a.updatedAt.getTime();
+  if (updatedDiff !== 0) return updatedDiff;
+  return b.id.localeCompare(a.id);
+};
+
 @Injectable()
 export class ChatsService {
   constructor(
@@ -65,6 +161,60 @@ export class ChatsService {
     }
 
     return chat;
+  }
+
+  private otherParticipantId(
+    chat: { buyerId: string; sellerId: string },
+    userId: string,
+  ) {
+    return chat.buyerId === userId ? chat.sellerId : chat.buyerId;
+  }
+
+  private async findPeerBlock(userAId: string, userBId: string) {
+    const peerBlocks = (this.prisma as any).chatPeerBlock;
+    if (!peerBlocks) return null;
+    return peerBlocks.findFirst({
+      where: {
+        OR: [
+          {
+            blockerUserId: userAId,
+            blockedUserId: userBId,
+          },
+          {
+            blockerUserId: userBId,
+            blockedUserId: userAId,
+          },
+        ],
+      },
+    });
+  }
+
+  private async assertNoPeerBlock(userAId: string, userBId: string) {
+    const block = await this.findPeerBlock(userAId, userBId);
+    if (block) {
+      throw new ForbiddenException('Пользователь заблокирован');
+    }
+  }
+
+  private async isBlockedByViewer(
+    chat: { buyerId: string; sellerId: string },
+    viewerId: string,
+  ) {
+    const otherUserId = this.otherParticipantId(chat, viewerId);
+    const peerBlocks = (this.prisma as any).chatPeerBlock;
+    if (!peerBlocks) return false;
+    const block = await peerBlocks.findUnique({
+      where: {
+        blockerUserId_blockedUserId: {
+          blockerUserId: viewerId,
+          blockedUserId: otherUserId,
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+    return block != null;
   }
 
   private messageStatus(message: {
@@ -137,6 +287,7 @@ export class ChatsService {
       unreadCount: viewerId === chat.buyerId ? chat.unreadForBuyer : chat.unreadForSeller,
       createdAt: chat.createdAt.toISOString(),
       updatedAt: chat.updatedAt.toISOString(),
+      blockedByMe: await this.isBlockedByViewer(chat, viewerId),
       listingPreview: {
         id: chat.listing?.id ?? chat.listingId,
         title: chat.listing?.title || chat.listingTitle || 'Объявление',
@@ -235,43 +386,61 @@ export class ChatsService {
     };
   }
 
-  async listChats(authUser: AuthenticatedUser) {
+  async listChats(
+    authUser: AuthenticatedUser,
+    params?: { limit?: number; cursor?: string },
+  ) {
+    const limit = pageLimit(params?.limit, 30, 50);
+    const cursorWhere = chatCursorWhere(
+      decodeCursor<ChatCursorPayload>(params?.cursor),
+    );
     const chats = await this.prisma.chat.findMany({
       where: {
-        OR: [
+        AND: [
           {
-            buyerId: authUser.userId,
-            deletedByBuyerAt: null,
+            OR: [
+              {
+                buyerId: authUser.userId,
+                deletedByBuyerAt: null,
+              },
+              {
+                sellerId: authUser.userId,
+                deletedBySellerAt: null,
+              },
+            ],
           },
-          {
-            sellerId: authUser.userId,
-            deletedBySellerAt: null,
-          },
+          ...(cursorWhere ? [cursorWhere] : []),
         ],
       },
       include: chatInclude,
+      orderBy: [
+        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+        { updatedAt: 'desc' },
+        { id: 'desc' },
+      ],
+      take: limit + 1,
     });
-
-    chats.sort((a, b) => {
-      const aHasMessages = a.lastMessageAt != null;
-      const bHasMessages = b.lastMessageAt != null;
-      if (aHasMessages !== bHasMessages) {
-        return aHasMessages ? -1 : 1;
-      }
-
-      if (a.lastMessageAt != null && b.lastMessageAt != null) {
-        const diff = b.lastMessageAt.getTime() - a.lastMessageAt.getTime();
-        if (diff !== 0) return diff;
-      }
-
-      const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
-      if (createdDiff !== 0) return createdDiff;
-      return b.updatedAt.getTime() - a.updatedAt.getTime();
-    });
+    const orderedChats = chats.sort(compareChatsForList);
+    const pageItems = orderedChats.slice(0, limit);
+    const hasMore = orderedChats.length > limit;
+    const last = hasMore ? pageItems[pageItems.length - 1] : null;
 
     return {
-      items: await Promise.all(chats.map((chat) => this.serializeChat(chat, authUser.userId))),
+      items: await Promise.all(
+        pageItems.map((chat) => this.serializeChat(chat, authUser.userId)),
+      ),
       unreadTotal: await this.unreadTotalForUser(authUser.userId),
+      nextCursor: last
+        ? encodeCursor({
+            lastMessageAt: last.lastMessageAt?.toISOString() ?? null,
+            createdAt: last.createdAt.toISOString(),
+            updatedAt: last.updatedAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+      hasMore,
+      limit,
     };
   }
 
@@ -337,22 +506,41 @@ export class ChatsService {
     };
   }
 
-  async listMessages(authUser: AuthenticatedUser, chatId: string) {
+  async listMessages(
+    authUser: AuthenticatedUser,
+    chatId: string,
+    params?: { limit?: number; cursor?: string },
+  ) {
     const chat = await this.ensureChatParticipant(chatId, authUser.userId);
+    const limit = pageLimit(params?.limit, 30, 100);
+    const cursorWhere = messageCursorWhere(
+      decodeCursor<MessageCursorPayload>(params?.cursor),
+    );
     const messages = await this.prisma.chatMessage.findMany({
       where: {
         chatId,
         deletedAt: null,
+        ...(cursorWhere ?? {}),
       },
       include: messageInclude,
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
     });
+    const pageItems = messages.slice(0, limit);
+    const hasMore = messages.length > limit;
+    const last = hasMore ? pageItems[pageItems.length - 1] : null;
 
     return {
       chat: await this.serializeChat(chat, authUser.userId),
-      items: messages.map((message) => this.serializeMessage(message)),
+      items: pageItems.map((message) => this.serializeMessage(message)),
+      nextCursor: last
+        ? encodeCursor({
+            createdAt: last.createdAt.toISOString(),
+            id: last.id,
+          })
+        : null,
+      hasMore,
+      limit,
     };
   }
 
@@ -370,7 +558,8 @@ export class ChatsService {
     }
     const clientMessageId = dto.clientMessageId?.trim() || null;
 
-    const recipientId = chat.buyerId === authUser.userId ? chat.sellerId : chat.buyerId;
+    const recipientId = this.otherParticipantId(chat, authUser.userId);
+    await this.assertNoPeerBlock(authUser.userId, recipientId);
 
     if (clientMessageId) {
       const existing = await this.prisma.chatMessage.findFirst({
@@ -488,6 +677,85 @@ export class ChatsService {
     };
   }
 
+  async hideChatForMe(authUser: AuthenticatedUser, chatId: string) {
+    const chat = await this.ensureChatParticipant(chatId, authUser.userId);
+    const now = new Date();
+    const isBuyer = chat.buyerId === authUser.userId;
+
+    const nextChat = await this.prisma.chat.update({
+      where: {
+        id: chatId,
+      },
+      data: isBuyer
+        ? {
+            deletedByBuyerAt: now,
+            unreadForBuyer: 0,
+          }
+        : {
+            deletedBySellerAt: now,
+            unreadForSeller: 0,
+          },
+      include: chatInclude,
+    });
+
+    return {
+      source: 'timeweb',
+      hidden: true,
+      chatId,
+      viewerId: authUser.userId,
+      unreadCount: 0,
+      unreadTotal: await this.unreadTotalForUser(authUser.userId),
+      chat: await this.serializeChat(nextChat, authUser.userId),
+    };
+  }
+
+  async peerBlockStatus(authUser: AuthenticatedUser, chatId: string) {
+    const chat = await this.ensureChatParticipant(chatId, authUser.userId);
+    return {
+      chatId,
+      blocked: await this.isBlockedByViewer(chat, authUser.userId),
+    };
+  }
+
+  async blockPeer(authUser: AuthenticatedUser, chatId: string) {
+    const chat = await this.ensureChatParticipant(chatId, authUser.userId);
+    const otherUserId = this.otherParticipantId(chat, authUser.userId);
+    await (this.prisma as any).chatPeerBlock.upsert({
+      where: {
+        blockerUserId_blockedUserId: {
+          blockerUserId: authUser.userId,
+          blockedUserId: otherUserId,
+        },
+      },
+      update: {},
+      create: {
+        blockerUserId: authUser.userId,
+        blockedUserId: otherUserId,
+      },
+    });
+
+    return {
+      chatId,
+      blocked: true,
+    };
+  }
+
+  async unblockPeer(authUser: AuthenticatedUser, chatId: string) {
+    const chat = await this.ensureChatParticipant(chatId, authUser.userId);
+    const otherUserId = this.otherParticipantId(chat, authUser.userId);
+    await (this.prisma as any).chatPeerBlock.deleteMany({
+      where: {
+        blockerUserId: authUser.userId,
+        blockedUserId: otherUserId,
+      },
+    });
+
+    return {
+      chatId,
+      blocked: false,
+    };
+  }
+
   async deleteMessage(authUser: AuthenticatedUser, messageId: string) {
     const message = await this.prisma.chatMessage.findUnique({
       where: {
@@ -592,8 +860,8 @@ export class ChatsService {
     file: UploadedImageFile,
   ) {
     const chat = await this.ensureChatParticipant(chatId, authUser.userId);
-    const recipientId =
-      chat.buyerId === authUser.userId ? chat.sellerId : chat.buyerId;
+    const recipientId = this.otherParticipantId(chat, authUser.userId);
+    await this.assertNoPeerBlock(authUser.userId, recipientId);
     const uploaded = await this.storageService.saveUploadedFile({
       buffer: file.buffer,
       category: 'chats',

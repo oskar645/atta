@@ -186,6 +186,10 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
   bool _loadedOnce = false;
   String? _errorText;
   bool _loading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  String? _nextCursor;
+  double? _lastLoadMoreTriggerPixels;
   bool _didAutoOpenInitialListing = false;
   DateTime? _lastRefreshAt;
 
@@ -243,23 +247,27 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
     unawaited(_refresh());
   }
 
-  Future<List<Listing>> _load() {
+  Future<List<Listing>> _load({bool reset = true}) async {
     final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
     final listings = context.read<ListingsService>();
     _debugMyListingsLog(
       'MyListings load start user=${widget.userId} statuses=${widget.statuses.join(",")}',
     );
-    return listings
-        .getMyListingsByStatuses(
-      widget.userId,
-      statuses: widget.statuses,
-      forceRefresh: hadItems,
-    )
-        .then((items) {
+    try {
+      final page = await listings.getMyListingsPageByStatuses(
+        widget.userId,
+        statuses: widget.statuses,
+        limit: 20,
+        cursor: reset ? null : _nextCursor,
+        forceRefresh: reset && hadItems,
+      );
+      final items = reset ? page.items : _appendListings(_items, page.items);
       final loadError = listings.lastMyListingsErrorForUser(widget.userId);
       if (mounted) {
         setState(() {
           _items = items;
+          _nextCursor = page.nextCursor;
+          _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
           _errorText = !hadItems && loadError != null
               ? 'Не удалось загрузить объявления. Попробуйте снова.'
               : null;
@@ -275,7 +283,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
       );
       _maybeAutoOpenListing(items);
       return items;
-    }).catchError((error) {
+    } catch (error) {
       if (mounted) {
         setState(() {
           _loading = false;
@@ -292,24 +300,24 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
       }
       _debugMyListingsLog('MyListings load error message=$error');
       return List<Listing>.from(_items ?? const <Listing>[]);
-    }).whenComplete(() {
+    } finally {
       _debugMyListingsLog('MyListings load finally loading=false');
-    });
+    }
   }
 
   Future<void> _refresh() async {
     _debugMyListingsLog(
       'MyListings refresh start user=${widget.userId} statuses=${widget.statuses.join(",")}',
     );
-    final next = context.read<ListingsService>().getMyListingsByStatuses(
-          widget.userId,
-          statuses: widget.statuses,
-          forceRefresh: true,
-        );
+    final next = _load(reset: true);
     setState(() {
       _future = next;
       _errorText = null;
       _loading = _items == null;
+      _isLoadingMore = false;
+      _hasMore = true;
+      _nextCursor = null;
+      _lastLoadMoreTriggerPixels = null;
     });
     try {
       final items = await next;
@@ -350,6 +358,43 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
     } finally {
       _debugMyListingsLog('MyListings refresh finally loading=false');
     }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loading || _isLoadingMore || !_hasMore || _nextCursor == null) return;
+    setState(() {
+      _isLoadingMore = true;
+    });
+    try {
+      await _load(reset: false);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+        });
+      }
+    }
+  }
+
+  bool _handleScroll(ScrollNotification notification) {
+    if (notification is! ScrollEndNotification) return false;
+    final pixels = notification.metrics.pixels;
+    if (notification.metrics.extentAfter < 480 &&
+        _lastLoadMoreTriggerPixels != pixels) {
+      _lastLoadMoreTriggerPixels = pixels;
+      unawaited(_loadMore());
+    }
+    return false;
+  }
+
+  List<Listing> _appendListings(List<Listing>? current, List<Listing> next) {
+    final merged = <Listing>[];
+    final seen = <String>{};
+    final currentItems = current ?? const <Listing>[];
+    for (final item in <Listing>[...currentItems, ...next]) {
+      if (seen.add(item.id)) merged.add(item);
+    }
+    return merged;
   }
 
   void _maybeAutoOpenListing(List<Listing> items) {
@@ -455,18 +500,44 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
 
         return RefreshIndicator(
           onRefresh: _refresh,
-          child: ListView.separated(
-            padding: const EdgeInsets.all(12),
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _MyListingTile(
-              listing: items[i],
-              showFavoriteCount: widget.statuses.length == 1 &&
-                  widget.statuses.contains('approved'),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _handleScroll,
+            child: ListView.separated(
+              padding: const EdgeInsets.all(12),
+              itemCount: items.length + (_isLoadingMore ? 1 : 0),
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (_, i) {
+                if (i >= items.length) {
+                  return const _LoadMoreFooter();
+                }
+                return _MyListingTile(
+                  listing: items[i],
+                  showFavoriteCount: widget.statuses.length == 1 &&
+                      widget.statuses.contains('approved'),
+                );
+              },
             ),
           ),
         );
       },
+    );
+  }
+}
+
+class _LoadMoreFooter extends StatelessWidget {
+  const _LoadMoreFooter();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
     );
   }
 }

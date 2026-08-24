@@ -29,8 +29,11 @@ let ChatsController = class ChatsController {
         this.rateLimitService = rateLimitService;
         this.notificationsService = notificationsService;
     }
-    listChats(authUser) {
-        return this.chatsService.listChats(authUser);
+    listChats(authUser, limit, cursor) {
+        return this.chatsService.listChats(authUser, {
+            limit: limit == null ? undefined : Number(limit),
+            cursor,
+        });
     }
     async createChat(authUser, dto) {
         const result = await this.chatsService.createOrGetChat(authUser, dto);
@@ -40,11 +43,14 @@ let ChatsController = class ChatsController {
     getChat(authUser, chatId) {
         return this.chatsService.getChat(authUser, chatId);
     }
-    listMessages(authUser, chatId) {
-        return this.chatsService.listMessages(authUser, chatId);
+    listMessages(authUser, chatId, limit, cursor) {
+        return this.chatsService.listMessages(authUser, chatId, {
+            limit: limit == null ? undefined : Number(limit),
+            cursor,
+        });
     }
     async sendMessage(request, authUser, chatId, dto) {
-        this.rateLimitService.consumeOrThrow(`chat:${authUser.userId}:${request?.ip?.toString() ?? chatId}`, {
+        await this.rateLimitService.consumeOrThrow(`chat:${authUser.userId}:${request?.ip?.toString() ?? chatId}`, {
             limit: 30,
             windowMs: 60 * 1000,
         });
@@ -65,6 +71,23 @@ let ChatsController = class ChatsController {
         this.chatsGateway.emitChatRead(result.chat, result.messageIds, result.readAt, result.senderIds);
         return result;
     }
+    peerBlockStatus(authUser, chatId) {
+        return this.chatsService.peerBlockStatus(authUser, chatId);
+    }
+    blockPeer(authUser, chatId) {
+        return this.chatsService.blockPeer(authUser, chatId);
+    }
+    unblockPeer(authUser, chatId) {
+        return this.chatsService.unblockPeer(authUser, chatId);
+    }
+    async hideChatForMe(authUser, chatId) {
+        const result = await this.chatsService.hideChatForMe(authUser, chatId);
+        this.chatsGateway.emitUnreadChanged(authUser.userId, {
+            id: chatId,
+            unreadCount: 0,
+        });
+        return result;
+    }
     async deleteChat(authUser, chatId) {
         const result = await this.chatsService.deleteChat(authUser, chatId);
         this.chatsGateway.emitChatDeleted(result.chatId, result.participantIds);
@@ -81,8 +104,10 @@ exports.ChatsController = ChatsController;
 __decorate([
     (0, common_1.Get)(),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('limit')),
+    __param(2, (0, common_1.Query)('cursor')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", void 0)
 ], ChatsController.prototype, "listChats", null);
 __decorate([
@@ -105,8 +130,10 @@ __decorate([
     (0, common_1.Get)(':id/messages'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Query)('limit')),
+    __param(3, (0, common_1.Query)('cursor')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ChatsController.prototype, "listMessages", null);
 __decorate([
@@ -127,6 +154,38 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], ChatsController.prototype, "markChatRead", null);
+__decorate([
+    (0, common_1.Get)(':id/peer-block'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], ChatsController.prototype, "peerBlockStatus", null);
+__decorate([
+    (0, common_1.Post)(':id/peer-block'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], ChatsController.prototype, "blockPeer", null);
+__decorate([
+    (0, common_1.Delete)(':id/peer-block'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], ChatsController.prototype, "unblockPeer", null);
+__decorate([
+    (0, common_1.Post)(':id/hide'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], ChatsController.prototype, "hideChatForMe", null);
 __decorate([
     (0, common_1.Delete)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

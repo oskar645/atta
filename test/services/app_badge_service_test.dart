@@ -179,7 +179,7 @@ class _FakeChatsApi extends ChatsApi {
   final List<String> markChatReadCalls = <String>[];
 
   @override
-  Future<Map<String, dynamic>> listChats() async {
+  Future<Map<String, dynamic>> listChats({int? limit, String? cursor}) async {
     listChatsCalls += 1;
     return <String, dynamic>{
       'items': <Map<String, dynamic>>[

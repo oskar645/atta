@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -24,13 +24,24 @@ export class FeedAdsController {
   }
 
   @Post('feed-ads/:id/impression')
-  impression(@Param('id') id: string) {
-    return this.feedAdsService.recordImpression(id);
+  impression(@Req() request: any, @Param('id') id: string) {
+    return this.feedAdsService.recordImpression(id, this.counterSource(request));
   }
 
   @Post('feed-ads/:id/click')
-  click(@Param('id') id: string) {
-    return this.feedAdsService.recordClick(id);
+  click(@Req() request: any, @Param('id') id: string) {
+    return this.feedAdsService.recordClick(id, this.counterSource(request));
+  }
+
+  private counterSource(request: any) {
+    const forwarded = `${request?.headers?.['x-forwarded-for'] ?? ''}`.trim();
+    return {
+      ip:
+        `${request?.ip ?? ''}`.trim() ||
+        forwarded.split(',')[0]?.trim() ||
+        'unknown',
+      userAgent: `${request?.headers?.['user-agent'] ?? ''}`.trim(),
+    };
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)

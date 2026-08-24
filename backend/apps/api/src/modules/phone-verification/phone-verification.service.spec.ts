@@ -20,7 +20,52 @@ function createService(findUniqueResult: { id: string } | null) {
       count: async () => 0,
       create: async () => undefined,
     },
+  } as never, {
+    countUniqueValues: async () => 1,
   } as never);
+}
+
+function createStartService(params?: {
+  phoneAttemptCount?: number;
+  uniqueCounter?: {
+    countUniqueValues: (
+      key: string,
+      value: string,
+      windowMs: number,
+    ) => Promise<number | null>;
+  };
+}) {
+  return new PhoneVerificationService({
+    user: {
+      findUnique: async () => null,
+    },
+    phoneVerification: {
+      count: async () => params?.phoneAttemptCount ?? 0,
+      create: async () => undefined,
+    },
+  } as never, (params?.uniqueCounter ?? {
+    countUniqueValues: async () => 1,
+  }) as never);
+}
+
+function createUniqueCounter() {
+  const valuesByKey = new Map<string, Set<string>>();
+  return {
+    async countUniqueValues(key: string, value: string) {
+      const values = valuesByKey.get(key) ?? new Set<string>();
+      values.add(value);
+      valuesByKey.set(key, values);
+      return values.size;
+    },
+  };
+}
+
+function enableFakeProvider() {
+  (env as { PHONE_VERIFICATION_DEV_MODE: boolean }).PHONE_VERIFICATION_DEV_MODE =
+    true;
+  (env as { NODE_ENV: 'development' | 'test' | 'production' }).NODE_ENV =
+    'test';
+  (env as { APP_ENV: string }).APP_ENV = 'local';
 }
 
 function setFetchResponse(shape: FetchResponseShape) {
@@ -233,6 +278,68 @@ test('phone normalization works for phone/start', async () => {
   assert.equal(requestedPhone, '79281234567');
 });
 
+test('ordinary repeated phone/start attempts are not blocked before existing phone cooldown', async () => {
+  enableFakeProvider();
+  const service = createStartService({ phoneAttemptCount: 2 });
+
+  const response = await service.startCallVerification(
+    '79281234567',
+    'signup',
+    { ip: '203.0.113.10', userAgent: 'atta-app/1' },
+  );
+
+  assert.equal(response.status, 'ok');
+});
+
+test('several users sharing one IP do not break phone registration', async () => {
+  enableFakeProvider();
+  const uniqueCounter = createUniqueCounter();
+  const service = createStartService({ uniqueCounter });
+
+  for (let index = 0; index < 20; index += 1) {
+    await service.startCallVerification(
+      `79281234${String(index).padStart(3, '0')}`,
+      'signup',
+      {
+        ip: '203.0.113.20',
+        userAgent: `atta-app/${index}`,
+      },
+    );
+  }
+
+  assert.ok(true);
+});
+
+test('mass phone/start requests to many numbers from one source are limited', async () => {
+  enableFakeProvider();
+  const uniqueCounter = createUniqueCounter();
+  const service = createStartService({ uniqueCounter });
+
+  for (let index = 0; index < 50; index += 1) {
+    await service.startCallVerification(
+      `79285550${String(index).padStart(3, '0')}`,
+      'signup',
+      {
+        ip: '203.0.113.30',
+        userAgent: 'same-script/1',
+      },
+    );
+  }
+
+  await assert.rejects(
+    () =>
+      service.startCallVerification('79285550999', 'signup', {
+        ip: '203.0.113.30',
+        userAgent: 'same-script/1',
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpException);
+      assert.equal(error.getStatus(), 429);
+      return true;
+    },
+  );
+});
+
 test('production mode does not return fake checkId', async () => {
   (env as { SMS_RU_CALLCHECK_ENABLED: boolean }).SMS_RU_CALLCHECK_ENABLED = true;
   (env as { SMS_RU_API_ID: string }).SMS_RU_API_ID = 'present';
@@ -294,6 +401,8 @@ test('phone/check maps SMS.ru 401 to confirmed', async () => {
       }),
       update: async () => undefined,
     },
+  } as never, {
+    countUniqueValues: async () => 1,
   } as never);
 
   const response = await service.checkCallVerification(
@@ -338,6 +447,8 @@ test('phone/check maps SMS.ru 400 to pending', async () => {
       }),
       update: async () => undefined,
     },
+  } as never, {
+    countUniqueValues: async () => 1,
   } as never);
 
   const response = await service.checkCallVerification(
@@ -382,6 +493,8 @@ test('phone/check maps SMS.ru 402 to expired', async () => {
       }),
       update: async () => undefined,
     },
+  } as never, {
+    countUniqueValues: async () => 1,
   } as never);
 
   const response = await service.checkCallVerification(

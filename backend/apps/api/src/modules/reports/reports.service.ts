@@ -206,8 +206,22 @@ export class ReportsService {
     },
   ) {
     const listingId = body.listingId?.trim() || null;
-    const reportedUserId =
+    let reportedUserId =
       body.reportedUserId?.trim() || body.listingOwnerId?.trim() || null;
+    if (listingId) {
+      const listing = await this.prisma.listing.findUnique({
+        where: {
+          id: listingId,
+        },
+        select: {
+          ownerId: true,
+        },
+      });
+      if (!listing) {
+        throw new BadRequestException('Объявление для жалобы не найдено');
+      }
+      reportedUserId = listing.ownerId;
+    }
     if (!listingId && !reportedUserId) {
       throw new BadRequestException('Нужно указать объявление или пользователя для жалобы');
     }

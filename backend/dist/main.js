@@ -5,6 +5,7 @@ const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
 const path_1 = require("path");
 const app_module_1 = require("./app.module");
+const trust_proxy_1 = require("./common/trust-proxy");
 const env_1 = require("./config/env");
 const storage_service_1 = require("./modules/storage/storage.service");
 const express = require('express');
@@ -15,6 +16,7 @@ async function bootstrap() {
             credentials: true,
         },
     });
+    (0, trust_proxy_1.configureTrustProxy)(app.getHttpAdapter().getInstance());
     app.useGlobalPipes(new common_1.ValidationPipe({
         whitelist: true,
         transform: true,
@@ -33,9 +35,6 @@ async function bootstrap() {
     app.use('/uploads/avatars', express.static((0, path_1.join)(uploadsRoot, 'avatars')));
     app.use('/uploads/listings', express.static((0, path_1.join)(uploadsRoot, 'listings')));
     app.use('/uploads/feed-ads', express.static((0, path_1.join)(uploadsRoot, 'feed-ads')));
-    app.use('/uploads/support', express.static((0, path_1.join)(uploadsRoot, 'support')));
-    app.use('/uploads/chats', express.static((0, path_1.join)(uploadsRoot, 'chats')));
-    app.use('/uploads/reports', express.static((0, path_1.join)(uploadsRoot, 'reports')));
     await app.listen(env_1.env.PORT);
     const logger = new common_1.Logger('Bootstrap');
     logger.log(`ATTA backend skeleton is running on port ${env_1.env.PORT}`);

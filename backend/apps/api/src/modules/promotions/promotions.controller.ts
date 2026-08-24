@@ -38,24 +38,41 @@ export class PromotionsController {
   }
 
   @Post('showcase/:promotionId/impression')
-  registerImpression(@Param('promotionId') promotionId: string) {
-    return this.promotionsService.registerImpression(promotionId);
+  registerImpression(@Req() request: any, @Param('promotionId') promotionId: string) {
+    return this.promotionsService.registerImpression(
+      promotionId,
+      this.counterSource(request),
+    );
   }
 
   @Post('showcase/:promotionId/click')
-  registerClick(@Param('promotionId') promotionId: string) {
-    return this.promotionsService.registerClick(promotionId);
+  registerClick(@Req() request: any, @Param('promotionId') promotionId: string) {
+    return this.promotionsService.registerClick(
+      promotionId,
+      this.counterSource(request),
+    );
+  }
+
+  private counterSource(request: any) {
+    const forwarded = `${request?.headers?.['x-forwarded-for'] ?? ''}`.trim();
+    return {
+      ip:
+        `${request?.ip ?? ''}`.trim() ||
+        forwarded.split(',')[0]?.trim() ||
+        'unknown',
+      userAgent: `${request?.headers?.['user-agent'] ?? ''}`.trim(),
+    };
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('listings/:id/promotions')
-  promoteListing(
+  async promoteListing(
     @Req() request: any,
     @Param('id') listingId: string,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() dto: CreatePromotionDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       `promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`,
       {
         limit: 20,
@@ -71,12 +88,12 @@ export class PromotionsController {
 
   @UseGuards(JwtAuthGuard)
   @Post('listings/:id/promote/showcase')
-  promoteShowcase(
+  async promoteShowcase(
     @Req() request: any,
     @Param('id') listingId: string,
     @CurrentUser() authUser: AuthenticatedUser,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       `promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`,
       {
         limit: 20,

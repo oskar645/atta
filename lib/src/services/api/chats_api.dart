@@ -5,8 +5,18 @@ class ChatsApi {
 
   final ApiClient client;
 
-  Future<Map<String, dynamic>> listChats() async {
-    final response = await client.get('/chats', authorized: true);
+  Future<Map<String, dynamic>> listChats({
+    int? limit,
+    String? cursor,
+  }) async {
+    final response = await client.get(
+      '/chats',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -30,9 +40,19 @@ class ChatsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> listMessages(String chatId) async {
-    final response =
-        await client.get('/chats/$chatId/messages', authorized: true);
+  Future<Map<String, dynamic>> listMessages(
+    String chatId, {
+    int? limit,
+    String? cursor,
+  }) async {
+    final response = await client.get(
+      '/chats/$chatId/messages',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -74,6 +94,36 @@ class ChatsApi {
   Future<Map<String, dynamic>> markMessageRead(String messageId) async {
     final response = await client.post(
       '/messages/$messageId/read',
+      authorized: true,
+      body: const <String, dynamic>{},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> peerBlockStatus(String chatId) async {
+    final response =
+        await client.get('/chats/$chatId/peer-block', authorized: true);
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> blockPeer(String chatId) async {
+    final response = await client.post(
+      '/chats/$chatId/peer-block',
+      authorized: true,
+      body: const <String, dynamic>{},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> unblockPeer(String chatId) async {
+    final response =
+        await client.delete('/chats/$chatId/peer-block', authorized: true);
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> hideChatForMe(String chatId) async {
+    final response = await client.post(
+      '/chats/$chatId/hide',
       authorized: true,
       body: const <String, dynamic>{},
     );

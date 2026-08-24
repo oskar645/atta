@@ -1002,7 +1002,17 @@ class _DashboardTab extends StatelessWidget {
               ),
               card('Активных объявлений', '${read('activeListings')}',
                   Icons.campaign),
-              card('Продано', '${read('sold')}', Icons.sell),
+              card(
+                'Продано',
+                '${read('sold')}',
+                Icons.sell,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const AdminListingsScreen(initialStatus: 'sold'),
+                  ),
+                ),
+              ),
               card('Продажи за 30 дней', '${read('sales30d')}',
                   Icons.sell_outlined),
               card(
@@ -1162,7 +1172,17 @@ class _DashboardTab extends StatelessWidget {
             card('Сейчас онлайн', '$online', Icons.circle),
             card('Объявлений всего', '$listings', Icons.list_alt),
             card('Активных объявлений', '$active', Icons.campaign),
-            card('Продано', '$sold', Icons.sell),
+            card(
+              'Продано',
+              '$sold',
+              Icons.sell,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const AdminListingsScreen(initialStatus: 'sold'),
+                ),
+              ),
+            ),
             card('Продажи за 30 дней', '$soldThisMonth', Icons.sell_outlined),
             card(
               'Покупки баллов',
@@ -1861,6 +1881,8 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     final ownerName = (d['owner_name'] ?? d['ownerName'] ?? '').toString();
     final status = (d['status'] ?? '').toString();
     final createdAt = (d['created_at'] ?? '').toString();
+    final moderationChanges = _moderationChangesByField(d);
+    final moderationChangesByLabel = _moderationChangesByDisplayLabel(d);
 
     final raw = d['photo_urls'] ?? [];
     final images =
@@ -1895,6 +1917,13 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                     ),
                   ),
                 ),
+                if (moderationChanges.containsKey('photos')) ...[
+                  const SizedBox(height: 8),
+                  _ModerationChangedLine(
+                    change: moderationChanges['photos']!,
+                    photos: true,
+                  ),
+                ],
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -1955,18 +1984,39 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                       fontSize: 20,
                     ),
                   ),
+                  if (moderationChanges.containsKey('title')) ...[
+                    const SizedBox(height: 6),
+                    _ModerationChangedLine(
+                      change: moderationChanges['title']!,
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _AdminInfoChip(label: 'Цена', value: '$price ₽'),
-                      _AdminInfoChip(label: 'Город', value: city),
-                      _AdminInfoChip(label: 'Категория', value: category),
+                      _AdminInfoChip(
+                        label: 'Цена',
+                        value: '$price ₽',
+                        change: moderationChanges['price'],
+                        formatBefore: (value) =>
+                            '${_formatModerationValue(value)} ₽',
+                      ),
+                      _AdminInfoChip(
+                        label: 'Город',
+                        value: city,
+                        change: moderationChanges['city'],
+                      ),
+                      _AdminInfoChip(
+                        label: 'Категория',
+                        value: category,
+                        change: moderationChanges['category'],
+                      ),
                       if (subcategory.trim().isNotEmpty)
                         _AdminInfoChip(
                           label: 'Подкатегория',
                           value: subcategory,
+                          change: moderationChanges['subcategory'],
                         ),
                       _AdminInfoChip(
                         label: 'Статус',
@@ -1981,7 +2031,18 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
           const SizedBox(height: 10),
           _AdminInfoSection(
             title: 'Описание',
-            child: Text(desc.isEmpty ? 'Описание отсутствует' : desc),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(desc.isEmpty ? 'Описание отсутствует' : desc),
+                if (moderationChanges.containsKey('description')) ...[
+                  const SizedBox(height: 8),
+                  _ModerationChangedLine(
+                    change: moderationChanges['description']!,
+                  ),
+                ],
+              ],
+            ),
           ),
           const SizedBox(height: 10),
           _AdminInfoSection(
@@ -2024,6 +2085,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                         child: _AdminInfoRow(
                           label: entry.key,
                           value: entry.value,
+                          change: moderationChangesByLabel[entry.key],
                         ),
                       ),
                     )
@@ -2104,10 +2166,12 @@ class _AdminInfoRow extends StatelessWidget {
   const _AdminInfoRow({
     required this.label,
     required this.value,
+    this.change,
   });
 
   final String label;
   final String value;
+  final _ModerationChange? change;
 
   @override
   Widget build(BuildContext context) {
@@ -2125,8 +2189,17 @@ class _AdminInfoRow extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: Text(
-            value.trim().isEmpty ? 'Не указано' : value,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value.trim().isEmpty ? 'Не указано' : value,
+              ),
+              if (change != null) ...[
+                const SizedBox(height: 4),
+                _ModerationChangedLine(change: change!),
+              ],
+            ],
           ),
         ),
       ],
@@ -2138,10 +2211,14 @@ class _AdminInfoChip extends StatelessWidget {
   const _AdminInfoChip({
     required this.label,
     required this.value,
+    this.change,
+    this.formatBefore,
   });
 
   final String label;
   final String value;
+  final _ModerationChange? change;
+  final String Function(dynamic value)? formatBefore;
 
   @override
   Widget build(BuildContext context) {
@@ -2151,20 +2228,102 @@ class _AdminInfoChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
       ),
-      child: RichText(
-        text: TextSpan(
-          style: DefaultTextStyle.of(context).style,
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.w700),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          RichText(
+            text: TextSpan(
+              style: DefaultTextStyle.of(context).style,
+              children: [
+                TextSpan(
+                  text: '$label: ',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                TextSpan(text: value.trim().isEmpty ? 'Не указано' : value),
+              ],
             ),
-            TextSpan(text: value.trim().isEmpty ? 'Не указано' : value),
+          ),
+          if (change != null) ...[
+            const SizedBox(height: 5),
+            _ModerationChangedLine(
+              change: change!,
+              formatBefore: formatBefore,
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
+}
+
+class _ModerationChangedLine extends StatelessWidget {
+  const _ModerationChangedLine({
+    required this.change,
+    this.photos = false,
+    this.formatBefore,
+  });
+
+  final _ModerationChange change;
+  final bool photos;
+  final String Function(dynamic value)? formatBefore;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final details = photos
+        ? _formatPhotoChange(change)
+        : 'Было: ${(formatBefore ?? _formatModerationValue)(change.before)}';
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 6,
+      runSpacing: 4,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: scheme.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: scheme.primary.withValues(alpha: 0.28)),
+          ),
+          child: Text(
+            'Изменено',
+            style: TextStyle(
+              color: scheme.primary,
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        Text(
+          details,
+          style: TextStyle(
+            color: scheme.onSurfaceVariant,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ModerationChange {
+  const _ModerationChange({
+    required this.field,
+    required this.label,
+    this.before,
+    this.after,
+    this.added = const [],
+    this.removed = const [],
+  });
+
+  final String field;
+  final String label;
+  final dynamic before;
+  final dynamic after;
+  final List<dynamic> added;
+  final List<dynamic> removed;
 }
 
 Map<String, String> _moderationExtraFields(Map<String, dynamic> data) {
@@ -2188,6 +2347,7 @@ Map<String, String> _moderationExtraFields(Map<String, dynamic> data) {
     'photoUrls',
     'photo_items',
     'photoItems',
+    'moderation_diff',
   };
 
   final fields = <String, String>{};
@@ -2200,6 +2360,44 @@ Map<String, String> _moderationExtraFields(Map<String, dynamic> data) {
   return fields;
 }
 
+Map<String, _ModerationChange> _moderationChangesByField(
+  Map<String, dynamic> data,
+) {
+  final diff = data['moderation_diff'];
+  if (diff is! Map) return const <String, _ModerationChange>{};
+  final changed = diff['changed'];
+  if (changed is! List) return const <String, _ModerationChange>{};
+
+  final result = <String, _ModerationChange>{};
+  for (final raw in changed) {
+    if (raw is! Map) continue;
+    final field = (raw['field'] ?? '').toString().trim();
+    if (field.isEmpty) continue;
+    result[field] = _ModerationChange(
+      field: field,
+      label: (raw['label'] ?? _moderationFieldLabel(field)).toString(),
+      before: raw['before'],
+      after: raw['after'],
+      added: raw['added'] is List
+          ? List<dynamic>.from(raw['added'] as List)
+          : const [],
+      removed: raw['removed'] is List
+          ? List<dynamic>.from(raw['removed'] as List)
+          : const [],
+    );
+  }
+  return result;
+}
+
+Map<String, _ModerationChange> _moderationChangesByDisplayLabel(
+  Map<String, dynamic> data,
+) {
+  final byField = _moderationChangesByField(data);
+  return {
+    for (final change in byField.values) change.label: change,
+  };
+}
+
 String _moderationFieldLabel(String key) {
   const labels = <String, String>{
     'brand': 'Марка',
@@ -2210,6 +2408,7 @@ String _moderationFieldLabel(String key) {
     'deal_type': 'Тип сделки',
     'real_estate_type': 'Вид товара',
     'clothes_type': 'Тип одежды',
+    'clothes_size': 'Размер одежды',
     'auto_brand': 'Марка авто',
     'auto_model': 'Модель авто',
     'auto_condition': 'Состояние авто',
@@ -2249,6 +2448,26 @@ String? _normalizeModerationFieldValue(dynamic value) {
     return entries.isEmpty ? null : entries.join(' • ');
   }
   return value.toString();
+}
+
+String _formatModerationValue(dynamic value) {
+  final normalized = _normalizeModerationFieldValue(value);
+  return normalized == null || normalized.trim().isEmpty
+      ? 'Не указано'
+      : normalized;
+}
+
+String _formatPhotoChange(_ModerationChange change) {
+  final added = change.added.length;
+  final removed = change.removed.length;
+  final parts = <String>[
+    if (added > 0) 'Добавлено фото: $added',
+    if (removed > 0) 'Удалено фото: $removed',
+  ];
+  if (parts.isEmpty) {
+    parts.add('Изменён порядок фотографий');
+  }
+  return parts.join(' • ');
 }
 
 String _formatModerationDate(String raw) {

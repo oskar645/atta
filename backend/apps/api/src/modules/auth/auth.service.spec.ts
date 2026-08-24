@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hashSync } from 'bcryptjs';
+import { compareSync, hashSync } from 'bcryptjs';
 import { HttpException } from '@nestjs/common';
 import { UserStatus } from '@prisma/client';
 
@@ -37,6 +37,10 @@ function createService(
       getActiveBlock?: (userId: string) => Promise<unknown>;
       assertNotBlocked?: (userId: string) => Promise<void>;
     };
+    jwtService?: {
+      signAsync?: (payload: Record<string, unknown>) => Promise<string>;
+      verifyAsync?: (token: string, options?: unknown) => Promise<Record<string, unknown>>;
+    };
   },
 ) {
   const prismaWithTransaction: Record<string, unknown> = {
@@ -57,6 +61,7 @@ function createService(
       signAsync: async (payload: Record<string, unknown>) =>
         `${payload.type ?? 'token'}-token`,
       verifyAsync: async () => ({}),
+      ...overrides?.jwtService,
     } as never,
     {} as never,
     {
@@ -478,6 +483,153 @@ test('getMe does not crash if wallet has issue', async () => {
   });
 
   assert.equal(response.user.id, 'user-1');
+});
+
+test('revokeOtherSessions revokes only current user sessions except current session', async () => {
+  let updateWhere: unknown;
+  const service = createService({
+    userSession: {
+      updateMany: async ({ where }: { where: unknown }) => {
+        updateWhere = where;
+        return { count: 2 };
+      },
+    },
+  });
+
+  const response = await service.revokeOtherSessions({
+    userId: 'user-1',
+    sessionId: 'session-current',
+    role: 'user',
+    email: null,
+  });
+
+  assert.deepEqual(updateWhere, {
+    userId: 'user-1',
+    id: {
+      not: 'session-current',
+    },
+    revokedAt: null,
+  });
+  assert.deepEqual(response, { revoked: 2 });
+});
+
+test('revokeAllSessions revokes only current user sessions', async () => {
+  let updateWhere: unknown;
+  const service = createService({
+    userSession: {
+      updateMany: async ({ where }: { where: unknown }) => {
+        updateWhere = where;
+        return { count: 3 };
+      },
+    },
+  });
+
+  const response = await service.revokeAllSessions({
+    userId: 'user-1',
+    sessionId: 'session-current',
+    role: 'user',
+    email: null,
+  });
+
+  assert.deepEqual(updateWhere, {
+    userId: 'user-1',
+    revokedAt: null,
+  });
+  assert.deepEqual(response, { revoked: 3 });
+});
+
+test('refresh rotation keeps active session and stores new refresh token hash', async () => {
+  const user = baseActiveUser();
+  let updatedHash = '';
+  let updatedExpiry: Date | null = null;
+  const service = createService(
+    {
+      user: {
+        findUnique: async () => user,
+      },
+      userSession: {
+        findUnique: async () => ({
+          id: 'session-1',
+          userId: 'user-1',
+          refreshTokenHash: hashSync('old-refresh-token', 10),
+          revokedAt: null,
+          expiresAt: new Date(Date.now() + 60_000),
+          user,
+        }),
+        update: async ({ data }: { data: { refreshTokenHash: string; expiresAt: Date } }) => {
+          updatedHash = data.refreshTokenHash;
+          updatedExpiry = data.expiresAt;
+        },
+      },
+    },
+    {
+      jwtService: {
+        verifyAsync: async () => ({
+          sub: 'user-1',
+          sessionId: 'session-1',
+          type: 'refresh',
+          role: 'user',
+          email: null,
+        }),
+        signAsync: async (payload) => `new-${payload.type}-token`,
+      },
+    },
+  );
+
+  const response = await service.refresh({
+    refreshToken: 'old-refresh-token',
+  });
+
+  assert.equal(response.auth.access_token, 'new-access-token');
+  assert.equal(response.auth.refresh_token, 'new-refresh-token');
+  assert.equal(compareSync('new-refresh-token', updatedHash), true);
+  assert.ok((updatedExpiry as unknown) instanceof Date);
+});
+
+test('refresh mismatch rejects without blindly revoking the session', async () => {
+  const user = baseActiveUser();
+  let revokeCalls = 0;
+  const service = createService(
+    {
+      userSession: {
+        findUnique: async () => ({
+          id: 'session-1',
+          userId: 'user-1',
+          refreshTokenHash: hashSync('current-refresh-token', 10),
+          revokedAt: null,
+          expiresAt: new Date(Date.now() + 60_000),
+          user,
+        }),
+        updateMany: async () => {
+          revokeCalls += 1;
+          return { count: 1 };
+        },
+      },
+    },
+    {
+      jwtService: {
+        verifyAsync: async () => ({
+          sub: 'user-1',
+          sessionId: 'session-1',
+          type: 'refresh',
+          role: 'user',
+          email: null,
+        }),
+      },
+    },
+  );
+
+  await assert.rejects(
+    service.refresh({
+      refreshToken: 'old-refresh-token',
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpException);
+      assert.equal(error.getStatus(), 401);
+      return true;
+    },
+  );
+  assert.equal(revokeCalls, 0);
 });
 
 test('signupPhone accrues inviter bonus once for valid referral after successful registration', async () => {

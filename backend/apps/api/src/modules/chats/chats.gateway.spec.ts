@@ -3,6 +3,170 @@ import assert from 'node:assert/strict';
 
 import { ChatsGateway } from './chats.gateway';
 
+class FakeSocket {
+  handshake = {
+    auth: {} as Record<string, string>,
+    headers: {} as Record<string, string>,
+  };
+  data: Record<string, unknown> = {};
+  joinedRooms: string[] = [];
+  emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
+  disconnected = false;
+
+  constructor(readonly id: string) {}
+
+  join(room: string) {
+    this.joinedRooms.push(room);
+  }
+
+  emit(event: string, payload: Record<string, unknown>) {
+    this.emitted.push({ event, payload });
+  }
+
+  disconnect(close: boolean) {
+    this.disconnected = close;
+  }
+}
+
+function createGateway({
+  token = 'access-token',
+  jwtPayload = { sub: 'user-1', sessionId: 'session-1' },
+  session = {
+    userId: 'user-1',
+    expiresAt: new Date(Date.now() + 60_000),
+  },
+  presenceError,
+}: {
+  token?: string;
+  jwtPayload?: Record<string, string>;
+  session?: { userId: string; expiresAt: Date } | null;
+  presenceError?: Error;
+} = {}) {
+  const logs: Array<{ level: string; message: string }> = [];
+  const gateway = new ChatsGateway(
+    {
+      async touchSocket(userId: string) {
+        if (presenceError) throw presenceError;
+        return {
+          userId,
+          isOnline: true,
+          lastSeen: new Date().toISOString(),
+          changed: true,
+        };
+      },
+    } as never,
+    {} as never,
+    {
+      async verifyAsync(receivedToken: string) {
+        assert.equal(receivedToken, token);
+        return jwtPayload;
+      },
+    } as never,
+    {
+      userSession: {
+        async findFirst() {
+          return session;
+        },
+      },
+    } as never,
+  );
+
+  gateway.server = {
+    emit() {},
+    to() {
+      return {
+        emit() {},
+      };
+    },
+  } as never;
+  (gateway as unknown as { logger: { log: Function; warn: Function } }).logger =
+    {
+      log(message: string) {
+        logs.push({ level: 'log', message });
+      },
+      warn(message: string) {
+        logs.push({ level: 'warn', message });
+      },
+    };
+
+  const client = new FakeSocket('socket-1');
+  client.handshake.auth['token'] = token;
+  return { gateway, client, logs };
+}
+
+test('handleConnection rejects missing auth with stage log and disconnects', async () => {
+  const { gateway, client, logs } = createGateway();
+  client.handshake.auth = {};
+
+  await gateway.handleConnection(client as never);
+
+  assert.equal(client.disconnected, true);
+  assert.equal(client.joinedRooms.length, 0);
+  assert.ok(
+    logs.some(
+      (entry) =>
+        entry.level === 'warn' &&
+        entry.message.includes('stage=auth') &&
+        entry.message.includes('Access token is missing'),
+    ),
+  );
+});
+
+test('handleConnection rejects inactive session with stage=session', async () => {
+  const { gateway, client, logs } = createGateway({ session: null });
+
+  await gateway.handleConnection(client as never);
+
+  assert.equal(client.disconnected, true);
+  assert.ok(
+    logs.some(
+      (entry) =>
+        entry.level === 'warn' &&
+        entry.message.includes('stage=session') &&
+        entry.message.includes('Session is not active'),
+    ),
+  );
+});
+
+test('handleConnection keeps authorized socket when presence touch fails', async () => {
+  const { gateway, client, logs } = createGateway({
+    presenceError: new Error('Redis unavailable'),
+  });
+
+  await gateway.handleConnection(client as never);
+
+  assert.equal(client.disconnected, false);
+  assert.deepEqual(client.joinedRooms, ['user:user-1']);
+  assert.equal(client.data.userId, 'user-1');
+  assert.equal(client.data.sessionId, 'session-1');
+  assert.ok(
+    logs.some(
+      (entry) =>
+        entry.level === 'warn' &&
+        entry.message.includes('stage=presence') &&
+        entry.message.includes('Redis unavailable') &&
+        entry.message.includes('user=user-1') &&
+        entry.message.includes('session=session-1'),
+    ),
+  );
+});
+
+test('handleConnection successful path remains connected', async () => {
+  const { gateway, client, logs } = createGateway();
+
+  await gateway.handleConnection(client as never);
+
+  assert.equal(client.disconnected, false);
+  assert.deepEqual(client.joinedRooms, ['user:user-1']);
+  assert.ok(
+    logs.some(
+      (entry) =>
+        entry.level === 'log' &&
+        entry.message.includes('Socket connected: socket-1 user=user-1'),
+    ),
+  );
+});
+
 test('emitOutgoingMessage keeps personalized chat payload out of shared room event', () => {
   const emissions: Array<{
     room: string;

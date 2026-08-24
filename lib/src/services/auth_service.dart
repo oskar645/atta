@@ -85,6 +85,12 @@ class AuthService {
   }) =>
       updateAuthMetadata(displayName: displayName, photoUrl: photoUrl);
 
+  Future<AuthUser?> syncCurrentUserFromProfile(
+    String uid,
+    Map<String, dynamic> profile,
+  ) =>
+      _backend.syncCurrentUserFromProfile(uid, profile);
+
   Future<AuthUser?> revalidateCurrentUser() => _backend.revalidateCurrentUser();
 
   Future<AuthUser?> syncBlockStatus() => _backend.revalidateCurrentUser();

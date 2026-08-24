@@ -121,7 +121,7 @@ class _FakeViewedListingsApi extends ViewedListingsApi {
   int listCalls = 0;
 
   @override
-  Future<Map<String, dynamic>> list() async {
+  Future<Map<String, dynamic>> list({int? limit, String? cursor}) async {
     listCalls += 1;
     final storage = TokenStorage();
     final user = await storage.readCurrentUser();

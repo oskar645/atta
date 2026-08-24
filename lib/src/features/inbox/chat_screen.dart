@@ -6,6 +6,7 @@ import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
+import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/models/chat.dart';
 import 'package:atta/src/models/message.dart';
 import 'package:atta/src/services/auth_service.dart';
@@ -44,8 +45,10 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with RouteAware {
   final _text = TextEditingController();
   final _picker = ImagePicker();
+  final ScrollController _messagesScrollController = ScrollController();
   final List<XFile> _selectedImages = <XFile>[];
   bool _sending = false;
+  bool _loadingOlder = false;
   int _lastSeenMessageCount = 0;
   Timer? _markReadDebounce;
   StreamSubscription<List<ChatMessage>>? _messagesSub;
@@ -63,6 +66,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
   void initState() {
     super.initState();
     _chatService = context.read<ChatService>();
+    _messagesScrollController.addListener(_handleMessagesScroll);
     _chatLoadFuture = _chatService.preloadChat(
       widget.chatId,
       uid: _uid(context),
@@ -86,6 +90,8 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
   void dispose() {
     attaRouteObserver.unsubscribe(this);
     _chatService.setForegroundChat(null);
+    _messagesScrollController.removeListener(_handleMessagesScroll);
+    _messagesScrollController.dispose();
     _markReadDebounce?.cancel();
     _messagesSub?.cancel();
     _text.dispose();
@@ -129,6 +135,39 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
   }
 
   bool _isRouteVisible() => mounted && (_route?.isCurrent ?? true);
+
+  void _handleMessagesScroll() {
+    if (_loadingOlder || !_messagesScrollController.hasClients) return;
+    final position = _messagesScrollController.position;
+    if (position.maxScrollExtent - position.pixels > 260) return;
+    if (!context.read<ChatService>().hasMoreMessages(widget.chatId)) return;
+    unawaited(_loadOlderMessages());
+  }
+
+  Future<void> _loadOlderMessages() async {
+    if (_loadingOlder || !_messagesScrollController.hasClients) return;
+    final beforeMax = _messagesScrollController.position.maxScrollExtent;
+    final beforePixels = _messagesScrollController.position.pixels;
+    setState(() => _loadingOlder = true);
+    try {
+      await context.read<ChatService>().loadOlderMessages(widget.chatId);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_messagesScrollController.hasClients) return;
+        final afterMax = _messagesScrollController.position.maxScrollExtent;
+        final target = beforePixels + (afterMax - beforeMax);
+        _messagesScrollController.jumpTo(
+          target
+              .clamp(
+                _messagesScrollController.position.minScrollExtent,
+                _messagesScrollController.position.maxScrollExtent,
+              )
+              .toDouble(),
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _loadingOlder = false);
+    }
+  }
 
   Future<void> _scheduleMarkRead({bool immediate = false}) async {
     final uid = _uid(context);
@@ -269,6 +308,168 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
         ),
       ),
     );
+  }
+
+  Future<void> _openChatActions({
+    required Chat chat,
+    required String otherUserId,
+    required String otherUserName,
+  }) async {
+    var blockedByMe = chat.blockedByMe;
+    try {
+      blockedByMe = await context.read<ChatService>().peerBlockStatus(
+            widget.chatId,
+          );
+    } catch (_) {
+      blockedByMe = chat.blockedByMe;
+    }
+    if (!mounted) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.report_outlined),
+              title: const Text('Пожаловаться'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openSupportReport(
+                  otherUserId: otherUserId,
+                  otherUserName: otherUserName,
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                blockedByMe ? Icons.lock_open_outlined : Icons.block_outlined,
+              ),
+              title: Text(blockedByMe ? 'Разблокировать' : 'Блокировать'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                if (blockedByMe) {
+                  await _unblockPeer();
+                } else {
+                  await _confirmBlockPeer();
+                }
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.delete_outline,
+                color: Theme.of(context).colorScheme.error,
+              ),
+              title: Text(
+                'Удалить диалог',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _confirmHideChatForMe();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openSupportReport({
+    required String otherUserId,
+    required String otherUserName,
+  }) {
+    final name =
+        otherUserName.trim().isEmpty ? 'Пользователь' : otherUserName.trim();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SupportScreen(
+          initialDraftText: 'Жалоба на пользователя\n'
+              'Имя: $name\n'
+              'chatId: ${widget.chatId}\n'
+              'reportedUserId: $otherUserId\n\n'
+              'Опишите, что произошло:',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmBlockPeer() async {
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Заблокировать пользователя?'),
+            content: const Text('Он больше не сможет писать вам.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Заблокировать'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok || !mounted) return;
+    try {
+      await context.read<ChatService>().blockPeer(widget.chatId);
+      if (!mounted) return;
+      showAppSnack(context, 'Пользователь заблокирован.');
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(context, _friendlyChatError(error), isError: true);
+    }
+  }
+
+  Future<void> _unblockPeer() async {
+    try {
+      await context.read<ChatService>().unblockPeer(widget.chatId);
+      if (!mounted) return;
+      showAppSnack(context, 'Пользователь разблокирован.');
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(context, _friendlyChatError(error), isError: true);
+    }
+  }
+
+  Future<void> _confirmHideChatForMe() async {
+    final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Удалить диалог?'),
+            content: const Text('Он исчезнет только у вас.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Отмена'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Удалить'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!ok || !mounted) return;
+    final uid = _uid(context);
+    if (uid.isEmpty) return;
+    try {
+      await context.read<ChatService>().hideChatForMe(
+            chatId: widget.chatId,
+            uid: uid,
+          );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(context, _friendlyChatError(error), isError: true);
+    }
   }
 
   void _openImageFullScreen(String imageUrl) {
@@ -628,6 +829,25 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                     );
                   },
                 ),
+                actions: [
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 4),
+                    child: IconButton(
+                      tooltip: 'Действия',
+                      visualDensity: VisualDensity.compact,
+                      style: IconButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                        shape: const CircleBorder(),
+                      ),
+                      icon: const Icon(Icons.more_vert),
+                      onPressed: () => _openChatActions(
+                        chat: chatRow,
+                        otherUserId: otherId,
+                        otherUserName: otherName,
+                      ),
+                    ),
+                  ),
+                ],
               ),
               body: Column(
                 children: [
@@ -666,10 +886,25 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                         }
 
                         return ListView.builder(
+                          controller: _messagesScrollController,
                           reverse: true,
                           padding: const EdgeInsets.all(12),
-                          itemCount: items.length,
+                          itemCount: items.length + (_loadingOlder ? 1 : 0),
                           itemBuilder: (_, i) {
+                            if (_loadingOlder && i == items.length) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 10),
+                                child: Center(
+                                  child: SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
                             final m = items[i];
                             final mine = m.senderId == uid;
                             final showDayDivider = i == items.length - 1 ||

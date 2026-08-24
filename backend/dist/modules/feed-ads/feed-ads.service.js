@@ -12,12 +12,17 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FeedAdsService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
+const crypto_1 = require("crypto");
 const prisma_service_1 = require("../prisma/prisma.service");
+const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const storage_service_1 = require("../storage/storage.service");
+const FEED_AD_IMPRESSION_DEBOUNCE_MS = 30 * 1000;
+const FEED_AD_CLICK_DEBOUNCE_MS = 5 * 1000;
 let FeedAdsService = class FeedAdsService {
-    constructor(prisma, storageService) {
+    constructor(prisma, storageService, rateLimitService) {
         this.prisma = prisma;
         this.storageService = storageService;
+        this.rateLimitService = rateLimitService;
     }
     serialize(item) {
         return {
@@ -189,7 +194,15 @@ let FeedAdsService = class FeedAdsService {
             id,
         };
     }
-    async recordImpression(id) {
+    async recordImpression(id, source) {
+        const shouldCount = await this.shouldCountCounterEvent('impression', id, source, FEED_AD_IMPRESSION_DEBOUNCE_MS);
+        if (!shouldCount) {
+            return {
+                tracked: true,
+                id,
+                event: 'impression',
+            };
+        }
         await this.prisma.feedAd.update({
             where: { id },
             data: {
@@ -204,7 +217,15 @@ let FeedAdsService = class FeedAdsService {
             event: 'impression',
         };
     }
-    async recordClick(id) {
+    async recordClick(id, source) {
+        const shouldCount = await this.shouldCountCounterEvent('click', id, source, FEED_AD_CLICK_DEBOUNCE_MS);
+        if (!shouldCount) {
+            return {
+                tracked: true,
+                id,
+                event: 'click',
+            };
+        }
         await this.prisma.feedAd.update({
             where: { id },
             data: {
@@ -227,6 +248,23 @@ let FeedAdsService = class FeedAdsService {
             throw new common_1.NotFoundException('Feed ad not found');
         }
         return item;
+    }
+    shouldCountCounterEvent(event, id, source, windowMs) {
+        const sourceKey = this.counterSourceKey(source);
+        if (!sourceKey) {
+            return Promise.resolve(true);
+        }
+        return this.rateLimitService.debounce(`feed-ad:${event}:${id}:${sourceKey}`, windowMs);
+    }
+    counterSourceKey(source) {
+        const ip = source?.ip?.trim();
+        const userAgent = source?.userAgent?.trim();
+        if (!ip && !userAgent) {
+            return '';
+        }
+        return (0, crypto_1.createHash)('sha256')
+            .update(`${ip || 'unknown'}:${userAgent || 'unknown'}`)
+            .digest('hex');
     }
     async attachImage(authUser, feedAdId, file) {
         await this.ensureExists(feedAdId);
@@ -262,6 +300,7 @@ exports.FeedAdsService = FeedAdsService;
 exports.FeedAdsService = FeedAdsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        storage_service_1.StorageService])
+        storage_service_1.StorageService,
+        rate_limit_service_1.RateLimitService])
 ], FeedAdsService);
 //# sourceMappingURL=feed-ads.service.js.map

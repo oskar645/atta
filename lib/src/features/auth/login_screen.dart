@@ -600,7 +600,7 @@ class _LoginScreenState extends State<LoginScreen> {
     ValueChanged<String>? onChanged,
     ValueChanged<String>? onSubmitted,
     String labelText = 'Номер телефона',
-    String hintText = '928 123-45-67',
+    String hintText = '(___) ___-__-__',
     String? errorText,
   }) {
     return TextField(
@@ -1022,7 +1022,7 @@ class _PhoneRegistrationPhoneScreenState
             decoration: InputDecoration(
               prefixText: '+7 ',
               labelText: 'Номер телефона',
-              hintText: '928 123-45-67',
+              hintText: '(___) ___-__-__',
               errorText:
                   phoneInvalid ? 'Введите номер телефона полностью' : null,
             ),

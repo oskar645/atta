@@ -43,6 +43,46 @@ class ApiClient {
     _accountBlockedHandler = onAccountBlocked;
   }
 
+  static Future<void> awaitAuthorizedSessionReadyForRealtime() async {
+    final waiter = _authorizedSessionWaiter;
+    if (waiter == null) {
+      return;
+    }
+    await waiter();
+  }
+
+  static Future<void> awaitActiveRefreshForRealtime() async {
+    final refreshFuture = _refreshInFlight;
+    if (refreshFuture == null) {
+      return;
+    }
+    await refreshFuture;
+  }
+
+  static Future<bool> ensureFreshAuthorizedSessionForRealtime(
+    TokenStorage tokenStorage,
+  ) async {
+    await awaitAuthorizedSessionReadyForRealtime();
+    await awaitActiveRefreshForRealtime();
+    final token = await tokenStorage.readAccessToken();
+    if (token == null || token.trim().isEmpty) {
+      return false;
+    }
+    if (!_isJwtExpired(token)) {
+      return true;
+    }
+    return refreshAuthorizedSessionForRealtime();
+  }
+
+  static Future<bool> refreshAuthorizedSessionForRealtime() async {
+    final refreshed = await _tryRefreshSessionForRealtime();
+    if (refreshed) {
+      return true;
+    }
+    await _sessionExpiredHandler?.call();
+    return false;
+  }
+
   Future<dynamic> get(
     String path, {
     Map<String, dynamic>? queryParameters,
@@ -62,12 +102,14 @@ class ApiClient {
     String path, {
     Object? body,
     bool authorized = false,
+    bool sendAuthIfAvailable = false,
   }) {
     return _send(
       'POST',
       path,
       body: body,
       authorized: authorized,
+      sendAuthIfAvailable: sendAuthIfAvailable,
     );
   }
 
@@ -473,12 +515,16 @@ class ApiClient {
   }
 
   Future<bool> _tryRefreshSession() async {
+    final refreshed = await _tryRefreshSessionForRealtime();
+    return _resolveRefreshOutcome(refreshed);
+  }
+
+  static Future<bool> _tryRefreshSessionForRealtime() async {
     final existing = _refreshInFlight;
     if (existing != null) {
       return existing;
     }
-    final future = _performRefreshSession().then(_resolveRefreshOutcome,
-        onError: (_) => _resolveRefreshOutcome(false));
+    final future = _performRefreshSessionForRealtime();
     _refreshInFlight = future;
     try {
       return await future;
@@ -489,13 +535,43 @@ class ApiClient {
     }
   }
 
-  Future<bool> _performRefreshSession() async {
+  static Future<bool> _performRefreshSessionForRealtime() async {
     final refreshHandler = _refreshHandler;
     if (refreshHandler == null) {
       return false;
     }
     try {
       return await refreshHandler();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool _isJwtExpired(String? token) {
+    final raw = token?.trim() ?? '';
+    if (raw.isEmpty) {
+      return true;
+    }
+    final parts = raw.split('.');
+    if (parts.length < 2) {
+      return false;
+    }
+    try {
+      final payload = utf8.decode(
+        base64Url.decode(base64Url.normalize(parts[1])),
+      );
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map) {
+        return false;
+      }
+      final expRaw = decoded['exp'];
+      final expSeconds =
+          expRaw is num ? expRaw.toInt() : int.tryParse('$expRaw');
+      if (expSeconds == null) {
+        return false;
+      }
+      final nowSeconds = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
+      return expSeconds <= nowSeconds + 15;
     } catch (_) {
       return false;
     }
@@ -514,18 +590,10 @@ class ApiClient {
   }
 
   Future<void> _awaitActiveRefreshIfAny() async {
-    final refreshFuture = _refreshInFlight;
-    if (refreshFuture == null) {
-      return;
-    }
-    await refreshFuture;
+    await awaitActiveRefreshForRealtime();
   }
 
   Future<void> _awaitAuthorizedSessionReady() async {
-    final waiter = _authorizedSessionWaiter;
-    if (waiter == null) {
-      return;
-    }
-    await waiter();
+    await awaitAuthorizedSessionReadyForRealtime();
   }
 }

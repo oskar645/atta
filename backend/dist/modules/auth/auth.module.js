@@ -26,7 +26,7 @@ exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [
             app_visits_module_1.AppVisitsModule,
-            storage_module_1.StorageModule,
+            (0, common_1.forwardRef)(() => storage_module_1.StorageModule),
             wallet_module_1.WalletModule,
             user_blocks_module_1.UserBlocksModule,
             jwt_1.JwtModule.register({

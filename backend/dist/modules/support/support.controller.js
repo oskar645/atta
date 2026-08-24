@@ -37,15 +37,15 @@ let SupportController = class SupportController {
     listTickets(authUser) {
         return this.supportService.listMyTickets(authUser);
     }
-    uploadImage(authUser, request, file) {
-        this.rateLimitService.consumeOrThrow(`support:image:${authUser.userId}`, {
+    async uploadImage(authUser, request, file) {
+        await this.rateLimitService.consumeOrThrow(`support:image:${authUser.userId}`, {
             limit: 20,
             windowMs: 60 * 1000,
         });
         return this.supportService.uploadImage(authUser, this.supportService.requireImage(file, 5 * 1024 * 1024), request?.query?.ticketId?.toString().trim() || undefined);
     }
-    createTicket(request, authUser, body) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? 'create'), {
+    async createTicket(request, authUser, body) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? 'create'), {
             limit: 8,
             windowMs: 60 * 1000,
         });
@@ -56,8 +56,8 @@ let SupportController = class SupportController {
             imageUrl: body.imageUrl ?? body.image_url,
         });
     }
-    createBlockAppeal(request, authUser, body) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? 'block-appeal'), {
+    async createBlockAppeal(request, authUser, body) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? 'block-appeal'), {
             limit: 4,
             windowMs: 60 * 1000,
         });
@@ -69,8 +69,8 @@ let SupportController = class SupportController {
     getTicket(authUser, ticketId) {
         return this.supportService.getTicketForUser(authUser, ticketId);
     }
-    sendMessage(request, authUser, ticketId, body) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? ticketId), {
+    async sendMessage(request, authUser, ticketId, body) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(authUser.userId, request?.ip?.toString() ?? ticketId), {
             limit: 12,
             windowMs: 60 * 1000,
         });
@@ -96,7 +96,7 @@ __decorate([
     __param(2, (0, common_1.UploadedFile)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], SupportController.prototype, "uploadImage", null);
 __decorate([
     (0, common_1.Post)('tickets'),
@@ -105,7 +105,7 @@ __decorate([
     __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object, create_support_ticket_dto_1.CreateSupportTicketDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], SupportController.prototype, "createTicket", null);
 __decorate([
     (0, common_1.Post)('block-appeals'),
@@ -114,7 +114,7 @@ __decorate([
     __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object, create_support_ticket_dto_1.CreateSupportTicketDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], SupportController.prototype, "createBlockAppeal", null);
 __decorate([
     (0, common_1.Get)('tickets/:id'),
@@ -132,7 +132,7 @@ __decorate([
     __param(3, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object, String, send_support_message_dto_1.SendSupportMessageDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], SupportController.prototype, "sendMessage", null);
 __decorate([
     (0, common_1.Patch)('tickets/:id/close'),
@@ -159,8 +159,8 @@ let AdminSupportController = class AdminSupportController {
     getTicket(ticketId) {
         return this.supportService.getTicketForAdmin(ticketId);
     }
-    sendMessage(ticketId, body) {
-        this.rateLimitService.consumeOrThrow(`support:admin:${ticketId}`, {
+    async sendMessage(ticketId, body) {
+        await this.rateLimitService.consumeOrThrow(`support:admin:${ticketId}`, {
             limit: 20,
             windowMs: 60 * 1000,
         });
@@ -200,7 +200,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, send_support_message_dto_1.SendSupportMessageDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AdminSupportController.prototype, "sendMessage", null);
 __decorate([
     (0, common_1.Post)('contact-user'),

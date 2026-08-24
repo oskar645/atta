@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RateLimitModule = void 0;
 const common_1 = require("@nestjs/common");
+const redis_module_1 = require("../redis/redis.module");
 const rate_limit_service_1 = require("./rate-limit.service");
 let RateLimitModule = class RateLimitModule {
 };
@@ -15,6 +16,7 @@ exports.RateLimitModule = RateLimitModule;
 exports.RateLimitModule = RateLimitModule = __decorate([
     (0, common_1.Global)(),
     (0, common_1.Module)({
+        imports: [redis_module_1.RedisModule],
         providers: [rate_limit_service_1.RateLimitService],
         exports: [rate_limit_service_1.RateLimitService],
     })

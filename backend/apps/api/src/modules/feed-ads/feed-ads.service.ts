@@ -4,19 +4,26 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { FeedAdPlacement } from '@prisma/client';
+import { createHash } from 'crypto';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 
 type FeedAdInput = Record<string, unknown>;
+type CounterSource = { ip?: string; userAgent?: string };
+
+const FEED_AD_IMPRESSION_DEBOUNCE_MS = 30 * 1000;
+const FEED_AD_CLICK_DEBOUNCE_MS = 5 * 1000;
 
 @Injectable()
 export class FeedAdsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
+    private readonly rateLimitService: RateLimitService,
   ) {}
 
   private serialize(item: {
@@ -229,7 +236,21 @@ export class FeedAdsService {
     };
   }
 
-  async recordImpression(id: string) {
+  async recordImpression(id: string, source?: CounterSource) {
+    const shouldCount = await this.shouldCountCounterEvent(
+      'impression',
+      id,
+      source,
+      FEED_AD_IMPRESSION_DEBOUNCE_MS,
+    );
+    if (!shouldCount) {
+      return {
+        tracked: true,
+        id,
+        event: 'impression',
+      };
+    }
+
     await this.prisma.feedAd.update({
       where: { id },
       data: {
@@ -246,7 +267,21 @@ export class FeedAdsService {
     };
   }
 
-  async recordClick(id: string) {
+  async recordClick(id: string, source?: CounterSource) {
+    const shouldCount = await this.shouldCountCounterEvent(
+      'click',
+      id,
+      source,
+      FEED_AD_CLICK_DEBOUNCE_MS,
+    );
+    if (!shouldCount) {
+      return {
+        tracked: true,
+        id,
+        event: 'click',
+      };
+    }
+
     await this.prisma.feedAd.update({
       where: { id },
       data: {
@@ -273,6 +308,33 @@ export class FeedAdsService {
     }
 
     return item;
+  }
+
+  private shouldCountCounterEvent(
+    event: 'impression' | 'click',
+    id: string,
+    source: CounterSource | undefined,
+    windowMs: number,
+  ) {
+    const sourceKey = this.counterSourceKey(source);
+    if (!sourceKey) {
+      return Promise.resolve(true);
+    }
+    return this.rateLimitService.debounce(
+      `feed-ad:${event}:${id}:${sourceKey}`,
+      windowMs,
+    );
+  }
+
+  private counterSourceKey(source?: CounterSource) {
+    const ip = source?.ip?.trim();
+    const userAgent = source?.userAgent?.trim();
+    if (!ip && !userAgent) {
+      return '';
+    }
+    return createHash('sha256')
+      .update(`${ip || 'unknown'}:${userAgent || 'unknown'}`)
+      .digest('hex');
   }
 
   async attachImage(

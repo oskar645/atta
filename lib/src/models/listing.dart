@@ -170,6 +170,8 @@ class Listing {
   final String category;
   final String subcategory; // ✅ ДОБАВИЛИ
   final int price;
+  final int? previousPrice;
+  final DateTime? priceReducedAt;
 
   final String phone;
   final bool phoneHidden;
@@ -219,6 +221,8 @@ class Listing {
     required this.category,
     required this.subcategory,
     required this.price,
+    this.previousPrice,
+    this.priceReducedAt,
     required this.phone,
     required this.phoneHidden,
     required this.city,
@@ -310,6 +314,15 @@ class Listing {
   bool get hasShowcasePromotion => activeShowcase != null;
   bool get hasVipPromotion => activeVip != null || activeTurbo != null;
   bool get hasBumpPromotion => activeBump != null || activeTurbo != null;
+  bool get hasActivePriceReduction {
+    final oldPrice = previousPrice;
+    final reducedAt = priceReducedAt;
+    if (oldPrice == null || reducedAt == null || oldPrice <= price) {
+      return false;
+    }
+    return DateTime.now().difference(reducedAt).inHours < 48;
+  }
+
   String? get firstPhotoUrl {
     for (final item in photoItems) {
       final url = item.url.trim();
@@ -335,6 +348,20 @@ class Listing {
     if (v is DateTime) return v;
     if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
     return DateTime.now();
+  }
+
+  static DateTime? _parseOptionalDt(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is String) return DateTime.tryParse(v);
+    return null;
+  }
+
+  static int? _parseOptionalInt(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v.trim());
+    return null;
   }
 
   static List<String> _parseTextArray(dynamic v) {
@@ -437,6 +464,10 @@ class Listing {
       category: (row['category'] ?? '').toString(),
       subcategory: (row['subcategory'] ?? '').toString(),
       price: (row['price'] is num) ? (row['price'] as num).toInt() : 0,
+      previousPrice:
+          _parseOptionalInt(row['previous_price'] ?? row['previousPrice']),
+      priceReducedAt:
+          _parseOptionalDt(row['price_reduced_at'] ?? row['priceReducedAt']),
       phone: (row['phone'] ?? '').toString(),
       phoneHidden: row['phone_hidden'] == true,
       city: city,
@@ -503,6 +534,8 @@ class Listing {
       'category': category,
       'subcategory': subcategory,
       'price': price,
+      'previous_price': previousPrice,
+      'price_reduced_at': priceReducedAt?.toIso8601String(),
       'phone': phone,
       'phone_hidden': phoneHidden,
 

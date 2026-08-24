@@ -211,6 +211,97 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('price reduction is secondary and fits compact cards',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 160,
+            height: 222,
+            child: ListingCard(
+              listing: _listing(
+                price: 1190000,
+                previousPrice: 1250000,
+                priceReducedAt: DateTime.now(),
+              ),
+              isFav: false,
+              isSeen: false,
+              reviews: _FakeReviewsService(),
+              onToggleFav: (_) {},
+              onOpen: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final currentPrice = tester.widget<Text>(
+      find.byKey(const ValueKey('listing_current_price')),
+    );
+    final previousPrice = tester.widget<Text>(
+      find.byKey(const ValueKey('listing_previous_price')),
+    );
+    final arrow = tester.widget<Icon>(
+      find.byKey(const ValueKey('listing_price_down_arrow')),
+    );
+
+    expect(currentPrice.style?.fontSize, 15);
+    expect(currentPrice.style?.fontWeight, FontWeight.w800);
+    expect(previousPrice.data?.replaceAll('\u00a0', ' '), '1 250 000');
+    expect(
+        previousPrice.style?.fontSize, lessThan(currentPrice.style!.fontSize!));
+    expect(previousPrice.style?.decoration, TextDecoration.lineThrough);
+    expect(previousPrice.style?.fontSize, lessThan(8));
+    expect(arrow.icon, Icons.arrow_downward);
+    expect(arrow.size, 9);
+    expect(arrow.weight, 800);
+    expect(arrow.color, Colors.blue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('long reduced prices stay inside ordinary and VIP cards',
+      (tester) async {
+    for (final isVip in <bool>[false, true]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 160,
+              height: 222,
+              child: ListingCard(
+                listing: _listing(
+                  price: 999999999999,
+                  previousPrice: 1000000000000,
+                  priceReducedAt: DateTime.now(),
+                  vip: isVip,
+                ),
+                isFav: false,
+                isSeen: false,
+                reviews: _FakeReviewsService(),
+                onToggleFav: (_) {},
+                onOpen: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final cardRect = tester.getRect(find.byType(ListingCard));
+      final previousPriceRect =
+          tester.getRect(find.byKey(const ValueKey('listing_previous_price')));
+      final arrowRect = tester
+          .getRect(find.byKey(const ValueKey('listing_price_down_arrow')));
+
+      expect(previousPriceRect.right, lessThanOrEqualTo(cardRect.right));
+      expect(arrowRect.right, lessThanOrEqualTo(cardRect.right));
+      expect(arrowRect.bottom, lessThan(cardRect.bottom));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   for (final scenario in <({String name, int width, int height})>[
     (name: 'horizontal photo', width: 1200, height: 800),
     (name: 'vertical photo', width: 800, height: 1200),
@@ -307,6 +398,8 @@ Listing _listing({
   String title = 'Велосипед',
   String city = 'Москва',
   int price = 10000,
+  int? previousPrice,
+  DateTime? priceReducedAt,
   bool vip = false,
 }) {
   return Listing.fromMap(<String, dynamic>{
@@ -319,6 +412,9 @@ Listing _listing({
     'category': 'Транспорт',
     'subcategory': 'Велосипеды',
     'price': price,
+    if (previousPrice != null) 'previous_price': previousPrice,
+    if (priceReducedAt != null)
+      'price_reduced_at': priceReducedAt.toIso8601String(),
     'phone': '',
     'phone_hidden': false,
     'city': city,

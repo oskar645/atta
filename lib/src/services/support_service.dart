@@ -42,7 +42,10 @@ class SupportService {
   Timer? _adminTicketsPoller;
   bool _adminSessionActive = false;
   Future<List<Map<String, dynamic>>>? _adminTicketsInFlight;
+  Future<List<Map<String, dynamic>>>? _adminTicketsLoadMoreInFlight;
   DateTime? _lastAdminTicketsRefreshAt;
+  String? _adminTicketsNextCursor;
+  bool _adminTicketsHasMore = true;
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -516,9 +519,18 @@ class SupportService {
     }
 
     final future = () async {
-      final response = await _api.adminList();
+      final response = await _api.adminList(limit: 50);
       final items = await _filterHiddenAdminTickets(_extractItems(response));
       _adminTicketsCache = List<Map<String, dynamic>>.from(items);
+      _adminTicketsNextCursor =
+          (response['nextCursor'] ?? response['next_cursor'])
+              ?.toString()
+              .trim();
+      if ((_adminTicketsNextCursor ?? '').isEmpty) {
+        _adminTicketsNextCursor = null;
+      }
+      _adminTicketsHasMore =
+          response['hasMore'] == true && _adminTicketsNextCursor != null;
       _lastAdminTicketsRefreshAt = DateTime.now();
       _adminTicketsControllerFor().add(List<Map<String, dynamic>>.from(items));
       return items;
@@ -537,6 +549,52 @@ class SupportService {
     } finally {
       if (identical(_adminTicketsInFlight, future)) {
         _adminTicketsInFlight = null;
+      }
+    }
+  }
+
+  bool get canLoadMoreAdminTickets =>
+      _adminTicketsHasMore && _adminTicketsNextCursor != null;
+
+  Future<List<Map<String, dynamic>>> loadMoreAdminTickets() async {
+    final cursor = _adminTicketsNextCursor;
+    if (!_adminTicketsHasMore || cursor == null) {
+      return List<Map<String, dynamic>>.from(_adminTicketsCache);
+    }
+    final existing = _adminTicketsLoadMoreInFlight;
+    if (existing != null) return existing;
+    final future = () async {
+      final response = await _api.adminList(limit: 50, cursor: cursor);
+      final incoming = await _filterHiddenAdminTickets(_extractItems(response));
+      final byId = <String, Map<String, dynamic>>{
+        for (final item in _adminTicketsCache)
+          (item['id'] ?? '').toString(): item,
+      };
+      for (final item in incoming) {
+        final id = (item['id'] ?? '').toString();
+        if (id.isNotEmpty) byId[id] = item;
+      }
+      _adminTicketsCache = byId.values.toList(growable: false);
+      _adminTicketsNextCursor =
+          (response['nextCursor'] ?? response['next_cursor'])
+              ?.toString()
+              .trim();
+      if ((_adminTicketsNextCursor ?? '').isEmpty) {
+        _adminTicketsNextCursor = null;
+      }
+      _adminTicketsHasMore =
+          response['hasMore'] == true && _adminTicketsNextCursor != null;
+      _lastAdminTicketsRefreshAt = DateTime.now();
+      _adminTicketsControllerFor()
+          .add(List<Map<String, dynamic>>.from(_adminTicketsCache));
+      return List<Map<String, dynamic>>.from(_adminTicketsCache);
+    }();
+    _adminTicketsLoadMoreInFlight = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_adminTicketsLoadMoreInFlight, future)) {
+        _adminTicketsLoadMoreInFlight = null;
       }
     }
   }
@@ -599,6 +657,9 @@ class SupportService {
     _adminTicketsPoller = null;
     _adminTicketsCache = const <Map<String, dynamic>>[];
     _adminTicketsInFlight = null;
+    _adminTicketsLoadMoreInFlight = null;
+    _adminTicketsNextCursor = null;
+    _adminTicketsHasMore = true;
     _lastAdminTicketsRefreshAt = null;
     _adminTicketsController?.add(const <Map<String, dynamic>>[]);
   }

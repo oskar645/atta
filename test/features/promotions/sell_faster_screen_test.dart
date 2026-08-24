@@ -53,6 +53,132 @@ void main() {
     expect(find.textContaining('рубл'), findsNothing);
   });
 
+  testWidgets('showcase confirmation changes days and total price',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final walletService = _FakeWalletService();
+    final promotionsService = _FakePromotionsService(walletService);
+    final listingsService = _FakeListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<WalletService>.value(value: walletService),
+          Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: MaterialApp(
+          home: SellFasterScreen(listing: _listing()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester
+        .ensureVisible(find.widgetWithText(FilledButton, 'Подключить').first);
+    await tester.tap(find.widgetWithText(FilledButton, 'Подключить').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 день'), findsOneWidget);
+    expect(find.text('Срок: 1 день'), findsOneWidget);
+    expect(find.text('Стоимость: 230 бонусов'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Увеличить'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 дня'), findsOneWidget);
+    expect(find.text('Срок: 2 дня'), findsOneWidget);
+    expect(find.text('Стоимость: 460 бонусов'), findsOneWidget);
+  });
+
+  testWidgets('VIP confirmation shows 48-hour periods as calendar days',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final walletService = _FakeWalletService();
+    final promotionsService = _FakePromotionsService(walletService);
+    final listingsService = _FakeListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<WalletService>.value(value: walletService),
+          Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: MaterialApp(
+          home: SellFasterScreen(listing: _listing()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester
+        .ensureVisible(find.widgetWithText(FilledButton, 'Подключить').at(2));
+    await tester.tap(find.widgetWithText(FilledButton, 'Подключить').at(2));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 дня'), findsOneWidget);
+    expect(find.text('Срок: 2 дня'), findsOneWidget);
+    expect(find.text('Стоимость: 150 бонусов'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Увеличить'));
+    await tester.tap(find.byTooltip('Увеличить'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('6 дней'), findsOneWidget);
+    expect(find.text('Срок: 6 дней'), findsOneWidget);
+    expect(find.text('Стоимость: 450 бонусов'), findsOneWidget);
+  });
+
+  testWidgets('duration selector stops at 30 quantity steps', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 1600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final walletService = _FakeWalletService()..setBalance(10000);
+    final promotionsService = _FakePromotionsService(walletService);
+    final listingsService = _FakeListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<WalletService>.value(value: walletService),
+          Provider<PromotionsService>.value(value: promotionsService),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: MaterialApp(
+          home: SellFasterScreen(listing: _listing()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester
+        .ensureVisible(find.widgetWithText(FilledButton, 'Подключить').at(2));
+    await tester.tap(find.widgetWithText(FilledButton, 'Подключить').at(2));
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 40; i += 1) {
+      await tester.tap(find.byTooltip('Увеличить'));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+
+    expect(find.text('60 дней'), findsOneWidget);
+    expect(find.text('Стоимость: 4500 бонусов'), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.widgetWithIcon(IconButton, Icons.add),
+          )
+          .onPressed,
+      isNull,
+    );
+  });
+
   testWidgets('sell faster screen still shows plans when wallet failed',
       (tester) async {
     final walletService = _FailingWalletService();
@@ -174,7 +300,9 @@ class _FakePromotionsService extends PromotionsService {
   _FakePromotionsService(this.walletService);
 
   final _FakeWalletService walletService;
-  bool showcaseActive = false;
+  final Set<String> activeTypes = <String>{};
+  int? lastDays;
+  String? lastType;
 
   @override
   Future<List<PromotionPlan>> getPlans() async {
@@ -214,18 +342,35 @@ class _FakePromotionsService extends PromotionsService {
   Future<ListingPromotionState> getListingPromotionState(
       String listingId) async {
     return ListingPromotionState(
-      activePromotions: showcaseActive
-          ? [
-              ActivePromotion.fromMap({
-                'id': 'promo-1',
-                'type': 'showcase',
-                'title': 'Витрина ATTA',
-                'status': 'active',
-                'costBonus': 230,
-                'endsAt': '2026-06-20T10:00:00.000Z',
-              }),
-            ]
-          : const [],
+      activePromotions: [
+        if (activeTypes.contains('showcase'))
+          ActivePromotion.fromMap({
+            'id': 'promo-1',
+            'type': 'showcase',
+            'title': 'Витрина ATTA',
+            'status': 'active',
+            'costBonus': 230,
+            'endsAt': '2026-06-20T10:00:00.000Z',
+          }),
+        if (activeTypes.contains('bump'))
+          ActivePromotion.fromMap({
+            'id': 'promo-bump',
+            'type': 'bump',
+            'title': 'Поднятие',
+            'status': 'active',
+            'costBonus': 35,
+            'endsAt': '2026-06-20T10:00:00.000Z',
+          }),
+        if (activeTypes.contains('vip'))
+          ActivePromotion.fromMap({
+            'id': 'promo-vip',
+            'type': 'vip',
+            'title': 'VIP',
+            'status': 'active',
+            'costBonus': 150,
+            'endsAt': '2026-06-20T10:00:00.000Z',
+          }),
+      ],
       canPromote: true,
     );
   }
@@ -237,7 +382,9 @@ class _FakePromotionsService extends PromotionsService {
     int days = 1,
     String? idempotencyKey,
   }) async {
-    showcaseActive = true;
+    lastType = type;
+    lastDays = days;
+    activeTypes.add(type);
     walletService.setBalance(0);
     final listingMap = _listing().toMap();
     listingMap['promotions'] = <String, dynamic>{

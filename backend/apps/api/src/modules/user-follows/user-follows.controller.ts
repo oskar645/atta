@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -11,8 +11,15 @@ export class UserFollowsController {
   constructor(private readonly userFollowsService: UserFollowsService) {}
 
   @Get()
-  list(@CurrentUser() authUser: AuthenticatedUser) {
-    return this.userFollowsService.list(authUser);
+  list(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.userFollowsService.list(authUser, {
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @Get('seller/:sellerId/count')

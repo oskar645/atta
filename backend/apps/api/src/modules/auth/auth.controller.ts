@@ -40,8 +40,8 @@ export class AuthController {
   }
 
   @Post('signup')
-  signup(@Req() request: any, @Body() dto: SignupDto) {
-    this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup'), {
+  async signup(@Req() request: any, @Body() dto: SignupDto) {
+    await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup'), {
       limit: 6,
       windowMs: 60 * 1000,
     });
@@ -49,8 +49,8 @@ export class AuthController {
   }
 
   @Post('login')
-  login(@Req() request: any, @Body() dto: LoginDto) {
-    this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login'), {
+  async login(@Req() request: any, @Body() dto: LoginDto) {
+    await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login'), {
       limit: 8,
       windowMs: 60 * 1000,
     });
@@ -58,8 +58,8 @@ export class AuthController {
   }
 
   @Post('signup-phone')
-  signupPhone(@Req() request: any, @Body() dto: SignupPhoneDto) {
-    this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup-phone'), {
+  async signupPhone(@Req() request: any, @Body() dto: SignupPhoneDto) {
+    await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup-phone'), {
       limit: 6,
       windowMs: 60 * 1000,
     });
@@ -67,7 +67,7 @@ export class AuthController {
   }
 
   @Post('referrals/open')
-  recordReferralOpen(
+  async recordReferralOpen(
     @Req() request: any,
     @Body()
     dto: {
@@ -77,7 +77,7 @@ export class AuthController {
       app_opened?: boolean;
     },
   ) {
-    this.rateLimitService.consumeOrThrow(this.rateKey(request, 'referrals-open'), {
+    await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'referrals-open'), {
       limit: 30,
       windowMs: 60 * 1000,
     });
@@ -85,8 +85,8 @@ export class AuthController {
   }
 
   @Post('login-phone')
-  loginPhone(@Req() request: any, @Body() dto: LoginPhoneDto) {
-    this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login-phone'), {
+  async loginPhone(@Req() request: any, @Body() dto: LoginPhoneDto) {
+    await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login-phone'), {
       limit: 8,
       windowMs: 60 * 1000,
     });
@@ -94,8 +94,8 @@ export class AuthController {
   }
 
   @Post('reset-password-phone')
-  resetPasswordPhone(@Req() request: any, @Body() dto: ResetPasswordPhoneDto) {
-    this.rateLimitService.consumeOrThrow(
+  async resetPasswordPhone(@Req() request: any, @Body() dto: ResetPasswordPhoneDto) {
+    await this.rateLimitService.consumeOrThrow(
       this.rateKey(request, 'reset-password-phone'),
       {
         limit: 5,
@@ -129,6 +129,18 @@ export class AuthController {
     @Body() dto: LogoutDto,
   ) {
     return this.authService.logout(authUser, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/revoke-others')
+  revokeOtherSessions(@CurrentUser() authUser: AuthenticatedUser) {
+    return this.authService.revokeOtherSessions(authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/revoke-all')
+  revokeAllSessions(@CurrentUser() authUser: AuthenticatedUser) {
+    return this.authService.revokeAllSessions(authUser);
   }
 
   @UseGuards(JwtAuthGuard)

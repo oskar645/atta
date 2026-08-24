@@ -486,6 +486,57 @@ void main() {
     await service.awaitPrivateAuthReady();
     expect(service.currentUser, isNull);
   });
+
+  test('syncCurrentUserFromProfile updates live user and emits userUpdated',
+      () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(
+        uid: 'user-1',
+        email: 'user@example.com',
+        displayName: 'Old Name',
+        phone: '+79281234567',
+        phoneVerified: true,
+        photoUrl: 'https://example.com/avatar.jpg',
+        referralCode: 'REFERRAL_CODE_ABC',
+        isAdmin: true,
+      ),
+    );
+    final service = BackendAuthService(
+      authApi: _FakeAuthApi(),
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+    );
+    await service.ensureInitialized();
+
+    final eventFuture = service.onAuthStateChange.first;
+    final user = await service.syncCurrentUserFromProfile(
+      'user-1',
+      <String, dynamic>{
+        'display_name': 'New Name',
+      },
+    );
+
+    expect(user?.displayName, 'New Name');
+    expect(service.currentUser?.displayName, 'New Name');
+    expect(service.currentUser?.uid, 'user-1');
+    expect(service.currentUser?.email, 'user@example.com');
+    expect(service.currentUser?.phone, '+79281234567');
+    expect(service.currentUser?.phoneVerified, isTrue);
+    expect(service.currentUser?.photoUrl, 'https://example.com/avatar.jpg');
+    expect(service.currentUser?.referralCode, 'REFERRAL_CODE_ABC');
+    expect(service.currentUser?.isAdmin, isTrue);
+
+    final savedUser = await tokenStorage.readCurrentUser();
+    expect(savedUser?.displayName, 'New Name');
+    expect((await tokenStorage.readAccessToken()), 'access-token');
+    expect((await tokenStorage.readRefreshToken()), 'refresh-token');
+
+    final event = await eventFuture;
+    expect(event.type, AuthSessionEventType.userUpdated);
+  });
 }
 
 class _FakeAuthApi extends AuthApi {

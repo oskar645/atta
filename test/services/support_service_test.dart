@@ -645,7 +645,7 @@ class _FakeSupportApi extends SupportApi {
   }
 
   @override
-  Future<Map<String, dynamic>> adminList() async {
+  Future<Map<String, dynamic>> adminList({int? limit, String? cursor}) async {
     adminListCalls += 1;
     if (adminListError != null) {
       throw adminListError!;

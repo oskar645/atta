@@ -19,9 +19,11 @@ class SupportScreen extends StatefulWidget {
   const SupportScreen({
     super.key,
     this.initialTicketId,
+    this.initialDraftText,
   });
 
   final String? initialTicketId;
+  final String? initialDraftText;
 
   @override
   State<SupportScreen> createState() => _SupportScreenState();
@@ -57,6 +59,10 @@ class _SupportScreenState extends State<SupportScreen> {
   @override
   void initState() {
     super.initState();
+    final draft = widget.initialDraftText?.trim() ?? '';
+    if (draft.isNotEmpty) {
+      _text.text = draft;
+    }
     _loadMyTicket();
   }
 

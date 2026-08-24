@@ -51,6 +51,30 @@ let RedisService = class RedisService {
         const client = this.getClient();
         return client.get(key);
     }
+    async incr(key) {
+        const client = this.getClient();
+        return client.incr(key);
+    }
+    async expire(key, ttlSeconds) {
+        const client = this.getClient();
+        return client.expire(key, ttlSeconds);
+    }
+    async ttl(key) {
+        const client = this.getClient();
+        return client.ttl(key);
+    }
+    async sadd(key, value) {
+        const client = this.getClient();
+        return client.sadd(key, value);
+    }
+    async scard(key) {
+        const client = this.getClient();
+        return client.scard(key);
+    }
+    async setNxWithTtl(key, value, ttlSeconds) {
+        const client = this.getClient();
+        return client.set(key, value, 'EX', ttlSeconds, 'NX');
+    }
     async onModuleDestroy() {
         if (this.client) {
             await this.client.quit();

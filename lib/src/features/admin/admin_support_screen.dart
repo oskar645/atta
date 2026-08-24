@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:provider/provider.dart';
@@ -114,8 +116,48 @@ String _maskedPhone(String raw) {
   return '${digits.substring(0, 3)}***${digits.substring(digits.length - 2)}';
 }
 
-class AdminSupportTab extends StatelessWidget {
+class AdminSupportTab extends StatefulWidget {
   const AdminSupportTab({super.key});
+
+  @override
+  State<AdminSupportTab> createState() => _AdminSupportTabState();
+}
+
+class _AdminSupportTabState extends State<AdminSupportTab> {
+  final ScrollController _scrollController = ScrollController();
+  bool _loadingMore = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_maybeLoadMore);
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_maybeLoadMore)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients || _loadingMore) return;
+    if (_scrollController.position.extentAfter > 500) return;
+    final support = context.read<SupportService>();
+    if (!support.canLoadMoreAdminTickets) return;
+    unawaited(_loadMore());
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      await context.read<SupportService>().loadMoreAdminTickets();
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
+  }
 
   void _openUserProfile(BuildContext context, String uid) {
     if (uid.trim().isEmpty) return;
@@ -199,10 +241,23 @@ class AdminSupportTab extends StatelessWidget {
         }
 
         return ListView.separated(
+          controller: _scrollController,
           padding: const EdgeInsets.all(12),
-          itemCount: docs.length,
+          itemCount: docs.length + (_loadingMore ? 1 : 0),
           separatorBuilder: (_, __) => const SizedBox(height: 10),
           itemBuilder: (_, i) {
+            if (_loadingMore && i == docs.length) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            }
             final data = docs[i];
 
             final uid = _ticketUserId(data);

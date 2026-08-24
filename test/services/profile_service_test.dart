@@ -158,6 +158,82 @@ void main() {
       contains('new.jpg?v=2026-06-25T10%3A00%3A00.000Z'),
     );
   });
+
+  test('updateProfile returns fresh backend profile and updates cached user',
+      () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(
+        uid: 'user-1',
+        email: 'user@example.com',
+        displayName: 'Old Name',
+        phone: '+79281234567',
+        phoneVerified: true,
+        photoUrl: 'https://cdn.example.com/avatar.jpg',
+        isAdmin: true,
+      ),
+    );
+    final service = ProfileService(
+      tokenStorage: tokenStorage,
+      usersApi: _UpdateNameUsersApi(),
+    );
+
+    final updated = await service.updateProfile(
+      'user-1',
+      <String, dynamic>{
+        'display_name': 'New Name',
+        'name': 'New Name',
+      },
+    );
+
+    expect(updated['display_name'], 'New Name');
+    expect(service.getCachedProfile('user-1')['display_name'], 'New Name');
+
+    final savedUser = await tokenStorage.readCurrentUser();
+    expect(savedUser?.displayName, 'New Name');
+    expect(savedUser?.uid, 'user-1');
+    expect(savedUser?.email, 'user@example.com');
+    expect(savedUser?.phone, '+79281234567');
+    expect(savedUser?.phoneVerified, isTrue);
+    expect(savedUser?.photoUrl, 'https://cdn.example.com/avatar.jpg');
+    expect(savedUser?.isAdmin, isTrue);
+  });
+
+  test('updateProfile error leaves cached current user unchanged', () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(
+        uid: 'user-1',
+        displayName: 'Old Name',
+        phone: '+79281234567',
+        phoneVerified: true,
+      ),
+    );
+    final service = ProfileService(
+      tokenStorage: tokenStorage,
+      usersApi: _FailingUpdateUsersApi(),
+    );
+
+    await expectLater(
+      service.updateProfile(
+        'user-1',
+        <String, dynamic>{
+          'display_name': 'New Name',
+          'name': 'New Name',
+        },
+      ),
+      throwsException,
+    );
+
+    final savedUser = await tokenStorage.readCurrentUser();
+    expect(savedUser?.displayName, 'Old Name');
+    expect(savedUser?.phone, '+79281234567');
+    expect(savedUser?.phoneVerified, isTrue);
+  });
 }
 
 class _FakeMediaApi extends MediaApi {
@@ -218,6 +294,40 @@ class _StaleAvatarUsersApi extends UsersApi {
         'avatar_updated_at': '2026-06-20T10:00:00.000Z',
       },
     };
+  }
+}
+
+class _UpdateNameUsersApi extends UsersApi {
+  _UpdateNameUsersApi()
+      : super(
+          ApiClient(
+            tokenStorage: TokenStorage(),
+          ),
+        );
+
+  @override
+  Future<Map<String, dynamic>> updateMe(Map<String, dynamic> data) async {
+    return <String, dynamic>{
+      'user': <String, dynamic>{
+        'id': 'user-1',
+        'display_name': data['display_name'],
+        'name': data['name'],
+      },
+    };
+  }
+}
+
+class _FailingUpdateUsersApi extends UsersApi {
+  _FailingUpdateUsersApi()
+      : super(
+          ApiClient(
+            tokenStorage: TokenStorage(),
+          ),
+        );
+
+  @override
+  Future<Map<String, dynamic>> updateMe(Map<String, dynamic> data) async {
+    throw Exception('patch failed');
   }
 }
 

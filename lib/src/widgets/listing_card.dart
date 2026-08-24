@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/listing.dart';
 import '../services/favorites_service.dart';
 import '../services/reviews_service.dart';
-import '../utils/price_formatter.dart';
+import 'listing_price_row.dart';
 import 'listing_promotion_badges.dart';
 import 'media_preview_box.dart';
 
@@ -196,9 +196,8 @@ class ListingCard extends StatelessWidget {
                                   horizontal: hasVipPromotion ? 7 : 0,
                                   vertical: hasVipPromotion ? 2 : 0,
                                 ),
-                                child: Text(
-                                  '${formatPrice(listing.price)} ₽',
-                                  maxLines: 1,
+                                child: ListingPriceRow(
+                                  listing: listing,
                                   style: TextStyle(
                                     fontSize: 15,
                                     fontWeight: FontWeight.w800,

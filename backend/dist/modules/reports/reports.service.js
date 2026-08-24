@@ -147,7 +147,21 @@ let ReportsService = ReportsService_1 = class ReportsService {
     }
     async create(authUser, body) {
         const listingId = body.listingId?.trim() || null;
-        const reportedUserId = body.reportedUserId?.trim() || body.listingOwnerId?.trim() || null;
+        let reportedUserId = body.reportedUserId?.trim() || body.listingOwnerId?.trim() || null;
+        if (listingId) {
+            const listing = await this.prisma.listing.findUnique({
+                where: {
+                    id: listingId,
+                },
+                select: {
+                    ownerId: true,
+                },
+            });
+            if (!listing) {
+                throw new common_1.BadRequestException('Объявление для жалобы не найдено');
+            }
+            reportedUserId = listing.ownerId;
+        }
         if (!listingId && !reportedUserId) {
             throw new common_1.BadRequestException('Нужно указать объявление или пользователя для жалобы');
         }

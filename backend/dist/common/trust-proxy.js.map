@@ -1,0 +1,1 @@
+{"version":3,"file":"trust-proxy.js","sourceRoot":"","sources":["../../apps/api/src/common/trust-proxy.ts"],"names":[],"mappings":";;;AAMA,kDAEC;AAJY,QAAA,kBAAkB,GAAG,UAAU,CAAC;AAE7C,SAAgB,mBAAmB,CAAC,GAAmB;IACrD,GAAG,CAAC,GAAG,CAAC,aAAa,EAAE,0BAAkB,CAAC,CAAC;AAC7C,CAAC"}

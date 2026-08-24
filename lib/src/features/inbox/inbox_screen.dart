@@ -36,10 +36,12 @@ class InboxScreen extends StatefulWidget {
 class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
   bool _showUnreadOnly = false;
   StreamSubscription<List<Chat>>? _chatsSub;
+  final ScrollController _scrollController = ScrollController();
   String? _boundUid;
   List<Chat>? _items;
   bool _loading = true;
   bool _loadedOnce = false;
+  bool _loadingMore = false;
   String? _errorText;
   DateTime? _lastResumeRefreshAt;
 
@@ -49,6 +51,7 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _scrollController.addListener(_handleScroll);
   }
 
   @override
@@ -65,8 +68,33 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _scrollController.removeListener(_handleScroll);
+    _scrollController.dispose();
     _chatsSub?.cancel();
     super.dispose();
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients || _loadingMore || _showUnreadOnly) {
+      return;
+    }
+    final position = _scrollController.position;
+    if (position.extentAfter > 320) return;
+    final uid = _boundUid;
+    if (uid == null || uid.isEmpty) return;
+    final chat = context.read<ChatService>();
+    if (!chat.hasMoreChats) return;
+    unawaited(_loadMoreInbox(chat));
+  }
+
+  Future<void> _loadMoreInbox(ChatService chat) async {
+    if (_loadingMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      await chat.loadMoreChats();
+    } finally {
+      if (mounted) setState(() => _loadingMore = false);
+    }
   }
 
   @override
@@ -297,9 +325,12 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
     return RefreshIndicator(
       onRefresh: () => _refreshInbox(chat, uid),
       child: ListView.separated(
+        controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        itemCount: visibleItems.isEmpty ? 2 : visibleItems.length + 1,
+        itemCount: visibleItems.isEmpty
+            ? 2
+            : visibleItems.length + 1 + (_loadingMore ? 1 : 0),
         separatorBuilder: (_, index) =>
             index == 0 ? const SizedBox(height: 12) : const Divider(height: 1),
         itemBuilder: (_, i) {
@@ -328,6 +359,18 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
             );
           }
           if (chatIndex >= visibleItems.length) {
+            if (_loadingMore && chatIndex == visibleItems.length) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              );
+            }
             return const SizedBox.shrink();
           }
           final c = visibleItems[chatIndex];

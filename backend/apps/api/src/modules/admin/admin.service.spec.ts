@@ -275,6 +275,46 @@ test('moderator can approve listing with one photo', async () => {
   assert.equal(response.listing.photo_urls.length, 1);
 });
 
+test('moderator approval records price reduction from public snapshot', async () => {
+  let updateArgs: Record<string, any> | undefined;
+  const service = createApproveListingService({
+    photos: [listingPhoto('photo-1')],
+    status: ListingStatus.PENDING,
+    price: BigInt(9000),
+    moderationSnapshot: {
+      price: '10000',
+    },
+    onUpdate: (args) => {
+      updateArgs = args;
+    },
+  });
+
+  await service.approveListing('listing-1', adminUser);
+
+  assert.equal(updateArgs?.data.previousPrice, BigInt(10000));
+  assert.ok(updateArgs?.data.priceReducedAt instanceof Date);
+});
+
+test('moderator approval clears price reduction on public increase', async () => {
+  let updateArgs: Record<string, any> | undefined;
+  const service = createApproveListingService({
+    photos: [listingPhoto('photo-1')],
+    status: ListingStatus.PENDING,
+    price: BigInt(11000),
+    moderationSnapshot: {
+      price: '9000',
+    },
+    onUpdate: (args) => {
+      updateArgs = args;
+    },
+  });
+
+  await service.approveListing('listing-1', adminUser);
+
+  assert.equal(updateArgs?.data.previousPrice, null);
+  assert.equal(updateArgs?.data.priceReducedAt, null);
+});
+
 test('re-moderation without photos is rejected', async () => {
   const service = createApproveListingService({
     photos: [],
@@ -455,18 +495,33 @@ function createReferralSearchService() {
 function createApproveListingService(params: {
   photos: ReturnType<typeof listingPhoto>[];
   status: ListingStatus;
+  price?: bigint;
+  moderationSnapshot?: Record<string, unknown>;
   onUpdate?: (args: Record<string, any>) => void;
 }) {
   return new AdminService(
     {
       listing: {
-        findUnique: async () => listingForModeration(params.status, params.photos),
+        findUnique: async () =>
+          listingForModeration(params.status, params.photos, {
+            price: params.price,
+            moderationSnapshot: params.moderationSnapshot,
+          }),
         update: async (args: Record<string, any>) => {
           params.onUpdate?.(args);
           return {
             ...listingForModeration(
               (args.data as { status: ListingStatus }).status,
               params.photos,
+              {
+                price: params.price,
+                previousPrice:
+                  (args.data as { previousPrice?: bigint | null }).previousPrice ??
+                  null,
+                priceReducedAt:
+                  (args.data as { priceReducedAt?: Date | null }).priceReducedAt ??
+                  null,
+              },
             ),
             rejectionReason:
               (args.data as { rejectionReason?: string | null }).rejectionReason ??
@@ -497,6 +552,12 @@ function createApproveListingService(params: {
 function listingForModeration(
   status: ListingStatus,
   photos: ReturnType<typeof listingPhoto>[],
+  options?: {
+    price?: bigint;
+    previousPrice?: bigint | null;
+    priceReducedAt?: Date | null;
+    moderationSnapshot?: Record<string, unknown>;
+  },
 ) {
   const now = new Date('2026-08-04T10:00:00.000Z');
   return {
@@ -508,7 +569,9 @@ function listingForModeration(
     description: 'Description',
     category: 'misc',
     subcategory: '',
-    price: BigInt(100),
+    price: options?.price ?? BigInt(100),
+    previousPrice: options?.previousPrice ?? null,
+    priceReducedAt: options?.priceReducedAt ?? null,
     phone: '',
     phoneHidden: false,
     city: '',
@@ -552,6 +615,13 @@ function listingForModeration(
       adminProfile: null,
     },
     photos,
+    moderationRevisions: options?.moderationSnapshot
+      ? [
+          {
+            snapshot: options.moderationSnapshot,
+          },
+        ]
+      : [],
   };
 }
 

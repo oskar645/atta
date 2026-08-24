@@ -14,21 +14,27 @@ exports.PhoneVerificationService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const crypto_1 = require("crypto");
+const crypto_2 = require("crypto");
 const phone_1 = require("../../common/phone");
 const env_1 = require("../../config/env");
 const prisma_service_1 = require("../prisma/prisma.service");
+const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const PHONE_VERIFICATION_TTL_MS = 5 * 60 * 1000;
 const MAX_CHECK_ATTEMPTS = 5;
 const DEV_CALL_TO_PHONE = '+7 999 000-00-00';
+const SMS_SOURCE_UNIQUE_WINDOW_MS = 15 * 60 * 1000;
+const SMS_DEVICE_UNIQUE_PHONE_LIMIT = 50;
+const SMS_IP_UNIQUE_PHONE_LIMIT = 100;
 let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificationService {
-    constructor(prisma) {
+    constructor(prisma, rateLimitService) {
         this.prisma = prisma;
+        this.rateLimitService = rateLimitService;
         this.logger = new common_1.Logger(PhoneVerificationService_1.name);
     }
     async checkRegistration(phone) {
         const normalizedPhone = this.normalizeRussianPhone(phone);
         this.validatePhoneFormat(normalizedPhone);
-        // TODO: replace with Redis-based per-phone and per-IP rate limiting.
+        // Keep the existing per-phone cooldown stable; Redis only adds mass source detection.
         const user = await this.prisma.user.findUnique({
             where: {
                 phone: normalizedPhone,
@@ -45,14 +51,15 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 : 'Phone is available',
         };
     }
-    async startCallVerification(phone, purpose) {
+    async startCallVerification(phone, purpose, source) {
         const normalizedPhone = this.normalizeRussianPhone(phone);
         this.validatePhoneFormat(normalizedPhone);
         await this.rateLimitPlaceholder(normalizedPhone);
+        await this.enforceSmsCostAbuseLimit(normalizedPhone, source);
         const now = new Date();
         const expiresAt = new Date(now.getTime() + PHONE_VERIFICATION_TTL_MS);
         if (this.useFakeProvider()) {
-            const checkId = `fake-${(0, crypto_1.randomUUID)()}`;
+            const checkId = `fake-${(0, crypto_2.randomUUID)()}`;
             await this.storeVerificationAttempt({
                 phone: normalizedPhone,
                 purpose,
@@ -273,6 +280,20 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             throw this.createTooManyRequestsException(`Too many verification attempts for ${maskedPhone}`);
         }
     }
+    async enforceSmsCostAbuseLimit(phone, source) {
+        const signals = this.smsSourceSignals(source);
+        if (signals.length === 0) {
+            return;
+        }
+        const phoneHash = this.sha256(phone);
+        for (const signal of signals) {
+            const count = await this.rateLimitService.countUniqueValues(`phone:start:unique:${signal.kind}:${signal.key}`, phoneHash, SMS_SOURCE_UNIQUE_WINDOW_MS);
+            if (count != null && count > signal.limit) {
+                this.logger.warn(`Blocked SMS.ru mass verification source=${signal.kind} count=${count} limit=${signal.limit}`);
+                throw this.createTooManyRequestsException('Too many verification attempts. Попробуйте позже.');
+            }
+        }
+    }
     async storeVerificationAttempt(params) {
         return this.prisma.phoneVerification.create({
             data: {
@@ -329,6 +350,37 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
     }
     isDevVerification(checkId) {
         return checkId.trim().startsWith('fake-');
+    }
+    smsSourceSignals(source) {
+        const deviceId = source?.deviceId?.trim();
+        const ip = source?.ip?.trim();
+        const userAgent = source?.userAgent?.trim();
+        const signals = [];
+        if (deviceId) {
+            signals.push({
+                kind: 'device',
+                key: this.sha256(deviceId),
+                limit: SMS_DEVICE_UNIQUE_PHONE_LIMIT,
+            });
+        }
+        else if (ip || userAgent) {
+            signals.push({
+                kind: 'client',
+                key: this.sha256(`${ip || 'unknown'}:${userAgent || 'unknown'}`),
+                limit: SMS_DEVICE_UNIQUE_PHONE_LIMIT,
+            });
+        }
+        if (ip && ip !== 'unknown') {
+            signals.push({
+                kind: 'ip',
+                key: this.sha256(ip),
+                limit: SMS_IP_UNIQUE_PHONE_LIMIT,
+            });
+        }
+        return signals;
+    }
+    sha256(value) {
+        return (0, crypto_1.createHash)('sha256').update(value).digest('hex');
     }
     createTooManyRequestsException(message) {
         return new common_1.HttpException(message, common_1.HttpStatus.TOO_MANY_REQUESTS);
@@ -469,6 +521,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
 exports.PhoneVerificationService = PhoneVerificationService;
 exports.PhoneVerificationService = PhoneVerificationService = PhoneVerificationService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
+        rate_limit_service_1.RateLimitService])
 ], PhoneVerificationService);
 //# sourceMappingURL=phone-verification.service.js.map

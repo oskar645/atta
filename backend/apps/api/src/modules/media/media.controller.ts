@@ -61,11 +61,11 @@ export class MediaController {
   @UseGuards(JwtAuthGuard)
   @Post('avatar')
   @UseInterceptors(memoryImageUpload)
-  uploadAvatar(
+  async uploadAvatar(
     @CurrentUser() authUser: AuthenticatedUser,
     @UploadedFile() file?: UploadedImageFile,
   ) {
-    this.rateLimitService.consumeOrThrow(`media:avatar:${authUser.userId}`, {
+    await this.rateLimitService.consumeOrThrow(`media:avatar:${authUser.userId}`, {
       limit: 15,
       windowMs: 60 * 1000,
     });
@@ -78,13 +78,13 @@ export class MediaController {
   @UseGuards(JwtAuthGuard)
   @Post('listings/:listingId/photos')
   @UseInterceptors(memoryImageUpload)
-  uploadListingPhoto(
+  async uploadListingPhoto(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('listingId', new ParseUUIDPipe()) listingId: string,
     @Req() request: any,
     @UploadedFile() file?: UploadedImageFile,
   ) {
-    this.rateLimitService.consumeOrThrow(`media:listing:${authUser.userId}`, {
+    await this.rateLimitService.consumeOrThrow(`media:listing:${authUser.userId}`, {
       limit: 20,
       windowMs: 60 * 1000,
     });
@@ -116,12 +116,12 @@ export class MediaController {
   @UseGuards(JwtAuthGuard)
   @Post('chats/:chatId/images')
   @UseInterceptors(memoryImageUpload)
-  uploadChatImage(
+  async uploadChatImage(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('chatId', new ParseUUIDPipe()) chatId: string,
     @UploadedFile() file?: UploadedImageFile,
   ) {
-    this.rateLimitService.consumeOrThrow(`media:chat:${authUser.userId}`, {
+    await this.rateLimitService.consumeOrThrow(`media:chat:${authUser.userId}`, {
       limit: 20,
       windowMs: 60 * 1000,
     });
@@ -196,6 +196,46 @@ export class MediaController {
     response.send(bytes);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('support/file')
+  async getSupportFileByKey(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('key') key: string,
+    @Res() response: any,
+  ) {
+    const normalizedKey = key?.trim() ?? '';
+    if (!normalizedKey) {
+      throw new BadRequestException('Файл не найден');
+    }
+    if (authUser.role !== 'admin') {
+      const message = await this.prisma.supportMessage.findFirst({
+        where: {
+          text: {
+            contains: normalizedKey,
+          },
+          ticket: {
+            userId: authUser.userId,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+      if (!message) {
+        throw new ForbiddenException('Нет доступа к файлу');
+      }
+    }
+    const bytes = await this.storageService.readStoredFile(
+      'support',
+      normalizedKey,
+      's3',
+    );
+    this.debugProxyHit('support', normalizedKey, 's3', 200);
+    response.setHeader('Content-Type', this.detectMediaMime(normalizedKey));
+    response.setHeader('Cache-Control', 'private, max-age=300');
+    response.send(bytes);
+  }
+
   @Get('object')
   async getPublicObject(
     @Query('category') category: string,
@@ -206,8 +246,6 @@ export class MediaController {
       'avatars',
       'listings',
       'feed-ads',
-      'support',
-      'reports',
       'misc',
       'videos',
     ]);
@@ -221,21 +259,7 @@ export class MediaController {
     );
     this.debugProxyHit(category, key, 's3', 200);
     const lowerKey = key.toLowerCase();
-    const mimeType = lowerKey.endsWith('.png')
-      ? 'image/png'
-      : lowerKey.endsWith('.webp')
-        ? 'image/webp'
-        : lowerKey.endsWith('.heic')
-          ? 'image/heic'
-          : lowerKey.endsWith('.heif')
-            ? 'image/heif'
-            : lowerKey.endsWith('.mp4')
-              ? 'video/mp4'
-              : lowerKey.endsWith('.mov')
-                ? 'video/quicktime'
-                : lowerKey.endsWith('.webm')
-                  ? 'video/webm'
-                  : 'image/jpeg';
+    const mimeType = this.detectMediaMime(lowerKey);
     response.setHeader('Content-Type', mimeType);
     response.setHeader('Cache-Control', 'public, max-age=300');
     response.send(bytes);
@@ -263,7 +287,7 @@ export class MediaController {
     @CurrentUser() authUser: AuthenticatedUser,
     @UploadedFile() file?: UploadedImageFile,
   ) {
-    this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
+    await this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
       limit: 20,
       windowMs: 60 * 1000,
     });
@@ -387,6 +411,25 @@ export class MediaController {
       }
     }
     return null;
+  }
+
+  private detectMediaMime(key: string) {
+    const lowerKey = key.toLowerCase();
+    return lowerKey.endsWith('.png')
+      ? 'image/png'
+      : lowerKey.endsWith('.webp')
+        ? 'image/webp'
+        : lowerKey.endsWith('.heic')
+          ? 'image/heic'
+          : lowerKey.endsWith('.heif')
+            ? 'image/heif'
+            : lowerKey.endsWith('.mp4')
+              ? 'video/mp4'
+              : lowerKey.endsWith('.mov')
+                ? 'video/quicktime'
+                : lowerKey.endsWith('.webm')
+                  ? 'video/webm'
+                  : 'image/jpeg';
   }
 
   private async authenticateRequest(

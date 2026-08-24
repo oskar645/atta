@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
@@ -11,6 +13,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
+    ApiClient.configureAuthHandlers();
   });
 
   test('expected websocket close errors are treated as benign', () {
@@ -56,6 +59,44 @@ void main() {
     expect(factory.createdSockets.single.connectCalls, 1);
   });
 
+  test('socket.io options force a fresh manager and keep manual reconnect', () {
+    final options = ChatSocketService.buildSocketOptionsForTesting(
+      <String, dynamic>{'token': 'access-token'},
+    );
+
+    expect(options['transports'], <String>['websocket']);
+    expect(options['autoConnect'], isFalse);
+    expect(options['reconnection'], isFalse);
+    expect(options['forceNew'], isTrue);
+    expect(options.containsKey('multiplex'), isFalse);
+    expect(options['timeout'], 10000);
+    expect(options['auth'], <String, dynamic>{'token': 'access-token'});
+  });
+
+  test('disconnect then connect creates a fresh socket and manager attempt',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'first-token');
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    final firstSocket = factory.createdSockets.single;
+    await service.disconnect();
+    await _saveSession(storage, accessToken: 'second-token');
+
+    await service.connect(reason: 'after-disconnect');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.first, same(firstSocket));
+    expect(factory.createdSockets.last, isNot(same(firstSocket)));
+    expect(factory.createdSockets.last.auth['token'], 'second-token');
+    expect(firstSocket.disposeCalls, 1);
+  });
+
   test('force reconnect recreates a socket after a network change', () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -70,6 +111,8 @@ void main() {
 
     expect(factory.createdSockets, hasLength(2));
     expect(factory.createdSockets.last.connectCalls, 1);
+    expect(
+        factory.createdSockets.last, isNot(same(factory.createdSockets.first)));
   });
 
   test('explicit network recovery can retry a server-disconnected socket',
@@ -296,7 +339,7 @@ void main() {
     );
   });
 
-  test('successive server disconnects use 1s 2s 3s retry before cooldown',
+  test('successive server disconnects use 1s 2s 3s retry before normal backoff',
       () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -333,14 +376,14 @@ void main() {
     expect(factory.createdSockets, hasLength(4));
     factory.createdSockets.last.emitDisconnect('io server disconnect');
 
-    expect(service.hasPendingReconnect, isFalse);
+    expect(service.hasPendingReconnect, isTrue);
     expect(
-      service.debugHistory.last,
-      contains('cooldown=5s'),
+      service.debugHistory.any((entry) => entry.contains('normal_backoff')),
+      isTrue,
     );
   });
 
-  test('protective server disconnect cooldown backs off after more rejects',
+  test('repeated server disconnects keep reconnecting instead of cooldown',
       () async {
     final storage = TokenStorage();
     await _saveSession(storage);
@@ -361,13 +404,220 @@ void main() {
     }
 
     factory.createdSockets.last.emitDisconnect('io server disconnect');
-    expect(service.debugHistory.last, contains('cooldown=5s'));
+    expect(service.hasPendingReconnect, isTrue);
+    expect(
+      service.debugHistory.any((entry) => entry.contains('normal_backoff')),
+      isTrue,
+    );
 
-    await Future<void>.delayed(const Duration(milliseconds: 5100));
     await service.forceReconnect(reason: 'presence.resume');
     factory.createdSockets.last.emitDisconnect('io server disconnect');
 
-    expect(service.debugHistory.last, contains('cooldown=10s'));
+    expect(
+      service.debugHistory.any((entry) => entry.contains('cooldown=')),
+      isFalse,
+    );
+  });
+
+  test('connect waits for auth refresh gate before reading socket token',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final authReady = Completer<void>();
+    ApiClient.configureAuthHandlers(
+      onAwaitAuthorizedSession: () => authReady.future,
+    );
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    final connect = service.connect(reason: 'chat.ensureReady');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(factory.createdSockets, isEmpty);
+
+    authReady.complete();
+    await connect;
+
+    expect(factory.createdSockets, hasLength(1));
+    expect(factory.createdSockets.single.connectCalls, 1);
+  });
+
+  test('socket connect reads the current access token', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'old-token');
+    await _saveSession(storage, accessToken: 'current-token');
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+
+    expect(factory.createdSockets, hasLength(1));
+    expect(factory.createdSockets.single.auth['token'], 'current-token');
+  });
+
+  test('expired token refreshes before socket connect uses auth token',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: _jwt(expired: true));
+    final factory = _FakeSocketFactory(autoConnect: true);
+    var refreshCalls = 0;
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: () async {
+        refreshCalls += 1;
+        await _saveSession(storage, accessToken: 'fresh-token');
+        return true;
+      },
+      onSessionExpired: () async => storage.clear(),
+    );
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'login');
+
+    expect(refreshCalls, 1);
+    expect(factory.createdSockets, hasLength(1));
+    expect(factory.createdSockets.single.auth['token'], 'fresh-token');
+  });
+
+  test('forceReconnect after network change uses refreshed token', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'initial-token');
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    await _saveSession(storage, accessToken: 'network-token');
+    await service.forceReconnect(reason: 'network.changed');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.first.auth['token'], 'initial-token');
+    expect(factory.createdSockets.last.auth['token'], 'network-token');
+  });
+
+  test('fresh token is passed to every new socket connect attempt', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'token-1');
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    await _saveSession(storage, accessToken: 'token-2');
+    await service.forceReconnect(reason: 'vpn.off');
+    await _saveSession(storage, accessToken: 'token-3');
+    await service.forceReconnect(reason: 'wifi.mobile');
+
+    expect(
+      factory.createdSockets.map((socket) => socket.auth['token']),
+      <String>['token-1', 'token-2', 'token-3'],
+    );
+  });
+
+  test('timed out stale attempt is disposed and cannot break new success',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'initial-token');
+    final factory = _FakeSocketFactory(autoConnect: false);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+      connectAttemptTimeout: const Duration(milliseconds: 1),
+    );
+
+    await service.connect(reason: 'initial-timeout');
+    final staleSocket = factory.createdSockets.single;
+
+    expect(staleSocket.disposeCalls, 1);
+    expect(staleSocket.clearListenersCalls, greaterThan(0));
+    expect(service.hasPendingReconnect, isTrue);
+
+    await _saveSession(storage, accessToken: 'network-token');
+    final reconnect = service.forceReconnect(reason: 'network.changed');
+    await Future<void>.delayed(Duration.zero);
+    final nextSocket = factory.createdSockets.last;
+    nextSocket.emitConnect();
+    await reconnect;
+
+    staleSocket.emitConnect();
+    staleSocket.emitConnectError(TimeoutException('late stale error'));
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(nextSocket.connected, isTrue);
+    expect(service.isConnected, isTrue);
+    expect(service.hasPendingReconnect, isFalse);
+    expect(nextSocket.auth['token'], 'network-token');
+  });
+
+  test('resume recovery reconnect uses current token', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'initial-token');
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect(reason: 'initial');
+    factory.createdSockets.single.ackError =
+        TimeoutException('stale transport');
+    await _saveSession(storage, accessToken: 'resume-token');
+
+    await service.recoverAfterResume(reason: 'presence.resume');
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.auth['token'], 'resume-token');
+  });
+
+  test('auth rejection runs one refresh and one clean reconnect', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage, accessToken: 'stale-token');
+    final factory = _FakeSocketFactory(autoConnect: true);
+    var refreshCalls = 0;
+    ApiClient.configureAuthHandlers(
+      onRefreshSession: () async {
+        refreshCalls += 1;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        await _saveSession(storage, accessToken: 'fresh-token');
+        return true;
+      },
+      onSessionExpired: () async => storage.clear(),
+    );
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    final connect = service.connect(reason: 'login');
+    await Future<void>.delayed(Duration.zero);
+    final socket = factory.createdSockets.single;
+
+    socket.emitError(<String, dynamic>{
+      'message': 'Access token is invalid or expired',
+    });
+    socket.emitError(<String, dynamic>{
+      'message': 'Access token is invalid or expired',
+    });
+    socket.emitDisconnect('io server disconnect');
+    await connect;
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(refreshCalls, 1);
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.auth['token'], 'fresh-token');
+    expect(factory.createdSockets.last.connectCalls, 1);
   });
 
   test('stable connection resets server disconnect retry counter', () async {
@@ -420,10 +670,100 @@ void main() {
     expect(factory.createdSockets.last.connectCalls, 1);
     expect(
       service.debugHistory.any(
-        (entry) => entry.contains('Socket resume recovery joined'),
+        (entry) => entry.contains('Socket recovery joined'),
       ),
       isTrue,
     );
+  });
+
+  test('concurrent force reconnect calls share one recovery flow', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: false);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    final firstConnect = service.connect(reason: 'initial');
+    await Future<void>.delayed(Duration.zero);
+    factory.createdSockets.single.emitConnect();
+    await firstConnect;
+
+    final first = service.forceReconnect(reason: 'network.one');
+    final second = service.forceReconnect(reason: 'network.two');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.hasRecoveryInFlight, isTrue);
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connectCalls, 1);
+    expect(
+      service.debugHistory.any(
+        (entry) => entry.contains('Socket recovery joined reason=network.two'),
+      ),
+      isTrue,
+    );
+
+    factory.createdSockets.last.emitConnect();
+    await Future.wait<void>(<Future<void>>[first, second]);
+
+    expect(service.hasRecoveryInFlight, isFalse);
+    expect(factory.createdSockets, hasLength(2));
+  });
+
+  test('resume and network recovery do not create two replacement sockets',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: false);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    final initial = service.connect(reason: 'initial');
+    await Future<void>.delayed(Duration.zero);
+    factory.createdSockets.single.emitConnect();
+    await initial;
+
+    final network = service.forceReconnect(reason: 'network.changed');
+    final resume = service.recoverAfterResume(reason: 'app.resume');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(factory.createdSockets, hasLength(2));
+    expect(factory.createdSockets.last.connectCalls, 1);
+
+    factory.createdSockets.last.emitConnect();
+    await Future.wait<void>(<Future<void>>[network, resume]);
+
+    expect(factory.createdSockets, hasLength(2));
+  });
+
+  test('join waits for active recovery before emitting room join', () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: false);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    final initial = service.connect(reason: 'initial');
+    await Future<void>.delayed(Duration.zero);
+    factory.createdSockets.single.emitConnect();
+    await initial;
+
+    final reconnect = service.forceReconnect(reason: 'network.changed');
+    await Future<void>.delayed(Duration.zero);
+    final join = service.joinChat('chat-1', reason: 'network.rejoin');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(factory.createdSockets.last.emittedEvents, isEmpty);
+
+    factory.createdSockets.last.emitConnect();
+    await Future.wait<void>(<Future<void>>[reconnect, join]);
+
+    expect(factory.createdSockets.last.emittedEvents, contains('chat.join'));
   });
 
   test('auth rejection suppresses automatic server disconnect retry', () async {
@@ -791,12 +1131,29 @@ void main() {
   });
 }
 
-Future<void> _saveSession(TokenStorage storage) {
+Future<void> _saveSession(
+  TokenStorage storage, {
+  String accessToken = 'access-token',
+}) {
   return storage.saveSession(
-    accessToken: 'access-token',
+    accessToken: accessToken,
     refreshToken: 'refresh-token',
     currentUser: const AuthUser(uid: 'user-1'),
   );
+}
+
+String _jwt({required bool expired}) {
+  final exp = DateTime.now()
+          .toUtc()
+          .add(expired ? -const Duration(minutes: 1) : const Duration(hours: 1))
+          .millisecondsSinceEpoch ~/
+      1000;
+  String encode(Map<String, dynamic> value) {
+    return base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+  }
+
+  return '${encode(<String, dynamic>{'alg': 'none'})}.'
+      '${encode(<String, dynamic>{'exp': exp})}.signature';
 }
 
 class _FakeSocketFactory {
@@ -813,6 +1170,7 @@ class _FakeSocketFactory {
 
   ChatSocketClient create(String url, Map<String, dynamic> auth) {
     final socket = _FakeChatSocketClient(
+      auth: Map<String, dynamic>.from(auth),
       autoConnect: autoConnect,
       disconnectError: disconnectError,
       disposeError: disposeError,
@@ -824,11 +1182,13 @@ class _FakeSocketFactory {
 
 class _FakeChatSocketClient implements ChatSocketClient {
   _FakeChatSocketClient({
+    required this.auth,
     this.autoConnect = false,
     this.disconnectError,
     this.disposeError,
   });
 
+  final Map<String, dynamic> auth;
   final bool autoConnect;
   final Object? disconnectError;
   final Object? disposeError;
@@ -848,6 +1208,7 @@ class _FakeChatSocketClient implements ChatSocketClient {
   int disposeCalls = 0;
   int clearListenersCalls = 0;
   int emitWithAckCalls = 0;
+  final List<String> emittedEvents = <String>[];
   bool ackEnabled = true;
   Object? ackError;
   bool _connected = false;
@@ -899,7 +1260,9 @@ class _FakeChatSocketClient implements ChatSocketClient {
   }
 
   @override
-  void emit(String event, [Map<String, dynamic>? payload]) {}
+  void emit(String event, [Map<String, dynamic>? payload]) {
+    emittedEvents.add(event);
+  }
 
   @override
   Future<dynamic> emitWithAck(

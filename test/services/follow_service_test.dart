@@ -53,7 +53,7 @@ class _FakeUserFollowsApi extends UserFollowsApi {
   String? unfollowedSellerId;
 
   @override
-  Future<Map<String, dynamic>> list() async {
+  Future<Map<String, dynamic>> list({int? limit, String? cursor}) async {
     listCalls++;
     return <String, dynamic>{
       'items': items,

@@ -123,6 +123,9 @@ const buildProxyMediaUrl = (category: string, key: string) => {
   if (category === 'chats') {
     return `/media/chats/file?key=${encodeURIComponent(normalizedKey)}`;
   }
+  if (category === 'support') {
+    return `/media/support/file?key=${encodeURIComponent(normalizedKey)}`;
+  }
   return `/media/object?category=${encodeURIComponent(category)}&key=${encodeURIComponent(normalizedKey)}`;
 };
 
@@ -139,6 +142,42 @@ export const normalizeStoredMediaUrl = (
     return null;
   }
 
+  const preferredCategory = options?.category?.trim().toLowerCase() ??
+      inferCategoryFromKey(normalizeS3ObjectKey(options?.storageKey)) ??
+      '';
+  if (preferredCategory === 'support') {
+    try {
+      const parsed = trimmedUrl.startsWith('/')
+        ? new URL(trimmedUrl, 'https://local.invalid')
+        : new URL(trimmedUrl);
+      if (parsed.pathname === '/media/object') {
+        const key = parsed.searchParams.get('key');
+        if (key) {
+          return buildProxyMediaUrl('support', key);
+        }
+      }
+      const publicBase = env.MEDIA_PUBLIC_BASE_URL.replace(/\/+$/, '');
+      const publicBasePath = new URL(publicBase).pathname.replace(/\/+$/, '');
+      if (parsed.pathname.startsWith('/uploads/support/')) {
+        return buildProxyMediaUrl(
+          'support',
+          parsed.pathname.replace(/^\/uploads\/+/, ''),
+        );
+      }
+      if (
+        publicBasePath &&
+        parsed.pathname.startsWith(`${publicBasePath}/support/`)
+      ) {
+        return buildProxyMediaUrl(
+          'support',
+          parsed.pathname.slice(publicBasePath.length + 1),
+        );
+      }
+    } catch {
+      // Fall through to the generic normalizer.
+    }
+  }
+
   if (
     trimmedUrl.startsWith('/media/') ||
     trimmedUrl.startsWith('/uploads/') ||
@@ -149,9 +188,6 @@ export const normalizeStoredMediaUrl = (
 
   const providerHint = options?.providerHint?.trim().toLowerCase() ?? '';
   const storageKey = normalizeS3ObjectKey(options?.storageKey);
-  const preferredCategory = options?.category?.trim().toLowerCase() ??
-      inferCategoryFromKey(storageKey) ??
-      '';
   const isS3Candidate =
     providerHint === 's3' ||
     (providerHint !== 'local' &&
@@ -315,7 +351,26 @@ export const serializeListing = (
   options?: {
     favoriteCount?: number | null;
   },
-) => ({
+) => {
+  const price =
+    typeof listing.price === 'bigint'
+      ? Number(listing.price)
+      : Number(listing.price ?? 0);
+  const previousPrice =
+    listing.previousPrice == null
+      ? null
+      : typeof listing.previousPrice === 'bigint'
+        ? Number(listing.previousPrice)
+        : Number(listing.previousPrice);
+  const priceReducedAt = listing.priceReducedAt ?? null;
+  const hasActivePriceReduction =
+    previousPrice != null &&
+    Number.isFinite(previousPrice) &&
+    previousPrice > price &&
+    priceReducedAt != null &&
+    Date.now() - priceReducedAt.getTime() < 48 * 60 * 60 * 1000;
+
+  return {
   ...(() => {
     const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
     const normalizedPhone = normalizeRussianPhone(fallbackPhone) || fallbackPhone;
@@ -370,10 +425,9 @@ export const serializeListing = (
   description: listing.description,
   category: listing.category,
   subcategory: listing.subcategory,
-  price:
-    typeof listing.price === 'bigint'
-      ? Number(listing.price)
-      : Number(listing.price ?? 0),
+  price,
+  previous_price: hasActivePriceReduction ? previousPrice : null,
+  price_reduced_at: hasActivePriceReduction ? toIsoString(priceReducedAt) : null,
   phone_hidden: listing.phoneHidden,
   city: listing.city,
   address: listing.address,
@@ -429,7 +483,8 @@ export const serializeListing = (
         display_name: listing.ownerName,
         name: listing.ownerName,
       },
-});
+  };
+};
 
 export const serializeFavorite = (favorite: Favorite) => ({
   id: favorite.id,

@@ -1537,7 +1537,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
     if (city.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Укажите город или адрес объявления')),
+        const SnackBar(content: Text('Укажите город')),
       );
       return;
     }

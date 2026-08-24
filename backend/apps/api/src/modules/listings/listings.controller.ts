@@ -18,7 +18,6 @@ import { OptionalJwtAuthGuard } from '../auth/optional-jwt-auth.guard';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
-import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { ListingsService } from './listings.service';
 
@@ -31,12 +30,12 @@ export class ListingsController {
 
   @UseGuards(JwtAuthGuard)
   @Post()
-  create(
+  async create(
     @Req() request: any,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() dto: CreateListingDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       `listing:create:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`,
       {
         limit: 20,
@@ -71,10 +70,32 @@ export class ListingsController {
     });
   }
 
+  @Get('vip')
+  findVip(
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+    @Query('category') category?: string,
+  ) {
+    return this.listingsService.findVipListings({
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+      category,
+    });
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('my')
-  findMy(@CurrentUser() authUser: AuthenticatedUser) {
-    return this.listingsService.findMy(authUser);
+  findMy(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.listingsService.findMy(authUser, {
+      status,
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @UseGuards(OptionalJwtAuthGuard)
@@ -107,27 +128,21 @@ export class ListingsController {
   }
 
   @Post(':id/views')
+  @UseGuards(OptionalJwtAuthGuard)
   incrementView(
     @Param('id') id: string,
-    @Body() dto: IncrementListingViewDto,
+    @CurrentUser() authUser?: AuthenticatedUser,
   ) {
-    return this.listingsService.incrementView(
-      id,
-      dto.viewer_user_id,
-      dto.viewer_device_id,
-    );
+    return this.listingsService.incrementView(id, authUser);
   }
 
   @Post(':id/view')
+  @UseGuards(OptionalJwtAuthGuard)
   incrementViewAlias(
     @Param('id') id: string,
-    @Body() dto: IncrementListingViewDto,
+    @CurrentUser() authUser?: AuthenticatedUser,
   ) {
-    return this.listingsService.incrementView(
-      id,
-      dto.viewer_user_id,
-      dto.viewer_device_id,
-    );
+    return this.listingsService.incrementView(id, authUser);
   }
 
   @UseGuards(JwtAuthGuard)

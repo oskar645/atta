@@ -21,12 +21,12 @@ export class ReportsController {
   ) {}
 
   @Post()
-  create(
+  async create(
     @Req() request: any,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() body: CreateReportDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       `reports:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`,
       {
         limit: 10,

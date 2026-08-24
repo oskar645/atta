@@ -14,6 +14,8 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.StorageController = void 0;
 const common_1 = require("@nestjs/common");
+const admin_guard_1 = require("../auth/admin.guard");
+const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const create_file_upload_dto_1 = require("./dto/create-file-upload.dto");
 const create_upload_url_dto_1 = require("./dto/create-upload-url.dto");
 const delete_object_dto_1 = require("./dto/delete-object.dto");
@@ -76,6 +78,7 @@ __decorate([
 ], StorageController.prototype, "deleteObject", null);
 exports.StorageController = StorageController = __decorate([
     (0, common_1.Controller)('storage'),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
     __metadata("design:paramtypes", [storage_service_1.StorageService])
 ], StorageController);
 //# sourceMappingURL=storage.controller.js.map

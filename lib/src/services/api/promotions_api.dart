@@ -21,7 +21,7 @@ class PromotionsApi {
       authorized: true,
       body: {
         'type': type,
-        if (type == 'bump') 'days': days,
+        if (type == 'bump' || type == 'showcase' || type == 'vip') 'days': days,
         if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
       },
     );

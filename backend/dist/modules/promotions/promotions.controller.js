@@ -33,14 +33,23 @@ let PromotionsController = class PromotionsController {
     getShowcase() {
         return this.promotionsService.getShowcase();
     }
-    registerImpression(promotionId) {
-        return this.promotionsService.registerImpression(promotionId);
+    registerImpression(request, promotionId) {
+        return this.promotionsService.registerImpression(promotionId, this.counterSource(request));
     }
-    registerClick(promotionId) {
-        return this.promotionsService.registerClick(promotionId);
+    registerClick(request, promotionId) {
+        return this.promotionsService.registerClick(promotionId, this.counterSource(request));
     }
-    promoteListing(request, listingId, authUser, dto) {
-        this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
+    counterSource(request) {
+        const forwarded = `${request?.headers?.['x-forwarded-for'] ?? ''}`.trim();
+        return {
+            ip: `${request?.ip ?? ''}`.trim() ||
+                forwarded.split(',')[0]?.trim() ||
+                'unknown',
+            userAgent: `${request?.headers?.['user-agent'] ?? ''}`.trim(),
+        };
+    }
+    async promoteListing(request, listingId, authUser, dto) {
+        await this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
             limit: 20,
             windowMs: 60 * 60 * 1000,
         });
@@ -50,8 +59,8 @@ let PromotionsController = class PromotionsController {
             idempotencyKey: dto.idempotencyKey,
         });
     }
-    promoteShowcase(request, listingId, authUser) {
-        this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
+    async promoteShowcase(request, listingId, authUser) {
+        await this.rateLimitService.consumeOrThrow(`promotion:purchase:${authUser.userId}:${request?.ip?.toString() ?? listingId}`, {
             limit: 20,
             windowMs: 60 * 60 * 1000,
         });
@@ -84,16 +93,18 @@ __decorate([
 ], PromotionsController.prototype, "getShowcase", null);
 __decorate([
     (0, common_1.Post)('showcase/:promotionId/impression'),
-    __param(0, (0, common_1.Param)('promotionId')),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('promotionId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], PromotionsController.prototype, "registerImpression", null);
 __decorate([
     (0, common_1.Post)('showcase/:promotionId/click'),
-    __param(0, (0, common_1.Param)('promotionId')),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('promotionId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], PromotionsController.prototype, "registerClick", null);
 __decorate([
@@ -105,7 +116,7 @@ __decorate([
     __param(3, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, Object, create_promotion_dto_1.CreatePromotionDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], PromotionsController.prototype, "promoteListing", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
@@ -115,7 +126,7 @@ __decorate([
     __param(2, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], PromotionsController.prototype, "promoteShowcase", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),

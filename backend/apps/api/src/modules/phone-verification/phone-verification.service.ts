@@ -11,6 +11,7 @@ import {
   PhoneVerificationStatus,
   Prisma,
 } from '@prisma/client';
+import { createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 
 import {
@@ -20,26 +21,38 @@ import {
 } from '../../common/phone';
 import { env } from '../../config/env';
 import { PrismaService } from '../prisma/prisma.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 
 type VerificationPurpose = 'signup' | 'login' | 'reset_password';
 
 type SmsRuResponse = Record<string, unknown>;
+type VerificationSource = {
+  deviceId?: string;
+  ip?: string;
+  userAgent?: string;
+};
 
 const PHONE_VERIFICATION_TTL_MS = 5 * 60 * 1000;
 const MAX_CHECK_ATTEMPTS = 5;
 const DEV_CALL_TO_PHONE = '+7 999 000-00-00';
+const SMS_SOURCE_UNIQUE_WINDOW_MS = 15 * 60 * 1000;
+const SMS_DEVICE_UNIQUE_PHONE_LIMIT = 50;
+const SMS_IP_UNIQUE_PHONE_LIMIT = 100;
 
 @Injectable()
 export class PhoneVerificationService {
   private readonly logger = new Logger(PhoneVerificationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly rateLimitService: RateLimitService,
+  ) {}
 
   async checkRegistration(phone: string) {
     const normalizedPhone = this.normalizeRussianPhone(phone);
     this.validatePhoneFormat(normalizedPhone);
 
-    // TODO: replace with Redis-based per-phone and per-IP rate limiting.
+    // Keep the existing per-phone cooldown stable; Redis only adds mass source detection.
     const user = await this.prisma.user.findUnique({
       where: {
         phone: normalizedPhone,
@@ -58,10 +71,15 @@ export class PhoneVerificationService {
     };
   }
 
-  async startCallVerification(phone: string, purpose: VerificationPurpose) {
+  async startCallVerification(
+    phone: string,
+    purpose: VerificationPurpose,
+    source?: VerificationSource,
+  ) {
     const normalizedPhone = this.normalizeRussianPhone(phone);
     this.validatePhoneFormat(normalizedPhone);
     await this.rateLimitPlaceholder(normalizedPhone);
+    await this.enforceSmsCostAbuseLimit(normalizedPhone, source);
 
     const now = new Date();
     const expiresAt = new Date(now.getTime() + PHONE_VERIFICATION_TTL_MS);
@@ -344,6 +362,30 @@ export class PhoneVerificationService {
     }
   }
 
+  async enforceSmsCostAbuseLimit(phone: string, source?: VerificationSource) {
+    const signals = this.smsSourceSignals(source);
+    if (signals.length === 0) {
+      return;
+    }
+
+    const phoneHash = this.sha256(phone);
+    for (const signal of signals) {
+      const count = await this.rateLimitService.countUniqueValues(
+        `phone:start:unique:${signal.kind}:${signal.key}`,
+        phoneHash,
+        SMS_SOURCE_UNIQUE_WINDOW_MS,
+      );
+      if (count != null && count > signal.limit) {
+        this.logger.warn(
+          `Blocked SMS.ru mass verification source=${signal.kind} count=${count} limit=${signal.limit}`,
+        );
+        throw this.createTooManyRequestsException(
+          'Too many verification attempts. Попробуйте позже.',
+        );
+      }
+    }
+  }
+
   async storeVerificationAttempt(params: {
     phone: string;
     purpose: VerificationPurpose;
@@ -432,6 +474,41 @@ export class PhoneVerificationService {
 
   private isDevVerification(checkId: string) {
     return checkId.trim().startsWith('fake-');
+  }
+
+  private smsSourceSignals(source?: VerificationSource) {
+    const deviceId = source?.deviceId?.trim();
+    const ip = source?.ip?.trim();
+    const userAgent = source?.userAgent?.trim();
+    const signals: Array<{ kind: string; key: string; limit: number }> = [];
+
+    if (deviceId) {
+      signals.push({
+        kind: 'device',
+        key: this.sha256(deviceId),
+        limit: SMS_DEVICE_UNIQUE_PHONE_LIMIT,
+      });
+    } else if (ip || userAgent) {
+      signals.push({
+        kind: 'client',
+        key: this.sha256(`${ip || 'unknown'}:${userAgent || 'unknown'}`),
+        limit: SMS_DEVICE_UNIQUE_PHONE_LIMIT,
+      });
+    }
+
+    if (ip && ip !== 'unknown') {
+      signals.push({
+        kind: 'ip',
+        key: this.sha256(ip),
+        limit: SMS_IP_UNIQUE_PHONE_LIMIT,
+      });
+    }
+
+    return signals;
+  }
+
+  private sha256(value: string) {
+    return createHash('sha256').update(value).digest('hex');
   }
 
   private createTooManyRequestsException(message: string) {

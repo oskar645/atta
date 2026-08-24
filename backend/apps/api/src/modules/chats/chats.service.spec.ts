@@ -196,6 +196,142 @@ test('sendMessage with duplicate clientMessageId returns existing message once',
   assert.equal(createCalled, false);
 });
 
+test('sendMessage allows repeated identical text without content-based spam blocking', async () => {
+  let createCount = 0;
+  const service = new ChatsService(
+    {
+      chat: {
+        findUnique: async () => createChat(),
+        aggregate: chatAggregate({ unreadForBuyer: 0, unreadForSeller: 0 }),
+      },
+      $transaction: async (
+        callback: (tx: {
+          chatMessage: { create: () => Promise<ReturnType<typeof createMessage>> };
+          chat: {
+            update: () => Promise<void>;
+            findUniqueOrThrow: () => Promise<ReturnType<typeof createChat>>;
+          };
+        }) => Promise<unknown>,
+      ) =>
+        callback({
+          chatMessage: {
+            create: async () => ({
+              ...createMessage(),
+              id: `message-${++createCount}`,
+            }),
+          },
+          chat: {
+            update: async () => undefined,
+            findUniqueOrThrow: async () => createChat(),
+          },
+        }),
+    } as never,
+    {
+      getPresenceMap: async () => new Map(),
+    } as never,
+    {} as never,
+  );
+
+  for (let index = 0; index < 10; index += 1) {
+    const result = await service.sendMessage(
+      {
+        userId: 'seller-1',
+        role: 'user',
+      } as never,
+      'chat-1',
+      {
+        text: 'Здравствуйте',
+      },
+    );
+    assert.equal(result.created, true);
+  }
+
+  assert.equal(createCount, 10);
+});
+
+test('sendMessage rejects when either participant has peer-blocked the other', async () => {
+  let createCalled = false;
+  const service = new ChatsService(
+    {
+      chat: {
+        findUnique: async () => createChat(),
+      },
+      chatPeerBlock: {
+        findFirst: async () => ({
+          id: 'block-1',
+          blockerUserId: 'buyer-1',
+          blockedUserId: 'seller-1',
+          createdAt: baseDate,
+        }),
+      },
+      $transaction: async () => {
+        createCalled = true;
+      },
+    } as never,
+    {
+      getPresenceMap: async () => new Map(),
+    } as never,
+    {} as never,
+  );
+
+  await assert.rejects(
+    () =>
+      service.sendMessage(
+        {
+          userId: 'seller-1',
+          role: 'user',
+        } as never,
+        'chat-1',
+        {
+          text: 'Здравствуйте',
+        },
+      ),
+    /Пользователь заблокирован/,
+  );
+  assert.equal(createCalled, false);
+});
+
+test('hideChatForMe only marks the current participant deleted marker', async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const service = new ChatsService(
+    {
+      chat: {
+        findUnique: async () => createChat(),
+        update: async (args: Record<string, unknown>) => {
+          updates.push(args);
+          return {
+            ...createChat(),
+            deletedByBuyerAt: new Date('2026-08-20T12:00:00.000Z'),
+          };
+        },
+        aggregate: chatAggregate({ unreadForBuyer: 0, unreadForSeller: 0 }),
+      },
+    } as never,
+    {
+      getPresenceMap: async () => new Map(),
+    } as never,
+    {
+      buildProtectedChatUrl: () => '',
+    } as never,
+  );
+
+  const result = await service.hideChatForMe(
+    {
+      userId: 'buyer-1',
+      role: 'user',
+    } as never,
+    'chat-1',
+  );
+
+  assert.equal(result.hidden, true);
+  assert.equal(result.viewerId, 'buyer-1');
+  assert.equal(updates.length, 1);
+  assert.deepEqual(Object.keys(updates[0]?.['data'] as Record<string, unknown>), [
+    'deletedByBuyerAt',
+    'unreadForBuyer',
+  ]);
+});
+
 test('listChats sorts by lastMessageAt desc and keeps empty chats below', async () => {
   const oldChat = {
     ...createChat(),
@@ -459,12 +595,11 @@ test('listChats returns separate chats for same participants with different list
   } as never);
 
   assert.equal(result.items.length, 2);
-  assert.equal(result.items[0].id, 'chat-bmw');
-  assert.equal(result.items[0].listingId, 'listing-bmw');
-  assert.equal(result.items[0].listingPreview.title, 'BMW');
-  assert.equal(result.items[1].id, 'chat-mercedes');
-  assert.equal(result.items[1].listingId, 'listing-mercedes');
-  assert.equal(result.items[1].listingPreview.title, 'Mercedes');
+  const byId = new Map(result.items.map((item) => [item.id, item]));
+  assert.equal(byId.get('chat-bmw')?.listingId, 'listing-bmw');
+  assert.equal(byId.get('chat-bmw')?.listingPreview.title, 'BMW');
+  assert.equal(byId.get('chat-mercedes')?.listingId, 'listing-mercedes');
+  assert.equal(byId.get('chat-mercedes')?.listingPreview.title, 'Mercedes');
   assert.equal(result.unreadTotal, 3);
 });
 

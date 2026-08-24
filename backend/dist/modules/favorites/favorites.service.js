@@ -13,22 +13,58 @@ exports.FavoritesService = void 0;
 const common_1 = require("@nestjs/common");
 const serializers_1 = require("../../common/serializers");
 const prisma_service_1 = require("../prisma/prisma.service");
+const pageLimit = (value) => Math.max(1, Math.min(Number.isFinite(value ?? NaN) ? value : 50, 100));
+const encodeCursor = (payload) => Buffer.from(JSON.stringify(payload)).toString('base64url');
+const decodeCursor = (cursor) => {
+    const raw = cursor?.trim();
+    if (!raw)
+        return null;
+    try {
+        const decoded = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+        return decoded && typeof decoded === 'object' ? decoded : null;
+    }
+    catch {
+        return null;
+    }
+};
 let FavoritesService = class FavoritesService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    async list(authUser) {
+    async list(authUser, params) {
+        const limit = pageLimit(params?.limit);
+        const cursor = decodeCursor(params?.cursor);
+        const cursorDate = cursor ? new Date(cursor.createdAt) : null;
+        const cursorId = cursor?.id ?? '';
         const favorites = await this.prisma.favorite.findMany({
             where: {
                 userId: authUser.userId,
+                ...(cursorDate && !Number.isNaN(cursorDate.getTime())
+                    ? {
+                        OR: [
+                            { createdAt: { lt: cursorDate } },
+                            { createdAt: cursorDate, id: { lt: cursorId } },
+                        ],
+                    }
+                    : {}),
             },
-            orderBy: {
-                createdAt: 'desc',
-            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit + 1,
         });
+        const pageItems = favorites.slice(0, limit);
+        const hasMore = favorites.length > limit;
+        const last = hasMore ? pageItems[pageItems.length - 1] : null;
         return {
-            items: favorites.map((favorite) => (0, serializers_1.serializeFavorite)(favorite)),
-            favorite_ids: favorites.map((favorite) => favorite.listingId),
+            items: pageItems.map((favorite) => (0, serializers_1.serializeFavorite)(favorite)),
+            favorite_ids: pageItems.map((favorite) => favorite.listingId),
+            nextCursor: last
+                ? encodeCursor({
+                    createdAt: last.createdAt.toISOString(),
+                    id: last.id,
+                })
+                : null,
+            hasMore,
+            limit,
         };
     }
     async add(authUser, listingId) {

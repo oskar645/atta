@@ -39,43 +39,43 @@ let AuthController = class AuthController {
             'unknown';
         return `auth:${action}:${ip}`;
     }
-    signup(request, dto) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup'), {
+    async signup(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup'), {
             limit: 6,
             windowMs: 60 * 1000,
         });
         return this.authService.signup(dto);
     }
-    login(request, dto) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login'), {
+    async login(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login'), {
             limit: 8,
             windowMs: 60 * 1000,
         });
         return this.authService.login(dto);
     }
-    signupPhone(request, dto) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup-phone'), {
+    async signupPhone(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'signup-phone'), {
             limit: 6,
             windowMs: 60 * 1000,
         });
         return this.authService.signupPhone(dto);
     }
-    recordReferralOpen(request, dto) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'referrals-open'), {
+    async recordReferralOpen(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'referrals-open'), {
             limit: 30,
             windowMs: 60 * 1000,
         });
         return this.authService.recordReferralAppOpen(dto);
     }
-    loginPhone(request, dto) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login-phone'), {
+    async loginPhone(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'login-phone'), {
             limit: 8,
             windowMs: 60 * 1000,
         });
         return this.authService.loginPhone(dto);
     }
-    resetPasswordPhone(request, dto) {
-        this.rateLimitService.consumeOrThrow(this.rateKey(request, 'reset-password-phone'), {
+    async resetPasswordPhone(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'reset-password-phone'), {
             limit: 5,
             windowMs: 60 * 1000,
         });
@@ -93,6 +93,12 @@ let AuthController = class AuthController {
     logout(authUser, dto) {
         return this.authService.logout(authUser, dto);
     }
+    revokeOtherSessions(authUser) {
+        return this.authService.revokeOtherSessions(authUser);
+    }
+    revokeAllSessions(authUser) {
+        return this.authService.revokeAllSessions(authUser);
+    }
     deleteAccount(authUser) {
         return this.authService.deleteAccount(authUser);
     }
@@ -104,7 +110,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, signup_dto_1.SignupDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "signup", null);
 __decorate([
     (0, common_1.Post)('login'),
@@ -112,7 +118,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, login_dto_1.LoginDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "login", null);
 __decorate([
     (0, common_1.Post)('signup-phone'),
@@ -120,7 +126,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, signup_phone_dto_1.SignupPhoneDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "signupPhone", null);
 __decorate([
     (0, common_1.Post)('referrals/open'),
@@ -128,7 +134,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "recordReferralOpen", null);
 __decorate([
     (0, common_1.Post)('login-phone'),
@@ -136,7 +142,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, login_phone_dto_1.LoginPhoneDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "loginPhone", null);
 __decorate([
     (0, common_1.Post)('reset-password-phone'),
@@ -144,7 +150,7 @@ __decorate([
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, reset_password_phone_dto_1.ResetPasswordPhoneDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], AuthController.prototype, "resetPasswordPhone", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
@@ -178,6 +184,22 @@ __decorate([
     __metadata("design:paramtypes", [Object, logout_dto_1.LogoutDto]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "logout", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('sessions/revoke-others'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "revokeOtherSessions", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('sessions/revoke-all'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "revokeAllSessions", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Delete)('account'),

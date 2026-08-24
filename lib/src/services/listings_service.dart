@@ -1,5 +1,5 @@
-// lib/src/services/listings_service.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:atta/src/models/car_specs.dart';
@@ -87,6 +87,18 @@ class CreateListingResult {
 
 class ListingsFeedPage {
   const ListingsFeedPage({
+    required this.items,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<Listing> items;
+  final bool hasMore;
+  final String? nextCursor;
+}
+
+class MyListingsPage {
+  const MyListingsPage({
     required this.items,
     required this.hasMore,
     this.nextCursor,
@@ -382,6 +394,47 @@ class ListingsService {
     }
   }
 
+  Future<ListingsFeedPage> getVipListingsPage({
+    int limit = 20,
+    String? cursor,
+    String category = 'Все',
+  }) async {
+    final effectiveCategory = category.trim().isEmpty ? 'Все' : category.trim();
+    final requestKey = [
+      'vip',
+      effectiveCategory,
+      limit,
+      (cursor ?? '').trim(),
+    ].join('|');
+    final existing = _feedPageInFlight[requestKey];
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = () async {
+      final response = await _api.vipListings(
+        limit: limit,
+        cursor: cursor,
+        category: _isAllCategory(effectiveCategory) ? null : effectiveCategory,
+      );
+      final items = _extractItems(response);
+      _cacheListings(items);
+      return ListingsFeedPage(
+        items: items,
+        hasMore: response['hasMore'] == true || response['has_more'] == true,
+        nextCursor: _extractNextCursor(response),
+      );
+    }();
+    _feedPageInFlight[requestKey] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_feedPageInFlight[requestKey], future)) {
+        _feedPageInFlight.remove(requestKey);
+      }
+    }
+  }
+
   List<Listing> peekListings({
     required String category,
     required String search,
@@ -404,9 +457,87 @@ class ListingsService {
     _debugSource('Listings source: Timeweb');
     final items = await _fetchMyListings(
       uid,
+      statuses: statuses,
       forceRefresh: forceRefresh,
     );
     return items.where((item) => statuses.contains(item.status)).toList();
+  }
+
+  Future<MyListingsPage> getMyListingsPageByStatuses(
+    String uid, {
+    required Set<String> statuses,
+    int limit = 20,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    if (runtimeType != ListingsService) {
+      if ((cursor ?? '').trim().isNotEmpty) {
+        return const MyListingsPage(items: <Listing>[], hasMore: false);
+      }
+      final items = await getMyListingsByStatuses(
+        uid,
+        statuses: statuses,
+        forceRefresh: forceRefresh,
+      );
+      return MyListingsPage(items: items, hasMore: false);
+    }
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) {
+      return const MyListingsPage(items: <Listing>[], hasMore: false);
+    }
+    _debugSource('Listings source: Timeweb');
+    final statusList = statuses.toList(growable: false)..sort();
+    if (statusList.isEmpty) {
+      return const MyListingsPage(items: <Listing>[], hasMore: false);
+    }
+
+    var cursorState = _decodeMyListingsCursor(cursor);
+    var statusIndex = cursorState.statusIndex.clamp(0, statusList.length - 1);
+    String? statusCursor = cursorState.cursor;
+    final collected = <Listing>[];
+    final seen = <String>{};
+    String? nextCursor;
+    var hasMore = false;
+
+    while (statusIndex < statusList.length && collected.isEmpty) {
+      final response = await _api.myListings(
+        status: statusList[statusIndex],
+        limit: limit,
+        cursor: statusCursor,
+      );
+      for (final item in _sanitizeMyListings(
+        _extractItems(response),
+        currentUserId: normalizedUid,
+      )) {
+        if (statuses.contains(item.status) && seen.add(item.id)) {
+          collected.add(item);
+        }
+      }
+      _cacheListings(collected);
+      _syncMyListingsPageCache(
+        normalizedUid,
+        statuses: statuses,
+        items: collected,
+        reset: (cursor ?? '').trim().isEmpty,
+      );
+      final responseCursor = _extractNextCursor(response);
+      if (response['hasMore'] == true && responseCursor != null) {
+        hasMore = true;
+        nextCursor = _encodeMyListingsCursor(statusIndex, responseCursor);
+      } else {
+        statusIndex += 1;
+        statusCursor = null;
+        hasMore = statusIndex < statusList.length;
+        nextCursor =
+            hasMore ? _encodeMyListingsCursor(statusIndex, null) : null;
+      }
+    }
+
+    return MyListingsPage(
+      items: collected,
+      hasMore: hasMore,
+      nextCursor: nextCursor,
+    );
   }
 
   /// Reloads the shared source for every "My listings" tab in one request.
@@ -1283,6 +1414,7 @@ class ListingsService {
 
   Future<List<Listing>> _fetchMyListings(
     String requestedUserId, {
+    Set<String>? statuses,
     bool forceRefresh = false,
   }) async {
     final uid = requestedUserId.trim();
@@ -1310,9 +1442,29 @@ class ListingsService {
       try {
         // ApiClient owns the transport timeout and starts it only after
         // auth-gate recovery and the actual HTTP send.
-        final response = await _api.myListings();
+        final statusList = (statuses == null || statuses.isEmpty)
+            ? const <String?>[null]
+            : statuses.toList(growable: false);
+        final collected = <Listing>[];
+        for (final status in statusList) {
+          String? cursor;
+          var hasMore = true;
+          while (hasMore) {
+            final response = await _api.myListings(
+              status: status,
+              limit: 50,
+              cursor: cursor,
+            );
+            collected.addAll(_extractItems(response));
+            cursor = (response['nextCursor'] ?? response['next_cursor'])
+                ?.toString()
+                .trim();
+            if ((cursor ?? '').isEmpty) cursor = null;
+            hasMore = response['hasMore'] == true && cursor != null;
+          }
+        }
         final items = _sanitizeMyListings(
-          _extractItems(response),
+          collected,
           currentUserId: uid,
         );
         _cacheListings(items);
@@ -1412,6 +1564,12 @@ class ListingsService {
         .toList();
   }
 
+  String? _extractNextCursor(Map<String, dynamic> response) {
+    final cursor =
+        (response['nextCursor'] ?? response['next_cursor'])?.toString().trim();
+    return (cursor ?? '').isEmpty ? null : cursor;
+  }
+
   void _emitRefresh({bool clearCaches = true}) {
     if (clearCaches) {
       _clearCachedCollections();
@@ -1446,6 +1604,41 @@ class ListingsService {
     for (final listing in items) {
       _listingById[listing.id] = listing;
     }
+  }
+
+  void _syncMyListingsPageCache(
+    String uid, {
+    required Set<String> statuses,
+    required List<Listing> items,
+    required bool reset,
+  }) {
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty || statuses.isEmpty) return;
+    if (_myListingsCacheUserId != null &&
+        _myListingsCacheUserId != normalizedUid) {
+      _clearMyListingsCache();
+    }
+
+    final existing = _myListingsCache ?? const <Listing>[];
+    final next = <Listing>[];
+    final seen = <String>{};
+    for (final item in existing) {
+      if (reset && statuses.contains(item.status)) continue;
+      if (seen.add(item.id)) next.add(item);
+    }
+    for (final item in items) {
+      if (item.ownerId.trim() != normalizedUid) continue;
+      if (!statuses.contains(item.status)) continue;
+      final currentIndex = next.indexWhere((cached) => cached.id == item.id);
+      if (currentIndex >= 0) {
+        next[currentIndex] = item;
+      } else if (seen.add(item.id)) {
+        next.add(item);
+      }
+    }
+    _myListingsCache = _dedupeAndSortListings(next);
+    _myListingsCachedAt = DateTime.now();
+    _myListingsCacheUserId = normalizedUid;
   }
 
   Listing? _extractListingFromResponse(Map<String, dynamic> response) {
@@ -1603,6 +1796,35 @@ class ListingsService {
     return _dedupeAndSortListings(filtered);
   }
 
+  _MyListingsCursor _decodeMyListingsCursor(String? cursor) {
+    final value = cursor?.trim() ?? '';
+    if (value.isEmpty) return const _MyListingsCursor(statusIndex: 0);
+    try {
+      final decoded = utf8.decode(base64Url.decode(base64Url.normalize(value)));
+      final raw = jsonDecode(decoded);
+      if (raw is! Map) return const _MyListingsCursor(statusIndex: 0);
+      final statusIndex = raw['statusIndex'];
+      final pageCursor = raw['cursor']?.toString().trim();
+      return _MyListingsCursor(
+        statusIndex: statusIndex is num ? statusIndex.toInt() : 0,
+        cursor: (pageCursor ?? '').isEmpty ? null : pageCursor,
+      );
+    } catch (_) {
+      return _MyListingsCursor(statusIndex: 0, cursor: value);
+    }
+  }
+
+  String _encodeMyListingsCursor(int statusIndex, String? cursor) {
+    return base64UrlEncode(
+      utf8.encode(
+        jsonEncode(<String, dynamic>{
+          'statusIndex': statusIndex,
+          if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+        }),
+      ),
+    );
+  }
+
   Future<void> _refreshListingFromBackend(String listingId) async {
     final id = listingId.trim();
     if (id.isEmpty) return;
@@ -1661,4 +1883,14 @@ class ListingsService {
       'Listing photo upload failed listing=$listingId index=$index error=$error',
     );
   }
+}
+
+class _MyListingsCursor {
+  const _MyListingsCursor({
+    required this.statusIndex,
+    this.cursor,
+  });
+
+  final int statusIndex;
+  final String? cursor;
 }

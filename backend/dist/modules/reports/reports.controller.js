@@ -29,8 +29,8 @@ let ReportsController = class ReportsController {
         this.chatsGateway = chatsGateway;
         this.rateLimitService = rateLimitService;
     }
-    create(request, authUser, body) {
-        this.rateLimitService.consumeOrThrow(`reports:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`, {
+    async create(request, authUser, body) {
+        await this.rateLimitService.consumeOrThrow(`reports:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`, {
             limit: 10,
             windowMs: 60 * 1000,
         });
@@ -61,7 +61,7 @@ __decorate([
     __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, Object, create_report_dto_1.CreateReportDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], ReportsController.prototype, "create", null);
 exports.ReportsController = ReportsController = __decorate([
     (0, common_1.Controller)('reports'),

@@ -28,11 +28,20 @@ let FeedAdsController = class FeedAdsController {
     active(placement, afterId) {
         return this.feedAdsService.getActive(placement, afterId);
     }
-    impression(id) {
-        return this.feedAdsService.recordImpression(id);
+    impression(request, id) {
+        return this.feedAdsService.recordImpression(id, this.counterSource(request));
     }
-    click(id) {
-        return this.feedAdsService.recordClick(id);
+    click(request, id) {
+        return this.feedAdsService.recordClick(id, this.counterSource(request));
+    }
+    counterSource(request) {
+        const forwarded = `${request?.headers?.['x-forwarded-for'] ?? ''}`.trim();
+        return {
+            ip: `${request?.ip ?? ''}`.trim() ||
+                forwarded.split(',')[0]?.trim() ||
+                'unknown',
+            userAgent: `${request?.headers?.['user-agent'] ?? ''}`.trim(),
+        };
     }
     adminList(placement) {
         return this.feedAdsService.listAll(placement);
@@ -71,16 +80,18 @@ __decorate([
 ], FeedAdsController.prototype, "active", null);
 __decorate([
     (0, common_1.Post)('feed-ads/:id/impression'),
-    __param(0, (0, common_1.Param)('id')),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], FeedAdsController.prototype, "impression", null);
 __decorate([
     (0, common_1.Post)('feed-ads/:id/click'),
-    __param(0, (0, common_1.Param)('id')),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], FeedAdsController.prototype, "click", null);
 __decorate([

@@ -6,6 +6,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -31,8 +32,15 @@ export class ChatsController {
   ) {}
 
   @Get()
-  listChats(@CurrentUser() authUser: AuthenticatedUser) {
-    return this.chatsService.listChats(authUser);
+  listChats(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.chatsService.listChats(authUser, {
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @Post()
@@ -57,8 +65,13 @@ export class ChatsController {
   listMessages(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe()) chatId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.chatsService.listMessages(authUser, chatId);
+    return this.chatsService.listMessages(authUser, chatId, {
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @Post(':id/messages')
@@ -68,7 +81,7 @@ export class ChatsController {
     @Param('id', new ParseUUIDPipe()) chatId: string,
     @Body() dto: SendChatMessageDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       `chat:${authUser.userId}:${request?.ip?.toString() ?? chatId}`,
       {
         limit: 30,
@@ -107,6 +120,43 @@ export class ChatsController {
       result.readAt,
       result.senderIds,
     );
+    return result;
+  }
+
+  @Get(':id/peer-block')
+  peerBlockStatus(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) chatId: string,
+  ) {
+    return this.chatsService.peerBlockStatus(authUser, chatId);
+  }
+
+  @Post(':id/peer-block')
+  blockPeer(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) chatId: string,
+  ) {
+    return this.chatsService.blockPeer(authUser, chatId);
+  }
+
+  @Delete(':id/peer-block')
+  unblockPeer(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) chatId: string,
+  ) {
+    return this.chatsService.unblockPeer(authUser, chatId);
+  }
+
+  @Post(':id/hide')
+  async hideChatForMe(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) chatId: string,
+  ) {
+    const result = await this.chatsService.hideChatForMe(authUser, chatId);
+    this.chatsGateway.emitUnreadChanged(authUser.userId, {
+      id: chatId,
+      unreadCount: 0,
+    });
     return result;
   }
 

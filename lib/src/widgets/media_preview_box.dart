@@ -1,4 +1,5 @@
 import 'package:atta/src/utils/media_url.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -65,6 +66,29 @@ class MediaPreviewBox extends StatelessWidget {
       return _fallback(context, emptyLabel, icon);
     }
 
+    final protectedMedia = _isProtectedMedia(resolvedUrl);
+    if (protectedMedia) {
+      return FutureBuilder<String?>(
+        future: TokenStorage().readAccessToken(),
+        builder: (context, snapshot) => _networkImage(
+          context,
+          resolution,
+          resolvedUrl,
+          token: snapshot.data,
+        ),
+      );
+    }
+
+    return _networkImage(context, resolution, resolvedUrl);
+  }
+
+  Widget _networkImage(
+    BuildContext context,
+    MediaUrlResolution resolution,
+    String resolvedUrl, {
+    String? token,
+  }) {
+    final authToken = token?.trim() ?? '';
     return SizedBox.expand(
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -74,6 +98,11 @@ class MediaPreviewBox extends StatelessWidget {
             ? _coverImage(debugImageProvider!)
             : CachedNetworkImage(
                 imageUrl: resolvedUrl,
+                httpHeaders: authToken.isEmpty
+                    ? null
+                    : <String, String>{
+                        'Authorization': 'Bearer $authToken',
+                      },
                 imageBuilder: (_, imageProvider) => _coverImage(imageProvider),
                 fit: BoxFit.cover,
                 alignment: Alignment.center,
@@ -93,6 +122,13 @@ class MediaPreviewBox extends StatelessWidget {
               ),
       ),
     );
+  }
+
+  bool _isProtectedMedia(String resolvedUrl) {
+    final uri = Uri.tryParse(resolvedUrl);
+    final path = uri?.path ?? resolvedUrl;
+    return path.startsWith('/media/support/') ||
+        path.startsWith('/media/reports/');
   }
 
   Widget _coverImage(ImageProvider imageProvider) {

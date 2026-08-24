@@ -54,6 +54,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   String? _avatarOverrideUrl;
   String? _profileStreamUid;
   Stream<Map<String, dynamic>>? _profileStream;
+  StreamSubscription<AuthSessionEvent>? _authSub;
   DateTime? _lastResumeRefreshAt;
 
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
@@ -62,10 +63,17 @@ class _ProfileScreenState extends State<ProfileScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _authSub = context.read<AuthService>().onAuthStateChange.listen((event) {
+      if (event.type != AuthSessionEventType.userUpdated || !mounted) {
+        return;
+      }
+      setState(() => _profileStream = null);
+    });
   }
 
   @override
   void dispose() {
+    _authSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -227,6 +235,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       BuildContext context, String uid, String currentName) async {
     final ctrl = TextEditingController(text: currentName);
     final profile = context.read<ProfileService>();
+    final auth = context.read<AuthService>();
 
     final res = await showDialog<String>(
       context: context,
@@ -253,11 +262,23 @@ class _ProfileScreenState extends State<ProfileScreen>
     final name = (res ?? '').trim();
     if (name.isEmpty) return;
 
-    await profile.updateProfile(uid, {'display_name': name, 'name': name});
+    try {
+      final updated = await profile
+          .updateProfile(uid, {'display_name': name, 'name': name});
+      await auth.syncCurrentUserFromProfile(uid, updated);
 
-    if (context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Имя сохранено')));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Имя сохранено')));
+      }
+    } catch (error) {
+      if (context.mounted) {
+        final message = error is ApiException && error.message.trim().isNotEmpty
+            ? error.message.trim()
+            : 'Не удалось сохранить имя. Попробуйте ещё раз.';
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
     }
   }
 

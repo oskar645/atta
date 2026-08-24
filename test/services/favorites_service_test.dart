@@ -301,7 +301,7 @@ class _FakeFavoritesApi extends FavoritesApi {
   Set<String> get favoriteIds => Set<String>.from(_favoriteIds);
 
   @override
-  Future<Map<String, dynamic>> list() async {
+  Future<Map<String, dynamic>> list({int? limit, String? cursor}) async {
     listCalls += 1;
     final completer = listCompleter;
     if (completer != null) {

@@ -25,6 +25,7 @@ class Chat {
   final int unreadCount;
   final int unreadForBuyer;
   final int unreadForSeller;
+  final bool blockedByMe;
 
   Chat({
     required this.id,
@@ -48,6 +49,7 @@ class Chat {
     this.unreadCount = 0,
     required this.unreadForBuyer,
     required this.unreadForSeller,
+    this.blockedByMe = false,
   });
 
   String otherUserId(String myUid) {
@@ -215,6 +217,7 @@ class Chat {
       unreadCount: (unreadRaw as num?)?.toInt() ?? 0,
       unreadForBuyer: (row['unread_for_buyer'] as num?)?.toInt() ?? 0,
       unreadForSeller: (row['unread_for_seller'] as num?)?.toInt() ?? 0,
+      blockedByMe: row['blockedByMe'] == true || row['blocked_by_me'] == true,
     );
   }
 

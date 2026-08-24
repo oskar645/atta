@@ -71,7 +71,9 @@ function createService(overrides?: {
     }),
   };
 
-  return new FeedAdsService(prisma as never, storage as never);
+  return new FeedAdsService(prisma as never, storage as never, {
+    debounce: async () => true,
+  } as never);
 }
 
 test('feed ad creation keeps new ads inactive until manual activation', async () => {
@@ -250,4 +252,35 @@ test('active feed ad query rotates to the ad after cursor and wraps', async () =
   assert.equal(second.ad?.id, 'feed-ad-2');
   assert.equal(third.ad?.id, 'feed-ad-3');
   assert.equal(first.ad?.id, 'feed-ad-1');
+});
+
+test('feed ad counter debounce skips duplicate source increments without blocking tracking', async () => {
+  let updateCalls = 0;
+  const service = new FeedAdsService(
+    {
+      feedAd: {
+        update: async () => {
+          updateCalls += 1;
+          return feedAd();
+        },
+      },
+    } as never,
+    {} as never,
+    {
+      debounce: async () => updateCalls === 0,
+    } as never,
+  );
+
+  const first = await service.recordImpression('feed-ad-1', {
+    ip: '203.0.113.10',
+    userAgent: 'atta-app/1',
+  });
+  const duplicate = await service.recordImpression('feed-ad-1', {
+    ip: '203.0.113.10',
+    userAgent: 'atta-app/1',
+  });
+
+  assert.equal(first.tracked, true);
+  assert.equal(duplicate.tracked, true);
+  assert.equal(updateCalls, 1);
 });

@@ -14,7 +14,6 @@ class ListingHistoryService extends ChangeNotifier {
   static final ViewedListingsApi _api = ViewedListingsApi(_apiClient);
   static const String _legacyPrefsKey = 'listing_history_v1';
   static const String _prefsKeyPrefix = 'listing_history_v2';
-  static const int _maxItems = 300;
   static const Duration _remoteSyncCooldown = Duration(seconds: 45);
 
   final Set<String> _viewedIds = <String>{};
@@ -49,11 +48,6 @@ class ListingHistoryService extends ChangeNotifier {
     final before = _viewedIds.toList(growable: false);
     _viewedIds.remove(id);
     _viewedIds.add(id);
-
-    if (_viewedIds.length > _maxItems) {
-      final overflow = _viewedIds.length - _maxItems;
-      _viewedIds.removeAll(_viewedIds.take(overflow));
-    }
 
     if (!_listEquals(before, _viewedIds.toList(growable: false)) || !_loaded) {
       notifyListeners();
@@ -94,6 +88,23 @@ class ListingHistoryService extends ChangeNotifier {
     }
   }
 
+  Future<ViewedListingsPage> getViewedListingsPage({
+    int limit = 50,
+    String? cursor,
+  }) async {
+    final response = await _viewedListingsApi.list(
+      limit: limit,
+      cursor: cursor,
+    );
+    final ids = _extractBackendViewedIds(response);
+    final nextCursor = _extractNextCursor(response);
+    return ViewedListingsPage(
+      ids: ids,
+      hasMore: response['hasMore'] == true && nextCursor != null,
+      nextCursor: nextCursor,
+    );
+  }
+
   Future<void> _load() async {
     final user = await _storage.readCurrentUser();
     final uid = user?.uid.trim() ?? '';
@@ -110,7 +121,6 @@ class ListingHistoryService extends ChangeNotifier {
     final localIds = stored
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
-        .take(_maxItems)
         .toList(growable: false);
     _viewedIds
       ..clear()
@@ -126,14 +136,27 @@ class ListingHistoryService extends ChangeNotifier {
       return;
     }
     try {
-      final response = await _viewedListingsApi.list();
-      final backendIds = _extractBackendViewedIds(response);
+      final backendIds = <String>[];
+      final seen = <String>{};
+      String? cursor;
+      var hasMore = true;
+      while (hasMore) {
+        final response = await _viewedListingsApi.list(
+          limit: 100,
+          cursor: cursor,
+        );
+        for (final id in _extractBackendViewedIds(response)) {
+          if (seen.add(id)) backendIds.add(id);
+        }
+        cursor = _extractNextCursor(response);
+        hasMore = response['hasMore'] == true && cursor != null;
+      }
       final mergedIds = <String>[..._viewedIds];
       for (final id in backendIds) {
         mergedIds.remove(id);
         mergedIds.insert(0, id);
       }
-      final normalized = mergedIds.take(_maxItems).toList(growable: false);
+      final normalized = mergedIds.toList(growable: false);
       _viewedIds
         ..clear()
         ..addAll(normalized);
@@ -150,6 +173,12 @@ class ListingHistoryService extends ChangeNotifier {
     } catch (_) {}
     _lastSyncedUserId = uid;
     _lastRemoteSyncAt = DateTime.now();
+  }
+
+  String? _extractNextCursor(Map<String, dynamic> response) {
+    final cursor =
+        (response['nextCursor'] ?? response['next_cursor'])?.toString().trim();
+    return (cursor ?? '').isEmpty ? null : cursor;
   }
 
   Future<void> _save() async {
@@ -202,4 +231,16 @@ class ListingHistoryService extends ChangeNotifier {
     }
     return true;
   }
+}
+
+class ViewedListingsPage {
+  const ViewedListingsPage({
+    required this.ids,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<String> ids;
+  final bool hasMore;
+  final String? nextCursor;
 }

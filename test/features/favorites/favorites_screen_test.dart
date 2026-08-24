@@ -353,10 +353,92 @@ void main() {
 
     expect(favorites.activeListeners, 0);
   });
+
+  testWidgets('favorites listings load more is incremental and stops',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 520));
+    final favorites = _PagedFavoritesService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: favorites,
+        listingsService: _ByIdListingsService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(favorites.requests, <String?>[null]);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(favorites.requests, <String?>[null, 'f2']);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(favorites.requests, <String?>[null, 'f2', 'f3']);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(favorites.requests, <String?>[null, 'f2', 'f3']);
+  });
+
+  testWidgets('viewed listings load more is incremental and stops',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 520));
+    final history = _PagedHistoryService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        historyService: history,
+        listingsService: _ByIdListingsService(),
+      ),
+    );
+    await tester.tap(find.text('Просмотренные'));
+    await tester.pumpAndSettle();
+
+    expect(history.requests, <String?>[null]);
+    await tester.drag(find.byType(GridView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(history.requests, <String?>[null, 'v2']);
+    await tester.drag(find.byType(GridView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(history.requests, <String?>[null, 'v2', 'v3']);
+
+    await tester.drag(find.byType(GridView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(history.requests, <String?>[null, 'v2', 'v3']);
+  });
+
+  testWidgets('following load more is incremental and stops', (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 520));
+    final follows = _PagedFollowService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        followService: follows,
+        listingsService: _FollowListingsService(),
+      ),
+    );
+    await tester.tap(find.text('Подписки'));
+    await tester.pumpAndSettle();
+
+    expect(follows.requests, <String?>[null]);
+    await tester.drag(find.byType(GridView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(follows.requests, <String?>[null, 's2']);
+    await tester.drag(find.byType(GridView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(follows.requests, <String?>[null, 's2', 's3']);
+    await tester.drag(find.byType(GridView).last, const Offset(0, -900));
+    await tester.pumpAndSettle();
+    expect(follows.requests, <String?>[null, 's2', 's3']);
+  });
 }
 
 Widget _wrapFavorites({
   FavoritesService? favoritesService,
+  FollowService? followService,
+  ListingHistoryService? historyService,
   ListingsService? listingsService,
   MainShellController? shellController,
 }) {
@@ -369,14 +451,15 @@ Widget _wrapFavorites({
       Provider<FavoritesService>.value(
         value: favoritesService ?? _FakeFavoritesService(),
       ),
-      Provider<FollowService>.value(value: _FakeFollowService()),
+      Provider<FollowService>.value(
+          value: followService ?? _FakeFollowService()),
       Provider<ListingsService>.value(
         value: listingsService ?? _DelayedListingsService(),
       ),
       Provider<NotificationsService>.value(value: _FakeNotificationsService()),
       Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
       ChangeNotifierProvider<ListingHistoryService>.value(
-        value: ListingHistoryService(),
+        value: historyService ?? ListingHistoryService(),
       ),
       Provider<ReviewsService>.value(value: _FakeReviewsService()),
     ],
@@ -857,6 +940,175 @@ class _MissingOneListingsService extends ListingsService {
   }
 }
 
+class _ByIdListingsService extends ListingsService {
+  @override
+  Future<Listing?> getListingById(String id) async {
+    return _listingFixture(id: id, title: id);
+  }
+}
+
+class _FollowListingsService extends ListingsService {
+  @override
+  List<Listing> peekListings({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+  }) {
+    return List<Listing>.generate(
+      18,
+      (index) => _listingFixture(
+        id: 'follow-listing-$index',
+        title: 'follow-listing-$index',
+        ownerId: 'seller-$index',
+      ),
+    );
+  }
+
+  @override
+  Future<ListingsFeedPage> getListingsPage({
+    required String category,
+    required String search,
+    ListingFeedFilters? filters,
+    int limit = 20,
+    String? cursor,
+  }) async {
+    return ListingsFeedPage(
+      items: peekListings(category: category, search: search),
+      hasMore: false,
+    );
+  }
+}
+
+class _PagedFavoritesService extends FavoritesService {
+  final List<String?> requests = <String?>[];
+  final StreamController<Set<String>> _controller =
+      StreamController<Set<String>>.broadcast();
+
+  @override
+  Set<String> peekFavoriteIds(String uid) => const <String>{};
+
+  @override
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    return Stream<Set<String>>.multi(
+      (controller) {
+        controller.add(const <String>{});
+        final sub = _controller.stream.listen(controller.add);
+        controller.onCancel = () async {
+          await sub.cancel();
+        };
+      },
+      isBroadcast: true,
+    );
+  }
+
+  @override
+  Future<FavoriteIdsPage> getFavoriteIdsPage({
+    required String uid,
+    int limit = 50,
+    String? cursor,
+    bool resetCache = false,
+  }) async {
+    requests.add(cursor);
+    if (cursor == null) {
+      return FavoriteIdsPage(
+        ids: List<String>.generate(5, (index) => 'listing-$index'),
+        hasMore: true,
+        nextCursor: 'f2',
+      );
+    }
+    if (cursor == 'f2') {
+      return const FavoriteIdsPage(
+        ids: <String>['listing-4', 'listing-5', 'listing-6', 'listing-7'],
+        hasMore: true,
+        nextCursor: 'f3',
+      );
+    }
+    return const FavoriteIdsPage(
+      ids: <String>['listing-7', 'listing-8', 'listing-9'],
+      hasMore: false,
+    );
+  }
+}
+
+class _PagedHistoryService extends ListingHistoryService {
+  final List<String?> requests = <String?>[];
+
+  @override
+  bool get isLoaded => true;
+
+  @override
+  List<String> get viewedIdsNewestFirst =>
+      List<String>.generate(10, (index) => 'listing-$index');
+
+  @override
+  bool hasViewed(String listingId) => listingId.trim().isNotEmpty;
+
+  @override
+  Future<ViewedListingsPage> getViewedListingsPage({
+    int limit = 50,
+    String? cursor,
+  }) async {
+    requests.add(cursor);
+    if (cursor == null) {
+      return ViewedListingsPage(
+        ids: List<String>.generate(5, (index) => 'listing-$index'),
+        hasMore: true,
+        nextCursor: 'v2',
+      );
+    }
+    if (cursor == 'v2') {
+      return const ViewedListingsPage(
+        ids: <String>['listing-4', 'listing-5', 'listing-6', 'listing-7'],
+        hasMore: true,
+        nextCursor: 'v3',
+      );
+    }
+    return const ViewedListingsPage(
+      ids: <String>['listing-7', 'listing-8', 'listing-9'],
+      hasMore: false,
+    );
+  }
+}
+
+class _PagedFollowService extends FollowService {
+  final List<String?> requests = <String?>[];
+
+  @override
+  List<FollowedSeller> peekFollowedSellers(String followerId) {
+    return const <FollowedSeller>[];
+  }
+
+  @override
+  Future<FollowedSellersPage> getFollowedSellersPage({
+    required String followerId,
+    int limit = 50,
+    String? cursor,
+    bool resetCache = false,
+  }) async {
+    requests.add(cursor);
+    final base = cursor == null
+        ? 0
+        : cursor == 's2'
+            ? 5
+            : 9;
+    return FollowedSellersPage(
+      items: List<FollowedSeller>.generate(
+        cursor == 's3' ? 4 : 5,
+        (index) => FollowedSeller(
+          sellerId: 'seller-${base + index}',
+          followedAt: DateTime.utc(2026, 1, 1),
+        ),
+      ),
+      hasMore: cursor != 's3',
+      nextCursor: cursor == null
+          ? 's2'
+          : cursor == 's2'
+              ? 's3'
+              : null,
+    );
+  }
+}
+
 class _FakeNotificationsService extends NotificationsService {
   @override
   Stream<int> streamUnreadSavedSearchCount(String userId) {
@@ -888,10 +1140,11 @@ Listing _listingFixture({
   String id = 'listing-1',
   String title = 'Тестовое объявление',
   String status = 'approved',
+  String ownerId = 'seller-1',
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': id,
-    'owner_id': 'seller-1',
+    'owner_id': ownerId,
     'owner_email': 'seller@example.com',
     'owner_name': 'Seller',
     'title': title,

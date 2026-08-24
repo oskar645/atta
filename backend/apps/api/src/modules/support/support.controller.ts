@@ -48,12 +48,12 @@ export class SupportController {
 
   @Post('images')
   @UseInterceptors(memoryImageUpload)
-  uploadImage(
+  async uploadImage(
     @CurrentUser() authUser: AuthenticatedUser,
     @Req() request: any,
     @UploadedFile() file?: UploadedImageFile,
   ) {
-    this.rateLimitService.consumeOrThrow(`support:image:${authUser.userId}`, {
+    await this.rateLimitService.consumeOrThrow(`support:image:${authUser.userId}`, {
       limit: 20,
       windowMs: 60 * 1000,
     });
@@ -65,12 +65,12 @@ export class SupportController {
   }
 
   @Post('tickets')
-  createTicket(
+  async createTicket(
     @Req() request: any,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() body: CreateSupportTicketDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       this.rateKey(authUser.userId, request?.ip?.toString() ?? 'create'),
       {
         limit: 8,
@@ -86,12 +86,12 @@ export class SupportController {
   }
 
   @Post('block-appeals')
-  createBlockAppeal(
+  async createBlockAppeal(
     @Req() request: any,
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() body: CreateSupportTicketDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       this.rateKey(authUser.userId, request?.ip?.toString() ?? 'block-appeal'),
       {
         limit: 4,
@@ -113,13 +113,13 @@ export class SupportController {
   }
 
   @Post('tickets/:id/messages')
-  sendMessage(
+  async sendMessage(
     @Req() request: any,
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe()) ticketId: string,
     @Body() body: SendSupportMessageDto,
   ) {
-    this.rateLimitService.consumeOrThrow(
+    await this.rateLimitService.consumeOrThrow(
       this.rateKey(authUser.userId, request?.ip?.toString() ?? ticketId),
       {
         limit: 12,
@@ -162,11 +162,11 @@ export class AdminSupportController {
   }
 
   @Post(':id/messages')
-  sendMessage(
+  async sendMessage(
     @Param('id', new ParseUUIDPipe()) ticketId: string,
     @Body() body: SendSupportMessageDto,
   ) {
-    this.rateLimitService.consumeOrThrow(`support:admin:${ticketId}`, {
+    await this.rateLimitService.consumeOrThrow(`support:admin:${ticketId}`, {
       limit: 20,
       windowMs: 60 * 1000,
     });

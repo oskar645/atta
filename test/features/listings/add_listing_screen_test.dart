@@ -137,6 +137,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(listings.createCalled, isTrue);
+    expect(listings.capturedCity, 'Москва');
     expect(listings.capturedCar, isNotNull);
     expect(listings.capturedCar!.mileageKm, isNull);
     expect(listings.capturedCar!.bodyType, isNull);
@@ -190,6 +191,71 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Добавьте минимум 1 фото'), findsOneWidget);
+    expect(listings.createCalled, isFalse);
+  });
+
+  testWidgets('create listing without city is blocked before publishing',
+      (tester) async {
+    final binding = TestWidgetsFlutterBinding.ensureInitialized();
+    await binding.setSurfaceSize(const Size(1000, 1800));
+    addTearDown(() async {
+      await binding.setSurfaceSize(null);
+    });
+
+    final photo = _createTestPng();
+    const channel = MethodChannel('plugins.flutter.io/image_picker');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'pickMultiImage') {
+        return <String>[photo.path];
+      }
+      return null;
+    });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      if (photo.existsSync()) photo.deleteSync();
+      final photoDir = photo.parent;
+      if (photoDir.existsSync()) photoDir.deleteSync();
+    });
+
+    final listings = _CapturingListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ProfileService>.value(value: ProfileService()),
+          Provider<ListingsService>.value(value: listings),
+        ],
+        child: const MaterialApp(
+          home: AddListingScreen(),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await _enterTextWithLabel(
+      tester,
+      'Название (автозаполнение можно править)',
+      'Toyota Camry',
+    );
+    await _enterTextWithLabel(tester, 'Цена (₽)', '1500000');
+    await _enterTextWithLabel(tester, 'Телефон (для звонка)', '79288888645');
+    await _enterTextWithLabel(tester, 'Описание', 'Надежный автомобиль');
+
+    await _scrollUntilBuilt(tester, find.text('Фото (0/10)').first);
+    await tester.tap(find.text('Фото (0/10)').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выбрать несколько из галереи'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Фото (1/10)'), findsOneWidget);
+
+    await tester.tap(find.text('Опубликовать'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Укажите город'), findsOneWidget);
     expect(listings.createCalled, isFalse);
   });
 
@@ -420,6 +486,7 @@ class _CapturingListingsService extends ListingsService {
   String? capturedCategory;
   String? capturedSubcategory;
   String? capturedDealType;
+  String? capturedCity;
 
   @override
   Future<CreateListingResult> createDraftListing({
@@ -466,6 +533,7 @@ class _CapturingListingsService extends ListingsService {
     String? clothesSize,
   }) async {
     createCalled = true;
+    capturedCity = city;
     capturedCar = car;
     capturedCategory = category ?? '';
     capturedSubcategory = subcategory ?? '';

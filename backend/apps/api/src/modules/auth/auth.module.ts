@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 
 import { env } from '../../config/env';
@@ -15,7 +15,7 @@ import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
 @Module({
   imports: [
     AppVisitsModule,
-    StorageModule,
+    forwardRef(() => StorageModule),
     WalletModule,
     UserBlocksModule,
     JwtModule.register({

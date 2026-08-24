@@ -14,10 +14,12 @@ import {
   PromotionStatus,
   PromotionType,
 } from '@prisma/client';
+import { createHash } from 'crypto';
 
 import { serializeListing, toIsoString } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { WalletService } from '../wallet/wallet.service';
 import {
   PROMOTION_PLAN_ORDER,
@@ -30,15 +32,20 @@ const promotableStatuses = new Set<ListingStatus>([
 ]);
 const MIN_RAISE_DAYS = 1;
 const MAX_RAISE_DAYS = 30;
+const MIN_PROMOTION_QUANTITY = 1;
+const MAX_PROMOTION_QUANTITY = 30;
 const RAISE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const RAISE_WORKER_INTERVAL_MS = 60 * 1000;
 const RAISE_WORKER_BATCH_SIZE = 10;
+const SHOWCASE_IMPRESSION_DEBOUNCE_MS = 30 * 1000;
+const SHOWCASE_CLICK_DEBOUNCE_MS = 5 * 1000;
 
 type PromoteListingInput = {
   type: string;
   days?: number;
   idempotencyKey?: string;
 };
+type CounterSource = { ip?: string; userAgent?: string };
 
 const listingInclude = {
   owner: {
@@ -70,6 +77,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
+    private readonly rateLimitService: RateLimitService,
   ) {}
 
   onModuleInit() {
@@ -136,7 +144,10 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     const inputType = typeof input === 'string' ? input : input.type;
     const type = this.parsePromotionType(inputType);
     const plan = PROMOTION_PLANS[type];
-    const days = this.parseRaiseDays(type, typeof input === 'string' ? undefined : input.days);
+    const quantity = this.parsePromotionQuantity(
+      type,
+      typeof input === 'string' ? undefined : input.days,
+    );
     const requestIdempotencyKey =
       typeof input === 'string' ? undefined : input.idempotencyKey;
     const listing = await this.prisma.listing.findUnique({
@@ -161,7 +172,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
       return this.purchaseRaiseCampaign({
         listingId,
         authUser,
-        days,
+        days: quantity,
         requestIdempotencyKey,
       });
     }
@@ -201,11 +212,12 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     }
 
     const wallet = await this.walletService.ensureWalletAndBonuses(authUser.userId);
-    if (wallet.bonusBalance < plan.costBonus) {
+    const totalPrice = plan.costBonus * quantity;
+    if (wallet.bonusBalance < totalPrice) {
       throw new BadRequestException({
         message: 'Недостаточно бонусов',
         currentBalance: wallet.bonusBalance,
-        requiredBalance: plan.costBonus,
+        requiredBalance: totalPrice,
       });
     }
 
@@ -263,11 +275,14 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
 
         const updatedWallet = await this.walletService.spendBonus(
           authUser.userId,
-          plan.costBonus,
+          totalPrice,
           walletReason,
           {
             listingId,
             promotionType: promotionTypeToResponse(type),
+            quantity,
+            pricePerPeriod: plan.costBonus,
+            totalPrice,
             requestedWalletReason: plan.walletReason.toLowerCase(),
             walletReasonFallbackApplied: walletReason !== plan.walletReason,
           },
@@ -275,13 +290,13 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         );
 
         const now = new Date();
-        const endsAt = new Date(now.getTime() + plan.durationMs);
+        const endsAt = new Date(now.getTime() + plan.durationMs * quantity);
         const promotion = await tx.promotion.create({
           data: {
             listingId,
             userId: authUser.userId,
             type,
-            costBonus: plan.costBonus,
+            costBonus: totalPrice,
             startsAt: now,
             endsAt,
             status: PromotionStatus.ACTIVE,
@@ -437,12 +452,26 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async registerImpression(promotionId: string) {
-    return this.bumpMetric(promotionId, 'impressionsCount');
+  async registerImpression(promotionId: string, source?: CounterSource) {
+    const shouldCount = await this.shouldCountCounterEvent(
+      'impression',
+      promotionId,
+      source,
+      SHOWCASE_IMPRESSION_DEBOUNCE_MS,
+    );
+    return shouldCount
+      ? this.bumpMetric(promotionId, 'impressionsCount')
+      : { ok: true };
   }
 
-  async registerClick(promotionId: string) {
-    return this.bumpMetric(promotionId, 'clicksCount');
+  async registerClick(promotionId: string, source?: CounterSource) {
+    const shouldCount = await this.shouldCountCounterEvent(
+      'click',
+      promotionId,
+      source,
+      SHOWCASE_CLICK_DEBOUNCE_MS,
+    );
+    return shouldCount ? this.bumpMetric(promotionId, 'clicksCount') : { ok: true };
   }
 
   async expirePromotionsByTime() {
@@ -913,15 +942,23 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private parseRaiseDays(type: PromotionType, rawDays?: number) {
-    if (type !== PromotionType.BUMP) {
+  private parsePromotionQuantity(type: PromotionType, rawQuantity?: number) {
+    if (
+      type !== PromotionType.BUMP &&
+      type !== PromotionType.SHOWCASE &&
+      type !== PromotionType.VIP
+    ) {
       return 1;
     }
-    const days = rawDays ?? 1;
-    if (!Number.isInteger(days) || days < MIN_RAISE_DAYS || days > MAX_RAISE_DAYS) {
+    const quantity = rawQuantity ?? 1;
+    const min =
+      type === PromotionType.BUMP ? MIN_RAISE_DAYS : MIN_PROMOTION_QUANTITY;
+    const max =
+      type === PromotionType.BUMP ? MAX_RAISE_DAYS : MAX_PROMOTION_QUANTITY;
+    if (!Number.isInteger(quantity) || quantity < min || quantity > max) {
       throw new BadRequestException('days must be an integer from 1 to 30');
     }
-    return days;
+    return quantity;
   }
 
   private buildRaisePurchaseIdempotencyKey(
@@ -1004,5 +1041,32 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
       impressionsCount: updated.impressionsCount,
       clicksCount: updated.clicksCount,
     };
+  }
+
+  private shouldCountCounterEvent(
+    event: 'impression' | 'click',
+    promotionId: string,
+    source: CounterSource | undefined,
+    windowMs: number,
+  ) {
+    const sourceKey = this.counterSourceKey(source);
+    if (!sourceKey) {
+      return Promise.resolve(true);
+    }
+    return this.rateLimitService.debounce(
+      `showcase:${event}:${promotionId}:${sourceKey}`,
+      windowMs,
+    );
+  }
+
+  private counterSourceKey(source?: CounterSource) {
+    const ip = source?.ip?.trim();
+    const userAgent = source?.userAgent?.trim();
+    if (!ip && !userAgent) {
+      return '';
+    }
+    return createHash('sha256')
+      .update(`${ip || 'unknown'}:${userAgent || 'unknown'}`)
+      .digest('hex');
   }
 }

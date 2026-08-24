@@ -218,6 +218,28 @@ class BackendAuthService {
     await _replaceCurrentUser(user);
   }
 
+  Future<AuthUser?> syncCurrentUserFromProfile(
+    String uid,
+    Map<String, dynamic> profile,
+  ) async {
+    final current = _currentUser;
+    final normalizedUid = uid.trim();
+    if (current == null ||
+        normalizedUid.isEmpty ||
+        current.uid != normalizedUid) {
+      return current;
+    }
+
+    final raw = <String, dynamic>{
+      ...profile,
+      'id': normalizedUid,
+      if (!profile.containsKey('block_status') && current.blockStatus != null)
+        'block_status': current.blockStatus!.toJson(),
+    };
+    await _replaceCurrentUser(_parseUser(raw));
+    return _currentUser;
+  }
+
   Future<PhoneVerificationStartResult> startPhoneVerification({
     required String phone,
     required String purpose,

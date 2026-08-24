@@ -5,7 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 class AdminListingsScreen extends StatefulWidget {
-  const AdminListingsScreen({super.key});
+  const AdminListingsScreen({
+    super.key,
+    this.initialStatus = 'all',
+  });
+
+  final String initialStatus;
 
   @override
   State<AdminListingsScreen> createState() => _AdminListingsScreenState();
@@ -15,7 +20,7 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
   static const int _pageLimit = 50;
 
   final ScrollController _scrollController = ScrollController();
-  String _status = 'all';
+  late String _status;
   bool _busy = false;
   late Future<List<Map<String, dynamic>>> _future;
   List<Map<String, dynamic>>? _items;
@@ -29,6 +34,9 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
   @override
   void initState() {
     super.initState();
+    _status = widget.initialStatus.trim().isEmpty
+        ? 'all'
+        : widget.initialStatus.trim();
     _scrollController.addListener(_maybeLoadMore);
     _future = _load();
   }
@@ -241,6 +249,11 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
                     current: _status,
                     onSelected: _setStatus),
                 _StatusChip(
+                    label: 'Sold',
+                    value: 'sold',
+                    current: _status,
+                    onSelected: _setStatus),
+                _StatusChip(
                     label: 'Archived',
                     value: 'archived',
                     current: _status,
@@ -326,6 +339,14 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
                               Text(
                                   'Владелец: ${(item['owner_name'] ?? '').toString()}'),
                               Text('Статус: $status'),
+                              if (status == 'sold' &&
+                                  (item['archived_at'] ?? '')
+                                      .toString()
+                                      .trim()
+                                      .isNotEmpty)
+                                Text(
+                                  'Продано: ${_formatAdminListingDate((item['archived_at'] ?? '').toString())}',
+                                ),
                               const SizedBox(height: 10),
                               Wrap(
                                 spacing: 8,
@@ -364,6 +385,18 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
       ),
     );
   }
+}
+
+String _formatAdminListingDate(String raw) {
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null) return raw;
+  final local = parsed.toLocal();
+  final dd = local.day.toString().padLeft(2, '0');
+  final mm = local.month.toString().padLeft(2, '0');
+  final yyyy = local.year.toString();
+  final hh = local.hour.toString().padLeft(2, '0');
+  final min = local.minute.toString().padLeft(2, '0');
+  return '$dd.$mm.$yyyy, $hh:$min';
 }
 
 class _StatusChip extends StatelessWidget {

@@ -27,6 +27,24 @@ const strangerUser = {
   role: 'user' as const,
 };
 
+const anotherStrangerUser = {
+  userId: 'user-3',
+  sessionId: 'session-3',
+  role: 'user' as const,
+};
+
+const adminUser = {
+  userId: 'admin-1',
+  sessionId: 'session-admin-1',
+  role: 'admin' as const,
+};
+
+const adminOwnerUser = {
+  userId: ownerUser.userId,
+  sessionId: 'session-admin-owner-1',
+  role: 'admin' as const,
+};
+
 function createApprovedListing(
   id: string,
   publishedAt: string,
@@ -134,6 +152,9 @@ function createService(overrides?: {
   update?: (args: Record<string, unknown>) => Promise<unknown>;
   findMany?: (args?: Record<string, unknown>) => Promise<unknown>;
   findFavorites?: (args?: Record<string, unknown>) => Promise<unknown>;
+  findListingView?: (args?: Record<string, unknown>) => Promise<unknown>;
+  createListingView?: (args: Record<string, unknown>) => Promise<unknown>;
+  findPromotions?: (args?: Record<string, unknown>) => Promise<unknown>;
   queryRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 }) {
   const prisma = {
@@ -248,16 +269,341 @@ function createService(overrides?: {
     favorite: {
       findMany: overrides?.findFavorites ?? (async () => []),
     },
-    $transaction: async <T>(handler: () => Promise<T>) => handler(),
+    listingView: {
+      findFirst: overrides?.findListingView ?? (async () => null),
+      create:
+        overrides?.createListingView ??
+        (async (args: Record<string, unknown>) => ({
+          id: 'listing-view-1',
+          ...args,
+        })),
+    },
+    promotion: {
+      findMany: overrides?.findPromotions ?? (async () => []),
+    },
+    $transaction: async <T>(handler: (tx: any) => Promise<T>) => handler(prisma),
     ...(overrides?.queryRaw ? { $queryRaw: overrides.queryRaw } : {}),
   };
 
   return new ListingsService(
     prisma as never,
     {} as never,
-    {} as never,
+    { expirePromotionsByTime: async () => undefined } as never,
   );
 }
+
+function createListingViewCounterService(options?: {
+  existingViews?: Array<{ listingId: string; viewerUserId: string | null }>;
+  ownerId?: string;
+  initialViewCount?: number;
+}) {
+  const listingId = 'listing-1';
+  const listing = {
+    ...createApprovedListing(listingId, '2026-06-19T10:00:00.000Z'),
+    ownerId: options?.ownerId ?? ownerUser.userId,
+    viewCount: options?.initialViewCount ?? 0,
+  };
+  const views = [...(options?.existingViews ?? [])];
+  const createdViews: Array<{ listingId: string; viewerUserId: string | null }> = [];
+  const advisoryLocks: unknown[][] = [];
+  let transactionQueue = Promise.resolve();
+
+  const prisma = {
+    listing: {
+      findUnique: async () => ({ ...listing }),
+      update: async (args: Record<string, any>) => {
+        listing.viewCount += Number(args.data?.viewCount?.increment ?? 0);
+        return { ...listing };
+      },
+    },
+    listingView: {
+      findFirst: async (args: Record<string, any>) => {
+        const where = args.where ?? {};
+        const found = views.find(
+          (view) =>
+            view.listingId === where.listingId &&
+            view.viewerUserId === where.viewerUserId,
+        );
+        return found ? { id: `view-${views.indexOf(found) + 1}` } : null;
+      },
+      create: async (args: Record<string, any>) => {
+        const view = {
+          listingId: String(args.data.listingId),
+          viewerUserId: (args.data.viewerUserId ?? null) as string | null,
+        };
+        views.push(view);
+        createdViews.push(view);
+        return { id: `view-${views.length}`, ...view };
+      },
+    },
+    $queryRaw: async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      advisoryLocks.push(values);
+      return [];
+    },
+    $transaction: async <T>(handler: (tx: any) => Promise<T>) => {
+      const run = transactionQueue.then(() => handler(prisma));
+      transactionQueue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    },
+  };
+
+  return {
+    service: new ListingsService(prisma as never, {} as never, {} as never),
+    listingId,
+    get viewCount() {
+      return listing.viewCount;
+    },
+    createdViews,
+    advisoryLocks,
+  };
+}
+
+test('incrementView does not count owner views', async () => {
+  const harness = createListingViewCounterService();
+
+  for (let index = 0; index < 10; index += 1) {
+    const response = await harness.service.incrementView(
+      harness.listingId,
+      ownerUser,
+    );
+    assert.equal(response.view_count, 0);
+  }
+
+  assert.equal(harness.viewCount, 0);
+  assert.equal(harness.createdViews.length, 0);
+  assert.equal(harness.advisoryLocks.length, 0);
+});
+
+test('findVipListings returns only active VIP promotions with cursor metadata', async () => {
+  const listing = {
+    ...createApprovedListing('listing-vip-1', '2026-06-19T10:00:00.000Z'),
+    photos: [
+      {
+        id: 'photo-1',
+        listingId: 'listing-vip-1',
+        storageBucket: 'local',
+        storageKey: 'listings/photo.jpg',
+        publicUrl: 'https://example.com/photo.jpg',
+        sortOrder: 0,
+        sizeBytes: 128,
+        mimeType: 'image/jpeg',
+        createdAt: new Date('2026-06-19T10:00:00.000Z'),
+      },
+    ],
+    owner: {
+      id: ownerUser.userId,
+      email: 'owner@example.com',
+      phone: '79281234567',
+      phoneVerified: true,
+      displayName: 'Owner',
+      name: 'Owner',
+      avatarUrl: null,
+      photoUrl: null,
+      status: UserStatus.ACTIVE,
+      blockedAt: null,
+      blockReason: null,
+      lastLoginAt: null,
+      createdAt: new Date('2026-06-19T10:00:00.000Z'),
+      updatedAt: new Date('2026-06-19T10:00:00.000Z'),
+      deletedAt: null,
+      adminProfile: null,
+    },
+  };
+  const firstPromotion = {
+    ...createPromotion(PromotionType.VIP, '2026-06-20T12:00:00.000Z'),
+    id: '00000000-0000-0000-0000-000000000002',
+    listingId: listing.id,
+    listing: {
+      ...listing,
+      promotions: [
+        {
+          ...createPromotion(PromotionType.VIP, '2026-06-20T12:00:00.000Z'),
+          id: '00000000-0000-0000-0000-000000000002',
+          listingId: listing.id,
+        },
+      ],
+    },
+  };
+  const secondPromotion = {
+    ...createPromotion(PromotionType.VIP, '2026-06-20T11:00:00.000Z'),
+    id: '00000000-0000-0000-0000-000000000001',
+    listingId: 'listing-vip-2',
+    listing: {
+      ...listing,
+      id: 'listing-vip-2',
+      promotions: [
+        {
+          ...createPromotion(PromotionType.VIP, '2026-06-20T11:00:00.000Z'),
+          id: '00000000-0000-0000-0000-000000000001',
+          listingId: 'listing-vip-2',
+        },
+      ],
+    },
+  };
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [firstPromotion, secondPromotion];
+    },
+  });
+
+  const response = await service.findVipListings({ limit: 1 });
+
+  assert.equal(capturedArgs?.where?.type, PromotionType.VIP);
+  assert.equal(capturedArgs?.where?.status, PromotionStatus.ACTIVE);
+  assert.equal(capturedArgs?.where?.listing?.status, ListingStatus.APPROVED);
+  assert.equal(response.items.length, 1);
+  assert.equal(response.items[0].id, 'listing-vip-1');
+  assert.equal(response.items[0].promotions.activeVip?.status, 'active');
+  assert.equal(response.hasMore, true);
+  assert.equal(typeof response.nextCursor, 'string');
+});
+
+test('findVipListings applies optional category filter', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  const response = await service.findVipListings({
+    limit: 20,
+    category: 'Авто',
+  });
+
+  assert.equal(capturedArgs?.where?.listing?.category, 'Авто');
+  assert.equal(response.items.length, 0);
+  assert.equal(response.hasMore, false);
+});
+
+test('findVipListings keeps unfiltered request backward-compatible', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({ limit: 20 });
+
+  assert.equal('category' in capturedArgs?.where?.listing, false);
+});
+
+test('incrementView counts a regular user once per listing', async () => {
+  const harness = createListingViewCounterService();
+
+  const first = await harness.service.incrementView(
+    harness.listingId,
+    strangerUser,
+  );
+  assert.equal(first.view_count, 1);
+
+  for (let index = 0; index < 10; index += 1) {
+    const response = await harness.service.incrementView(
+      harness.listingId,
+      strangerUser,
+    );
+    assert.equal(response.view_count, 1);
+  }
+
+  assert.equal(harness.viewCount, 1);
+  assert.deepEqual(harness.createdViews, [
+    { listingId: harness.listingId, viewerUserId: strangerUser.userId },
+  ]);
+});
+
+test('incrementView counts another regular user for the same listing', async () => {
+  const harness = createListingViewCounterService();
+
+  await harness.service.incrementView(harness.listingId, strangerUser);
+  const response = await harness.service.incrementView(
+    harness.listingId,
+    anotherStrangerUser,
+  );
+
+  assert.equal(response.view_count, 2);
+  assert.equal(harness.viewCount, 2);
+  assert.deepEqual(
+    harness.createdViews.map((view) => view.viewerUserId),
+    [strangerUser.userId, anotherStrangerUser.userId],
+  );
+});
+
+test('incrementView counts every admin view of another owner listing', async () => {
+  const harness = createListingViewCounterService();
+
+  for (let index = 0; index < 10; index += 1) {
+    const response = await harness.service.incrementView(
+      harness.listingId,
+      adminUser,
+    );
+    assert.equal(response.view_count, index + 1);
+  }
+
+  assert.equal(harness.viewCount, 10);
+  assert.equal(harness.createdViews.length, 10);
+  assert.equal(harness.advisoryLocks.length, 0);
+});
+
+test('incrementView does not count admin views of own listing', async () => {
+  const harness = createListingViewCounterService();
+
+  for (let index = 0; index < 10; index += 1) {
+    const response = await harness.service.incrementView(
+      harness.listingId,
+      adminOwnerUser,
+    );
+    assert.equal(response.view_count, 0);
+  }
+
+  assert.equal(harness.viewCount, 0);
+  assert.equal(harness.createdViews.length, 0);
+});
+
+test('incrementView does not increment when listing_views already has regular user view', async () => {
+  const harness = createListingViewCounterService({
+    initialViewCount: 7,
+    existingViews: [
+      { listingId: 'listing-1', viewerUserId: strangerUser.userId },
+    ],
+  });
+
+  const response = await harness.service.incrementView(
+    harness.listingId,
+    strangerUser,
+  );
+
+  assert.equal(response.view_count, 7);
+  assert.equal(harness.viewCount, 7);
+  assert.equal(harness.createdViews.length, 0);
+  assert.equal(harness.advisoryLocks.length, 1);
+});
+
+test('incrementView protects regular user duplicate race with transaction lock', async () => {
+  const harness = createListingViewCounterService();
+
+  await Promise.all(
+    Array.from({ length: 8 }, () =>
+      harness.service.incrementView(harness.listingId, strangerUser),
+    ),
+  );
+
+  assert.equal(harness.viewCount, 1);
+  assert.deepEqual(harness.createdViews, [
+    { listingId: harness.listingId, viewerUserId: strangerUser.userId },
+  ]);
+  assert.equal(harness.advisoryLocks.length, 8);
+});
 
 type RawFeedRow = {
   id: string;
@@ -560,14 +906,25 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     '2026-07-01T10:00:00.000Z',
   );
   let updateArgs: Record<string, unknown> | undefined;
+  let revisionCreateArgs: Record<string, unknown> | undefined;
   let savedListing = listing;
   const prisma = {
     listing: {
       findUnique: async () => ({
         ...listing,
+        price: BigInt(100000),
+        city: 'Грозный',
         owner: {
           phone: '79281234567',
         },
+        photos: [
+          {
+            id: 'photo-1',
+            storageKey: 'listing-photos/listing-1/old.jpg',
+            publicUrl: 'https://example.com/old.jpg',
+            sortOrder: 0,
+          },
+        ],
       }),
       update: async (args: Record<string, unknown>) => {
         updateArgs = args;
@@ -583,6 +940,13 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     listingPhoto: {
       deleteMany: async () => ({}),
       createMany: async () => ({}),
+    },
+    listingModerationRevision: {
+      findFirst: async () => null,
+      create: async (args: Record<string, unknown>) => {
+        revisionCreateArgs = args;
+        return { id: 'revision-1' };
+      },
     },
     $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
       handler(prisma),
@@ -602,6 +966,19 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     (updateArgs?.data as Record<string, unknown>).status,
     ListingStatus.PENDING,
   );
+  const snapshot = (revisionCreateArgs?.data as Record<string, unknown>)
+    ?.snapshot as Record<string, unknown>;
+  assert.equal((revisionCreateArgs?.data as Record<string, unknown>)?.listingId, 'listing-1');
+  assert.equal(snapshot['price'], '100000');
+  assert.equal(snapshot['city'], 'Грозный');
+  assert.deepEqual(snapshot['photos'], [
+    {
+      id: 'photo-1',
+      storage_key: 'listing-photos/listing-1/old.jpg',
+      url: 'https://example.com/old.jpg',
+      sort_order: 0,
+    },
+  ]);
   assert.equal(response.listing.status, 'pending');
 });
 
@@ -1970,6 +2347,49 @@ test('public feed only returns approved listings with at least one photo', async
   assert.deepEqual(findManyArgs?.where.photos, { some: {} });
   assert.equal(findManyArgs?.where.status, ListingStatus.APPROVED);
   assert.equal(findManyArgs?.where.category, 'Одежда');
+});
+
+test('public owner listing query does not expose non-public statuses', async () => {
+  let findManyCalled = false;
+  const service = createService({
+    findMany: async () => {
+      findManyCalled = true;
+      return [createApprovedListing('listing-pending', '2026-06-19T10:00:00.000Z')];
+    },
+  });
+
+  const response = await service.findAll({
+    ownerId: 'owner-2',
+    status: 'pending',
+  });
+
+  assert.equal(findManyCalled, false);
+  assert.deepEqual(response.items, []);
+  assert.equal(response.hasMore, false);
+});
+
+test('public owner listing query keeps approved owner listings public-compatible', async () => {
+  let findManyArgs: Record<string, any> | undefined;
+  const service = createService({
+    findMany: async (args?: Record<string, unknown>) => {
+      findManyArgs = args as Record<string, any>;
+      return [createApprovedListing('listing-approved', '2026-06-19T10:00:00.000Z')];
+    },
+  });
+
+  const response = await service.findAll({
+    ownerId: 'owner-2',
+    status: 'approved',
+  });
+
+  assert.equal(response.items.length, 1);
+  assert.equal(findManyArgs?.where?.ownerId, 'owner-2');
+  assert.equal(findManyArgs?.where?.status, ListingStatus.APPROVED);
+  assert.deepEqual(findManyArgs?.where?.photos, { some: {} });
+  assert.deepEqual(findManyArgs?.where?.owner, {
+    deletedAt: null,
+    status: UserStatus.ACTIVE,
+  });
 });
 
 test('delete last photo is rejected for publishable listing statuses', async () => {

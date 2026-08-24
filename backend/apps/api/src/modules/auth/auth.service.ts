@@ -491,6 +491,41 @@ export class AuthService {
     };
   }
 
+  async revokeOtherSessions(authUser: AuthenticatedUser) {
+    const result = await this.prisma.userSession.updateMany({
+      where: {
+        userId: authUser.userId,
+        id: {
+          not: authUser.sessionId,
+        },
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+
+    return {
+      revoked: result.count,
+    };
+  }
+
+  async revokeAllSessions(authUser: AuthenticatedUser) {
+    const result = await this.prisma.userSession.updateMany({
+      where: {
+        userId: authUser.userId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+      },
+    });
+
+    return {
+      revoked: result.count,
+    };
+  }
+
   async deleteAccount(authUser: AuthenticatedUser) {
     const user = await this.prisma.user.findUnique({
       where: {

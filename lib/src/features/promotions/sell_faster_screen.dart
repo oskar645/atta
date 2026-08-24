@@ -479,6 +479,10 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
   String? _errorText;
 
   bool get _isRaise => widget.plan.type == 'bump';
+  bool get _hasQuantitySelector =>
+      _isRaise || widget.plan.type == 'showcase' || widget.plan.type == 'vip';
+  int get _quantity => _hasQuantitySelector ? _days : 1;
+  int get _displayDays => widget.plan.type == 'vip' ? _days * 2 : _days;
 
   @override
   void initState() {
@@ -505,7 +509,7 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
     });
     try {
       final response = await widget.onConfirm(
-        _isRaise ? _days : 1,
+        _quantity,
         _idempotencyKey,
       );
       if (!mounted) return;
@@ -519,7 +523,7 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
     }
   }
 
-  int get _totalPrice => widget.plan.costBonus * (_isRaise ? _days : 1);
+  int get _totalPrice => widget.plan.costBonus * _quantity;
   int? get _balance => widget.wallet?.balance;
   int get _missingBonuses =>
       (_totalPrice - (_balance ?? 0)).clamp(0, 1 << 31).toInt();
@@ -599,7 +603,7 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
               ),
             ),
             const SizedBox(height: 16),
-            if (_isRaise) ...[
+            if (_hasQuantitySelector) ...[
               Row(
                 children: [
                   IconButton.outlined(
@@ -612,7 +616,7 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
                   Expanded(
                     child: Center(
                       child: Text(
-                        '$_days ${russianDayWord(_days)}',
+                        '$_displayDays ${russianDayWord(_displayDays)}',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
@@ -635,6 +639,9 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
               Text('Количество поднятий: $_days'),
               const SizedBox(height: 4),
               Text('Длительность: $_days ${russianDayWord(_days)}'),
+              const SizedBox(height: 4),
+            ] else if (_hasQuantitySelector) ...[
+              Text('Срок: $_displayDays ${russianDayWord(_displayDays)}'),
               const SizedBox(height: 4),
             ],
             Text('Стоимость: $_totalPrice бонусов'),

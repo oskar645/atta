@@ -73,12 +73,43 @@ const buildProxyMediaUrl = (category, key) => {
     if (category === 'chats') {
         return `/media/chats/file?key=${encodeURIComponent(normalizedKey)}`;
     }
+    if (category === 'support') {
+        return `/media/support/file?key=${encodeURIComponent(normalizedKey)}`;
+    }
     return `/media/object?category=${encodeURIComponent(category)}&key=${encodeURIComponent(normalizedKey)}`;
 };
 const normalizeStoredMediaUrl = (url, options) => {
     const trimmedUrl = url?.trim() ?? '';
     if (!trimmedUrl) {
         return null;
+    }
+    const preferredCategory = options?.category?.trim().toLowerCase() ??
+        inferCategoryFromKey(normalizeS3ObjectKey(options?.storageKey)) ??
+        '';
+    if (preferredCategory === 'support') {
+        try {
+            const parsed = trimmedUrl.startsWith('/')
+                ? new URL(trimmedUrl, 'https://local.invalid')
+                : new URL(trimmedUrl);
+            if (parsed.pathname === '/media/object') {
+                const key = parsed.searchParams.get('key');
+                if (key) {
+                    return buildProxyMediaUrl('support', key);
+                }
+            }
+            const publicBase = env_1.env.MEDIA_PUBLIC_BASE_URL.replace(/\/+$/, '');
+            const publicBasePath = new URL(publicBase).pathname.replace(/\/+$/, '');
+            if (parsed.pathname.startsWith('/uploads/support/')) {
+                return buildProxyMediaUrl('support', parsed.pathname.replace(/^\/uploads\/+/, ''));
+            }
+            if (publicBasePath &&
+                parsed.pathname.startsWith(`${publicBasePath}/support/`)) {
+                return buildProxyMediaUrl('support', parsed.pathname.slice(publicBasePath.length + 1));
+            }
+        }
+        catch {
+            // Fall through to the generic normalizer.
+        }
     }
     if (trimmedUrl.startsWith('/media/') ||
         trimmedUrl.startsWith('/uploads/') ||
@@ -87,9 +118,6 @@ const normalizeStoredMediaUrl = (url, options) => {
     }
     const providerHint = options?.providerHint?.trim().toLowerCase() ?? '';
     const storageKey = normalizeS3ObjectKey(options?.storageKey);
-    const preferredCategory = options?.category?.trim().toLowerCase() ??
-        inferCategoryFromKey(storageKey) ??
-        '';
     const isS3Candidate = providerHint === 's3' ||
         (providerHint !== 'local' &&
             (storageKey.length > 0 ||
@@ -203,107 +231,123 @@ const listingStatusFromInput = (status) => {
     }
 };
 exports.listingStatusFromInput = listingStatusFromInput;
-const serializeListing = (listing, options) => ({
-    ...(() => {
-        const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
-        const normalizedPhone = (0, phone_1.normalizeRussianPhone)(fallbackPhone) || fallbackPhone;
-        return {
-            phone: normalizedPhone,
-        };
-    })(),
-    ...(() => {
-        const activePromotions = new Map();
-        for (const promotion of listing.promotions ?? []) {
-            if (promotion.status === client_1.PromotionStatus.ACTIVE &&
-                promotion.endsAt.getTime() > Date.now() &&
-                !activePromotions.has(promotion.type)) {
-                activePromotions.set(promotion.type, promotion);
-            }
-        }
-        const serializePromotion = (promotionType, title) => {
-            const promotion = activePromotions.get(promotionType);
-            if (!promotion) {
-                return null;
-            }
-            return {
-                type: promotion.type.toLowerCase(),
-                title,
-                endsAt: (0, exports.toIsoString)(promotion.endsAt),
-                status: promotion.status.toLowerCase(),
-                costBonus: promotion.costBonus,
-            };
-        };
-        return {
-            promotions: {
-                activeShowcase: serializePromotion(client_1.PromotionType.SHOWCASE, 'Витрина ATTA'),
-                activeBump: serializePromotion(client_1.PromotionType.BUMP, 'Поднятие'),
-                activeVip: serializePromotion(client_1.PromotionType.VIP, 'VIP'),
-                activeTurbo: serializePromotion(client_1.PromotionType.TURBO, 'Турбо'),
-            },
-        };
-    })(),
-    id: listing.id,
-    owner_id: listing.ownerId,
-    owner_email: listing.ownerEmail,
-    owner_name: listing.ownerName,
-    title: listing.title,
-    description: listing.description,
-    category: listing.category,
-    subcategory: listing.subcategory,
-    price: typeof listing.price === 'bigint'
+const serializeListing = (listing, options) => {
+    const price = typeof listing.price === 'bigint'
         ? Number(listing.price)
-        : Number(listing.price ?? 0),
-    phone_hidden: listing.phoneHidden,
-    city: listing.city,
-    address: listing.address,
-    latitude: listing.latitude ? Number(listing.latitude) : null,
-    longitude: listing.longitude ? Number(listing.longitude) : null,
-    location: (0, exports.normalizeJsonRecord)(listing.locationJson),
-    location_json: (0, exports.normalizeJsonRecord)(listing.locationJson),
-    delivery: (0, exports.normalizeJsonRecord)(listing.delivery),
-    car: listing.car ?? null,
-    deal_type: listing.dealType,
-    real_estate_type: listing.realEstateType,
-    clothes_type: listing.clothesType,
-    clothes_size: listing.clothesSize ?? null,
-    photo_urls: listing.photos?.map((photo) => (0, exports.normalizeStoredMediaUrl)(photo.publicUrl, {
-        category: 'listings',
-        providerHint: photo.storageBucket,
-        storageKey: photo.storageKey,
-    }) ?? photo.publicUrl) ?? [],
-    photo_items: listing.photos?.map((photo) => ({
-        id: photo.id,
-        url: (0, exports.normalizeStoredMediaUrl)(photo.publicUrl, {
+        : Number(listing.price ?? 0);
+    const previousPrice = listing.previousPrice == null
+        ? null
+        : typeof listing.previousPrice === 'bigint'
+            ? Number(listing.previousPrice)
+            : Number(listing.previousPrice);
+    const priceReducedAt = listing.priceReducedAt ?? null;
+    const hasActivePriceReduction = previousPrice != null &&
+        Number.isFinite(previousPrice) &&
+        previousPrice > price &&
+        priceReducedAt != null &&
+        Date.now() - priceReducedAt.getTime() < 48 * 60 * 60 * 1000;
+    return {
+        ...(() => {
+            const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
+            const normalizedPhone = (0, phone_1.normalizeRussianPhone)(fallbackPhone) || fallbackPhone;
+            return {
+                phone: normalizedPhone,
+            };
+        })(),
+        ...(() => {
+            const activePromotions = new Map();
+            for (const promotion of listing.promotions ?? []) {
+                if (promotion.status === client_1.PromotionStatus.ACTIVE &&
+                    promotion.endsAt.getTime() > Date.now() &&
+                    !activePromotions.has(promotion.type)) {
+                    activePromotions.set(promotion.type, promotion);
+                }
+            }
+            const serializePromotion = (promotionType, title) => {
+                const promotion = activePromotions.get(promotionType);
+                if (!promotion) {
+                    return null;
+                }
+                return {
+                    type: promotion.type.toLowerCase(),
+                    title,
+                    endsAt: (0, exports.toIsoString)(promotion.endsAt),
+                    status: promotion.status.toLowerCase(),
+                    costBonus: promotion.costBonus,
+                };
+            };
+            return {
+                promotions: {
+                    activeShowcase: serializePromotion(client_1.PromotionType.SHOWCASE, 'Витрина ATTA'),
+                    activeBump: serializePromotion(client_1.PromotionType.BUMP, 'Поднятие'),
+                    activeVip: serializePromotion(client_1.PromotionType.VIP, 'VIP'),
+                    activeTurbo: serializePromotion(client_1.PromotionType.TURBO, 'Турбо'),
+                },
+            };
+        })(),
+        id: listing.id,
+        owner_id: listing.ownerId,
+        owner_email: listing.ownerEmail,
+        owner_name: listing.ownerName,
+        title: listing.title,
+        description: listing.description,
+        category: listing.category,
+        subcategory: listing.subcategory,
+        price,
+        previous_price: hasActivePriceReduction ? previousPrice : null,
+        price_reduced_at: hasActivePriceReduction ? (0, exports.toIsoString)(priceReducedAt) : null,
+        phone_hidden: listing.phoneHidden,
+        city: listing.city,
+        address: listing.address,
+        latitude: listing.latitude ? Number(listing.latitude) : null,
+        longitude: listing.longitude ? Number(listing.longitude) : null,
+        location: (0, exports.normalizeJsonRecord)(listing.locationJson),
+        location_json: (0, exports.normalizeJsonRecord)(listing.locationJson),
+        delivery: (0, exports.normalizeJsonRecord)(listing.delivery),
+        car: listing.car ?? null,
+        deal_type: listing.dealType,
+        real_estate_type: listing.realEstateType,
+        clothes_type: listing.clothesType,
+        clothes_size: listing.clothesSize ?? null,
+        photo_urls: listing.photos?.map((photo) => (0, exports.normalizeStoredMediaUrl)(photo.publicUrl, {
             category: 'listings',
             providerHint: photo.storageBucket,
             storageKey: photo.storageKey,
-        }) ?? photo.publicUrl,
-        sort_order: photo.sortOrder,
-    })) ?? [],
-    view_count: listing.viewCount,
-    ...(options?.favoriteCount != null
-        ? {
-            favorites_count: Math.max(0, Number(options.favoriteCount) || 0),
-        }
-        : {}),
-    status: (0, exports.listingStatusToResponse)(listing.status),
-    rejection_reason: listing.rejectionReason ?? '',
-    moderation_note: listing.moderationNote,
-    moderated_by: listing.moderatedBy,
-    moderated_at: (0, exports.toIsoString)(listing.moderatedAt),
-    published_at: (0, exports.toIsoString)(listing.publishedAt),
-    archived_at: (0, exports.toIsoString)(listing.archivedAt),
-    deleted_at: (0, exports.toIsoString)(listing.deletedAt),
-    created_at: listing.createdAt.toISOString(),
-    updated_at: listing.updatedAt.toISOString(),
-    owner: listing.owner
-        ? (0, exports.serializeUser)(listing.owner)
-        : {
-            id: listing.ownerId,
-            display_name: listing.ownerName,
-            name: listing.ownerName,
-        },
-});
+        }) ?? photo.publicUrl) ?? [],
+        photo_items: listing.photos?.map((photo) => ({
+            id: photo.id,
+            url: (0, exports.normalizeStoredMediaUrl)(photo.publicUrl, {
+                category: 'listings',
+                providerHint: photo.storageBucket,
+                storageKey: photo.storageKey,
+            }) ?? photo.publicUrl,
+            sort_order: photo.sortOrder,
+        })) ?? [],
+        view_count: listing.viewCount,
+        ...(options?.favoriteCount != null
+            ? {
+                favorites_count: Math.max(0, Number(options.favoriteCount) || 0),
+            }
+            : {}),
+        status: (0, exports.listingStatusToResponse)(listing.status),
+        rejection_reason: listing.rejectionReason ?? '',
+        moderation_note: listing.moderationNote,
+        moderated_by: listing.moderatedBy,
+        moderated_at: (0, exports.toIsoString)(listing.moderatedAt),
+        published_at: (0, exports.toIsoString)(listing.publishedAt),
+        archived_at: (0, exports.toIsoString)(listing.archivedAt),
+        deleted_at: (0, exports.toIsoString)(listing.deletedAt),
+        created_at: listing.createdAt.toISOString(),
+        updated_at: listing.updatedAt.toISOString(),
+        owner: listing.owner
+            ? (0, exports.serializeUser)(listing.owner)
+            : {
+                id: listing.ownerId,
+                display_name: listing.ownerName,
+                name: listing.ownerName,
+            },
+    };
+};
 exports.serializeListing = serializeListing;
 const serializeFavorite = (favorite) => ({
     id: favorite.id,

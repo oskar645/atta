@@ -25,11 +25,25 @@ let PhoneVerificationController = class PhoneVerificationController {
     checkRegistration(dto) {
         return this.phoneVerificationService.checkRegistration(dto.phone);
     }
-    start(dto) {
-        return this.phoneVerificationService.startCallVerification(dto.phone, dto.purpose);
+    start(request, dto) {
+        return this.phoneVerificationService.startCallVerification(dto.phone, dto.purpose, {
+            deviceId: this.headerValue(request, 'x-device-id') ||
+                this.headerValue(request, 'x-client-device-id'),
+            ip: this.clientIp(request),
+            userAgent: this.headerValue(request, 'user-agent'),
+        });
     }
     check(dto) {
         return this.phoneVerificationService.checkCallVerification(dto.phone, dto.verificationId ?? dto.checkId ?? '', dto.purpose);
+    }
+    headerValue(request, name) {
+        return `${request?.headers?.[name] ?? ''}`.trim();
+    }
+    clientIp(request) {
+        const forwarded = this.headerValue(request, 'x-forwarded-for');
+        return (`${request?.ip ?? ''}`.trim() ||
+            forwarded.split(',')[0]?.trim() ||
+            'unknown');
     }
 };
 exports.PhoneVerificationController = PhoneVerificationController;
@@ -42,9 +56,10 @@ __decorate([
 ], PhoneVerificationController.prototype, "checkRegistration", null);
 __decorate([
     (0, common_1.Post)('start'),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [start_phone_verification_dto_1.StartPhoneVerificationDto]),
+    __metadata("design:paramtypes", [Object, start_phone_verification_dto_1.StartPhoneVerificationDto]),
     __metadata("design:returntype", void 0)
 ], PhoneVerificationController.prototype, "start", null);
 __decorate([

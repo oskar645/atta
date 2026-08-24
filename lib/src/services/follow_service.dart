@@ -52,22 +52,98 @@ class FollowService {
 
   Future<List<FollowedSeller>> _fetchFollowedSellers() async {
     try {
-      final response = await _api.list();
-      final raw = response['items'];
-      if (raw is! List) return const <FollowedSeller>[];
-      return raw.whereType<Map>().map((row) {
-        final map = Map<String, dynamic>.from(row);
-        return FollowedSeller(
-          sellerId: (map['seller_id'] ?? '').toString(),
-          followedAt: _parseFollowedAt(map['created_at']),
-        );
-      }).toList();
+      final items = <FollowedSeller>[];
+      final seen = <String>{};
+      String? cursor;
+      var hasMore = true;
+      while (hasMore) {
+        final response = await _api.list(limit: 100, cursor: cursor);
+        final raw = response['items'];
+        if (raw is List) {
+          for (final row in raw.whereType<Map>()) {
+            final map = Map<String, dynamic>.from(row);
+            final sellerId = (map['seller_id'] ?? '').toString().trim();
+            if (sellerId.isEmpty || !seen.add(sellerId)) continue;
+            items.add(
+              FollowedSeller(
+                sellerId: sellerId,
+                followedAt: _parseFollowedAt(map['created_at']),
+              ),
+            );
+          }
+        }
+        cursor = (response['nextCursor'] ?? response['next_cursor'])
+            ?.toString()
+            .trim();
+        if ((cursor ?? '').isEmpty) cursor = null;
+        hasMore = response['hasMore'] == true && cursor != null;
+      }
+      return items;
     } on ApiException catch (error) {
       if (error.isNotFound) {
         _markTimewebUnavailable(
           'Follows source: Timeweb unavailable (404). Falling back to empty state until backend is updated.',
         );
         return const <FollowedSeller>[];
+      }
+      rethrow;
+    }
+  }
+
+  Future<FollowedSellersPage> getFollowedSellersPage({
+    required String followerId,
+    int limit = 50,
+    String? cursor,
+    bool resetCache = false,
+  }) async {
+    if (runtimeType != FollowService) {
+      if ((cursor ?? '').trim().isNotEmpty) {
+        return const FollowedSellersPage(
+          items: <FollowedSeller>[],
+          hasMore: false,
+        );
+      }
+      final items = await getFollowedSellers(followerId);
+      return FollowedSellersPage(items: items, hasMore: false);
+    }
+    final follower = followerId.trim();
+    if (follower.isEmpty || _timewebFollowsUnavailable) {
+      return const FollowedSellersPage(
+        items: <FollowedSeller>[],
+        hasMore: false,
+      );
+    }
+    try {
+      final response = await _api.list(limit: limit, cursor: cursor);
+      final items = _extractFollowedSellers(response);
+      final merged = resetCache
+          ? <FollowedSeller>[]
+          : List<FollowedSeller>.from(
+              _cache[follower] ?? const <FollowedSeller>[],
+            );
+      final seen = merged.map((item) => item.sellerId).toSet();
+      for (final item in items) {
+        if (seen.add(item.sellerId)) merged.add(item);
+      }
+      _cache[follower] = merged;
+      _cacheAt[follower] = DateTime.now();
+      _followedControllerFor(follower).add(List<FollowedSeller>.from(merged));
+      _emitFollowingStates(follower);
+      final nextCursor = _extractNextCursor(response);
+      return FollowedSellersPage(
+        items: items,
+        hasMore: response['hasMore'] == true && nextCursor != null,
+        nextCursor: nextCursor,
+      );
+    } on ApiException catch (error) {
+      if (error.isNotFound) {
+        _markTimewebUnavailable(
+          'Follows source: Timeweb unavailable (404). Falling back to empty state until backend is updated.',
+        );
+        return const FollowedSellersPage(
+          items: <FollowedSeller>[],
+          hasMore: false,
+        );
       }
       rethrow;
     }
@@ -120,6 +196,31 @@ class FollowService {
     if (value is DateTime) return value.toUtc();
     final parsed = DateTime.tryParse((value ?? '').toString());
     return (parsed ?? DateTime.now()).toUtc();
+  }
+
+  List<FollowedSeller> _extractFollowedSellers(Map<String, dynamic> response) {
+    final raw = response['items'];
+    if (raw is! List) return const <FollowedSeller>[];
+    final items = <FollowedSeller>[];
+    final seen = <String>{};
+    for (final row in raw.whereType<Map>()) {
+      final map = Map<String, dynamic>.from(row);
+      final sellerId = (map['seller_id'] ?? '').toString().trim();
+      if (sellerId.isEmpty || !seen.add(sellerId)) continue;
+      items.add(
+        FollowedSeller(
+          sellerId: sellerId,
+          followedAt: _parseFollowedAt(map['created_at']),
+        ),
+      );
+    }
+    return items;
+  }
+
+  String? _extractNextCursor(Map<String, dynamic> response) {
+    final cursor =
+        (response['nextCursor'] ?? response['next_cursor'])?.toString().trim();
+    return (cursor ?? '').isEmpty ? null : cursor;
   }
 
   Stream<int> streamFollowersCount(String sellerId) {
@@ -336,6 +437,18 @@ class FollowService {
     _countInFlight.clear();
     _timewebFollowsUnavailable = false;
   }
+}
+
+class FollowedSellersPage {
+  const FollowedSellersPage({
+    required this.items,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<FollowedSeller> items;
+  final bool hasMore;
+  final String? nextCursor;
 }
 
 extension<T> on Stream<T> {

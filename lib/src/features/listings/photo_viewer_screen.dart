@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -70,24 +71,63 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                         ),
                       ),
                     )
-                  : CachedNetworkImage(
-                      imageUrl: url,
-                      fit: BoxFit.contain,
-                      placeholder: (_, __) => const Center(
-                        child: CircularProgressIndicator(),
-                      ),
-                      errorWidget: (_, __, ___) => const Center(
-                        child: Icon(
-                          Icons.broken_image_outlined,
-                          color: Colors.white70,
-                          size: 52,
-                        ),
-                      ),
-                    ),
+                  : _networkPhoto(url),
             ),
           );
         },
       ),
     );
+  }
+
+  Widget _networkPhoto(String url) {
+    if (!_isProtectedMedia(url)) {
+      return CachedNetworkImage(
+        imageUrl: url,
+        fit: BoxFit.contain,
+        placeholder: (_, __) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+        errorWidget: (_, __, ___) => const Center(
+          child: Icon(
+            Icons.broken_image_outlined,
+            color: Colors.white70,
+            size: 52,
+          ),
+        ),
+      );
+    }
+
+    return FutureBuilder<String?>(
+      future: TokenStorage().readAccessToken(),
+      builder: (context, snapshot) {
+        final token = snapshot.data?.trim() ?? '';
+        return CachedNetworkImage(
+          imageUrl: url,
+          httpHeaders: token.isEmpty
+              ? null
+              : <String, String>{
+                  'Authorization': 'Bearer $token',
+                },
+          fit: BoxFit.contain,
+          placeholder: (_, __) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+          errorWidget: (_, __, ___) => const Center(
+            child: Icon(
+              Icons.broken_image_outlined,
+              color: Colors.white70,
+              size: 52,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  bool _isProtectedMedia(String resolvedUrl) {
+    final uri = Uri.tryParse(resolvedUrl);
+    final path = uri?.path ?? resolvedUrl;
+    return path.startsWith('/media/support/') ||
+        path.startsWith('/media/reports/');
   }
 }

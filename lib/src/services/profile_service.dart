@@ -224,7 +224,8 @@ class ProfileService {
     }
   }
 
-  Future<void> updateProfile(String uid, Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> updateProfile(
+      String uid, Map<String, dynamic> data) async {
     _debugSource('Profile source: Timeweb');
     final payload = <String, dynamic>{
       if (data['display_name'] != null) 'display_name': data['display_name'],
@@ -243,6 +244,7 @@ class ProfileService {
       await _syncCurrentUserFromProfile(
           updated, await _tokenStorage.readCurrentUser());
     }
+    return updated;
   }
 
   String pickNameFromRow(
@@ -629,6 +631,7 @@ class ProfileService {
           row['is_admin'] == true ||
           row['role'] == 'admin' ||
           currentUser.isAdmin == true,
+      blockStatus: currentUser.blockStatus,
     );
 
     await _tokenStorage.saveSession(

@@ -4,13 +4,13 @@ import assert from 'node:assert/strict';
 import { FavoritesService } from './favorites.service';
 
 test('favorites list is sorted by createdAt desc', async () => {
-  let capturedOrderBy: Record<string, unknown> | undefined;
+  let capturedOrderBy: unknown;
 
   const service = new FavoritesService(
     {
       favorite: {
         findMany: async (args: Record<string, unknown>) => {
-          capturedOrderBy = args['orderBy'] as Record<string, unknown> | undefined;
+          capturedOrderBy = args['orderBy'];
           return [];
         },
       },
@@ -19,7 +19,5 @@ test('favorites list is sorted by createdAt desc', async () => {
 
   await service.list({ userId: 'user-1' } as any);
 
-  assert.deepEqual(capturedOrderBy, {
-    createdAt: 'desc',
-  });
+  assert.deepEqual(capturedOrderBy, [{ createdAt: 'desc' }, { id: 'desc' }]);
 });

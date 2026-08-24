@@ -86,8 +86,15 @@ class SupportApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> adminList() async {
-    final response = await _client.get('/admin/support', authorized: true);
+  Future<Map<String, dynamic>> adminList({int? limit, String? cursor}) async {
+    final response = await _client.get(
+      '/admin/support',
+      authorized: true,
+      queryParameters: {
+        if (limit != null) 'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 

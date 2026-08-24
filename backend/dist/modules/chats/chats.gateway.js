@@ -72,22 +72,42 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             sessionId: payload.sessionId,
         };
     }
+    socketFailureMessage(error, fallback) {
+        return error instanceof Error && error.message.length > 0
+            ? error.message
+            : fallback;
+    }
+    socketAuthFailureStage(error) {
+        const message = this.socketFailureMessage(error, '').toLowerCase();
+        return message.includes('session') ? 'session' : 'auth';
+    }
     async handleConnection(client) {
+        let auth;
         try {
-            const auth = await this.authenticate(client);
-            client.data.userId = auth.userId;
-            client.join(`user:${auth.userId}`);
-            const presence = await this.presenceService.touchSocket(auth.userId, client.id);
-            this.emitPresenceChanged(presence, { force: true });
-            this.logger.log(`Socket connected: ${client.id} user=${auth.userId}`);
+            auth = await this.authenticate(client);
         }
         catch (error) {
-            this.logger.warn(`Socket rejected: ${client.id}`);
+            const reason = this.socketFailureMessage(error, 'Socket authentication failed');
+            const stage = this.socketAuthFailureStage(error);
+            this.logger.warn(`Socket connection rejected: client=${client.id} stage=${stage} reason=${reason}`);
             client.emit('error', {
-                message: error instanceof Error ? error.message : 'Socket authentication failed',
+                message: reason,
             });
             client.disconnect(true);
+            return;
         }
+        client.data.userId = auth.userId;
+        client.data.sessionId = auth.sessionId;
+        client.join(`user:${auth.userId}`);
+        try {
+            const presence = await this.presenceService.touchSocket(auth.userId, client.id);
+            this.emitPresenceChanged(presence, { force: true });
+        }
+        catch (error) {
+            const reason = this.socketFailureMessage(error, 'Presence update failed');
+            this.logger.warn(`Socket connection failed: client=${client.id} stage=presence reason=${reason} user=${auth.userId} session=${auth.sessionId}`);
+        }
+        this.logger.log(`Socket connected: ${client.id} user=${auth.userId}`);
     }
     async handleDisconnect(client) {
         const userId = (client.data.userId ?? '').toString();

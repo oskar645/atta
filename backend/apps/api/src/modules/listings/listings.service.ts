@@ -90,6 +90,17 @@ type FeedCursorPayload = {
   id: string;
 };
 
+type VipListingsCursorPayload = {
+  createdAt: string;
+  id: string;
+};
+
+type ListingWithModerationSnapshot = Prisma.ListingGetPayload<{
+  include: {
+    photos: true;
+  };
+}>;
+
 const PROTECTED_FEED_HEAD_SIZE = 10;
 
 const parsePromotionDate = (value: Date | string | null | undefined) => {
@@ -355,6 +366,45 @@ const parseFeedCursor = (rawCursor?: string): FeedCursorPayload | null => {
   }
 };
 
+const encodeVipListingsCursor = (
+  promotion: Pick<Promotion, 'createdAt' | 'id'>,
+) =>
+  Buffer.from(
+    JSON.stringify({
+      createdAt: promotion.createdAt.toISOString(),
+      id: promotion.id,
+    } satisfies VipListingsCursorPayload),
+  ).toString('base64url');
+
+const parseVipListingsCursor = (
+  rawCursor?: string,
+): VipListingsCursorPayload | null => {
+  const cursor = rawCursor?.trim() ?? '';
+  if (!cursor) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8'),
+    ) as Partial<VipListingsCursorPayload>;
+    if (
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      parsed.createdAt.trim().length === 0 ||
+      parsed.id.trim().length === 0
+    ) {
+      return null;
+    }
+    return {
+      createdAt: parsed.createdAt,
+      id: parsed.id,
+    };
+  } catch {
+    return null;
+  }
+};
+
 type PublicFeedRankRow = {
   id: string;
   promotedAt: Date | null;
@@ -490,7 +540,25 @@ export class ListingsService {
       where.ownerId = ownerId;
     }
 
-    if (status) {
+    if (!ownerMe && ownerId) {
+      const requestedStatus = status ? listingStatusFromInput(status) : null;
+      if (requestedStatus && requestedStatus !== ListingStatus.APPROVED) {
+        return {
+          items: [],
+          nextCursor: null,
+          hasMore: false,
+          allowed_statuses: LISTING_STATUSES,
+        };
+      }
+      where.status = ListingStatus.APPROVED;
+      where.photos = {
+        some: {},
+      };
+      where.owner = {
+        deletedAt: null,
+        status: UserStatus.ACTIVE,
+      };
+    } else if (status) {
       where.status = listingStatusFromInput(status);
     } else if (!ownerMe && !ownerId) {
       where.status = ListingStatus.APPROVED;
@@ -664,6 +732,93 @@ export class ListingsService {
       nextCursor,
       hasMore,
       allowed_statuses: LISTING_STATUSES,
+    };
+  }
+
+  async findVipListings(params?: {
+    limit?: number;
+    cursor?: string;
+    category?: string;
+  }) {
+    await this.promotionsService.expirePromotionsByTime();
+
+    const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
+    const category = params?.category?.trim();
+    const cursor = parseVipListingsCursor(params?.cursor);
+    const cursorDate = cursor ? new Date(cursor.createdAt) : null;
+    const cursorId = cursor?.id;
+    const cursorWhere =
+      cursorDate != null &&
+      cursorId != null &&
+      !Number.isNaN(cursorDate.getTime())
+        ? {
+            OR: [
+              {
+                createdAt: {
+                  lt: cursorDate,
+                },
+              },
+              {
+                createdAt: cursorDate,
+                id: {
+                  lt: cursorId,
+                },
+              },
+            ],
+          }
+        : {};
+
+    const promotions = await this.prisma.promotion.findMany({
+      where: {
+        type: PromotionType.VIP,
+        status: PromotionStatus.ACTIVE,
+        endsAt: {
+          gt: new Date(),
+        },
+        ...cursorWhere,
+        listing: {
+          status: ListingStatus.APPROVED,
+          deletedAt: null,
+          archivedAt: null,
+          photos: {
+            some: {},
+          },
+          owner: {
+            deletedAt: null,
+            status: UserStatus.ACTIVE,
+          },
+          ...(category && category.toLowerCase() !== 'все'
+            ? { category }
+            : {}),
+        },
+      },
+      include: {
+        listing: {
+          include: listingInclude,
+        },
+      },
+      orderBy: [
+        {
+          createdAt: 'desc',
+        },
+        {
+          id: 'desc',
+        },
+      ],
+      take: limit + 1,
+    });
+
+    const pageItems = promotions.slice(0, limit);
+    const hasMore = promotions.length > limit;
+    const nextCursor =
+      hasMore && pageItems.length > 0
+        ? encodeVipListingsCursor(pageItems[pageItems.length - 1]!)
+        : null;
+
+    return {
+      items: pageItems.map((promotion) => serializeListing(promotion.listing)),
+      nextCursor,
+      hasMore,
     };
   }
 
@@ -942,6 +1097,8 @@ export class ListingsService {
     const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await this.createOwnerApprovedSnapshotIfNeeded(tx, listing);
+
       const savedListing = await tx.listing.update({
         where: {
           id,
@@ -1109,8 +1266,7 @@ export class ListingsService {
 
   async incrementView(
     listingId: string,
-    viewerUserId?: string,
-    viewerDeviceId?: string,
+    authUser?: AuthenticatedUser,
   ) {
     const listing = await this.prisma.listing.findUnique({
       where: {
@@ -1122,12 +1278,42 @@ export class ListingsService {
       throw new NotFoundException('Listing not found');
     }
 
+    const viewerUserId = authUser?.userId;
+    if (viewerUserId != null && listing.ownerId === viewerUserId) {
+      return {
+        listing_id: listingId,
+        view_count: listing.viewCount,
+      };
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
+      if (viewerUserId != null && authUser?.role !== 'admin') {
+        await tx.$queryRaw`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${`listing-view:${listingId}:${viewerUserId}`}, 0)
+          )
+        `;
+
+        const existingView = await tx.listingView.findFirst({
+          where: {
+            listingId,
+            viewerUserId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingView) {
+          return listing;
+        }
+      }
+
       await tx.listingView.create({
         data: {
           listingId,
           viewerUserId: viewerUserId || null,
-          viewerDeviceId: viewerDeviceId || null,
+          viewerDeviceId: null,
         },
       });
 
@@ -1149,29 +1335,38 @@ export class ListingsService {
     };
   }
 
-  async findMy(authUser: AuthenticatedUser) {
+  async findMy(
+    authUser: AuthenticatedUser,
+    params?: { status?: string; limit?: number; cursor?: string },
+  ) {
+    const status = params?.status?.trim();
+    const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
+    const cursor = parseFeedCursor(params?.cursor);
+    const cursorWhere = buildPublicFeedCursorWhere(cursor);
+    const where: Prisma.ListingWhereInput = {
+      deletedAt: null,
+      ownerId: authUser.userId,
+      ...(status ? { status: listingStatusFromInput(status) } : {}),
+    };
+    if (cursorWhere != null) {
+      where.AND = [cursorWhere];
+    }
     const listings = await this.prisma.listing.findMany({
-      where: {
-        deletedAt: null,
-        ownerId: authUser.userId,
-      },
+      where,
       include: listingInclude,
-      orderBy: [
-        {
-          publishedAt: 'desc',
-        },
-        {
-          createdAt: 'desc',
-        },
-        {
-          id: 'desc',
-        },
-      ],
+      orderBy: publicFeedOrderBy,
+      take: limit + 1,
     });
 
-    listings.sort(compareFeedByFreshness);
+    const orderedListings = listings.sort(compareFeedByFreshness);
+    const pageItems = orderedListings.slice(0, limit);
+    const hasMore = orderedListings.length > limit;
+    const nextCursor =
+      hasMore && pageItems.length > 0
+        ? encodeFeedCursor(pageItems[pageItems.length - 1]!)
+        : null;
 
-    const listingIds = listings.map((listing) => listing.id);
+    const listingIds = pageItems.map((listing) => listing.id);
     const favorites = listingIds.length === 0
       ? []
       : await this.prisma.favorite.findMany({
@@ -1197,11 +1392,14 @@ export class ListingsService {
     }
 
     return {
-      items: listings.map((listing) =>
+      items: pageItems.map((listing) =>
         serializeListing(listing, {
           favoriteCount: favoriteCountByListingId.get(listing.id) ?? 0,
         }),
       ),
+      nextCursor,
+      hasMore,
+      limit,
       allowed_statuses: LISTING_STATUSES,
     };
   }
@@ -1239,22 +1437,25 @@ export class ListingsService {
       originalName: file.originalname,
     });
 
-    const photo = await this.prisma.listingPhoto.create({
-      data: {
-        listingId,
-        storageBucket: uploaded.bucket ?? 'local',
-        storageKey: uploaded.key,
-        publicUrl: uploaded.url,
-        sortOrder:
-          typeof sortOrder === 'number' && Number.isFinite(sortOrder) && sortOrder >= 0
-            ? Math.trunc(sortOrder)
-            : listing.photos.length,
-        sizeBytes: uploaded.sizeBytes,
-        mimeType: uploaded.mimeType,
-      },
+    const photo = await this.runListingTransaction(async (tx) => {
+      await this.createOwnerApprovedSnapshotIfNeeded(tx, listing);
+      const created = await tx.listingPhoto.create({
+        data: {
+          listingId,
+          storageBucket: uploaded.bucket ?? 'local',
+          storageKey: uploaded.key,
+          publicUrl: uploaded.url,
+          sortOrder:
+            typeof sortOrder === 'number' && Number.isFinite(sortOrder) && sortOrder >= 0
+              ? Math.trunc(sortOrder)
+              : listing.photos.length,
+          sizeBytes: uploaded.sizeBytes,
+          mimeType: uploaded.mimeType,
+        },
+      });
+      await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser, tx);
+      return created;
     });
-
-    await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser);
 
     const updated = await this.prisma.listing.findUniqueOrThrow({
       where: { id: listingId },
@@ -1305,30 +1506,33 @@ export class ListingsService {
     }
 
     await this.storageService.deleteStoredFile('listings', photo.storageKey);
-    await this.prisma.listingPhoto.delete({
-      where: {
-        id: photoId,
-      },
-    });
+    await this.runListingTransaction(async (tx) => {
+      await this.createOwnerApprovedSnapshotIfNeeded(tx, listing);
+      await tx.listingPhoto.delete({
+        where: {
+          id: photoId,
+        },
+      });
 
-    const remaining = await this.prisma.listingPhoto.findMany({
-      where: {
-        listingId,
-      },
-      orderBy: {
-        sortOrder: 'asc',
-      },
-    });
-    await Promise.all(
-      remaining.map((item, index) =>
-        this.prisma.listingPhoto.update({
-          where: { id: item.id },
-          data: { sortOrder: index },
-        }),
-      ),
-    );
+      const remaining = await tx.listingPhoto.findMany({
+        where: {
+          listingId,
+        },
+        orderBy: {
+          sortOrder: 'asc',
+        },
+      });
+      await Promise.all(
+        remaining.map((item, index) =>
+          tx.listingPhoto.update({
+            where: { id: item.id },
+            data: { sortOrder: index },
+          }),
+        ),
+      );
 
-    await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser);
+      await this.resubmitPublishedListingAfterOwnerEdit(listing, authUser, tx);
+    });
 
     const updated = await this.prisma.listing.findUniqueOrThrow({
       where: { id: listingId },
@@ -1400,18 +1604,93 @@ export class ListingsService {
   private async resubmitPublishedListingAfterOwnerEdit(
     listing: { id: string; ownerId: string; status: ListingStatus },
     authUser: AuthenticatedUser,
+    tx: Prisma.TransactionClient = this.prisma,
   ) {
     if (this.statusAfterOwnerEdit(listing, authUser) !== ListingStatus.PENDING) {
       return;
     }
 
-    await this.prisma.listing.update({
+    await tx.listing.update({
       where: { id: listing.id },
       data: {
         status: ListingStatus.PENDING,
         ...this.pendingModerationUpdateData(),
       },
     });
+  }
+
+  private async createOwnerApprovedSnapshotIfNeeded(
+    tx: Prisma.TransactionClient,
+    listing: ListingWithModerationSnapshot,
+  ) {
+    if (listing.status !== ListingStatus.APPROVED) {
+      return;
+    }
+
+    const revisions = tx.listingModerationRevision;
+    if (!revisions) {
+      return;
+    }
+
+    const existing = await revisions.findFirst({
+      where: {
+        listingId: listing.id,
+        resolvedAt: null,
+      },
+      select: {
+        id: true,
+      },
+    });
+    if (existing) {
+      return;
+    }
+
+    await revisions.create({
+      data: {
+        listingId: listing.id,
+        snapshot: this.buildModerationSnapshot(listing),
+      },
+    });
+  }
+
+  private buildModerationSnapshot(listing: ListingWithModerationSnapshot) {
+    return {
+      title: listing.title,
+      description: listing.description,
+      category: listing.category,
+      subcategory: listing.subcategory,
+      price:
+        typeof listing.price === 'bigint'
+          ? listing.price.toString()
+          : String(listing.price ?? 0),
+      phone_hidden: listing.phoneHidden,
+      city: listing.city,
+      address: listing.address,
+      latitude: listing.latitude == null ? null : Number(listing.latitude),
+      longitude: listing.longitude == null ? null : Number(listing.longitude),
+      location: listing.locationJson ?? {},
+      delivery: listing.delivery ?? {},
+      car: listing.car ?? null,
+      deal_type: listing.dealType,
+      real_estate_type: listing.realEstateType,
+      clothes_type: listing.clothesType,
+      clothes_size: listing.clothesSize,
+      photos: listing.photos.map((photo) => ({
+        id: photo.id,
+        storage_key: photo.storageKey,
+        url: photo.publicUrl,
+        sort_order: photo.sortOrder,
+      })),
+    };
+  }
+
+  private async runListingTransaction<T>(
+    handler: (tx: Prisma.TransactionClient) => Promise<T>,
+  ) {
+    if (typeof this.prisma.$transaction === 'function') {
+      return this.prisma.$transaction(handler);
+    }
+    return handler(this.prisma as unknown as Prisma.TransactionClient);
   }
 
 }

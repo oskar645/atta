@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { join } from 'path';
 
 import { AppModule } from './app.module';
+import { configureTrustProxy } from './common/trust-proxy';
 import { env, parseCorsOrigins } from './config/env';
 import { StorageService } from './modules/storage/storage.service';
 
@@ -19,6 +20,7 @@ async function bootstrap() {
       credentials: true,
     },
   });
+  configureTrustProxy(app.getHttpAdapter().getInstance());
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -50,18 +52,6 @@ async function bootstrap() {
   app.use(
     '/uploads/feed-ads',
     express.static(join(uploadsRoot, 'feed-ads')),
-  );
-  app.use(
-    '/uploads/support',
-    express.static(join(uploadsRoot, 'support')),
-  );
-  app.use(
-    '/uploads/chats',
-    express.static(join(uploadsRoot, 'chats')),
-  );
-  app.use(
-    '/uploads/reports',
-    express.static(join(uploadsRoot, 'reports')),
   );
 
   await app.listen(env.PORT);
