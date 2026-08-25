@@ -6,6 +6,7 @@ import { AuthenticatedUser } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminService } from './admin.service';
 import { ListAdminBonusAnalyticsDto } from './dto/list-admin-bonus-analytics.dto';
+import { AdminRegistrationStatsDto } from './dto/admin-registration-stats.dto';
 import { ListAdminListingsDto } from './dto/list-admin-listings.dto';
 import { ListAdminPointsPurchasesDto } from './dto/list-admin-points-purchases.dto';
 import { ListAdminPromotionsDto } from './dto/list-admin-promotions.dto';
@@ -34,6 +35,11 @@ export class AdminController {
   @Get('users')
   listUsers(@Query() query: ListAdminUsersDto) {
     return this.adminService.listUsers(query);
+  }
+
+  @Get('users/registration-stats')
+  getUserRegistrationStats(@Query() query: AdminRegistrationStatsDto) {
+    return this.adminService.getUserRegistrationStats(query);
   }
 
   @Get('online-users')

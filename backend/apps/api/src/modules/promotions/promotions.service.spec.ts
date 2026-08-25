@@ -6,6 +6,7 @@ import {
   ListingStatus,
   PromotionStatus,
   PromotionType,
+  UserStatus,
   WalletTransactionReason,
 } from '@prisma/client';
 
@@ -190,6 +191,75 @@ function createService(options?: {
   return { service, createdPromotions, spent };
 }
 
+function createShowcaseService(options?: {
+  findMany?: (args?: Record<string, unknown>) => Promise<unknown[]>;
+}) {
+  let capturedArgs: Record<string, any> | undefined;
+  const now = new Date('2026-08-24T10:00:00.000Z');
+  const promotions = [
+    {
+      ...activePromotion(PromotionType.SHOWCASE, 230),
+      id: 'promotion-showcase-2',
+      listingId: 'listing-showcase-2',
+      createdAt: new Date('2026-08-24T12:00:00.000Z'),
+      listing: {
+        ...listing(),
+        id: 'listing-showcase-2',
+        category: 'Запчасти',
+        city: 'Грозный',
+        owner: listing().owner,
+        photos: [
+          {
+            id: 'photo-2',
+            listingId: 'listing-showcase-2',
+            publicUrl: 'https://example.com/2.jpg',
+            sortOrder: 0,
+            createdAt: now,
+          },
+        ],
+      },
+    },
+    {
+      ...activePromotion(PromotionType.SHOWCASE, 230),
+      id: 'promotion-showcase-1',
+      listingId: 'listing-showcase-1',
+      createdAt: new Date('2026-08-24T11:00:00.000Z'),
+      listing: {
+        ...listing(),
+        id: 'listing-showcase-1',
+        category: 'Запчасти',
+        city: 'Грозный',
+        owner: listing().owner,
+        photos: [],
+      },
+    },
+  ];
+
+  const prisma = {
+    promotion: {
+      updateMany: async () => ({ count: 0 }),
+      findMany: async (args?: Record<string, unknown>) => {
+        capturedArgs = args as Record<string, any>;
+        return options?.findMany ? options.findMany(args) : promotions;
+      },
+    },
+    review: {
+      groupBy: async () => [],
+    },
+  };
+
+  return {
+    service: new PromotionsService(
+      prisma as any,
+      {} as any,
+      { debounce: async () => true } as any,
+    ),
+    get capturedArgs() {
+      return capturedArgs;
+    },
+  };
+}
+
 test('old VIP client without quantity keeps 150 bonuses and 48 hours', async () => {
   const { service, createdPromotions, spent } = createService();
 
@@ -324,4 +394,82 @@ test('BUMP still passes requested days to existing raise campaign flow', async (
 
   assert.equal(capturedDays, 7);
   assert.deepEqual(response, { days: 7 });
+});
+
+test('getShowcase without search keeps old unpaginated request shape', async () => {
+  const harness = createShowcaseService();
+
+  const response = await harness.service.getShowcase();
+
+  assert.equal(harness.capturedArgs?.where?.type, PromotionType.SHOWCASE);
+  assert.equal(harness.capturedArgs?.where?.listing?.status, ListingStatus.APPROVED);
+  assert.deepEqual(harness.capturedArgs?.where?.listing?.photos, { some: {} });
+  assert.deepEqual(harness.capturedArgs?.where?.listing?.owner, {
+    deletedAt: null,
+    status: UserStatus.ACTIVE,
+  });
+  assert.equal('take' in harness.capturedArgs!, false);
+  assert.equal('category' in harness.capturedArgs?.where?.listing, false);
+  assert.equal(response.items.length, 2);
+});
+
+test('getShowcase applies text/OEM search and category inside showcase scope', async () => {
+  const harness = createShowcaseService();
+
+  const response = await harness.service.getShowcase({
+    limit: 1,
+    category: 'Запчасти',
+    search: '81150-06C70',
+  });
+
+  assert.equal(harness.capturedArgs?.take, 2);
+  assert.equal(harness.capturedArgs?.where?.type, PromotionType.SHOWCASE);
+  assert.equal(harness.capturedArgs?.where?.listing?.category, 'Запчасти');
+  assert.ok(
+    harness.capturedArgs?.where?.listing?.AND?.[0]?.OR?.some(
+      (group: Record<string, any>) => group.OR?.some(
+        (condition: Record<string, unknown>) =>
+          condition.oemPartNumberNormalized === '8115006C70',
+      ),
+    ),
+  );
+  assert.equal(response.items.length, 1);
+  assert.equal(response.hasMore, true);
+  assert.equal(typeof response.nextCursor, 'string');
+});
+
+test('getShowcase applies mixed text and OEM search inside showcase scope', async () => {
+  const harness = createShowcaseService();
+
+  await harness.service.getShowcase({
+    limit: 20,
+    search: 'Toyota 8115006C70',
+  });
+
+  assert.ok(
+    harness.capturedArgs?.where?.listing?.AND?.[0]?.OR?.some(
+      (group: Record<string, any>) => group.OR?.some(
+        (condition: Record<string, unknown>) =>
+          condition.oemPartNumberNormalized === '8115006C70',
+      ),
+    ),
+  );
+});
+
+test('getShowcase uses shared transliteration search inside showcase scope', async () => {
+  const harness = createShowcaseService();
+
+  await harness.service.getShowcase({
+    limit: 20,
+    category: 'Электроника',
+    search: 'Самсунг Galaxy',
+  });
+
+  const serializedSearchWhere = JSON.stringify(
+    harness.capturedArgs?.where?.listing?.AND?.[0],
+  );
+  assert.equal(harness.capturedArgs?.where?.type, PromotionType.SHOWCASE);
+  assert.equal(harness.capturedArgs?.where?.listing?.category, 'Электроника');
+  assert.ok(serializedSearchWhere.includes('"contains":"samsung"'));
+  assert.ok(serializedSearchWhere.includes('"contains":"galaxy"'));
 });

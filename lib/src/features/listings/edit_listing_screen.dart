@@ -89,6 +89,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
   final _desc = TextEditingController();
   final _price = TextEditingController();
   final _phone = TextEditingController();
+  final _oemPartNumber = TextEditingController();
 
   // авто
   final _carYear = TextEditingController();
@@ -137,6 +138,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
   };
 
   bool get _isAuto => _category == 'Авто';
+  bool get _isAutoParts => _category == 'Запчасти';
 
   bool get _isPassengerCar =>
       _isAuto && isPassengerCarsSubcategory(_subcategory);
@@ -235,6 +237,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     _desc.dispose();
     _price.dispose();
     _phone.dispose();
+    _oemPartNumber.dispose();
 
     _carYear.dispose();
     _carMileage.dispose();
@@ -290,6 +293,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     _desc.text = l.description;
     _price.text = formatPrice(l.price);
     _phone.text = formatRuPhoneForField(l.phone);
+    _oemPartNumber.text = l.oemPartNumber ?? '';
     _phoneHidden = l.phoneHidden;
 
     for (final k in _delivery.keys) {
@@ -1052,12 +1056,15 @@ class _EditListingScreenState extends State<EditListingScreen> {
         listingId: listing.id,
         title: title,
         description: desc,
+        category: _category,
+        subcategory: _subcategory,
         price: price,
         phone: phone,
         phoneHidden: _phoneHidden,
         city: city,
         delivery: _delivery,
         car: _isAuto ? car : null,
+        oemPartNumber: _isAutoParts ? _oemPartNumber.text : null,
       );
 
       if (!mounted) return;
@@ -1436,6 +1443,16 @@ class _EditListingScreenState extends State<EditListingScreen> {
             ),
           ),
           const SizedBox(height: 12),
+          if (_isAutoParts) ...[
+            TextField(
+              controller: _oemPartNumber,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: 'Номер детали (OEM)',
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           TextField(
             controller: _price,
             keyboardType: TextInputType.number,

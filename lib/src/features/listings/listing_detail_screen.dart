@@ -470,10 +470,14 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   }
 
   List<MapEntry<String, String>> _carSpecsEntries(Listing listing) {
-    if (listing.car == null) return [];
-    final car = listing.car!;
-
     final items = <MapEntry<String, String>>[
+      if ((listing.oemPartNumber ?? '').trim().isNotEmpty)
+        MapEntry('Номер детали (OEM)', listing.oemPartNumber!.trim()),
+    ];
+    final car = listing.car;
+    if (car == null) return items;
+
+    items.addAll([
       MapEntry('Марка', car.brand),
       MapEntry('Модель', car.model),
       if (car.generation.trim().isNotEmpty)
@@ -502,7 +506,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       if ((car.vin ?? '').trim().isNotEmpty) MapEntry('VIN', car.vin!.trim()),
       if ((car.note ?? '').trim().isNotEmpty)
         MapEntry('Примечание', car.note!.trim()),
-    ];
+    ]);
 
     return items;
   }

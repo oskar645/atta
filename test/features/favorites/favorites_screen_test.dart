@@ -212,6 +212,71 @@ void main() {
     expect(listings.getListingByIdCalls, 1);
   });
 
+  testWidgets('embedded favorite listing skips getListingById', (tester) async {
+    final listings = _CountingDelayedListingsService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: _EmbeddedFavoritesService(
+          items: <Listing>[_listingFixture(title: 'Embedded favorite')],
+        ),
+        listingsService: listings,
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Embedded favorite'), findsOneWidget);
+    expect(listings.getListingByIdCalls, 0);
+  });
+
+  testWidgets('33 embedded favorites do not start 33 listing requests',
+      (tester) async {
+    final listings = _CountingDelayedListingsService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: _EmbeddedFavoritesService(
+          items: List<Listing>.generate(
+            33,
+            (index) => _listingFixture(
+              id: 'listing-$index',
+              title: 'Embedded $index',
+            ),
+          ),
+        ),
+        listingsService: listings,
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Embedded 0'), findsOneWidget);
+    expect(listings.getListingByIdCalls, 0);
+  });
+
+  testWidgets('missing embedded listing keeps old getListingById fallback',
+      (tester) async {
+    final listings = _CountingDelayedListingsService();
+
+    await tester.pumpWidget(
+      _wrapFavorites(
+        favoritesService: _EmbeddedFavoritesService(
+          idsWithoutListings: const <String>['listing-1'],
+        ),
+        listingsService: listings,
+      ),
+    );
+
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Тестовое объявление'), findsOneWidget);
+    expect(listings.getListingByIdCalls, 1);
+  });
+
   testWidgets('favorites first open starts one backend load', (tester) async {
     final favorites = _CountingFavoritesService();
     final listings = _CachedListingsService();
@@ -710,6 +775,49 @@ class _CachedFavoritesService extends FavoritesService {
   }
 }
 
+class _EmbeddedFavoritesService extends FavoritesService {
+  _EmbeddedFavoritesService({
+    List<Listing> items = const <Listing>[],
+    List<String> idsWithoutListings = const <String>[],
+  })  : _items = List<Listing>.from(items),
+        _idsWithoutListings = List<String>.from(idsWithoutListings);
+
+  final List<Listing> _items;
+  final List<String> _idsWithoutListings;
+
+  List<String> get _ids => <String>[
+        ..._items.map((item) => item.id),
+        ..._idsWithoutListings,
+      ];
+
+  @override
+  Set<String> peekFavoriteIds(String uid) => const <String>{};
+
+  @override
+  Stream<Set<String>> streamCachedFavoriteIds(String uid) {
+    return Stream<Set<String>>.value(const <String>{});
+  }
+
+  @override
+  Future<FavoriteIdsPage> getFavoriteIdsPage({
+    required String uid,
+    int limit = 50,
+    String? cursor,
+    bool resetCache = false,
+  }) async {
+    if ((cursor ?? '').trim().isNotEmpty) {
+      return const FavoriteIdsPage(ids: <String>[], hasMore: false);
+    }
+    return FavoriteIdsPage(
+      ids: _ids,
+      embeddedListings: <String, Listing>{
+        for (final item in _items) item.id: item,
+      },
+      hasMore: false,
+    );
+  }
+}
+
 class _StaticFavoritesService extends FavoritesService {
   _StaticFavoritesService({required Set<String> ids})
       : _ids = Set<String>.from(ids);
@@ -971,6 +1079,8 @@ class _FollowListingsService extends ListingsService {
     ListingFeedFilters? filters,
     int limit = 20,
     String? cursor,
+    bool useVipInterleave = false,
+    int vipRotation = 0,
   }) async {
     return ListingsFeedPage(
       items: peekListings(category: category, search: search),

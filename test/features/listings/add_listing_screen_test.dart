@@ -531,6 +531,7 @@ class _CapturingListingsService extends ListingsService {
     String? dealType,
     String? clothesType,
     String? clothesSize,
+    String? oemPartNumber,
   }) async {
     createCalled = true;
     capturedCity = city;

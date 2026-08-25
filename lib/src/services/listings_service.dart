@@ -269,6 +269,90 @@ class ListingsService {
     return _fetchListingsByOwner(id, forceRefresh: true);
   }
 
+  Future<ListingsFeedPage> getPublicOwnerListingsPage({
+    required String ownerId,
+    required String status,
+    int limit = 20,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    if (runtimeType != ListingsService) {
+      if ((cursor ?? '').trim().isNotEmpty) {
+        return const ListingsFeedPage(items: <Listing>[], hasMore: false);
+      }
+      final items = forceRefresh
+          ? await refreshListingsByOwner(ownerId)
+          : await getListingsByOwnerAll(ownerId);
+      final allowed = status == 'archive'
+          ? const <String>{'archived', 'sold'}
+          : <String>{status};
+      return ListingsFeedPage(
+        items: items.where((item) => allowed.contains(item.status)).toList(),
+        hasMore: false,
+      );
+    }
+
+    final id = ownerId.trim();
+    if (id.isEmpty) {
+      return const ListingsFeedPage(items: <Listing>[], hasMore: false);
+    }
+    final normalizedStatus = status.trim().toLowerCase();
+    final requestKey = [
+      'owner',
+      id,
+      normalizedStatus,
+      limit,
+      (cursor ?? '').trim(),
+      if (forceRefresh) 'refresh',
+    ].join('|');
+    final existing = _feedPageInFlight[requestKey];
+    if (existing != null) {
+      return existing;
+    }
+
+    final future = () async {
+      _debugSource('Listings source: Timeweb');
+      final response = await _api.list(
+        queryParameters: {
+          'ownerId': id,
+          'limit': limit,
+          if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+          if (normalizedStatus == 'archive')
+            'publicMode': 'archive'
+          else
+            'status': normalizedStatus,
+        },
+      );
+      final allowed = normalizedStatus == 'archive'
+          ? const <String>{'archived', 'sold'}
+          : <String>{normalizedStatus};
+      final items = _dedupeAndSortListings(_extractItems(response))
+          .where((item) => item.ownerId == id && allowed.contains(item.status))
+          .toList(growable: false);
+      _cacheListings(items);
+      if ((cursor ?? '').trim().isEmpty && normalizedStatus == 'approved') {
+        _ownerListingsCache[id] = List<Listing>.from(items);
+        _ownerListingsCachedAt[id] = DateTime.now();
+      }
+      final nextCursor = _extractNextCursor(response);
+      return ListingsFeedPage(
+        items: items,
+        hasMore:
+            (response['hasMore'] == true || response['has_more'] == true) &&
+                nextCursor != null,
+        nextCursor: nextCursor,
+      );
+    }();
+    _feedPageInFlight[requestKey] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_feedPageInFlight[requestKey], future)) {
+        _feedPageInFlight.remove(requestKey);
+      }
+    }
+  }
+
   Stream<List<Listing>> streamListingsByOwnerAll(String ownerId) async* {
     _debugSource('Listings source: Timeweb');
     yield await _fetchListingsByOwner(ownerId);
@@ -337,6 +421,8 @@ class ListingsService {
     ListingFeedFilters? filters,
     int limit = 20,
     String? cursor,
+    bool useVipInterleave = false,
+    int vipRotation = 0,
   }) async {
     final effectiveFilters = filters ??
         ListingFeedFilters(
@@ -347,6 +433,7 @@ class ListingsService {
       _filtersCacheKey(effectiveFilters),
       limit,
       (cursor ?? '').trim(),
+      if (useVipInterleave) 'vip_interleave_v1:$vipRotation',
     ].join('|');
     final existing = _feedPageInFlight[requestKey];
     if (existing != null) {
@@ -369,6 +456,8 @@ class ListingsService {
             'maxPrice': effectiveFilters.priceTo,
           'limit': limit,
           if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+          if (useVipInterleave) 'feedMode': 'vip_interleave_v1',
+          if (useVipInterleave) 'vipRotation': vipRotation,
         },
       );
       final items = _extractItems(response);
@@ -398,11 +487,14 @@ class ListingsService {
     int limit = 20,
     String? cursor,
     String category = 'Все',
+    String search = '',
   }) async {
     final effectiveCategory = category.trim().isEmpty ? 'Все' : category.trim();
+    final effectiveSearch = search.trim();
     final requestKey = [
       'vip',
       effectiveCategory,
+      effectiveSearch,
       limit,
       (cursor ?? '').trim(),
     ].join('|');
@@ -416,6 +508,7 @@ class ListingsService {
         limit: limit,
         cursor: cursor,
         category: _isAllCategory(effectiveCategory) ? null : effectiveCategory,
+        search: effectiveSearch,
       );
       final items = _extractItems(response);
       _cacheListings(items);
@@ -587,6 +680,7 @@ class ListingsService {
     String? dealType,
     String? clothesType,
     String? clothesSize,
+    String? oemPartNumber,
     ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
   }) async {
     _debugSource('Listings source: Timeweb');
@@ -618,6 +712,8 @@ class ListingsService {
           clothesSize != null &&
           clothesSize.trim().isNotEmpty)
         'clothes_size': clothesSize.trim(),
+      if (category == 'Запчасти' && oemPartNumber != null)
+        'oem_part_number': oemPartNumber.trim(),
     });
     final createdListing = _extractListingFromResponse(created);
     final listingId = createdListing?.id ?? '';
@@ -756,6 +852,10 @@ class ListingsService {
     return _listingById[normalizedId];
   }
 
+  void cacheListings(Iterable<Listing> items) {
+    _cacheListings(items.toList(growable: false));
+  }
+
   Future<Listing?> refreshListingById(String listingId) async {
     final id = listingId.trim();
     if (id.isEmpty) return null;
@@ -786,6 +886,7 @@ class ListingsService {
     String? dealType,
     String? clothesType,
     String? clothesSize,
+    String? oemPartNumber,
   }) async {
     _debugSource('Listings source: Timeweb');
     final response = await _api.update(
@@ -812,6 +913,8 @@ class ListingsService {
             clothesSize != null &&
             clothesSize.trim().isNotEmpty)
           'clothes_size': clothesSize.trim(),
+        if (category == 'Запчасти' && oemPartNumber != null)
+          'oem_part_number': oemPartNumber.trim(),
       },
     );
     final updated = _extractListingFromResponse(response);

@@ -4,6 +4,7 @@ import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/favorites_api.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/models/listing.dart';
 
 class FavoritesService {
   FavoritesService({
@@ -218,6 +219,7 @@ class FavoritesService {
     try {
       final response = await _api.list(limit: limit, cursor: cursor);
       final ids = _extractFavoriteIds(response);
+      final embeddedListings = _extractEmbeddedListings(response);
       final current = resetCache
           ? <String>{}
           : Set<String>.from(_cache[normalizedUid] ?? const <String>{});
@@ -226,6 +228,7 @@ class FavoritesService {
       final nextCursor = _extractNextCursor(response);
       return FavoriteIdsPage(
         ids: ids,
+        embeddedListings: embeddedListings,
         nextCursor: nextCursor,
         hasMore: response['hasMore'] == true && nextCursor != null,
       );
@@ -294,6 +297,26 @@ class FavoritesService {
     final cursor =
         (response['nextCursor'] ?? response['next_cursor'])?.toString().trim();
     return (cursor ?? '').isEmpty ? null : cursor;
+  }
+
+  Map<String, Listing> _extractEmbeddedListings(Map<String, dynamic> response) {
+    final rawItems = response['items'];
+    if (rawItems is! List) return const <String, Listing>{};
+    final listings = <String, Listing>{};
+    for (final rawItem in rawItems) {
+      if (rawItem is! Map) continue;
+      final rawListing = rawItem['listing'];
+      if (rawListing is! Map) continue;
+      try {
+        final listing = Listing.fromMap(
+          rawListing.map((key, value) => MapEntry(key.toString(), value)),
+        );
+        listings[listing.id] = listing;
+      } catch (_) {
+        continue;
+      }
+    }
+    return listings;
   }
 
   StreamController<Set<String>> _controllerFor(String uid) {
@@ -416,10 +439,12 @@ class FavoriteIdsPage {
   const FavoriteIdsPage({
     required this.ids,
     required this.hasMore,
+    this.embeddedListings = const <String, Listing>{},
     this.nextCursor,
   });
 
   final List<String> ids;
+  final Map<String, Listing> embeddedListings;
   final bool hasMore;
   final String? nextCursor;
 }

@@ -457,6 +457,7 @@ Listing _listing() {
     realEstateType: null,
     clothesType: null,
     clothesSize: null,
+    oemPartNumber: null,
     viewCount: 0,
     favoriteCount: 0,
     status: 'approved',

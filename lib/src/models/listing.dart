@@ -195,6 +195,7 @@ class Listing {
   final String? realEstateType;
   final String? clothesType;
   final String? clothesSize;
+  final String? oemPartNumber;
 
   final int viewCount;
   final int favoriteCount;
@@ -235,6 +236,7 @@ class Listing {
     required this.realEstateType,
     required this.clothesType,
     required this.clothesSize,
+    required this.oemPartNumber,
     required this.viewCount,
     required this.favoriteCount,
     required this.status,
@@ -492,6 +494,7 @@ class Listing {
       realEstateType: row['real_estate_type']?.toString(),
       clothesType: row['clothes_type']?.toString(),
       clothesSize: row['clothes_size']?.toString(),
+      oemPartNumber: row['oem_part_number']?.toString(),
       viewCount:
           (row['view_count'] is num) ? (row['view_count'] as num).toInt() : 0,
       favoriteCount: (row['favorites_count'] is num)
@@ -561,6 +564,7 @@ class Listing {
       'real_estate_type': realEstateType,
       'clothes_type': clothesType,
       'clothes_size': clothesSize,
+      'oem_part_number': oemPartNumber,
       'view_count': viewCount,
       'favorites_count': favoriteCount,
       'status': status,

@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -28,13 +29,33 @@ export class PromotionsController {
   }
 
   @Get('promotions/showcase')
-  getShowcaseByPromotionsRoute() {
-    return this.promotionsService.getShowcase();
+  getShowcaseByPromotionsRoute(
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+    @Query('category') category?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.promotionsService.getShowcase({
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+      category,
+      search,
+    });
   }
 
   @Get('showcase')
-  getShowcase() {
-    return this.promotionsService.getShowcase();
+  getShowcase(
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+    @Query('category') category?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.promotionsService.getShowcase({
+      limit: limit == null ? undefined : Number(limit),
+      cursor,
+      category,
+      search,
+    });
   }
 
   @Post('showcase/:promotionId/impression')

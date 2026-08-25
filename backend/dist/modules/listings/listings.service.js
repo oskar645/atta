@@ -9,16 +9,19 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ListingsService = exports.LISTING_PHOTO_REQUIRED = exports.LISTING_STATUSES = void 0;
+exports.ListingsService = exports.LISTING_PHOTO_REQUIRED = exports.LISTING_STATUSES = exports.canViewListing = exports.listingInclude = exports.normalizeOemPartNumber = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
+const listing_search_1 = require("../../common/listing-search");
 const serializers_1 = require("../../common/serializers");
 const phone_1 = require("../../common/phone");
 const prisma_service_1 = require("../prisma/prisma.service");
 const promotions_service_1 = require("../promotions/promotions.service");
 const storage_service_1 = require("../storage/storage.service");
 const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
-const listingInclude = {
+var listing_search_2 = require("../../common/listing-search");
+Object.defineProperty(exports, "normalizeOemPartNumber", { enumerable: true, get: function () { return listing_search_2.normalizeOemPartNumber; } });
+exports.listingInclude = {
     owner: {
         include: {
             adminProfile: true,
@@ -38,6 +41,17 @@ const listingInclude = {
         },
     },
 };
+const canViewListing = (listing, authUser) => {
+    const isAdmin = authUser?.role === 'admin';
+    const isOwner = authUser?.userId === listing.ownerId;
+    const isPublic = listing.status === client_1.ListingStatus.APPROVED &&
+        listing.photos.length > 0 &&
+        listing.deletedAt == null &&
+        listing.owner?.deletedAt == null &&
+        listing.owner?.status === client_1.UserStatus.ACTIVE;
+    return isPublic || isOwner || isAdmin;
+};
+exports.canViewListing = canViewListing;
 exports.LISTING_STATUSES = [
     'pending',
     'approved',
@@ -50,6 +64,14 @@ exports.LISTING_PHOTO_REQUIRED = 'LISTING_PHOTO_REQUIRED';
 const toInputJson = (value) => (value ?? {});
 const toNullableInputJson = (value) => (value ?? client_1.Prisma.JsonNull);
 const PROTECTED_FEED_HEAD_SIZE = 10;
+const VIP_INTERLEAVE_FEED_MODE = 'vip_interleave_v1';
+const PUBLIC_ARCHIVE_MODE = 'archive';
+const AUTO_PARTS_CATEGORY = 'Запчасти';
+const trimOptional = (value) => {
+    const trimmed = value?.trim() ?? '';
+    return trimmed.length > 0 ? trimmed : null;
+};
+const isAutoPartsCategory = (category) => category?.trim() === AUTO_PARTS_CATEGORY;
 const parsePromotionDate = (value) => {
     const parsed = value instanceof Date ? value : value == null ? null : new Date(value);
     if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
@@ -312,6 +334,10 @@ let ListingsService = class ListingsService {
         const nextPhone = this.pickListingPhone(dto.phone, owner.phone);
         const requestedStatus = (0, serializers_1.listingStatusFromInput)(dto.status);
         const nextStatus = authUser.role === 'admin' ? requestedStatus : client_1.ListingStatus.PENDING;
+        const category = dto.category.trim();
+        const oemPartNumber = isAutoPartsCategory(category)
+            ? trimOptional(dto.oem_part_number)
+            : null;
         if (nextStatus === client_1.ListingStatus.APPROVED && !dto.photo_urls?.length) {
             throw new common_1.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
         }
@@ -326,8 +352,10 @@ let ListingsService = class ListingsService {
                     'Пользователь',
                 title: dto.title.trim(),
                 description: dto.description.trim(),
-                category: dto.category.trim(),
+                category,
                 subcategory: dto.subcategory?.trim() ?? '',
+                oemPartNumber,
+                oemPartNumberNormalized: (0, listing_search_1.normalizeOemPartNumber)(oemPartNumber),
                 price: dto.price,
                 city: dto.city?.trim() ?? '',
                 address: dto.address?.trim() ?? '',
@@ -346,7 +374,7 @@ let ListingsService = class ListingsService {
                 dealType: dto.deal_type?.trim() || null,
                 realEstateType: dto.real_estate_type?.trim() || null,
                 clothesType: dto.clothes_type?.trim() || null,
-                clothesSize: dto.category.trim() === 'Одежда'
+                clothesSize: category === 'Одежда'
                     ? dto.clothes_size?.trim() || null
                     : null,
                 publishedAt: nextStatus === client_1.ListingStatus.APPROVED ? new Date() : null,
@@ -360,7 +388,7 @@ let ListingsService = class ListingsService {
                     }
                     : undefined,
             },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         return {
             listing: (0, serializers_1.serializeListing)(listing),
@@ -374,8 +402,13 @@ let ListingsService = class ListingsService {
         const ownerId = params?.ownerId?.trim();
         const ownerMe = params?.ownerMe?.trim();
         const status = params?.status?.trim();
+        const publicMode = params?.publicMode?.trim();
         const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
         const cursor = parseFeedCursor(params?.cursor);
+        const feedMode = params?.feedMode?.trim();
+        const vipRotation = Number.isFinite(params?.vipRotation)
+            ? Math.max(0, Math.trunc(params?.vipRotation ?? 0))
+            : 0;
         const andConditions = [];
         const where = {
             deletedAt: null,
@@ -386,7 +419,19 @@ let ListingsService = class ListingsService {
         else if (ownerId) {
             where.ownerId = ownerId;
         }
-        if (!ownerMe && ownerId) {
+        if (!ownerMe && ownerId && publicMode === PUBLIC_ARCHIVE_MODE) {
+            where.status = {
+                in: [client_1.ListingStatus.ARCHIVED, client_1.ListingStatus.SOLD],
+            };
+            where.photos = {
+                some: {},
+            };
+            where.owner = {
+                deletedAt: null,
+                status: client_1.UserStatus.ACTIVE,
+            };
+        }
+        else if (!ownerMe && ownerId) {
             const requestedStatus = status ? (0, serializers_1.listingStatusFromInput)(status) : null;
             if (requestedStatus && requestedStatus !== client_1.ListingStatus.APPROVED) {
                 return {
@@ -449,53 +494,9 @@ let ListingsService = class ListingsService {
                     : {}),
             };
         }
-        if (search) {
-            andConditions.push({
-                OR: [
-                    {
-                        title: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                    {
-                        description: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                    {
-                        category: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                    {
-                        subcategory: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                    {
-                        city: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                    {
-                        address: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                    {
-                        ownerName: {
-                            contains: search,
-                            mode: 'insensitive',
-                        },
-                    },
-                ],
-            });
+        const searchWhere = (0, listing_search_1.buildListingSearchWhere)(search);
+        if (searchWhere != null) {
+            andConditions.push(searchWhere);
         }
         if (andConditions.length > 0) {
             where.AND = andConditions;
@@ -510,6 +511,8 @@ let ListingsService = class ListingsService {
                 maxPrice: params?.maxPrice,
                 cursor,
                 limit,
+                feedMode,
+                vipRotation,
             });
             const pageRows = rankedRows.slice(0, limit);
             const hasMore = rankedRows.length > limit;
@@ -522,7 +525,7 @@ let ListingsService = class ListingsService {
                             in: ids,
                         },
                     },
-                    include: listingInclude,
+                    include: exports.listingInclude,
                 });
             const listingsById = new Map(listings.map((listing) => [listing.id, listing]));
             const pageItems = ids
@@ -549,7 +552,7 @@ let ListingsService = class ListingsService {
         }
         const listings = await this.prisma.listing.findMany({
             where,
-            include: listingInclude,
+            include: exports.listingInclude,
             orderBy: publicFeedOrderBy,
             take: limit + 1,
         });
@@ -572,6 +575,7 @@ let ListingsService = class ListingsService {
         await this.promotionsService.expirePromotionsByTime();
         const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
         const category = params?.category?.trim();
+        const search = params?.search?.trim();
         const cursor = parseVipListingsCursor(params?.cursor);
         const cursorDate = cursor ? new Date(cursor.createdAt) : null;
         const cursorId = cursor?.id;
@@ -594,6 +598,11 @@ let ListingsService = class ListingsService {
                 ],
             }
             : {};
+        const listingAndConditions = [];
+        const searchWhere = (0, listing_search_1.buildListingSearchWhere)(search);
+        if (searchWhere != null) {
+            listingAndConditions.push(searchWhere);
+        }
         const promotions = await this.prisma.promotion.findMany({
             where: {
                 type: client_1.PromotionType.VIP,
@@ -616,11 +625,14 @@ let ListingsService = class ListingsService {
                     ...(category && category.toLowerCase() !== 'все'
                         ? { category }
                         : {}),
+                    ...(listingAndConditions.length > 0
+                        ? { AND: listingAndConditions }
+                        : {}),
                 },
             },
             include: {
                 listing: {
-                    include: listingInclude,
+                    include: exports.listingInclude,
                 },
             },
             orderBy: [
@@ -672,19 +684,19 @@ let ListingsService = class ListingsService {
         if (typeof params.maxPrice === 'number') {
             whereParts.push(client_1.Prisma.sql `l."price" <= ${params.maxPrice}`);
         }
-        if (params.search) {
-            const searchPattern = `%${params.search}%`;
-            whereParts.push(client_1.Prisma.sql `(
-        l."title" ILIKE ${searchPattern}
-        OR l."description" ILIKE ${searchPattern}
-        OR l."category" ILIKE ${searchPattern}
-        OR l."subcategory" ILIKE ${searchPattern}
-        OR l."city" ILIKE ${searchPattern}
-        OR l."address" ILIKE ${searchPattern}
-        OR l."owner_name" ILIKE ${searchPattern}
-      )`);
+        const searchSql = (0, listing_search_1.buildListingSearchSql)(params.search);
+        if (searchSql != null) {
+            whereParts.push(searchSql);
         }
         const cursor = this.buildRankedFeedCursorSql(params.cursor);
+        if (params.feedMode === VIP_INTERLEAVE_FEED_MODE) {
+            return this.findPublicFeedVipInterleavedRows({
+                whereParts,
+                cursor,
+                limit: params.limit,
+                vipRotation: params.vipRotation,
+            });
+        }
         const rows = await this.prisma.$queryRaw `
       WITH base AS (
         SELECT
@@ -789,6 +801,106 @@ let ListingsService = class ListingsService {
             createdAt: parseRankRowDate(row.created_at) ?? new Date(0),
         }));
     }
+    async findPublicFeedVipInterleavedRows(params) {
+        const rows = await this.prisma.$queryRaw `
+      WITH base AS (
+        SELECT
+          l."id",
+          l."published_at",
+          l."created_at",
+          MAX(p."created_at") FILTER (
+            WHERE p."status"::text = 'ACTIVE'
+              AND p."ends_at" > NOW()
+              AND p."type"::text = 'VIP'
+          ) AS vip_promoted_at
+        FROM "listings" l
+        JOIN "users" u ON u."id" = l."owner_id"
+        LEFT JOIN "promotions" p ON p."listing_id" = l."id"
+        WHERE ${client_1.Prisma.join(params.whereParts, ' AND ')}
+        GROUP BY l."id", l."published_at", l."created_at"
+      ),
+      ranked AS (
+        SELECT
+          base.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY (vip_promoted_at IS NULL)
+            ORDER BY
+              base."published_at" DESC NULLS LAST,
+              base."created_at" DESC,
+              base."id" DESC
+          ) AS ordinary_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY (vip_promoted_at IS NOT NULL)
+            ORDER BY
+              vip_promoted_at DESC,
+              base."created_at" DESC,
+              base."id" DESC
+          ) AS vip_queue_rank,
+          COUNT(*) FILTER (WHERE vip_promoted_at IS NOT NULL) OVER () AS vip_count,
+          LEAST(
+            COUNT(*) FILTER (WHERE vip_promoted_at IS NULL) OVER (),
+            ${PROTECTED_FEED_HEAD_SIZE}
+          ) AS ordinary_head_count
+        FROM base
+      ),
+      ordered AS (
+        SELECT
+          "id",
+          vip_promoted_at AS promoted_at,
+          published_at,
+          created_at,
+          CASE
+            WHEN vip_promoted_at IS NULL AND ordinary_rank <= ordinary_head_count
+              THEN ordinary_rank
+            WHEN vip_promoted_at IS NOT NULL
+              THEN ordinary_head_count
+                + 1
+                + (
+                  (
+                    (
+                      vip_queue_rank
+                      - 1
+                      - (${params.vipRotation} % GREATEST(vip_count, 1))
+                    )
+                    + vip_count
+                  ) % GREATEST(vip_count, 1)
+                ) * 3
+            ELSE ordinary_head_count
+              + (ordinary_rank - ordinary_head_count)
+              + CEIL((ordinary_rank - ordinary_head_count)::numeric / 2.0)::int
+          END AS sort_group,
+          CASE
+            WHEN vip_promoted_at IS NOT NULL
+              THEN vip_promoted_at
+            ELSE COALESCE("published_at", "created_at")
+          END AS sort_at
+        FROM ranked
+      )
+      SELECT
+        "id",
+        promoted_at,
+        sort_group,
+        sort_at,
+        published_at,
+        created_at
+      FROM ordered
+      WHERE ${params.cursor}
+      ORDER BY
+        sort_group ASC,
+        sort_at DESC,
+        created_at DESC,
+        "id" DESC
+      LIMIT ${params.limit + 1}
+    `;
+        return rows.map((row) => ({
+            id: row.id,
+            promotedAt: parseRankRowDate(row.promoted_at),
+            sortGroup: Number(row.sort_group),
+            sortAt: parseRankRowDate(row.sort_at) ?? new Date(0),
+            publishedAt: parseRankRowDate(row.published_at),
+            createdAt: parseRankRowDate(row.created_at) ?? new Date(0),
+        }));
+    }
     buildRankedFeedCursorSql(cursor) {
         if (cursor == null ||
             cursor.sortGroup == null ||
@@ -825,19 +937,12 @@ let ListingsService = class ListingsService {
             where: {
                 id,
             },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         if (!listing) {
             throw new common_1.NotFoundException('Listing not found');
         }
-        const isAdmin = authUser?.role === 'admin';
-        const isOwner = authUser?.userId === listing.ownerId;
-        const isPublic = listing.status === client_1.ListingStatus.APPROVED &&
-            listing.photos.length > 0 &&
-            listing.deletedAt == null &&
-            listing.owner?.deletedAt == null &&
-            listing.owner?.status === client_1.UserStatus.ACTIVE;
-        if (!isPublic && !isOwner && !isAdmin) {
+        if (!(0, exports.canViewListing)(listing, authUser)) {
             throw new common_1.NotFoundException('Listing not found');
         }
         return {
@@ -851,7 +956,7 @@ let ListingsService = class ListingsService {
             where: {
                 id,
             },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         if (!listing) {
             throw new common_1.NotFoundException('Listing not found');
@@ -871,6 +976,11 @@ let ListingsService = class ListingsService {
             ? requestedStatus
             : this.statusAfterOwnerEdit(listing, authUser);
         const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
+        const nextCategory = dto.category?.trim() ?? listing.category;
+        const shouldUpdateOem = Object.prototype.hasOwnProperty.call(dto, 'oem_part_number');
+        const nextOemPartNumber = isAutoPartsCategory(nextCategory)
+            ? trimOptional(dto.oem_part_number)
+            : null;
         const updated = await this.prisma.$transaction(async (tx) => {
             await this.createOwnerApprovedSnapshotIfNeeded(tx, listing);
             const savedListing = await tx.listing.update({
@@ -896,6 +1006,16 @@ let ListingsService = class ListingsService {
                     delivery: dto.delivery ? toInputJson(dto.delivery) : undefined,
                     locationJson: dto.location ? toInputJson(dto.location) : undefined,
                     car: dto.car ? toNullableInputJson(dto.car) : undefined,
+                    oemPartNumber: isAutoPartsCategory(nextCategory)
+                        ? shouldUpdateOem
+                            ? nextOemPartNumber
+                            : undefined
+                        : null,
+                    oemPartNumberNormalized: isAutoPartsCategory(nextCategory)
+                        ? shouldUpdateOem
+                            ? (0, listing_search_1.normalizeOemPartNumber)(nextOemPartNumber)
+                            : undefined
+                        : null,
                     dealType: dto.deal_type?.trim(),
                     realEstateType: dto.real_estate_type?.trim(),
                     clothesType: dto.clothes_type?.trim(),
@@ -909,7 +1029,7 @@ let ListingsService = class ListingsService {
                         : {}),
                     archivedAt: nextStatus === client_1.ListingStatus.ARCHIVED ? new Date() : listing.archivedAt,
                 },
-                include: listingInclude,
+                include: exports.listingInclude,
             });
             if (dto.photo_urls) {
                 await tx.listingPhoto.deleteMany({
@@ -930,7 +1050,7 @@ let ListingsService = class ListingsService {
             }
             return tx.listing.findUniqueOrThrow({
                 where: { id },
-                include: listingInclude,
+                include: exports.listingInclude,
             });
         });
         return {
@@ -961,7 +1081,7 @@ let ListingsService = class ListingsService {
                 status: client_1.ListingStatus.DELETED,
                 deletedAt: new Date(),
             },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         await this.storageService.deleteListingPhotosForListings([id]);
         return {
@@ -1001,7 +1121,7 @@ let ListingsService = class ListingsService {
                         : 'Объявление снято с публикации.',
                 archivedAt: new Date(),
             },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         return {
             listing: (0, serializers_1.serializeListing)(updated),
@@ -1082,7 +1202,7 @@ let ListingsService = class ListingsService {
         }
         const listings = await this.prisma.listing.findMany({
             where,
-            include: listingInclude,
+            include: exports.listingInclude,
             orderBy: publicFeedOrderBy,
             take: limit + 1,
         });
@@ -1127,7 +1247,7 @@ let ListingsService = class ListingsService {
             where: {
                 id: listingId,
             },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         if (!listing) {
             throw new common_1.NotFoundException('Listing not found');
@@ -1168,7 +1288,7 @@ let ListingsService = class ListingsService {
         });
         const updated = await this.prisma.listing.findUniqueOrThrow({
             where: { id: listingId },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         return {
             source: 'timeweb',
@@ -1230,7 +1350,7 @@ let ListingsService = class ListingsService {
         });
         const updated = await this.prisma.listing.findUniqueOrThrow({
             where: { id: listingId },
-            include: listingInclude,
+            include: exports.listingInclude,
         });
         return {
             source: 'timeweb',
@@ -1339,6 +1459,7 @@ let ListingsService = class ListingsService {
             real_estate_type: listing.realEstateType,
             clothes_type: listing.clothesType,
             clothes_size: listing.clothesSize,
+            oem_part_number: listing.oemPartNumber,
             photos: listing.photos.map((photo) => ({
                 id: photo.id,
                 storage_key: photo.storageKey,

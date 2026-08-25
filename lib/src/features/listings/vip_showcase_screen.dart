@@ -23,16 +23,20 @@ class VipShowcaseScreen extends StatefulWidget {
 
 class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
   static const int _pageSize = 20;
+  static const Duration _searchDebounce = Duration(milliseconds: 400);
 
   final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
   List<Listing> _items = const <Listing>[];
   bool _initialLoading = true;
   bool _loadingMore = false;
   bool _hasMore = true;
   String? _nextCursor;
   String _selectedCategory = 'Все';
+  String _search = '';
   Object? _error;
   int _requestSerial = 0;
+  Timer? _searchDebounceTimer;
 
   @override
   void initState() {
@@ -44,6 +48,8 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
   @override
   void dispose() {
     _scrollController.removeListener(_maybeLoadMore);
+    _searchDebounceTimer?.cancel();
+    _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -91,6 +97,7 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
             limit: _pageSize,
             cursor: reset ? null : _nextCursor,
             category: _selectedCategory,
+            search: _search,
           );
       if (!mounted || serial != _requestSerial) return;
       setState(() {
@@ -130,6 +137,45 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
     unawaited(_load(reset: true));
   }
 
+  void _onSearchChanged(String value) {
+    setState(() {});
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(_searchDebounce, () {
+      final nextSearch = value.trim();
+      if (nextSearch == _search) {
+        return;
+      }
+      setState(() {
+        _search = nextSearch;
+        _items = const <Listing>[];
+        _initialLoading = true;
+        _loadingMore = false;
+        _hasMore = true;
+        _nextCursor = null;
+        _error = null;
+      });
+      unawaited(_load(reset: true));
+    });
+  }
+
+  void _clearSearch() {
+    _searchDebounceTimer?.cancel();
+    if (_searchController.text.isEmpty && _search.isEmpty) {
+      return;
+    }
+    _searchController.clear();
+    setState(() {
+      _search = '';
+      _items = const <Listing>[];
+      _initialLoading = true;
+      _loadingMore = false;
+      _hasMore = true;
+      _nextCursor = null;
+      _error = null;
+    });
+    unawaited(_load(reset: true));
+  }
+
   @override
   Widget build(BuildContext context) {
     final favs = context.read<FavoritesService>();
@@ -146,6 +192,45 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
         onRefresh: _refresh,
         child: Column(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+              child: TextField(
+                key: const ValueKey('vip_showcase_search_field'),
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                onChanged: _onSearchChanged,
+                onSubmitted: (value) {
+                  _searchDebounceTimer?.cancel();
+                  final nextSearch = value.trim();
+                  if (nextSearch == _search) return;
+                  setState(() {
+                    _search = nextSearch;
+                    _items = const <Listing>[];
+                    _initialLoading = true;
+                    _loadingMore = false;
+                    _hasMore = true;
+                    _nextCursor = null;
+                    _error = null;
+                  });
+                  unawaited(_load(reset: true));
+                },
+                decoration: InputDecoration(
+                  hintText: 'Поиск',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Очистить',
+                          icon: const Icon(Icons.close),
+                          onPressed: _clearSearch,
+                        ),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
             SizedBox(
               height: 52,
               child: ListView.separated(
@@ -194,45 +279,55 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
                     );
                   }
 
-                  return GridView.builder(
-                    controller: _scrollController,
-                    physics: const AlwaysScrollableScrollPhysics(
-                      parent: BouncingScrollPhysics(),
-                    ),
-                    padding: const EdgeInsets.all(10),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                      childAspectRatio: 0.72,
-                    ),
-                    itemCount: _items.length + (_loadingMore ? 2 : 0),
-                    itemBuilder: (context, index) {
-                      if (index >= _items.length) {
-                        return const Center(
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                  return Column(
+                    children: [
+                      Expanded(
+                        child: GridView.builder(
+                          controller: _scrollController,
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
                           ),
-                        );
-                      }
-                      final item = _items[index];
-                      return FavoriteListingCard(
-                        listing: item,
-                        favoritesService: favs,
-                        userId: userId,
-                        isSeen: history.hasViewed(item.id),
-                        reviews: reviews,
-                        onOpen: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                ListingDetailScreen(listingId: item.id),
+                          padding: const EdgeInsets.all(10),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                            childAspectRatio: 0.72,
+                          ),
+                          itemCount: _items.length,
+                          itemBuilder: (context, index) {
+                            final item = _items[index];
+                            return FavoriteListingCard(
+                              listing: item,
+                              favoritesService: favs,
+                              userId: userId,
+                              isSeen: history.hasViewed(item.id),
+                              reviews: reviews,
+                              onOpen: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      ListingDetailScreen(listingId: item.id),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      if (_loadingMore)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            ),
                           ),
                         ),
-                      );
-                    },
+                    ],
                   );
                 },
               ),

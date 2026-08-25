@@ -5,7 +5,7 @@ import 'package:atta/src/services/api/showcase_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 
 class ShowcaseService {
-  ShowcaseService() : _api = ShowcaseApi(_apiClient);
+  ShowcaseService({ShowcaseApi? api}) : _api = api ?? ShowcaseApi(_apiClient);
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -28,6 +28,43 @@ class ShowcaseService {
           ),
         )
         .toList();
+  }
+
+  Future<ShowcasePage> getShowcasePage({
+    int limit = 20,
+    String? cursor,
+    String category = 'Все',
+    String search = '',
+  }) async {
+    if (!ApiConfig.useTimewebBackend) {
+      return const ShowcasePage(items: <ShowcaseItem>[], hasMore: false);
+    }
+    final effectiveCategory = category.trim();
+    final response = await _api.getShowcase(
+      limit: limit,
+      cursor: cursor,
+      category: effectiveCategory == 'Все' ? null : effectiveCategory,
+      search: search.trim(),
+    );
+    final rawItems = response['items'];
+    final items = rawItems is List
+        ? rawItems
+            .whereType<Map>()
+            .map(
+              (item) => ShowcaseItem.fromMap(
+                item.map((key, value) => MapEntry(key.toString(), value)),
+              ),
+            )
+            .toList()
+        : const <ShowcaseItem>[];
+    final nextCursor =
+        (response['nextCursor'] ?? response['next_cursor'])?.toString().trim();
+    return ShowcasePage(
+      items: items,
+      hasMore: (response['hasMore'] == true || response['has_more'] == true) &&
+          (nextCursor ?? '').isNotEmpty,
+      nextCursor: nextCursor,
+    );
   }
 
   Future<List<ShowcaseItem>> getHomeShowcase() async {
@@ -137,4 +174,16 @@ class PreparedHomeShowcase {
 
   final List<ShowcaseItem> items;
   final int nextRotationOffset;
+}
+
+class ShowcasePage {
+  const ShowcasePage({
+    required this.items,
+    required this.hasMore,
+    this.nextCursor,
+  });
+
+  final List<ShowcaseItem> items;
+  final bool hasMore;
+  final String? nextCursor;
 }

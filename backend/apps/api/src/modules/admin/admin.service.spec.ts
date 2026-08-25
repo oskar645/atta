@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 
 import { buildReferralCode } from '../../common/referral-code';
+import { AdminGuard } from '../auth/admin.guard';
 import { AdminService } from './admin.service';
 
 const adminUser = {
@@ -158,6 +159,125 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
     typeof (capturedWalletAggregateWhere?.['createdAt'] as Record<string, unknown>)
       ?.['gte'],
     'object',
+  );
+});
+
+test('admin registration stats aggregate users by selected year without personal data', async () => {
+  const now = new Date();
+  const currentYear = now.getUTCFullYear();
+  const previousYear = currentYear - 1;
+  const currentMonth = now.getUTCMonth() + 1;
+  const firstCreatedAt = new Date(Date.UTC(previousYear, 5, 10));
+  const queryYears: number[] = [];
+
+  const service = new AdminService(
+    {
+      user: {
+        count: async (args?: any) => {
+          const createdAt = args?.where?.createdAt;
+          if (createdAt?.gte && createdAt?.lt) return 2;
+          return 9;
+        },
+        findFirst: async () => ({ createdAt: firstCreatedAt }),
+      },
+      $queryRaw: async (
+        strings: TemplateStringsArray,
+        ...values: unknown[]
+      ) => {
+        assert.ok(strings.join('').includes('GROUP BY month'));
+        const yearStart = values.find(
+          (value) => value instanceof Date && value.getUTCMonth() === 0,
+        ) as Date;
+        queryYears.push(yearStart.getUTCFullYear());
+        if (yearStart.getUTCFullYear() === currentYear) {
+          return [
+            { month: currentMonth, count: BigInt(2) },
+            { month: Math.max(currentMonth - 2, 1), count: BigInt(3) },
+          ];
+        }
+        return [
+          { month: 12, count: BigInt(4) },
+          { month: 6, count: BigInt(1) },
+        ];
+      },
+    } as any,
+    { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+
+  const currentStats = await service.getUserRegistrationStats({
+    year: currentYear,
+  });
+  const previousStats = await service.getUserRegistrationStats({
+    year: previousYear,
+  });
+
+  assert.deepEqual(queryYears, [currentYear, previousYear]);
+  assert.equal(currentStats.total_users, 9);
+  assert.equal(currentStats.current_month_count, 2);
+  assert.deepEqual(currentStats.available_years, [previousYear, currentYear]);
+  assert.equal(currentStats.months[0].month, currentMonth);
+  assert.equal(currentStats.months[0].count, 2);
+  if (currentMonth >= 2) {
+    assert.equal(currentStats.months[1].count, 0);
+  }
+  assert.equal(
+    currentStats.months.find((item: any) => item.month === Math.max(currentMonth - 2, 1))?.count,
+    3,
+  );
+  assert.equal(previousStats.months[0].month, 12);
+  assert.equal(previousStats.months[0].count, 4);
+  assert.equal(previousStats.months.at(-1)?.month, 6);
+  assert.equal(previousStats.months.at(-1)?.count, 1);
+  const serialized = JSON.stringify(currentStats);
+  assert.equal(serialized.includes('phone'), false);
+  assert.equal(serialized.includes('email'), false);
+  assert.equal(serialized.includes('display_name'), false);
+});
+
+test('admin registration stats returns empty months without users', async () => {
+  const service = new AdminService(
+    {
+      user: {
+        count: async () => 0,
+        findFirst: async () => null,
+      },
+      $queryRaw: async () => [],
+    } as any,
+    { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+  );
+
+  const stats = await service.getUserRegistrationStats({});
+
+  assert.equal(stats.total_users, 0);
+  assert.equal(stats.current_month_count, 0);
+  assert.deepEqual(stats.months, []);
+});
+
+test('non-admin user cannot access admin guarded endpoints', () => {
+  const guard = new AdminGuard();
+
+  assert.throws(
+    () =>
+      guard.canActivate({
+        switchToHttp: () => ({
+          getRequest: () => ({
+            authUser: {
+              userId: 'user-1',
+              sessionId: 'session-1',
+              role: 'user',
+            },
+          }),
+        }),
+      } as any),
+    /Доступ разрешён только администраторам/,
   );
 });
 
@@ -313,6 +433,19 @@ test('moderator approval clears price reduction on public increase', async () =>
 
   assert.equal(updateArgs?.data.previousPrice, null);
   assert.equal(updateArgs?.data.priceReducedAt, null);
+});
+
+test('moderator approval preserves OEM fields on pending listing', async () => {
+  const service = createApproveListingService({
+    photos: [listingPhoto('photo-1')],
+    status: ListingStatus.PENDING,
+    oemPartNumber: '81150-06C70',
+    oemPartNumberNormalized: '8115006C70',
+  });
+
+  const response = await service.approveListing('listing-1', adminUser);
+
+  assert.equal(response.listing.oem_part_number, '81150-06C70');
 });
 
 test('re-moderation without photos is rejected', async () => {
@@ -496,6 +629,8 @@ function createApproveListingService(params: {
   photos: ReturnType<typeof listingPhoto>[];
   status: ListingStatus;
   price?: bigint;
+  oemPartNumber?: string | null;
+  oemPartNumberNormalized?: string | null;
   moderationSnapshot?: Record<string, unknown>;
   onUpdate?: (args: Record<string, any>) => void;
 }) {
@@ -505,6 +640,8 @@ function createApproveListingService(params: {
         findUnique: async () =>
           listingForModeration(params.status, params.photos, {
             price: params.price,
+            oemPartNumber: params.oemPartNumber,
+            oemPartNumberNormalized: params.oemPartNumberNormalized,
             moderationSnapshot: params.moderationSnapshot,
           }),
         update: async (args: Record<string, any>) => {
@@ -521,6 +658,8 @@ function createApproveListingService(params: {
                 priceReducedAt:
                   (args.data as { priceReducedAt?: Date | null }).priceReducedAt ??
                   null,
+                oemPartNumber: params.oemPartNumber,
+                oemPartNumberNormalized: params.oemPartNumberNormalized,
               },
             ),
             rejectionReason:
@@ -556,6 +695,8 @@ function listingForModeration(
     price?: bigint;
     previousPrice?: bigint | null;
     priceReducedAt?: Date | null;
+    oemPartNumber?: string | null;
+    oemPartNumberNormalized?: string | null;
     moderationSnapshot?: Record<string, unknown>;
   },
 ) {
@@ -585,6 +726,8 @@ function listingForModeration(
     realEstateType: null,
     clothesType: null,
     clothesSize: null,
+    oemPartNumber: options?.oemPartNumber ?? null,
+    oemPartNumberNormalized: options?.oemPartNumberNormalized ?? null,
     status,
     rejectionReason: null,
     moderationNote: null,

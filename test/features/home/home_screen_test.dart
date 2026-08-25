@@ -853,10 +853,15 @@ void main() {
       await tester.drag(find.byType(ListView).first, const Offset(-600, 0));
       await tester.pumpAndSettle();
 
+      final categoryScrollable = find.descendant(
+        of: find.byKey(const ValueKey('showcase_category_filters')),
+        matching: find.byType(Scrollable),
+      );
+
       await tester.scrollUntilVisible(
         find.text('Работа'),
         120,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: categoryScrollable,
       );
       await tester.pumpAndSettle();
 
@@ -869,7 +874,7 @@ void main() {
       await tester.scrollUntilVisible(
         find.text('Все'),
         -120,
-        scrollable: find.byType(Scrollable).first,
+        scrollable: categoryScrollable,
       );
       await tester.pumpAndSettle();
 
@@ -2060,6 +2065,8 @@ class _FakeListingsService extends ListingsService {
     ListingFeedFilters? filters,
     int limit = 20,
     String? cursor,
+    bool useVipInterleave = false,
+    int vipRotation = 0,
   }) {
     final request = _PageRequest(
       category: category,
@@ -2077,9 +2084,14 @@ class _FakeListingsService extends ListingsService {
     int limit = 20,
     String? cursor,
     String category = 'Все',
+    String search = '',
   }) {
-    final request =
-        _VipPageRequest(limit: limit, cursor: cursor, category: category);
+    final request = _VipPageRequest(
+      limit: limit,
+      cursor: cursor,
+      category: category,
+      search: search,
+    );
     vipRequests.add(request);
     final handler = onGetVipListingsPage;
     if (handler != null) {
@@ -2100,11 +2112,13 @@ class _VipPageRequest {
     required this.limit,
     required this.cursor,
     required this.category,
+    required this.search,
   });
 
   final int limit;
   final String? cursor;
   final String category;
+  final String search;
 }
 
 class _FakeAuthService extends AuthService {
@@ -2401,6 +2415,32 @@ class _FakeShowcaseService extends ShowcaseService {
   @override
   Future<List<ShowcaseItem>> getShowcase() async {
     return List<ShowcaseItem>.from(_items);
+  }
+
+  @override
+  Future<ShowcasePage> getShowcasePage({
+    int limit = 20,
+    String? cursor,
+    String category = 'Все',
+    String search = '',
+  }) async {
+    final start =
+        (cursor ?? '').trim().isEmpty ? 0 : int.tryParse(cursor!) ?? 0;
+    final filtered = _items.where((item) {
+      final matchesCategory =
+          category == 'Все' || item.category.trim() == category.trim();
+      final query = search.trim().toLowerCase();
+      final matchesSearch = query.isEmpty ||
+          item.title.toLowerCase().contains(query) ||
+          item.city.toLowerCase().contains(query);
+      return matchesCategory && matchesSearch;
+    }).toList(growable: false);
+    final end = (start + limit).clamp(0, filtered.length);
+    return ShowcasePage(
+      items: filtered.sublist(start, end),
+      hasMore: end < filtered.length,
+      nextCursor: end < filtered.length ? '$end' : null,
+    );
   }
 
   @override

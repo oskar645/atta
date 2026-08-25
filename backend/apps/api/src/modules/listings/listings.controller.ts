@@ -56,6 +56,9 @@ export class ListingsController {
     @Query('cursor') cursor?: string,
     @Query('ownerId') ownerId?: string,
     @Query('status') status?: string,
+    @Query('publicMode') publicMode?: string,
+    @Query('feedMode') feedMode?: string,
+    @Query('vipRotation') vipRotation?: string,
   ) {
     return this.listingsService.findAll({
       search,
@@ -63,8 +66,11 @@ export class ListingsController {
       city,
       ownerId,
       status,
+      publicMode,
       limit: limit == null ? undefined : Number(limit),
       cursor,
+      feedMode,
+      vipRotation: vipRotation == null ? undefined : Number(vipRotation),
       minPrice: minPrice == null ? undefined : Number(minPrice),
       maxPrice: maxPrice == null ? undefined : Number(maxPrice),
     });
@@ -75,11 +81,13 @@ export class ListingsController {
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
     @Query('category') category?: string,
+    @Query('search') search?: string,
   ) {
     return this.listingsService.findVipListings({
       limit: limit == null ? undefined : Number(limit),
       cursor,
       category,
+      search,
     });
   }
 

@@ -218,6 +218,48 @@ void main() {
     expect(find.textContaining('Размер:'), findsNothing);
   });
 
+  testWidgets('listing detail shows OEM part number when present',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            category: 'Запчасти',
+            subcategory: 'Оптика',
+            oemPartNumber: '81150-06C70',
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Номер детали (OEM)'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('Номер детали (OEM)'), findsOneWidget);
+    expect(find.text('81150-06C70'), findsOneWidget);
+  });
+
+  testWidgets('old listing without OEM does not show OEM row', (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            category: 'Запчасти',
+            subcategory: 'Оптика',
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('Номер детали (OEM)'), findsNothing);
+  });
+
   testWidgets('listing detail hides empty optional transport fields',
       (tester) async {
     await tester.pumpWidget(
@@ -435,6 +477,7 @@ Listing _listingFixture({
   String category = 'Авто',
   String subcategory = 'Седан',
   String? clothesSize,
+  String? oemPartNumber,
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': 'listing-1',
@@ -446,6 +489,7 @@ Listing _listingFixture({
     'category': category,
     'subcategory': subcategory,
     'clothes_size': clothesSize,
+    'oem_part_number': oemPartNumber,
     'price': 1200000,
     'phone': '+79990000000',
     'phone_hidden': false,

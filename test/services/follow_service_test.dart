@@ -40,14 +40,47 @@ void main() {
     expect(api.followedSellerId, 'seller-1');
     expect(api.unfollowedSellerId, 'seller-1');
   });
+
+  test('isFollowing stream supports repeated listeners without extra refreshes',
+      () async {
+    final api = _FakeUserFollowsApi(
+      items: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'seller_id': 'seller-1',
+          'created_at': '2026-06-18T10:00:00.000Z',
+        },
+      ],
+      listDelay: const Duration(milliseconds: 10),
+    );
+    final service = FollowService(api: api);
+
+    final stream = service.streamIsFollowing(
+      followerId: 'user-1',
+      sellerId: 'seller-1',
+    );
+    final firstValues = <bool>[];
+    final secondValues = <bool>[];
+
+    final firstSub = stream.listen(firstValues.add);
+    final secondSub = stream.listen(secondValues.add);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    await firstSub.cancel();
+    await secondSub.cancel();
+
+    expect(firstValues, <bool>[false, true]);
+    expect(secondValues, <bool>[false, true]);
+    expect(api.listCalls, 1);
+  });
 }
 
 class _FakeUserFollowsApi extends UserFollowsApi {
   _FakeUserFollowsApi({
     required this.items,
+    this.listDelay = Duration.zero,
   }) : super(ApiClient(tokenStorage: TokenStorage()));
 
   final List<Map<String, dynamic>> items;
+  final Duration listDelay;
   int listCalls = 0;
   String? followedSellerId;
   String? unfollowedSellerId;
@@ -55,6 +88,9 @@ class _FakeUserFollowsApi extends UserFollowsApi {
   @override
   Future<Map<String, dynamic>> list({int? limit, String? cursor}) async {
     listCalls++;
+    if (listDelay > Duration.zero) {
+      await Future<void>.delayed(listDelay);
+    }
     return <String, dynamic>{
       'items': items,
     };

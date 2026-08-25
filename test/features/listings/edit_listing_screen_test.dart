@@ -269,6 +269,7 @@ class _FakeListingsService extends ListingsService {
     String? dealType,
     String? clothesType,
     String? clothesSize,
+    String? oemPartNumber,
   }) async {
     calls.add('update');
     return (await getListingById(listingId))!;

@@ -327,6 +327,8 @@ model Listing {
   realEstateType  String?       @map("real_estate_type")
   clothesType     String?       @map("clothes_type")
   clothesSize     String?       @map("clothes_size")
+  oemPartNumber   String?       @map("oem_part_number")
+  oemPartNumberNormalized String? @map("oem_part_number_normalized")
   status          ListingStatus @default(PENDING)
   rejectionReason String?       @map("rejection_reason")
   moderationNote  String?       @map("moderation_note")
@@ -354,6 +356,7 @@ model Listing {
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
   @@index([category, status, createdAt])
+  @@index([oemPartNumberNormalized])
   @@map("listings")
 }
 

@@ -4,8 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { serializeFavorite } from '../../common/serializers';
+import { serializeFavorite, serializeListing } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
+import {
+  canViewListing,
+  listingInclude,
+} from '../listings/listings.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type CursorPayload = {
@@ -57,9 +61,33 @@ export class FavoritesService {
     const pageItems = favorites.slice(0, limit);
     const hasMore = favorites.length > limit;
     const last = hasMore ? pageItems[pageItems.length - 1] : null;
+    const listingIds = Array.from(
+      new Set(pageItems.map((favorite) => favorite.listingId)),
+    );
+    const listings = listingIds.length === 0
+      ? []
+      : await this.prisma.listing.findMany({
+          where: {
+            id: {
+              in: listingIds,
+            },
+          },
+          include: listingInclude,
+        });
+    const visibleListingsById = new Map(
+      listings
+        .filter((listing) => canViewListing(listing, authUser))
+        .map((listing) => [listing.id, serializeListing(listing)]),
+    );
 
     return {
-      items: pageItems.map((favorite) => serializeFavorite(favorite)),
+      items: pageItems.map((favorite) => {
+        const listing = visibleListingsById.get(favorite.listingId);
+        return {
+          ...serializeFavorite(favorite),
+          ...(listing ? { listing } : {}),
+        };
+      }),
       favorite_ids: pageItems.map((favorite) => favorite.listingId),
       nextCursor: last
         ? encodeCursor({

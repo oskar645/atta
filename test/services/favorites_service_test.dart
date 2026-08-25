@@ -222,6 +222,21 @@ void main() {
     expect(api.listCalls, 1);
   });
 
+  test('favorite page extracts embedded listings without changing ids',
+      () async {
+    final api = _FakeFavoritesApi(favoriteIds: <String>{'listing-1'})
+      ..embeddedListings = <Map<String, dynamic>>[
+        _listingMap('listing-1', title: 'Embedded listing'),
+      ];
+    final service = FavoritesService(api: api);
+
+    final page = await service.getFavoriteIdsPage(uid: 'user-1');
+
+    expect(page.ids, <String>['listing-1']);
+    expect(page.embeddedListings.keys, <String>{'listing-1'});
+    expect(page.embeddedListings['listing-1']?.title, 'Embedded listing');
+  });
+
   test('force refresh after timeout starts a new favorites request', () async {
     final api = _FakeFavoritesApi(favoriteIds: <String>{'listing-1'});
     final service = FavoritesService(api: api);
@@ -297,6 +312,7 @@ class _FakeFavoritesApi extends FavoritesApi {
   Object? addError;
   Object? listError;
   Completer<Map<String, dynamic>>? listCompleter;
+  List<Map<String, dynamic>> embeddedListings = const <Map<String, dynamic>>[];
 
   Set<String> get favoriteIds => Set<String>.from(_favoriteIds);
 
@@ -313,6 +329,19 @@ class _FakeFavoritesApi extends FavoritesApi {
     }
     return <String, dynamic>{
       'favorite_ids': _favoriteIds.toList(),
+      'items': <Map<String, dynamic>>[
+        for (final id in _favoriteIds)
+          <String, dynamic>{
+            'id': 'favorite-$id',
+            'listing_id': id,
+            if (embeddedListings
+                .where((listing) => listing['id'] == id)
+                .isNotEmpty)
+              'listing': embeddedListings.firstWhere(
+                (listing) => listing['id'] == id,
+              ),
+          },
+      ],
     };
   }
 
@@ -336,6 +365,37 @@ class _FakeFavoritesApi extends FavoritesApi {
       'deleted': true,
     };
   }
+}
+
+Map<String, dynamic> _listingMap(String id, {String? title}) {
+  final now = DateTime(2026, 1, 1).toIso8601String();
+  return <String, dynamic>{
+    'id': id,
+    'owner_id': 'owner-1',
+    'owner_email': 'owner@example.com',
+    'owner_name': 'Owner',
+    'title': title ?? id,
+    'description': 'Description',
+    'category': 'Все',
+    'subcategory': '',
+    'price': 1000,
+    'phone': '+79990000000',
+    'phone_hidden': false,
+    'city': 'Город',
+    'location': <String, dynamic>{},
+    'delivery': <String, dynamic>{},
+    'photo_urls': const <String>[],
+    'photo_items': const <Map<String, dynamic>>[],
+    'car': null,
+    'view_count': 0,
+    'favorites_count': 0,
+    'status': 'approved',
+    'rejection_reason': '',
+    'promotions': <String, dynamic>{},
+    'published_at': now,
+    'created_at': now,
+    'updated_at': now,
+  };
 }
 
 class _FavoritesAuthRetryHttpClient extends http.BaseClient {

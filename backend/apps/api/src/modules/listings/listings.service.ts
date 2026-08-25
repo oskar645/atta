@@ -14,6 +14,11 @@ import {
 } from '@prisma/client';
 
 import {
+  buildListingSearchSql,
+  buildListingSearchWhere,
+  normalizeOemPartNumber,
+} from '../../common/listing-search';
+import {
   listingStatusFromInput,
   listingStatusToResponse,
   serializeListing,
@@ -29,7 +34,9 @@ import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 
-const listingInclude = {
+export { normalizeOemPartNumber } from '../../common/listing-search';
+
+export const listingInclude = {
   owner: {
     include: {
       adminProfile: true,
@@ -49,6 +56,26 @@ const listingInclude = {
     },
   },
 } satisfies Prisma.ListingInclude;
+
+export type ListingWithPublicRelations = Prisma.ListingGetPayload<{
+  include: typeof listingInclude;
+}>;
+
+export const canViewListing = (
+  listing: ListingWithPublicRelations,
+  authUser?: AuthenticatedUser,
+) => {
+  const isAdmin = authUser?.role === 'admin';
+  const isOwner = authUser?.userId === listing.ownerId;
+  const isPublic =
+    listing.status === ListingStatus.APPROVED &&
+    listing.photos.length > 0 &&
+    listing.deletedAt == null &&
+    listing.owner?.deletedAt == null &&
+    listing.owner?.status === UserStatus.ACTIVE;
+
+  return isPublic || isOwner || isAdmin;
+};
 
 export const LISTING_STATUSES = [
   'pending',
@@ -102,6 +129,17 @@ type ListingWithModerationSnapshot = Prisma.ListingGetPayload<{
 }>;
 
 const PROTECTED_FEED_HEAD_SIZE = 10;
+const VIP_INTERLEAVE_FEED_MODE = 'vip_interleave_v1';
+const PUBLIC_ARCHIVE_MODE = 'archive';
+const AUTO_PARTS_CATEGORY = 'Запчасти';
+
+const trimOptional = (value: string | null | undefined) => {
+  const trimmed = value?.trim() ?? '';
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const isAutoPartsCategory = (category: string | null | undefined) =>
+  category?.trim() === AUTO_PARTS_CATEGORY;
 
 const parsePromotionDate = (value: Date | string | null | undefined) => {
   const parsed = value instanceof Date ? value : value == null ? null : new Date(value);
@@ -445,6 +483,10 @@ export class ListingsService {
     const requestedStatus = listingStatusFromInput(dto.status);
     const nextStatus =
       authUser.role === 'admin' ? requestedStatus : ListingStatus.PENDING;
+    const category = dto.category.trim();
+    const oemPartNumber = isAutoPartsCategory(category)
+      ? trimOptional(dto.oem_part_number)
+      : null;
 
     if (nextStatus === ListingStatus.APPROVED && !dto.photo_urls?.length) {
       throw new BadRequestException(LISTING_PHOTO_REQUIRED);
@@ -462,8 +504,10 @@ export class ListingsService {
           'Пользователь',
         title: dto.title.trim(),
         description: dto.description.trim(),
-        category: dto.category.trim(),
+        category,
         subcategory: dto.subcategory?.trim() ?? '',
+        oemPartNumber,
+        oemPartNumberNormalized: normalizeOemPartNumber(oemPartNumber),
         price: dto.price,
         city: dto.city?.trim() ?? '',
         address: dto.address?.trim() ?? '',
@@ -485,7 +529,7 @@ export class ListingsService {
         realEstateType: dto.real_estate_type?.trim() || null,
         clothesType: dto.clothes_type?.trim() || null,
         clothesSize:
-          dto.category.trim() === 'Одежда'
+          category === 'Одежда'
             ? dto.clothes_size?.trim() || null
             : null,
         publishedAt: nextStatus === ListingStatus.APPROVED ? new Date() : null,
@@ -517,8 +561,11 @@ export class ListingsService {
     ownerId?: string;
     ownerMe?: string;
     status?: string;
+    publicMode?: string;
     limit?: number;
     cursor?: string;
+    feedMode?: string;
+    vipRotation?: number;
   }) {
     const search = params?.search?.trim();
     const category = params?.category?.trim();
@@ -526,8 +573,13 @@ export class ListingsService {
     const ownerId = params?.ownerId?.trim();
     const ownerMe = params?.ownerMe?.trim();
     const status = params?.status?.trim();
+    const publicMode = params?.publicMode?.trim();
     const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
     const cursor = parseFeedCursor(params?.cursor);
+    const feedMode = params?.feedMode?.trim();
+    const vipRotation = Number.isFinite(params?.vipRotation)
+      ? Math.max(0, Math.trunc(params?.vipRotation ?? 0))
+      : 0;
     const andConditions: Prisma.ListingWhereInput[] = [];
 
     const where: Prisma.ListingWhereInput = {
@@ -540,7 +592,18 @@ export class ListingsService {
       where.ownerId = ownerId;
     }
 
-    if (!ownerMe && ownerId) {
+    if (!ownerMe && ownerId && publicMode === PUBLIC_ARCHIVE_MODE) {
+      where.status = {
+        in: [ListingStatus.ARCHIVED, ListingStatus.SOLD],
+      };
+      where.photos = {
+        some: {},
+      };
+      where.owner = {
+        deletedAt: null,
+        status: UserStatus.ACTIVE,
+      };
+    } else if (!ownerMe && ownerId) {
       const requestedStatus = status ? listingStatusFromInput(status) : null;
       if (requestedStatus && requestedStatus !== ListingStatus.APPROVED) {
         return {
@@ -605,53 +668,9 @@ export class ListingsService {
       };
     }
 
-    if (search) {
-      andConditions.push({
-        OR: [
-          {
-            title: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            description: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            category: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            subcategory: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            city: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            address: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-          {
-            ownerName: {
-              contains: search,
-              mode: 'insensitive',
-            },
-          },
-        ],
-      });
+    const searchWhere = buildListingSearchWhere(search);
+    if (searchWhere != null) {
+      andConditions.push(searchWhere);
     }
 
     if (andConditions.length > 0) {
@@ -668,6 +687,8 @@ export class ListingsService {
         maxPrice: params?.maxPrice,
         cursor,
         limit,
+        feedMode,
+        vipRotation,
       });
       const pageRows = rankedRows.slice(0, limit);
       const hasMore = rankedRows.length > limit;
@@ -739,11 +760,13 @@ export class ListingsService {
     limit?: number;
     cursor?: string;
     category?: string;
+    search?: string;
   }) {
     await this.promotionsService.expirePromotionsByTime();
 
     const limit = Math.max(1, Math.min(params?.limit ?? 20, 50));
     const category = params?.category?.trim();
+    const search = params?.search?.trim();
     const cursor = parseVipListingsCursor(params?.cursor);
     const cursorDate = cursor ? new Date(cursor.createdAt) : null;
     const cursorId = cursor?.id;
@@ -768,6 +791,12 @@ export class ListingsService {
           }
         : {};
 
+    const listingAndConditions: Prisma.ListingWhereInput[] = [];
+    const searchWhere = buildListingSearchWhere(search);
+    if (searchWhere != null) {
+      listingAndConditions.push(searchWhere);
+    }
+
     const promotions = await this.prisma.promotion.findMany({
       where: {
         type: PromotionType.VIP,
@@ -789,6 +818,9 @@ export class ListingsService {
           },
           ...(category && category.toLowerCase() !== 'все'
             ? { category }
+            : {}),
+          ...(listingAndConditions.length > 0
+            ? { AND: listingAndConditions }
             : {}),
         },
       },
@@ -830,6 +862,8 @@ export class ListingsService {
     maxPrice?: number;
     cursor: FeedCursorPayload | null;
     limit: number;
+    feedMode?: string;
+    vipRotation: number;
   }): Promise<PublicFeedRankRow[]> {
     const whereParts: Prisma.Sql[] = [
       Prisma.sql`l."deleted_at" IS NULL`,
@@ -862,20 +896,21 @@ export class ListingsService {
       whereParts.push(Prisma.sql`l."price" <= ${params.maxPrice}`);
     }
 
-    if (params.search) {
-      const searchPattern = `%${params.search}%`;
-      whereParts.push(Prisma.sql`(
-        l."title" ILIKE ${searchPattern}
-        OR l."description" ILIKE ${searchPattern}
-        OR l."category" ILIKE ${searchPattern}
-        OR l."subcategory" ILIKE ${searchPattern}
-        OR l."city" ILIKE ${searchPattern}
-        OR l."address" ILIKE ${searchPattern}
-        OR l."owner_name" ILIKE ${searchPattern}
-      )`);
+    const searchSql = buildListingSearchSql(params.search);
+    if (searchSql != null) {
+      whereParts.push(searchSql);
     }
 
     const cursor = this.buildRankedFeedCursorSql(params.cursor);
+    if (params.feedMode === VIP_INTERLEAVE_FEED_MODE) {
+      return this.findPublicFeedVipInterleavedRows({
+        whereParts,
+        cursor,
+        limit: params.limit,
+        vipRotation: params.vipRotation,
+      });
+    }
+
     const rows = await this.prisma.$queryRaw<Array<{
       id: string;
       promoted_at: Date | string | null;
@@ -989,6 +1024,120 @@ export class ListingsService {
     }));
   }
 
+  private async findPublicFeedVipInterleavedRows(params: {
+    whereParts: Prisma.Sql[];
+    cursor: Prisma.Sql;
+    limit: number;
+    vipRotation: number;
+  }): Promise<PublicFeedRankRow[]> {
+    const rows = await this.prisma.$queryRaw<Array<{
+      id: string;
+      promoted_at: Date | string | null;
+      sort_group: number | bigint;
+      sort_at: Date | string;
+      published_at: Date | string | null;
+      created_at: Date | string;
+    }>>`
+      WITH base AS (
+        SELECT
+          l."id",
+          l."published_at",
+          l."created_at",
+          MAX(p."created_at") FILTER (
+            WHERE p."status"::text = 'ACTIVE'
+              AND p."ends_at" > NOW()
+              AND p."type"::text = 'VIP'
+          ) AS vip_promoted_at
+        FROM "listings" l
+        JOIN "users" u ON u."id" = l."owner_id"
+        LEFT JOIN "promotions" p ON p."listing_id" = l."id"
+        WHERE ${Prisma.join(params.whereParts, ' AND ')}
+        GROUP BY l."id", l."published_at", l."created_at"
+      ),
+      ranked AS (
+        SELECT
+          base.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY (vip_promoted_at IS NULL)
+            ORDER BY
+              base."published_at" DESC NULLS LAST,
+              base."created_at" DESC,
+              base."id" DESC
+          ) AS ordinary_rank,
+          ROW_NUMBER() OVER (
+            PARTITION BY (vip_promoted_at IS NOT NULL)
+            ORDER BY
+              vip_promoted_at DESC,
+              base."created_at" DESC,
+              base."id" DESC
+          ) AS vip_queue_rank,
+          COUNT(*) FILTER (WHERE vip_promoted_at IS NOT NULL) OVER () AS vip_count,
+          LEAST(
+            COUNT(*) FILTER (WHERE vip_promoted_at IS NULL) OVER (),
+            ${PROTECTED_FEED_HEAD_SIZE}
+          ) AS ordinary_head_count
+        FROM base
+      ),
+      ordered AS (
+        SELECT
+          "id",
+          vip_promoted_at AS promoted_at,
+          published_at,
+          created_at,
+          CASE
+            WHEN vip_promoted_at IS NULL AND ordinary_rank <= ordinary_head_count
+              THEN ordinary_rank
+            WHEN vip_promoted_at IS NOT NULL
+              THEN ordinary_head_count
+                + 1
+                + (
+                  (
+                    (
+                      vip_queue_rank
+                      - 1
+                      - (${params.vipRotation} % GREATEST(vip_count, 1))
+                    )
+                    + vip_count
+                  ) % GREATEST(vip_count, 1)
+                ) * 3
+            ELSE ordinary_head_count
+              + (ordinary_rank - ordinary_head_count)
+              + CEIL((ordinary_rank - ordinary_head_count)::numeric / 2.0)::int
+          END AS sort_group,
+          CASE
+            WHEN vip_promoted_at IS NOT NULL
+              THEN vip_promoted_at
+            ELSE COALESCE("published_at", "created_at")
+          END AS sort_at
+        FROM ranked
+      )
+      SELECT
+        "id",
+        promoted_at,
+        sort_group,
+        sort_at,
+        published_at,
+        created_at
+      FROM ordered
+      WHERE ${params.cursor}
+      ORDER BY
+        sort_group ASC,
+        sort_at DESC,
+        created_at DESC,
+        "id" DESC
+      LIMIT ${params.limit + 1}
+    `;
+
+    return rows.map((row) => ({
+      id: row.id,
+      promotedAt: parseRankRowDate(row.promoted_at),
+      sortGroup: Number(row.sort_group),
+      sortAt: parseRankRowDate(row.sort_at) ?? new Date(0),
+      publishedAt: parseRankRowDate(row.published_at),
+      createdAt: parseRankRowDate(row.created_at) ?? new Date(0),
+    }));
+  }
+
   private buildRankedFeedCursorSql(cursor: FeedCursorPayload | null) {
     if (
       cursor == null ||
@@ -1039,16 +1188,7 @@ export class ListingsService {
       throw new NotFoundException('Listing not found');
     }
 
-    const isAdmin = authUser?.role === 'admin';
-    const isOwner = authUser?.userId === listing.ownerId;
-    const isPublic =
-      listing.status === ListingStatus.APPROVED &&
-      listing.photos.length > 0 &&
-      listing.deletedAt == null &&
-      listing.owner?.deletedAt == null &&
-      listing.owner?.status === UserStatus.ACTIVE;
-
-    if (!isPublic && !isOwner && !isAdmin) {
+    if (!canViewListing(listing, authUser)) {
       throw new NotFoundException('Listing not found');
     }
 
@@ -1095,6 +1235,14 @@ export class ListingsService {
         : this.statusAfterOwnerEdit(listing, authUser);
 
     const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
+    const nextCategory = dto.category?.trim() ?? listing.category;
+    const shouldUpdateOem = Object.prototype.hasOwnProperty.call(
+      dto,
+      'oem_part_number',
+    );
+    const nextOemPartNumber = isAutoPartsCategory(nextCategory)
+      ? trimOptional(dto.oem_part_number)
+      : null;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.createOwnerApprovedSnapshotIfNeeded(tx, listing);
@@ -1124,6 +1272,16 @@ export class ListingsService {
           delivery: dto.delivery ? toInputJson(dto.delivery) : undefined,
           locationJson: dto.location ? toInputJson(dto.location) : undefined,
           car: dto.car ? toNullableInputJson(dto.car) : undefined,
+          oemPartNumber: isAutoPartsCategory(nextCategory)
+            ? shouldUpdateOem
+              ? nextOemPartNumber
+              : undefined
+            : null,
+          oemPartNumberNormalized: isAutoPartsCategory(nextCategory)
+            ? shouldUpdateOem
+              ? normalizeOemPartNumber(nextOemPartNumber)
+              : undefined
+            : null,
           dealType: dto.deal_type?.trim(),
           realEstateType: dto.real_estate_type?.trim(),
           clothesType: dto.clothes_type?.trim(),
@@ -1675,6 +1833,7 @@ export class ListingsService {
       real_estate_type: listing.realEstateType,
       clothes_type: listing.clothesType,
       clothes_size: listing.clothesSize,
+      oem_part_number: listing.oemPartNumber,
       photos: listing.photos.map((photo) => ({
         id: photo.id,
         storage_key: photo.storageKey,

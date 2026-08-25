@@ -5,8 +5,21 @@ class ShowcaseApi {
 
   final ApiClient client;
 
-  Future<Map<String, dynamic>> getShowcase() async {
-    final response = await client.get('/showcase');
+  Future<Map<String, dynamic>> getShowcase({
+    int? limit,
+    String? cursor,
+    String? category,
+    String? search,
+  }) async {
+    final response = await client.get(
+      '/showcase',
+      queryParameters: {
+        if (limit != null) 'limit': limit,
+        if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+        if ((category ?? '').trim().isNotEmpty) 'category': category!.trim(),
+        if ((search ?? '').trim().isNotEmpty) 'search': search!.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 

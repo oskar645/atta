@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/models/showcase_item.dart';
@@ -23,13 +25,165 @@ class ShowcaseAllScreen extends StatefulWidget {
 }
 
 class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
-  late Future<List<ShowcaseItem>> _future;
+  static const int _pageSize = 20;
+  static const Duration _searchDebounce = Duration(milliseconds: 400);
+
+  final ScrollController _scrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
+  List<ShowcaseItem> _items = const <ShowcaseItem>[];
   String _selectedFilter = 'Все';
+  String _search = '';
+  bool _initialLoading = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  String? _nextCursor;
+  Object? _error;
+  int _requestSerial = 0;
+  Timer? _searchDebounceTimer;
 
   @override
   void initState() {
     super.initState();
-    _future = context.read<ShowcaseService>().getShowcase();
+    _scrollController.addListener(_maybeLoadMore);
+    unawaited(_load(reset: true));
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_maybeLoadMore);
+    _searchDebounceTimer?.cancel();
+    _searchController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _maybeLoadMore() {
+    if (!_scrollController.hasClients ||
+        _scrollController.position.extentAfter >= 900 ||
+        _initialLoading ||
+        _loadingMore ||
+        !_hasMore) {
+      return;
+    }
+    unawaited(_load(reset: false));
+  }
+
+  List<ShowcaseItem> _mergeUnique(
+    List<ShowcaseItem> current,
+    List<ShowcaseItem> incoming,
+  ) {
+    final seenKeys = current.map(_dedupeKey).toSet();
+    final merged = List<ShowcaseItem>.from(current);
+    for (final item in incoming) {
+      if (seenKeys.add(_dedupeKey(item))) {
+        merged.add(item);
+      }
+    }
+    return merged;
+  }
+
+  String _dedupeKey(ShowcaseItem item) {
+    final listingId = item.listingId.trim();
+    if (listingId.isNotEmpty) return 'listing:$listingId';
+    return 'promotion:${item.promotionId.trim()}';
+  }
+
+  Future<void> _load({required bool reset}) async {
+    if (!reset && (_loadingMore || !_hasMore)) return;
+    final serial = ++_requestSerial;
+    setState(() {
+      if (reset) {
+        _initialLoading = true;
+        _loadingMore = false;
+        _hasMore = true;
+        _nextCursor = null;
+        _error = null;
+      } else {
+        _loadingMore = true;
+        _error = null;
+      }
+    });
+
+    try {
+      final page = await context.read<ShowcaseService>().getShowcasePage(
+            limit: _pageSize,
+            cursor: reset ? null : _nextCursor,
+            category: _selectedFilter,
+            search: _search,
+          );
+      if (!mounted || serial != _requestSerial) return;
+      setState(() {
+        _items = reset
+            ? List<ShowcaseItem>.from(page.items)
+            : _mergeUnique(_items, page.items);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
+        _initialLoading = false;
+        _loadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted || serial != _requestSerial) return;
+      setState(() {
+        _initialLoading = false;
+        _loadingMore = false;
+        _error = error;
+      });
+    }
+  }
+
+  Future<void> _refresh() => _load(reset: true);
+
+  void _resetAndLoad() {
+    setState(() {
+      _items = const <ShowcaseItem>[];
+      _initialLoading = true;
+      _loadingMore = false;
+      _hasMore = true;
+      _nextCursor = null;
+      _error = null;
+    });
+    unawaited(_load(reset: true));
+  }
+
+  void _selectCategory(String filter) {
+    if (filter == _selectedFilter) {
+      return;
+    }
+    _selectedFilter = filter;
+    _resetAndLoad();
+  }
+
+  void _onSearchChanged(String value) {
+    setState(() {});
+    _searchDebounceTimer?.cancel();
+    _searchDebounceTimer = Timer(_searchDebounce, () {
+      final nextSearch = value.trim();
+      if (nextSearch == _search) {
+        return;
+      }
+      _search = nextSearch;
+      _resetAndLoad();
+    });
+  }
+
+  void _submitSearch(String value) {
+    _searchDebounceTimer?.cancel();
+    final nextSearch = value.trim();
+    if (nextSearch == _search) {
+      return;
+    }
+    _search = nextSearch;
+    _resetAndLoad();
+  }
+
+  void _clearSearch() {
+    _searchDebounceTimer?.cancel();
+    if (_searchController.text.isEmpty && _search.isEmpty) {
+      return;
+    }
+    _searchController.clear();
+    _search = '';
+    _resetAndLoad();
   }
 
   @override
@@ -39,73 +193,114 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
         title: const Text('Витрина ATTA'),
         centerTitle: false,
       ),
-      body: FutureBuilder<List<ShowcaseItem>>(
-        future: _future,
-        builder: (context, snapshot) {
-          final allItems = snapshot.data ?? const <ShowcaseItem>[];
-          final items = _selectedFilter == 'Все'
-              ? allItems
-              : allItems
-                  .where((item) => item.category == _selectedFilter)
-                  .toList();
-
-          return Column(
-            children: [
-              SizedBox(
-                height: 52,
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                  scrollDirection: Axis.horizontal,
-                  itemBuilder: (context, index) {
-                    final filter = kCategories[index];
-                    final selected = filter == _selectedFilter;
-                    return ChoiceChip(
-                      label: Text(filter),
-                      selected: selected,
-                      onSelected: (_) {
-                        if (selected) {
-                          return;
-                        }
-                        setState(() => _selectedFilter = filter);
-                      },
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      visualDensity: VisualDensity.compact,
-                    );
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemCount: kCategories.length,
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+              child: TextField(
+                key: const ValueKey('showcase_search_field'),
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                onChanged: _onSearchChanged,
+                onSubmitted: _submitSearch,
+                decoration: InputDecoration(
+                  hintText: 'Поиск',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchController.text.trim().isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Очистить',
+                          icon: const Icon(Icons.close),
+                          onPressed: _clearSearch,
+                        ),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
-              Expanded(
-                child: snapshot.connectionState == ConnectionState.waiting
-                    ? const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: _ShowcaseGridSkeleton(),
-                      )
-                    : items.isEmpty
-                        ? const _EmptyShowcaseState()
-                        : GridView.builder(
-                            padding: const EdgeInsets.all(12),
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              crossAxisSpacing: 10,
-                              mainAxisSpacing: 10,
-                              childAspectRatio: 0.76,
-                            ),
-                            itemCount: items.length,
-                            itemBuilder: (context, index) {
-                              final item = items[index];
-                              return _ShowcaseGridCard(
-                                item: item,
-                                onOpenListing: widget.onOpenListing,
-                              );
-                            },
-                          ),
+            ),
+            SizedBox(
+              height: 52,
+              child: ListView.separated(
+                key: const ValueKey('showcase_category_filters'),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (context, index) {
+                  final filter = kCategories[index];
+                  final selected = filter == _selectedFilter;
+                  return ChoiceChip(
+                    label: Text(filter),
+                    selected: selected,
+                    onSelected: (_) => _selectCategory(filter),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  );
+                },
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemCount: kCategories.length,
               ),
-            ],
-          );
-        },
+            ),
+            Expanded(
+              child: Builder(
+                builder: (context) {
+                  if (_initialLoading && _items.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: _ShowcaseGridSkeleton(),
+                    );
+                  }
+
+                  if (_items.isEmpty) {
+                    return _EmptyShowcaseState(error: _error);
+                  }
+
+                  return Column(
+                    children: [
+                      Expanded(
+                        child: GridView.builder(
+                          controller: _scrollController,
+                          physics: const AlwaysScrollableScrollPhysics(
+                            parent: BouncingScrollPhysics(),
+                          ),
+                          padding: const EdgeInsets.all(12),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 10,
+                            childAspectRatio: 0.76,
+                          ),
+                          itemCount: _items.length,
+                          itemBuilder: (context, index) {
+                            final item = _items[index];
+                            return _ShowcaseGridCard(
+                              item: item,
+                              onOpenListing: widget.onOpenListing,
+                            );
+                          },
+                        ),
+                      ),
+                      if (_loadingMore)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -286,28 +481,39 @@ class _ShowcaseGridSkeleton extends StatelessWidget {
 }
 
 class _EmptyShowcaseState extends StatelessWidget {
-  const _EmptyShowcaseState();
+  const _EmptyShowcaseState({this.error});
+
+  final Object? error;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Витрина пока пустая',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Здесь появятся объявления, которые пользователи продвигают за бонусы.',
-              textAlign: TextAlign.center,
-            ),
-          ],
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 120, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                error == null
+                    ? 'Витрина пока пустая'
+                    : 'Не удалось загрузить витрину',
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                error == null
+                    ? 'Здесь появятся объявления, которые пользователи продвигают за бонусы.'
+                    : 'Потяните вниз, чтобы повторить.',
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }

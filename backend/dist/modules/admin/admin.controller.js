@@ -19,6 +19,7 @@ const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const admin_service_1 = require("./admin.service");
 const list_admin_bonus_analytics_dto_1 = require("./dto/list-admin-bonus-analytics.dto");
+const admin_registration_stats_dto_1 = require("./dto/admin-registration-stats.dto");
 const list_admin_listings_dto_1 = require("./dto/list-admin-listings.dto");
 const list_admin_points_purchases_dto_1 = require("./dto/list-admin-points-purchases.dto");
 const list_admin_promotions_dto_1 = require("./dto/list-admin-promotions.dto");
@@ -40,6 +41,9 @@ let AdminController = class AdminController {
     }
     listUsers(query) {
         return this.adminService.listUsers(query);
+    }
+    getUserRegistrationStats(query) {
+        return this.adminService.getUserRegistrationStats(query);
     }
     listOnlineUsers() {
         return this.adminService.listOnlineUsers();
@@ -160,6 +164,13 @@ __decorate([
     __metadata("design:paramtypes", [list_admin_users_dto_1.ListAdminUsersDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listUsers", null);
+__decorate([
+    (0, common_1.Get)('users/registration-stats'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [admin_registration_stats_dto_1.AdminRegistrationStatsDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getUserRegistrationStats", null);
 __decorate([
     (0, common_1.Get)('online-users'),
     __metadata("design:type", Function),

@@ -27,11 +27,21 @@ let PromotionsController = class PromotionsController {
     getPlans() {
         return this.promotionsService.getPlans();
     }
-    getShowcaseByPromotionsRoute() {
-        return this.promotionsService.getShowcase();
+    getShowcaseByPromotionsRoute(limit, cursor, category, search) {
+        return this.promotionsService.getShowcase({
+            limit: limit == null ? undefined : Number(limit),
+            cursor,
+            category,
+            search,
+        });
     }
-    getShowcase() {
-        return this.promotionsService.getShowcase();
+    getShowcase(limit, cursor, category, search) {
+        return this.promotionsService.getShowcase({
+            limit: limit == null ? undefined : Number(limit),
+            cursor,
+            category,
+            search,
+        });
     }
     registerImpression(request, promotionId) {
         return this.promotionsService.registerImpression(promotionId, this.counterSource(request));
@@ -81,14 +91,22 @@ __decorate([
 ], PromotionsController.prototype, "getPlans", null);
 __decorate([
     (0, common_1.Get)('promotions/showcase'),
+    __param(0, (0, common_1.Query)('limit')),
+    __param(1, (0, common_1.Query)('cursor')),
+    __param(2, (0, common_1.Query)('category')),
+    __param(3, (0, common_1.Query)('search')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], PromotionsController.prototype, "getShowcaseByPromotionsRoute", null);
 __decorate([
     (0, common_1.Get)('showcase'),
+    __param(0, (0, common_1.Query)('limit')),
+    __param(1, (0, common_1.Query)('cursor')),
+    __param(2, (0, common_1.Query)('category')),
+    __param(3, (0, common_1.Query)('search')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], PromotionsController.prototype, "getShowcase", null);
 __decorate([

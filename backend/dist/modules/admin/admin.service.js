@@ -80,6 +80,7 @@ const moderationDiffFields = [
     'real_estate_type',
     'clothes_type',
     'clothes_size',
+    'oem_part_number',
 ];
 let AdminService = class AdminService {
     constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService) {
@@ -321,6 +322,75 @@ let AdminService = class AdminService {
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
             limit,
+        };
+    }
+    async getUserRegistrationStats(query = {}) {
+        const now = new Date();
+        const currentYear = now.getUTCFullYear();
+        const currentMonth = now.getUTCMonth() + 1;
+        const requestedYear = Number.isInteger(query.year) ? query.year : currentYear;
+        const year = Math.min(Math.max(requestedYear, 2000), 2100);
+        const yearStart = new Date(Date.UTC(year, 0, 1));
+        const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
+        const currentMonthStart = new Date(Date.UTC(currentYear, now.getUTCMonth(), 1));
+        const nextMonthStart = new Date(Date.UTC(currentYear, now.getUTCMonth() + 1, 1));
+        const activeUserWhere = {
+            deletedAt: null,
+            status: {
+                not: client_1.UserStatus.DELETED,
+            },
+        };
+        const [totalUsers, firstUser, currentMonthCount, monthRows] = await Promise.all([
+            this.prisma.user.count({ where: activeUserWhere }),
+            this.prisma.user.findFirst({
+                where: activeUserWhere,
+                orderBy: { createdAt: 'asc' },
+                select: { createdAt: true },
+            }),
+            this.prisma.user.count({
+                where: {
+                    ...activeUserWhere,
+                    createdAt: {
+                        gte: currentMonthStart,
+                        lt: nextMonthStart,
+                    },
+                },
+            }),
+            this.prisma.$queryRaw `
+          SELECT
+            EXTRACT(MONTH FROM u."created_at")::int AS month,
+            COUNT(*)::bigint AS count
+          FROM "users" u
+          WHERE u."deleted_at" IS NULL
+            AND u."status" <> ${client_1.UserStatus.DELETED}::"UserStatus"
+            AND u."created_at" >= ${yearStart}
+            AND u."created_at" < ${yearEnd}
+          GROUP BY month
+        `,
+        ]);
+        const firstYear = firstUser?.createdAt.getUTCFullYear() ?? currentYear;
+        const availableYears = Array.from({ length: Math.max(currentYear - firstYear + 1, 0) }, (_, index) => firstYear + index);
+        const countsByMonth = new Map();
+        for (const row of monthRows) {
+            countsByMonth.set(this.numberFromDb(row.month), this.numberFromDb(row.count));
+        }
+        const startMonth = year === firstYear && firstUser
+            ? firstUser.createdAt.getUTCMonth() + 1
+            : 1;
+        const endMonth = year === currentYear ? currentMonth : 12;
+        const months = !firstUser || year < firstYear || year > currentYear || startMonth > endMonth
+            ? []
+            : Array.from({ length: endMonth - startMonth + 1 }, (_, index) => endMonth - index).map((month) => ({
+                month,
+                count: countsByMonth.get(month) ?? 0,
+            }));
+        return {
+            source: 'timeweb',
+            year,
+            available_years: availableYears,
+            total_users: totalUsers,
+            current_month_count: currentMonthCount,
+            months,
         };
     }
     async listOnlineUsers() {
@@ -1079,6 +1149,7 @@ let AdminService = class AdminService {
             real_estate_type: 'Вид товара',
             clothes_type: 'Тип одежды',
             clothes_size: 'Размер одежды',
+            oem_part_number: 'Номер детали (OEM)',
         };
         return labels[field] ?? field;
     }

@@ -36,6 +36,7 @@ class ListingsApi {
     int? limit,
     String? cursor,
     String? category,
+    String? search,
   }) async {
     final response = await client.get(
       '/listings/vip',
@@ -44,6 +45,7 @@ class ListingsApi {
         if (limit != null) 'limit': limit,
         if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
         if ((category ?? '').trim().isNotEmpty) 'category': category!.trim(),
+        if ((search ?? '').trim().isNotEmpty) 'search': search!.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);

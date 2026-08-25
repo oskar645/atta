@@ -127,6 +127,108 @@ void main() {
         find.byKey(const ValueKey('admin_copy_user_id_button')), findsNothing);
     expect(find.text('Продавец'), findsOneWidget);
   });
+
+  testWidgets('active listings paginate without duplicates', (tester) async {
+    final listings = _FakeSellerListingsService(
+      initialItems: List<Listing>.generate(
+        45,
+        (index) => _listing(
+          'listing-${index + 1}',
+          'Активное ${index + 1}',
+          createdAtMinute: 59 - index,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(_buildApp(listings: listings));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Активное 1'), findsOneWidget);
+    expect(find.text('Активное 21'), findsNothing);
+
+    final activeState = tester.state(_activeListingsSectionFinder) as dynamic;
+    await activeState.loadMore();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Активное 21'), findsOneWidget);
+    expect(find.text('Активное 1'), findsOneWidget);
+    expect(
+      listings.publicOwnerQueries
+          .where((query) => query['status'] == 'approved')
+          .map((query) => query['cursor']),
+      contains('20'),
+    );
+  });
+
+  testWidgets('archive tab only shows archived and sold listings',
+      (tester) async {
+    final listings = _FakeSellerListingsService(
+      initialItems: <Listing>[
+        _listing('archived-1', 'Снятое', status: 'archived'),
+        _listing('sold-1', 'Проданное', status: 'sold'),
+        _listing('deleted-1', 'Удалённое', status: 'deleted'),
+        _listing('rejected-1', 'Отклонённое', status: 'rejected'),
+        _listing('pending-1', 'На модерации', status: 'pending'),
+      ],
+    );
+
+    await tester.pumpWidget(_buildApp(listings: listings));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Архив'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Снятое'), findsOneWidget);
+    expect(find.text('Проданное'), findsOneWidget);
+    expect(find.text('Удалённое'), findsNothing);
+    expect(find.text('Отклонённое'), findsNothing);
+    expect(find.text('На модерации'), findsNothing);
+    expect(
+      listings.publicOwnerQueries.any(
+        (query) => query['publicMode'] == 'archive',
+      ),
+      isTrue,
+    );
+  });
+
+  testWidgets('load more spinner is a single centered footer', (tester) async {
+    final listings = _FakeSellerListingsService(
+      initialItems: List<Listing>.generate(
+        40,
+        (index) => _listing(
+          'listing-${index + 1}',
+          'Активное ${index + 1}',
+          createdAtMinute: 59 - index,
+        ),
+      ),
+    );
+    listings.loadMoreCompleter = Completer<List<Listing>>();
+
+    await tester.pumpWidget(_buildApp(listings: listings));
+    await tester.pumpAndSettle();
+    final activeState = tester.state(_activeListingsSectionFinder) as dynamic;
+    unawaited(activeState.loadMore() as Future<void>);
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    final spinnerCenter =
+        tester.getCenter(find.byType(CircularProgressIndicator));
+    final screenWidth =
+        tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    expect((spinnerCenter.dx - screenWidth / 2).abs(), lessThan(24));
+
+    listings.loadMoreCompleter!.complete(
+      listings.itemsForTest.skip(20).toList(growable: false),
+    );
+    await tester.pumpAndSettle();
+  });
+}
+
+Finder get _activeListingsSectionFinder {
+  return find.byWidgetPredicate(
+    (widget) =>
+        widget.runtimeType.toString() == '_SellerListingsSection' &&
+        (widget as dynamic).isArchive == false,
+  );
 }
 
 Widget _buildApp({
@@ -162,6 +264,11 @@ class _FakeSellerListingsService extends ListingsService {
   List<Listing> _items;
   Completer<List<Listing>>? firstLoadCompleter;
   Completer<List<Listing>>? refreshCompleter;
+  Completer<List<Listing>>? loadMoreCompleter;
+  final List<Map<String, dynamic>> publicOwnerQueries =
+      <Map<String, dynamic>>[];
+
+  List<Listing> get itemsForTest => List<Listing>.from(_items);
 
   @override
   List<Listing> peekListingsByOwner(String ownerId) {
@@ -191,6 +298,53 @@ class _FakeSellerListingsService extends ListingsService {
       return List<Listing>.from(_items);
     }
     return List<Listing>.from(_items);
+  }
+
+  @override
+  Future<ListingsFeedPage> getPublicOwnerListingsPage({
+    required String ownerId,
+    required String status,
+    int limit = 20,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    publicOwnerQueries.add(<String, dynamic>{
+      'ownerId': ownerId,
+      'limit': limit,
+      if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+      if (status == 'archive') 'publicMode': 'archive' else 'status': status,
+    });
+    if (forceRefresh && refreshCompleter != null) {
+      final items = await refreshCompleter!.future;
+      _items = List<Listing>.from(items);
+      refreshCompleter = null;
+    } else if ((cursor ?? '').trim().isEmpty &&
+        status == 'approved' &&
+        firstLoadCompleter != null) {
+      final items = await firstLoadCompleter!.future;
+      _items = List<Listing>.from(items);
+      firstLoadCompleter = null;
+    } else if ((cursor ?? '').trim().isNotEmpty && loadMoreCompleter != null) {
+      await loadMoreCompleter!.future;
+      loadMoreCompleter = null;
+    }
+
+    final allowed = status == 'archive'
+        ? const <String>{'archived', 'sold'}
+        : <String>{status};
+    final filtered = _items
+        .where(
+            (item) => item.ownerId == ownerId && allowed.contains(item.status))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final start = int.tryParse((cursor ?? '').trim()) ?? 0;
+    final end = (start + limit).clamp(0, filtered.length);
+    final slice = filtered.sublist(start, end);
+    return ListingsFeedPage(
+      items: slice,
+      hasMore: end < filtered.length,
+      nextCursor: end < filtered.length ? '$end' : null,
+    );
   }
 }
 
@@ -273,7 +427,14 @@ class _FakeAuthService extends AuthService {
   AuthUser? get currentUser => AuthUser(uid: 'viewer-1', isAdmin: isAdmin);
 }
 
-Listing _listing(String id, String title) {
+Listing _listing(
+  String id,
+  String title, {
+  String status = 'approved',
+  int createdAtMinute = 0,
+}) {
+  final createdAt =
+      '2026-07-01T10:${createdAtMinute.toString().padLeft(2, '0')}:00.000Z';
   return Listing.fromMap(<String, dynamic>{
     'id': id,
     'owner_id': 'seller-1',
@@ -290,14 +451,11 @@ Listing _listing(String id, String title) {
     'delivery': const <String, dynamic>{'pickup': true},
     'photo_urls': const <String>[],
     'view_count': 0,
-    'status': 'approved',
+    'status': status,
     'rejection_reason': '',
     'can_promote': false,
-    'created_at': id == 'listing-2'
-        ? '2026-07-02T10:00:00.000Z'
-        : '2026-07-01T10:00:00.000Z',
-    'published_at': id == 'listing-2'
-        ? '2026-07-02T10:00:00.000Z'
-        : '2026-07-01T10:00:00.000Z',
+    'created_at': createdAt,
+    'published_at': createdAt,
+    if (status == 'archived' || status == 'sold') 'archived_at': createdAt,
   });
 }

@@ -13,9 +13,11 @@ import {
   Promotion,
   PromotionStatus,
   PromotionType,
+  UserStatus,
 } from '@prisma/client';
 import { createHash } from 'crypto';
 
+import { buildListingSearchWhere } from '../../common/listing-search';
 import { serializeListing, toIsoString } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,6 +48,10 @@ type PromoteListingInput = {
   idempotencyKey?: string;
 };
 type CounterSource = { ip?: string; userAgent?: string };
+type ShowcaseCursorPayload = {
+  createdAt: string;
+  id: string;
+};
 
 const listingInclude = {
   owner: {
@@ -67,6 +73,45 @@ const listingInclude = {
     },
   },
 } satisfies Prisma.ListingInclude;
+
+const encodeShowcaseCursor = (
+  promotion: Pick<Promotion, 'createdAt' | 'id'>,
+) =>
+  Buffer.from(
+    JSON.stringify({
+      createdAt: promotion.createdAt.toISOString(),
+      id: promotion.id,
+    } satisfies ShowcaseCursorPayload),
+  ).toString('base64url');
+
+const parseShowcaseCursor = (
+  rawCursor?: string,
+): ShowcaseCursorPayload | null => {
+  const cursor = rawCursor?.trim() ?? '';
+  if (!cursor) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, 'base64url').toString('utf8'),
+    ) as Partial<ShowcaseCursorPayload>;
+    if (
+      typeof parsed.createdAt !== 'string' ||
+      typeof parsed.id !== 'string' ||
+      parsed.createdAt.trim().length === 0 ||
+      parsed.id.trim().length === 0
+    ) {
+      return null;
+    }
+    return {
+      createdAt: parsed.createdAt,
+      id: parsed.id,
+    };
+  } catch {
+    return null;
+  }
+};
 
 @Injectable()
 export class PromotionsService implements OnModuleInit, OnModuleDestroy {
@@ -187,9 +232,14 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
           gt: new Date(),
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [
+        {
+          createdAt: 'desc',
+        },
+        {
+          id: 'desc',
+        },
+      ],
     });
 
     if (activePromotion) {
@@ -365,8 +415,46 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async getShowcase() {
+  async getShowcase(params?: {
+    limit?: number;
+    cursor?: string;
+    category?: string;
+    search?: string;
+  }) {
     await this.expirePromotionsByTime();
+
+    const limit =
+      params?.limit == null ? null : Math.max(1, Math.min(params.limit, 50));
+    const category = params?.category?.trim();
+    const search = params?.search?.trim();
+    const cursor = parseShowcaseCursor(params?.cursor);
+    const cursorDate = cursor ? new Date(cursor.createdAt) : null;
+    const cursorId = cursor?.id;
+    const cursorWhere =
+      cursorDate != null &&
+      cursorId != null &&
+      !Number.isNaN(cursorDate.getTime())
+        ? {
+            OR: [
+              {
+                createdAt: {
+                  lt: cursorDate,
+                },
+              },
+              {
+                createdAt: cursorDate,
+                id: {
+                  lt: cursorId,
+                },
+              },
+            ],
+          }
+        : {};
+    const listingAndConditions: Prisma.ListingWhereInput[] = [];
+    const searchWhere = buildListingSearchWhere(search);
+    if (searchWhere != null) {
+      listingAndConditions.push(searchWhere);
+    }
 
     const promotions = await this.prisma.promotion.findMany({
       where: {
@@ -375,10 +463,24 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         endsAt: {
           gt: new Date(),
         },
+        ...cursorWhere,
         listing: {
           status: ListingStatus.APPROVED,
           deletedAt: null,
           archivedAt: null,
+          photos: {
+            some: {},
+          },
+          owner: {
+            deletedAt: null,
+            status: UserStatus.ACTIVE,
+          },
+          ...(category && category.toLowerCase() !== 'все'
+            ? { category }
+            : {}),
+          ...(listingAndConditions.length > 0
+            ? { AND: listingAndConditions }
+            : {}),
         },
       },
       include: {
@@ -396,13 +498,20 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
       orderBy: {
         createdAt: 'desc',
       },
+      ...(limit == null ? {} : { take: limit + 1 }),
     });
 
     const uniquePromotions = promotions.filter((promotion, index, items) =>
       items.findIndex((candidate) => candidate.listingId === promotion.listingId) === index,
     );
+    const pageItems = limit == null ? uniquePromotions : uniquePromotions.slice(0, limit);
+    const hasMore = limit != null && uniquePromotions.length > limit;
+    const nextCursor =
+      hasMore && pageItems.length > 0
+        ? encodeShowcaseCursor(pageItems[pageItems.length - 1]!)
+        : null;
     const sellerIds = [
-      ...new Set(uniquePromotions.map((promotion) => promotion.listing.ownerId)),
+      ...new Set(pageItems.map((promotion) => promotion.listing.ownerId)),
     ];
     const groupedRatings = sellerIds.length
       ? await this.prisma.review.groupBy({
@@ -423,7 +532,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     );
 
     return {
-      items: uniquePromotions.map((promotion) => ({
+      items: pageItems.map((promotion) => ({
         promotionId: promotion.id,
         listingId: promotion.listingId,
         title: promotion.listing.title,
@@ -449,6 +558,8 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         impressionsCount: promotion.impressionsCount,
         clicksCount: promotion.clicksCount,
       })),
+      nextCursor,
+      hasMore,
     };
   }
 

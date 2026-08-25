@@ -123,6 +123,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   String? _nextCursor;
   Object? _feedError;
   int _feedRequestSerial = 0;
+  int _mainFeedVipRotationOffset = 0;
+  int _activeMainFeedVipRotationOffset = 0;
 
   @override
   void initState() {
@@ -501,6 +503,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }) async {
     final listings = context.read<ListingsService>();
     final requestId = ++_feedRequestSerial;
+    final vipRotationOffset =
+        reset ? _mainFeedVipRotationOffset : _activeMainFeedVipRotationOffset;
 
     setState(() {
       if (reset) {
@@ -525,6 +529,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         filters: _currentFeedFilters,
         limit: _feedPageSize,
         cursor: reset ? null : _nextCursor,
+        useVipInterleave: true,
+        vipRotation: vipRotationOffset,
       );
       if (!mounted || requestId != _feedRequestSerial) return;
       setState(() {
@@ -536,6 +542,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         _isInitialLoading = false;
         _isLoadingMore = false;
         _feedError = null;
+        if (reset) {
+          _activeMainFeedVipRotationOffset = vipRotationOffset;
+          _mainFeedVipRotationOffset = vipRotationOffset + 1;
+        }
       });
     } catch (error) {
       if (!mounted || requestId != _feedRequestSerial) return;

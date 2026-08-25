@@ -30,6 +30,17 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> userRegistrationStats({int? year}) async {
+    final response = await client.get(
+      '/admin/users/registration-stats',
+      authorized: true,
+      queryParameters: {
+        if (year != null) 'year': '$year',
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> onlineUsers() async {
     final response = await client.get('/admin/online-users', authorized: true);
     return Map<String, dynamic>.from(response as Map);

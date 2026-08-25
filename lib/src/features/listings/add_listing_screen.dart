@@ -135,6 +135,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
   final _desc = TextEditingController();
   final _price = TextEditingController();
   final _phone = TextEditingController();
+  final _oemPartNumber = TextEditingController();
 
   // ✅ авто-поля
   final _carYear = TextEditingController();
@@ -206,6 +207,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool get _isElectronics => _category == 'Электроника';
   bool get _isRealEstate => _category == 'Недвижимость';
   bool get _isClothes => _category == 'Одежда';
+  bool get _isAutoParts => _category == 'Запчасти';
   String _categoryLabel(String value) => value == 'Авто' ? 'Транспорт' : value;
   bool get _isUploadingPhotos => _photoItems.any(
         (item) =>
@@ -573,6 +575,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     _desc.dispose();
     _price.dispose();
     _phone.dispose();
+    _oemPartNumber.dispose();
 
     _carYear.dispose();
     _carMileage.dispose();
@@ -1019,6 +1022,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
     _electronicsSub = null;
     _lastTitleSuggestion = '';
     _title.clear();
+    _oemPartNumber.clear();
 
     // ✅ сброс авто параметров
     _carYear.clear();
@@ -1645,6 +1649,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
         dealType: dealType,
         clothesType: clothesType,
         clothesSize: clothesSize,
+        oemPartNumber: _isAutoParts ? _oemPartNumber.text : null,
       );
 
       if (!mounted) return;
@@ -1991,6 +1996,17 @@ class _AddListingScreenState extends State<AddListingScreen> {
           ),
 
           const SizedBox(height: 12),
+
+          if (_isAutoParts) ...[
+            TextField(
+              controller: _oemPartNumber,
+              textCapitalization: TextCapitalization.characters,
+              decoration: const InputDecoration(
+                labelText: 'Номер детали (OEM)',
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
 
           if (_isClothes) ...[
             _selectTile(

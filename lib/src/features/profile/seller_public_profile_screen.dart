@@ -53,7 +53,10 @@ class SellerPublicProfileScreen extends StatefulWidget {
 class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
-  final GlobalKey<_SellerListingsSectionState> _listingsKey =
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey<_SellerListingsSectionState> _activeListingsKey =
+      GlobalKey<_SellerListingsSectionState>();
+  final GlobalKey<_SellerListingsSectionState> _archiveListingsKey =
       GlobalKey<_SellerListingsSectionState>();
   bool _followBusy = false;
 
@@ -61,14 +64,22 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
+    _scrollController.addListener(_handleScroll);
+    _tab.addListener(() {
+      if (!_tab.indexIsChanging && mounted) {
+        setState(() {});
+      }
+    });
   }
 
   Future<void> _handleRefresh({
     required ProfileService profile,
     required ReviewsService reviews,
   }) async {
+    final currentListingsKey =
+        _tab.index == 1 ? _archiveListingsKey : _activeListingsKey;
     await Future.wait<void>(<Future<void>>[
-      _listingsKey.currentState?.refresh() ?? Future<void>.value(),
+      currentListingsKey.currentState?.refresh() ?? Future<void>.value(),
       reviews.refreshSellerReviews(widget.sellerId).then((_) {}),
       profile.getProfile(widget.sellerId).then((_) {}),
     ]);
@@ -79,8 +90,18 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _tab.dispose();
     super.dispose();
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.maxScrollExtent - position.pixels > 420) return;
+    final currentListingsKey =
+        _tab.index == 1 ? _archiveListingsKey : _activeListingsKey;
+    currentListingsKey.currentState?.loadMore();
   }
 
   Future<void> _openChat({
@@ -253,6 +274,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
           return RefreshIndicator(
             onRefresh: () => _handleRefresh(profile: profile, reviews: reviews),
             child: ListView(
+              controller: _scrollController,
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
               children: [
@@ -510,11 +532,27 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 AnimatedBuilder(
                   animation: _tab,
                   builder: (context, _) {
-                    return _SellerListingsSection(
-                      key: _listingsKey,
-                      ownerId: widget.sellerId,
-                      listingsService: listingsSvc,
-                      isArchive: _tab.index == 1,
+                    return Column(
+                      children: [
+                        Offstage(
+                          offstage: _tab.index != 0,
+                          child: _SellerListingsSection(
+                            key: _activeListingsKey,
+                            ownerId: widget.sellerId,
+                            listingsService: listingsSvc,
+                            isArchive: false,
+                          ),
+                        ),
+                        Offstage(
+                          offstage: _tab.index != 1,
+                          child: _SellerListingsSection(
+                            key: _archiveListingsKey,
+                            ownerId: widget.sellerId,
+                            listingsService: listingsSvc,
+                            isArchive: true,
+                          ),
+                        ),
+                      ],
                     );
                   },
                 ),
@@ -597,17 +635,26 @@ class _SellerListingsSection extends StatefulWidget {
 }
 
 class _SellerListingsSectionState extends State<_SellerListingsSection> {
+  static const int _pageSize = 20;
   late StreamSubscription<void> _refreshSubscription;
   List<Listing> _allItems = const <Listing>[];
   Object? _error;
   bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMore = false;
+  String? _nextCursor;
 
   @override
   void initState() {
     super.initState();
-    _allItems = widget.listingsService.peekListingsByOwner(widget.ownerId);
+    _allItems = widget.isArchive
+        ? const <Listing>[]
+        : widget.listingsService
+            .peekListingsByOwner(widget.ownerId)
+            .where((item) => item.status == 'approved')
+            .toList(growable: false);
     _refreshSubscription = widget.listingsService.refreshes.listen((_) {
-      unawaited(_load());
+      unawaited(_load(forceRefresh: true));
     });
     unawaited(_load());
   }
@@ -615,9 +662,20 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
   @override
   void didUpdateWidget(covariant _SellerListingsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.ownerId == widget.ownerId) return;
-    _allItems = widget.listingsService.peekListingsByOwner(widget.ownerId);
+    if (oldWidget.ownerId == widget.ownerId &&
+        oldWidget.isArchive == widget.isArchive) {
+      return;
+    }
+    _allItems = widget.isArchive
+        ? const <Listing>[]
+        : widget.listingsService
+            .peekListingsByOwner(widget.ownerId)
+            .where((item) => item.status == 'approved')
+            .toList(growable: false);
     _error = null;
+    _nextCursor = null;
+    _hasMore = false;
+    _isLoadingMore = false;
     unawaited(_load(forceRefresh: true));
   }
 
@@ -634,19 +692,26 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
     if (mounted) {
       setState(() {
         _isLoading = true;
+        _isLoadingMore = false;
         _error = null;
       });
     } else {
       _isLoading = true;
+      _isLoadingMore = false;
       _error = null;
     }
     try {
-      final rows = forceRefresh
-          ? await widget.listingsService.refreshListingsByOwner(widget.ownerId)
-          : await widget.listingsService.getListingsByOwnerAll(widget.ownerId);
+      final page = await widget.listingsService.getPublicOwnerListingsPage(
+        ownerId: widget.ownerId,
+        status: widget.isArchive ? 'archive' : 'approved',
+        limit: _pageSize,
+        forceRefresh: forceRefresh,
+      );
       if (!mounted) return;
       setState(() {
-        _allItems = rows;
+        _allItems = _dedupe(page.items);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
         _isLoading = false;
       });
     } catch (error) {
@@ -658,21 +723,49 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
     }
   }
 
-  List<Listing> _visibleItems() {
-    if (widget.isArchive) {
-      return _allItems
-          .where(
-            (x) =>
-                x.status == 'deleted' ||
-                x.status == 'archived' ||
-                x.status == 'sold' ||
-                x.status == 'rejected',
-          )
-          .toList(growable: false);
+  Future<void> loadMore() async {
+    if (_isLoading || _isLoadingMore || !_hasMore || _nextCursor == null) {
+      return;
     }
-    return _allItems
-        .where((x) => x.status == 'approved')
-        .toList(growable: false);
+    setState(() {
+      _isLoadingMore = true;
+      _error = null;
+    });
+    try {
+      final page = await widget.listingsService.getPublicOwnerListingsPage(
+        ownerId: widget.ownerId,
+        status: widget.isArchive ? 'archive' : 'approved',
+        limit: _pageSize,
+        cursor: _nextCursor,
+      );
+      if (!mounted) return;
+      setState(() {
+        _allItems = _dedupe(<Listing>[..._allItems, ...page.items]);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
+        _isLoadingMore = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error;
+        _isLoadingMore = false;
+      });
+    }
+  }
+
+  List<Listing> _dedupe(List<Listing> items) {
+    final allowed = widget.isArchive
+        ? const <String>{'archived', 'sold'}
+        : const <String>{'approved'};
+    final byId = <String, Listing>{};
+    for (final item in items) {
+      if (allowed.contains(item.status)) {
+        byId[item.id] = item;
+      }
+    }
+    return byId.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
   @override
@@ -701,7 +794,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
       );
     }
 
-    final items = _visibleItems();
+    final items = _allItems;
     if (items.isEmpty) {
       return Center(
         child: Text(
@@ -737,7 +830,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (_isLoading)
+        if (_isLoading && _allItems.isNotEmpty)
           const Padding(
             padding: EdgeInsets.only(bottom: 10),
             child: LinearProgressIndicator(minHeight: 2),
@@ -763,7 +856,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
             ),
             child: Text(
-              'Архив: история объявлений продавца (продано, снято, отклонено).',
+              'Архив: история объявлений продавца (продано, снято с продажи).',
               style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                 fontWeight: FontWeight.w600,
@@ -771,6 +864,11 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
             ),
           ),
         grid,
+        if (_isLoadingMore)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(child: CircularProgressIndicator()),
+          ),
       ],
     );
   }
@@ -791,10 +889,6 @@ class _ListingCard extends StatelessWidget {
     switch (status) {
       case 'sold':
         return 'Продано';
-      case 'rejected':
-        return 'На исправлении';
-      case 'deleted':
-        return 'Удалено админом';
       case 'archived':
         return 'Снято с продажи';
       default:
@@ -806,14 +900,8 @@ class _ListingCard extends StatelessWidget {
     switch (status) {
       case 'sold':
         return Colors.green;
-      case 'rejected':
-        return Colors.orange;
-      case 'deleted':
-        return Colors.red;
       case 'archived':
         return Colors.grey;
-      case 'pending':
-        return Colors.orange;
       default:
         return Colors.blueGrey;
     }

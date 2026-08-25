@@ -34,24 +34,28 @@ let ListingsController = class ListingsController {
         });
         return this.listingsService.create(authUser, dto);
     }
-    findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status) {
+    findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status, publicMode, feedMode, vipRotation) {
         return this.listingsService.findAll({
             search,
             category,
             city,
             ownerId,
             status,
+            publicMode,
             limit: limit == null ? undefined : Number(limit),
             cursor,
+            feedMode,
+            vipRotation: vipRotation == null ? undefined : Number(vipRotation),
             minPrice: minPrice == null ? undefined : Number(minPrice),
             maxPrice: maxPrice == null ? undefined : Number(maxPrice),
         });
     }
-    findVip(limit, cursor, category) {
+    findVip(limit, cursor, category, search) {
         return this.listingsService.findVipListings({
             limit: limit == null ? undefined : Number(limit),
             cursor,
             category,
+            search,
         });
     }
     findMy(authUser, status, limit, cursor) {
@@ -102,8 +106,11 @@ __decorate([
     __param(6, (0, common_1.Query)('cursor')),
     __param(7, (0, common_1.Query)('ownerId')),
     __param(8, (0, common_1.Query)('status')),
+    __param(9, (0, common_1.Query)('publicMode')),
+    __param(10, (0, common_1.Query)('feedMode')),
+    __param(11, (0, common_1.Query)('vipRotation')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "findAll", null);
 __decorate([
@@ -111,8 +118,9 @@ __decorate([
     __param(0, (0, common_1.Query)('limit')),
     __param(1, (0, common_1.Query)('cursor')),
     __param(2, (0, common_1.Query)('category')),
+    __param(3, (0, common_1.Query)('search')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "findVip", null);
 __decorate([

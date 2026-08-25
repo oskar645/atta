@@ -13,7 +13,8 @@ import {
   UserStatus,
 } from '@prisma/client';
 
-import { ListingsService } from './listings.service';
+import { ListingsService, normalizeOemPartNumber } from './listings.service';
+import { listingSearchDebugVariants } from '../../common/listing-search';
 
 const ownerUser = {
   userId: 'owner-1',
@@ -74,6 +75,8 @@ function createApprovedListing(
     realEstateType: null,
     clothesType: null,
     clothesSize: null,
+    oemPartNumber: null as string | null,
+    oemPartNumberNormalized: null as string | null,
     status: ListingStatus.APPROVED,
     rejectionReason: '',
     moderationNote: null,
@@ -194,6 +197,8 @@ function createService(overrides?: {
           realEstateType: null,
           clothesType: null,
           clothesSize: null,
+          oemPartNumber: null,
+          oemPartNumberNormalized: null,
           status: ListingStatus.PENDING,
           rejectionReason: '',
           moderationNote: null,
@@ -249,6 +254,8 @@ function createService(overrides?: {
           realEstateType: null,
           clothesType: null,
           clothesSize: null,
+          oemPartNumber: null,
+          oemPartNumberNormalized: null,
           status: ListingStatus.ARCHIVED,
           rejectionReason: '',
           moderationNote: null,
@@ -499,6 +506,209 @@ test('findVipListings keeps unfiltered request backward-compatible', async () =>
   assert.equal('category' in capturedArgs?.where?.listing, false);
 });
 
+test('findVipListings applies text search inside VIP scope', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({ limit: 20, search: 'фара Toyota' });
+
+  assert.equal(capturedArgs?.where?.type, PromotionType.VIP);
+  assert.equal(capturedArgs?.where?.listing?.AND?.length, 1);
+  assert.deepEqual(
+    capturedArgs?.where?.listing?.AND?.[0]?.OR?.[0]?.OR?.[0]?.title,
+    { contains: 'фара toyota', mode: 'insensitive' },
+  );
+});
+
+test('findVipListings applies normalized OEM search with category', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    category: 'Запчасти',
+    search: '81150-06C70',
+  });
+
+  assert.equal(capturedArgs?.where?.listing?.category, 'Запчасти');
+  assert.ok(
+    capturedArgs?.where?.listing?.AND?.[0]?.OR?.some(
+      (group: Record<string, any>) => group.OR?.some(
+        (condition: Record<string, unknown>) =>
+          condition.oemPartNumberNormalized === '8115006C70',
+      ),
+    ),
+  );
+});
+
+test('findVipListings builds generic transliteration variants without brand whitelist', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: 'Глобарис',
+  });
+
+  assert.ok(
+    capturedArgs?.where?.listing?.AND?.[0]?.OR?.some(
+      (group: Record<string, any>) => group.OR?.some(
+        (condition: Record<string, any>) =>
+          condition.title?.contains === 'globaris',
+      ),
+    ),
+  );
+});
+
+test('findVipListings keeps OEM search deterministic without typo variants', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: '81150-06C70',
+  });
+
+  const serializedSearchWhere = JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]);
+  const debug = listingSearchDebugVariants('81150-06C70');
+
+  assert.ok(serializedSearchWhere.includes('8115006C70'));
+  assert.deepEqual(
+    debug.tokens.flatMap((token) => token.typoFragments),
+    [],
+  );
+  assert.deepEqual(
+    debug.tokens.flatMap((token) => token.deletionTypoVariants),
+    [],
+  );
+});
+
+test('findVipListings supports limited typo fragments for ordinary text', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: 'Toyta',
+  });
+
+  const serializedSearchWhere = JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]);
+  assert.ok(serializedSearchWhere.includes('"contains":"toy"'));
+  assert.ok(serializedSearchWhere.includes('"contains":"ta"'));
+});
+
+test('findVipListings uses shared transliteration for multi-word search', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: 'Тойота Камри',
+  });
+
+  const serializedSearchWhere = JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]);
+  assert.ok(serializedSearchWhere.includes('"contains":"toyota"'));
+  assert.ok(serializedSearchWhere.includes('"contains":"camry"'));
+});
+
+test('findVipListings keeps typo search inside VIP scope', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: 'Samsng',
+  });
+
+  assert.equal(capturedArgs?.where?.type, PromotionType.VIP);
+  assert.ok(JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]).includes('"contains":"sam"'));
+});
+
+test('findVipListings paginates with shared search conditions', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: 'Bosch',
+    cursor: Buffer.from(
+      JSON.stringify({
+        createdAt: '2026-08-24T10:00:00.000Z',
+        id: 'promotion-1',
+      }),
+    ).toString('base64url'),
+  });
+
+  assert.equal(capturedArgs?.take, 21);
+  assert.ok(capturedArgs?.where?.OR);
+  assert.ok(JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]).includes('бош'));
+});
+
+test('findVipListings applies mixed text and OEM search inside VIP scope', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    search: 'фара 81150-06C70',
+  });
+
+  assert.equal(capturedArgs?.where?.type, PromotionType.VIP);
+  assert.ok(
+    capturedArgs?.where?.listing?.AND?.[0]?.OR?.some(
+      (group: Record<string, any>) => group.OR?.some(
+        (condition: Record<string, unknown>) =>
+          condition.oemPartNumberNormalized === '8115006C70',
+      ),
+    ),
+  );
+});
+
 test('incrementView counts a regular user once per listing', async () => {
   const harness = createListingViewCounterService();
 
@@ -684,6 +894,31 @@ function findCursorUuidValue(
   return null;
 }
 
+function findVipRotationValue(
+  strings: readonly string[],
+  values: readonly unknown[],
+): number {
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (
+      typeof value === 'number' &&
+      strings[index]?.includes('- (') &&
+      strings[index + 1]?.includes('% GREATEST')
+    ) {
+      return value;
+    }
+
+    if (isSqlLike(value)) {
+      const nested = findVipRotationValue(value.strings, value.values);
+      if (nested !== 0) {
+        return nested;
+      }
+    }
+  }
+
+  return 0;
+}
+
 function rawRowForListing(
   listing: TestApprovedListing,
   sortGroup: number,
@@ -820,8 +1055,178 @@ function buildRankedRawRows(
   );
 }
 
+function buildVipInterleavedRawRows(
+  listings: TestApprovedListing[],
+  promotedIds?: Record<string, string>,
+  vipRotation = 0,
+) {
+  const natural = [...listings].sort(compareNaturalListings);
+  const vipPromotedAtById = new Map<string, Date>();
+  for (const listing of natural) {
+    const promotedAt = promotedIds?.[listing.id] != null
+      ? new Date(promotedIds[listing.id]!)
+      : promotionActivatedAt(listing);
+    const hasVip = (listing.promotions ?? []).some((promotion) => {
+      if (typeof promotion !== 'object' || promotion == null) return false;
+      const promo = promotion as { type?: PromotionType; status?: PromotionStatus };
+      return promo.type === PromotionType.VIP && promo.status === PromotionStatus.ACTIVE;
+    });
+    if (hasVip && promotedAt != null && !Number.isNaN(promotedAt.getTime())) {
+      vipPromotedAtById.set(listing.id, promotedAt);
+    }
+  }
+
+  const ordinary = natural.filter((listing) => !vipPromotedAtById.has(listing.id));
+  const vipQueue = natural
+    .filter((listing) => vipPromotedAtById.has(listing.id))
+    .sort((a, b) => {
+      const promotedDiff =
+        vipPromotedAtById.get(b.id)!.getTime() - vipPromotedAtById.get(a.id)!.getTime();
+      if (promotedDiff !== 0) {
+        return promotedDiff;
+      }
+
+      const createdDiff = b.createdAt.getTime() - a.createdAt.getTime();
+      if (createdDiff !== 0) {
+        return createdDiff;
+      }
+
+      return b.id.localeCompare(a.id);
+    });
+  const rotatedVipQueue = vipQueue.length === 0
+    ? vipQueue
+    : [
+        ...vipQueue.slice(vipRotation % vipQueue.length),
+        ...vipQueue.slice(0, vipRotation % vipQueue.length),
+      ];
+  const headCount = Math.min(ordinary.length, 10);
+  const rows: RawFeedRow[] = [];
+
+  ordinary.slice(0, headCount).forEach((listing, index) => {
+    rows.push(rawRowForListing(listing, index + 1));
+  });
+  rotatedVipQueue.forEach((listing, index) => {
+    rows.push(
+      rawRowForListing(
+        listing,
+        headCount + 1 + index * 3,
+        vipPromotedAtById.get(listing.id) ?? null,
+      ),
+    );
+  });
+  ordinary.slice(headCount).forEach((listing, index) => {
+    const ordinaryTailRank = index + 1;
+    rows.push(
+      rawRowForListing(
+        listing,
+        headCount + ordinaryTailRank + Math.ceil(ordinaryTailRank / 2),
+      ),
+    );
+  });
+
+  return rows.sort((a, b) => {
+    const groupDiff = a.sort_group - b.sort_group;
+    if (groupDiff !== 0) return groupDiff;
+    const sortAtDiff = b.sort_at.getTime() - a.sort_at.getTime();
+    if (sortAtDiff !== 0) return sortAtDiff;
+    const createdDiff = b.created_at.getTime() - a.created_at.getTime();
+    if (createdDiff !== 0) return createdDiff;
+    return b.id.localeCompare(a.id);
+  });
+}
+
 function uuidFromNumber(value: number) {
   return `00000000-0000-4000-8000-${value.toString().padStart(12, '0')}`;
+}
+
+function compactTestSearchText(value: string) {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function editDistanceAtMostOne(left: string, right: string) {
+  if (Math.abs(left.length - right.length) > 1) return false;
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let edits = 0;
+
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+
+    edits += 1;
+    if (edits > 1) return false;
+
+    if (left.length > right.length) {
+      leftIndex += 1;
+    } else if (right.length > left.length) {
+      rightIndex += 1;
+    } else {
+      leftIndex += 1;
+      rightIndex += 1;
+    }
+  }
+
+  return edits + (left.length - leftIndex) + (right.length - rightIndex) <= 1;
+}
+
+function listingMatchesRawSearch(
+  listing: TestApprovedListing | undefined,
+  flattenedValues: unknown[],
+) {
+  if (listing == null) return false;
+
+  const searchableText = [
+    listing.title,
+    listing.description,
+    listing.category,
+    listing.subcategory,
+    listing.city,
+    listing.address,
+    listing.ownerName,
+  ].join(' ').toLowerCase();
+  const searchableCompact = compactTestSearchText(searchableText);
+  const searchableWords = searchableText
+    .split(/[^\p{L}\p{N}]+/u)
+    .map(compactTestSearchText)
+    .filter(Boolean);
+  const likeSearches = flattenedValues
+    .filter((value): value is string =>
+      typeof value === 'string' && value.startsWith('%') && value.endsWith('%'),
+    )
+    .map((value) => value.slice(1, -1).toLowerCase());
+  const fuzzySearches = flattenedValues
+    .filter((value): value is string =>
+      typeof value === 'string' &&
+      !value.startsWith('%') &&
+      /^[\p{L}]{5,}$/u.test(value),
+    )
+    .map(compactTestSearchText);
+  const normalizedSearches = new Set(
+    flattenedValues
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => normalizeOemPartNumber(value))
+      .filter((value): value is string => value != null),
+  );
+
+  return (
+    likeSearches.some((search) =>
+      searchableText.includes(search) ||
+      searchableCompact.includes(compactTestSearchText(search)),
+    ) ||
+    fuzzySearches.some((search) =>
+      searchableWords.some((word) => editDistanceAtMostOne(word, search)),
+    ) ||
+    (
+      listing.oemPartNumberNormalized != null &&
+      normalizedSearches.has(listing.oemPartNumberNormalized)
+    )
+  );
 }
 
 function createRawFeedHarness(
@@ -842,25 +1247,30 @@ function createRawFeedHarness(
       const cursorId = findCursorUuidValue(strings, values);
       rawCalls.push({ ...flattened, cursorId });
 
-      let filteredRows = orderedRows;
+      const isVipInterleaved = flattened.text.includes('vip_promoted_at');
+      const vipRotation = isVipInterleaved
+        ? findVipRotationValue(strings, values)
+        : 0;
+      let filteredRows = isVipInterleaved
+        ? buildVipInterleavedRawRows(
+            orderedListings,
+            options?.promotedIds,
+            vipRotation,
+          )
+        : orderedRows;
       if (flattened.values.includes('auto')) {
         filteredRows = filteredRows.filter(
           (row) => listingsById.get(row.id)?.category === 'auto',
         );
       }
-      const searchPattern = flattened.values.find(
-        (value): value is string =>
-          typeof value === 'string' && value.startsWith('%') && value.endsWith('%'),
+      const hasSearch = flattened.values.some((value) =>
+        typeof value === 'string' &&
+        value.startsWith('%'),
       );
-      if (searchPattern) {
-        const search = searchPattern.slice(1, -1).toLowerCase();
+      if (hasSearch) {
         filteredRows = filteredRows.filter((row) => {
           const listing = listingsById.get(row.id);
-          return (
-            listing?.title.toLowerCase().includes(search) ||
-            listing?.description.toLowerCase().includes(search) ||
-            listing?.category.toLowerCase().includes(search)
-          );
+          return listingMatchesRawSearch(listing, flattened.values);
         });
       }
 
@@ -914,6 +1324,8 @@ test('owner edit of approved listing sends it back to moderation', async () => {
         ...listing,
         price: BigInt(100000),
         city: 'Грозный',
+        oemPartNumber: '81150-06C70',
+        oemPartNumberNormalized: '8115006C70',
         owner: {
           phone: '79281234567',
         },
@@ -971,6 +1383,7 @@ test('owner edit of approved listing sends it back to moderation', async () => {
   assert.equal((revisionCreateArgs?.data as Record<string, unknown>)?.listingId, 'listing-1');
   assert.equal(snapshot['price'], '100000');
   assert.equal(snapshot['city'], 'Грозный');
+  assert.equal(snapshot['oem_part_number'], '81150-06C70');
   assert.deepEqual(snapshot['photos'], [
     {
       id: 'photo-1',
@@ -980,6 +1393,83 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     },
   ]);
   assert.equal(response.listing.status, 'pending');
+});
+
+test('update can add, change and clear OEM for auto parts listings', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Запчасти'),
+    status: ListingStatus.PENDING,
+    owner: {
+      id: ownerUser.userId,
+      email: 'owner@example.com',
+      phone: '79281234567',
+      phoneVerified: true,
+      displayName: 'Owner',
+      name: 'Owner',
+      avatarUrl: null,
+      photoUrl: null,
+      status: UserStatus.ACTIVE,
+      blockedAt: null,
+      blockReason: null,
+      lastLoginAt: null,
+      createdAt: new Date('2026-07-01T10:00:00.000Z'),
+      updatedAt: new Date('2026-07-01T10:00:00.000Z'),
+      deletedAt: null,
+      adminProfile: null,
+    },
+  };
+  const updateData: Array<Record<string, unknown>> = [];
+  let savedListing: Record<string, unknown> = {
+    ...listing,
+    oemPartNumber: null,
+    oemPartNumberNormalized: null,
+  };
+  const prisma = {
+    listing: {
+      findUnique: async () => listing,
+      update: async (args: Record<string, any>) => {
+        updateData.push(args.data);
+        savedListing = {
+          ...savedListing,
+          ...args.data,
+          updatedAt: new Date(),
+        };
+        return savedListing;
+      },
+      findUniqueOrThrow: async () => savedListing,
+    },
+    listingPhoto: {
+      deleteMany: async () => ({}),
+      createMany: async () => ({}),
+    },
+    listingModerationRevision: {
+      findFirst: async () => null,
+      create: async () => ({ id: 'revision-1' }),
+    },
+    $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
+      handler(prisma),
+  };
+  const service = new ListingsService(prisma as never, {} as never, {} as never);
+
+  await service.update('listing-1', ownerUser, {
+    category: 'Запчасти',
+    oem_part_number: '81150-06c70',
+  });
+  await service.update('listing-1', ownerUser, {
+    category: 'Запчасти',
+    oem_part_number: '81150 06C71',
+  });
+  await service.update('listing-1', ownerUser, {
+    category: 'Запчасти',
+    oem_part_number: '',
+  });
+
+  assert.equal(updateData[0]?.oemPartNumber, '81150-06c70');
+  assert.equal(updateData[0]?.oemPartNumberNormalized, '8115006C70');
+  assert.equal(updateData[1]?.oemPartNumber, '81150 06C71');
+  assert.equal(updateData[1]?.oemPartNumberNormalized, '8115006C71');
+  assert.equal(updateData[2]?.oemPartNumber, null);
+  assert.equal(updateData[2]?.oemPartNumberNormalized, null);
 });
 
 test('mark sold works through explicit archive endpoint', async () => {
@@ -1132,6 +1622,8 @@ test('create uses owner phone when dto phone is empty', async () => {
         realEstateType: null,
         clothesType: null,
         clothesSize: null,
+        oemPartNumber: null,
+        oemPartNumberNormalized: null,
         status: ListingStatus.PENDING,
         rejectionReason: '',
         moderationNote: null,
@@ -1233,6 +1725,88 @@ test('create ignores clothes size for other categories', async () => {
   });
 
   assert.equal(createData?.clothesSize, null);
+});
+
+test('create accepts auto parts without optional OEM number', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Запчасти'),
+        status: ListingStatus.PENDING,
+        oemPartNumber: createData.oemPartNumber,
+        oemPartNumberNormalized: createData.oemPartNumberNormalized,
+      };
+    },
+  });
+
+  const response = await service.create(ownerUser, {
+    title: 'Фара',
+    description: 'Передняя',
+    category: 'Запчасти',
+    subcategory: 'Оптика',
+    price: 1000,
+  });
+
+  assert.equal(createData?.oemPartNumber, null);
+  assert.equal(createData?.oemPartNumberNormalized, null);
+  assert.equal(response.listing.oem_part_number, null);
+});
+
+test('create stores and normalizes optional OEM only for auto parts', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Запчасти'),
+        status: ListingStatus.PENDING,
+        oemPartNumber: createData.oemPartNumber,
+        oemPartNumberNormalized: createData.oemPartNumberNormalized,
+      };
+    },
+  });
+
+  const response = await service.create(ownerUser, {
+    title: 'Фара',
+    description: 'Передняя',
+    category: 'Запчасти',
+    subcategory: 'Оптика',
+    price: 1000,
+    oem_part_number: ' 81150-06c70 ',
+  });
+
+  assert.equal(createData?.oemPartNumber, '81150-06c70');
+  assert.equal(createData?.oemPartNumberNormalized, '8115006C70');
+  assert.equal(response.listing.oem_part_number, '81150-06c70');
+});
+
+test('create ignores OEM for non-parts categories', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Авто'),
+        status: ListingStatus.PENDING,
+        oemPartNumber: createData.oemPartNumber,
+        oemPartNumberNormalized: createData.oemPartNumberNormalized,
+      };
+    },
+  });
+
+  await service.create(ownerUser, {
+    title: 'Camry',
+    description: 'Описание',
+    category: 'Авто',
+    subcategory: 'Легковые автомобили',
+    price: 1000,
+    oem_part_number: '81150-06C70',
+  });
+
+  assert.equal(createData?.oemPartNumber, null);
+  assert.equal(createData?.oemPartNumberNormalized, null);
 });
 
 test('public feed is sorted by publishedAt desc, then createdAt desc, then id desc', async () => {
@@ -2131,6 +2705,121 @@ test('public feed $queryRaw uses one newest-first VIP/BUMP promotion queue from 
   );
 });
 
+test('public feed vip interleave mode starts with 10 ordinary listings then alternates one VIP and two ordinary', async () => {
+  const ordinary = Array.from({ length: 18 }, (_, index) =>
+    createApprovedListing(
+      uuidFromNumber(600 - index),
+      `2026-07-03T12:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+    ),
+  );
+  const vip = Array.from({ length: 4 }, (_, index) => ({
+    ...createApprovedListing(
+      uuidFromNumber(500 - index),
+      `2026-07-03T09:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+    ),
+    promotions: [
+      createPromotion(
+        PromotionType.VIP,
+        `2026-07-03T13:0${index}:00.000Z`,
+      ),
+    ],
+  }));
+  const { service } = createRawFeedHarness([...ordinary, ...vip]);
+
+  const response = await service.findAll({
+    limit: 22,
+    feedMode: 'vip_interleave_v1',
+  });
+  const ids = response.items.map((item: { id: string }) => item.id);
+  const vipIds = [...vip].reverse().map((listing) => listing.id);
+
+  assert.deepEqual(ids.slice(0, 10), ordinary.slice(0, 10).map((listing) => listing.id));
+  assert.equal(ids[10], vipIds[0]);
+  assert.deepEqual(ids.slice(11, 13), ordinary.slice(10, 12).map((listing) => listing.id));
+  assert.equal(ids[13], vipIds[1]);
+  assert.deepEqual(ids.slice(14, 16), ordinary.slice(12, 14).map((listing) => listing.id));
+  assert.equal(ids[16], vipIds[2]);
+  assert.equal(ids.length, new Set(ids).size);
+  assert.ok(!ids.slice(0, 20).some((id, index) =>
+    index > 0 && vipIds.includes(id) && vipIds.includes(ids[index - 1]!),
+  ));
+});
+
+test('public feed vip interleave mode rotates VIP order and keeps cursor pages unique', async () => {
+  const ordinary = Array.from({ length: 24 }, (_, index) =>
+    createApprovedListing(
+      uuidFromNumber(700 - index),
+      `2026-07-04T12:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+    ),
+  );
+  const vip = Array.from({ length: 6 }, (_, index) => ({
+    ...createApprovedListing(
+      uuidFromNumber(650 - index),
+      `2026-07-04T09:${(59 - index).toString().padStart(2, '0')}:00.000Z`,
+    ),
+    promotions: [
+      createPromotion(
+        PromotionType.VIP,
+        `2026-07-04T13:0${index}:00.000Z`,
+      ),
+    ],
+  }));
+  const { service, rawCalls } = createRawFeedHarness([...ordinary, ...vip]);
+
+  const firstRefresh = await service.findAll({
+    limit: 15,
+    feedMode: 'vip_interleave_v1',
+    vipRotation: 0,
+  });
+  const firstRefreshSecondPage = await service.findAll({
+    limit: 15,
+    feedMode: 'vip_interleave_v1',
+    vipRotation: 0,
+    cursor: firstRefresh.nextCursor ?? undefined,
+  });
+  const secondRefresh = await service.findAll({
+    limit: 15,
+    feedMode: 'vip_interleave_v1',
+    vipRotation: 1,
+  });
+  const firstIds = [
+    ...firstRefresh.items.map((item: { id: string }) => item.id),
+    ...firstRefreshSecondPage.items.map((item: { id: string }) => item.id),
+  ];
+  const vipIds = [...vip].reverse().map((listing) => listing.id);
+
+  assert.equal(firstRefresh.items[10]!.id, vipIds[0]);
+  assert.equal(secondRefresh.items[10]!.id, vipIds[1]);
+  assert.equal(firstIds.length, 30);
+  assert.equal(new Set(firstIds).size, 30);
+  assert.deepEqual(
+    firstIds.filter((id) => vipIds.includes(id)),
+    vipIds,
+  );
+  assert.match(rawCalls[0]!.text, /vip_promoted_at|ordinary_head_count/);
+  assert.match(rawCalls[1]!.text, /"id"\s*<\s*\$\d+::uuid/);
+});
+
+test('public feed without vip interleave mode keeps legacy paid ordering for old clients', async () => {
+  const listings = createFreshListings(40).map((listing, index) => {
+    if (index === 14) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:00:00.000Z');
+    }
+    if (index === 15) {
+      return withPromotionAt(listing, PromotionType.VIP, '2026-07-02T12:01:00.000Z');
+    }
+    return listing;
+  });
+  const { service } = createRawFeedHarness(listings);
+
+  const response = await service.findAll({ limit: 40 });
+
+  assert.deepEqual(
+    response.items.slice(9, 11).map((item: { id: string }) => item.id),
+    ['listing-16', 'listing-15'],
+  );
+});
+
 test('public feed $queryRaw search and category filters keep working with cursor', async () => {
   const orderedListings = [
     {
@@ -2176,6 +2865,269 @@ test('public feed $queryRaw search and category filters keep working with cursor
   assert.match(rawCalls[0]!.text, /l\."category" =/);
   assert.match(rawCalls[0]!.text, /l\."title" ILIKE/);
   assert.match(rawCalls[1]!.text, /"id"\s*<\s*\$\d+::uuid/);
+});
+
+test('public feed search finds all approved listings by normalized OEM variants', async () => {
+  const matchingOne = {
+    ...createApprovedListing(uuidFromNumber(420), '2026-07-03T10:10:00.000Z', 'Запчасти'),
+    title: 'Фара левая',
+    oemPartNumber: '81150-06C70',
+    oemPartNumberNormalized: '8115006C70',
+  };
+  const matchingTwo = {
+    ...createApprovedListing(uuidFromNumber(419), '2026-07-03T10:09:00.000Z', 'Запчасти'),
+    title: 'Оптика Toyota',
+    oemPartNumber: '81150 06c70',
+    oemPartNumberNormalized: '8115006C70',
+  };
+  const nonMatching = {
+    ...createApprovedListing(uuidFromNumber(418), '2026-07-03T10:08:00.000Z', 'Запчасти'),
+    title: 'Фара правая',
+    oemPartNumber: '81110-06C70',
+    oemPartNumberNormalized: '8111006C70',
+  };
+  const { service, rawCalls } = createRawFeedHarness([
+    matchingOne,
+    matchingTwo,
+    nonMatching,
+  ]);
+
+  for (const search of ['81150-06C70', '8115006C70', '81150 06c70']) {
+    const response = await service.findAll({ search, limit: 10 });
+    assert.deepEqual(
+      response.items.map((item: { id: string }) => item.id),
+      [matchingOne.id, matchingTwo.id],
+    );
+  }
+
+  assert.match(rawCalls[0]!.text, /oem_part_number_normalized/);
+});
+
+test('public feed search covers title, description, language mix, case and spaces', async () => {
+  const englishTitleRussianDescription = {
+    ...createApprovedListing(uuidFromNumber(425), '2026-07-03T10:10:00.000Z'),
+    title: 'BMW X5 Headlight',
+    description: 'Передняя левая фара, хорошее состояние',
+  };
+  const russianTitleEnglishDescription = {
+    ...createApprovedListing(uuidFromNumber(424), '2026-07-03T10:09:00.000Z'),
+    title: 'Фара Toyota Camry',
+    description: 'Original headlight for Toyota Camry',
+  };
+  const nonMatching = {
+    ...createApprovedListing(uuidFromNumber(423), '2026-07-03T10:08:00.000Z'),
+    title: 'Дверь Toyota Camry',
+    description: 'Original door',
+  };
+  const { service } = createRawFeedHarness([
+    englishTitleRussianDescription,
+    russianTitleEnglishDescription,
+    nonMatching,
+  ]);
+
+  assert.deepEqual(
+    (await service.findAll({ search: 'фара', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [englishTitleRussianDescription.id, russianTitleEnglishDescription.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'HEADLIGHT', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [englishTitleRussianDescription.id, russianTitleEnglishDescription.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: '  Toyota   Camry  ', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [russianTitleEnglishDescription.id, nonMatching.id],
+  );
+});
+
+test('public feed search supports transliteration in title and description', async () => {
+  const rayBanInTitle = {
+    ...createApprovedListing(uuidFromNumber(435), '2026-07-03T10:10:00.000Z'),
+    title: 'Ray-Ban Aviator',
+    description: 'Оригинальные солнцезащитные очки',
+  };
+  const rayBanInDescription = {
+    ...createApprovedListing(uuidFromNumber(434), '2026-07-03T10:09:00.000Z'),
+    title: 'Очки Рэйбан',
+    description: 'Original Ray-Ban Aviator',
+  };
+  const toyotaCamry = {
+    ...createApprovedListing(uuidFromNumber(433), '2026-07-03T10:08:00.000Z', 'Автомобили'),
+    title: 'Toyota Camry',
+    description: 'Седан в хорошем состоянии',
+  };
+  const samsungGalaxy = {
+    ...createApprovedListing(uuidFromNumber(432), '2026-07-03T10:07:00.000Z', 'Электроника'),
+    title: 'Samsung Galaxy',
+    description: 'Смартфон без сколов',
+  };
+  const { service } = createRawFeedHarness([
+    rayBanInTitle,
+    rayBanInDescription,
+    toyotaCamry,
+    samsungGalaxy,
+  ]);
+
+  assert.deepEqual(
+    (await service.findAll({ search: 'рейбан', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [rayBanInTitle.id, rayBanInDescription.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'Rayban', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [rayBanInTitle.id, rayBanInDescription.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'Тойота Камри', category: 'Автомобили', limit: 10 }))
+      .items.map((item: { id: string }) => item.id),
+    [toyotaCamry.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'Самсунг Galaxy', category: 'Электроника', limit: 10 }))
+      .items.map((item: { id: string }) => item.id),
+    [samsungGalaxy.id],
+  );
+});
+
+test('public feed search keeps typo tolerance bounded and OEM exact', async () => {
+  const toyota = {
+    ...createApprovedListing(uuidFromNumber(445), '2026-07-03T10:10:00.000Z', 'Автомобили'),
+    title: 'Toyota Camry',
+    description: 'Original sedan',
+    oemPartNumber: '81150-06C70',
+    oemPartNumberNormalized: '8115006C70',
+  };
+  const samsung = {
+    ...createApprovedListing(uuidFromNumber(444), '2026-07-03T10:09:00.000Z', 'Электроника'),
+    title: 'Samsung Galaxy',
+    description: 'Android phone',
+  };
+  const rayBan = {
+    ...createApprovedListing(uuidFromNumber(443), '2026-07-03T10:08:00.000Z'),
+    title: 'Ray-Ban Aviator',
+    description: 'Sunglasses',
+  };
+  const unrelated = {
+    ...createApprovedListing(uuidFromNumber(442), '2026-07-03T10:07:00.000Z'),
+    title: 'Кухонный стол',
+    description: 'Дерево',
+    oemPartNumber: '81150-06C71',
+    oemPartNumberNormalized: '8115006C71',
+  };
+  const { service } = createRawFeedHarness([toyota, samsung, rayBan, unrelated]);
+
+  for (const search of ['Toyta', 'Tooyota', 'Toyotaa', 'Camri', 'Kamry']) {
+    assert.deepEqual(
+      (await service.findAll({ search, limit: 10 })).items.map(
+        (item: { id: string }) => item.id,
+      ),
+      [toyota.id],
+    );
+  }
+  for (const search of ['Samsng', 'Samsungg']) {
+    assert.deepEqual(
+      (await service.findAll({ search, limit: 10 })).items.map(
+        (item: { id: string }) => item.id,
+      ),
+      [samsung.id],
+    );
+  }
+  assert.deepEqual(
+    (await service.findAll({ search: 'Raybn', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [rayBan.id],
+  );
+  assert.deepEqual((await service.findAll({ search: 'zzzzzz', limit: 10 })).items, []);
+  assert.deepEqual((await service.findAll({ search: 'ab', limit: 10 })).items, []);
+  assert.deepEqual((await service.findAll({ search: '12', limit: 10 })).items, []);
+  assert.deepEqual(
+    (await service.findAll({ search: '81150-06C71', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [unrelated.id],
+  );
+});
+
+test('public feed OEM search supports spaces, letters, short and long codes', async () => {
+  const shortCode = {
+    ...createApprovedListing(uuidFromNumber(428), '2026-07-03T10:10:00.000Z', 'Запчасти'),
+    oemPartNumber: '1234',
+    oemPartNumberNormalized: '1234',
+  };
+  const dashedCode = {
+    ...createApprovedListing(uuidFromNumber(427), '2026-07-03T10:09:00.000Z', 'Запчасти'),
+    oemPartNumber: '77-88-99',
+    oemPartNumberNormalized: '778899',
+  };
+  const longCode = {
+    ...createApprovedListing(uuidFromNumber(426), '2026-07-03T10:08:00.000Z', 'Запчасти'),
+    oemPartNumber: 'AB-123456789012345678',
+    oemPartNumberNormalized: 'AB123456789012345678',
+  };
+  const { service } = createRawFeedHarness([shortCode, dashedCode, longCode]);
+
+  assert.deepEqual(
+    (await service.findAll({ search: '1234', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [shortCode.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: '77 88 99', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [dashedCode.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'ab 123456789012345678', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [longCode.id],
+  );
+});
+
+test('public feed mixed text and OEM query can still match by normalized OEM token', async () => {
+  const matching = {
+    ...createApprovedListing(uuidFromNumber(429), '2026-07-03T10:10:00.000Z', 'Запчасти'),
+    title: 'Фара Toyota Camry',
+    description: 'Original Toyota part',
+    oemPartNumber: '81150-06C70',
+    oemPartNumberNormalized: '8115006C70',
+  };
+  const { service } = createRawFeedHarness([matching]);
+
+  for (const search of ['фара 81150-06C70', 'Toyota 8115006C70']) {
+    const response = await service.findAll({ search, limit: 10 });
+    assert.deepEqual(
+      response.items.map((item: { id: string }) => item.id),
+      [matching.id],
+    );
+  }
+});
+
+test('public feed OEM search keeps existing public visibility filters', async () => {
+  const { service, rawCalls } = createRawFeedHarness([
+    {
+      ...createApprovedListing(uuidFromNumber(430), '2026-07-03T10:10:00.000Z', 'Запчасти'),
+      oemPartNumber: '81150-06C70',
+      oemPartNumberNormalized: '8115006C70',
+    },
+  ]);
+
+  await service.findAll({ search: '81150-06C70', limit: 10 });
+
+  assert.match(rawCalls[0]!.text, /l\."deleted_at" IS NULL/);
+  assert.match(rawCalls[0]!.text, /l\."status"::text = 'APPROVED'/);
+  assert.match(rawCalls[0]!.text, /u\."status"::text = 'ACTIVE'/);
 });
 
 test('listing photo upload uses selected storage provider flow', async () => {
@@ -2385,6 +3337,46 @@ test('public owner listing query keeps approved owner listings public-compatible
   assert.equal(response.items.length, 1);
   assert.equal(findManyArgs?.where?.ownerId, 'owner-2');
   assert.equal(findManyArgs?.where?.status, ListingStatus.APPROVED);
+  assert.deepEqual(findManyArgs?.where?.photos, { some: {} });
+  assert.deepEqual(findManyArgs?.where?.owner, {
+    deletedAt: null,
+    status: UserStatus.ACTIVE,
+  });
+});
+
+test('public owner archive mode only exposes archived and sold statuses', async () => {
+  let findManyArgs: Record<string, any> | undefined;
+  const archived = {
+    ...createApprovedListing('listing-archived', '2026-06-19T10:00:00.000Z'),
+    status: ListingStatus.ARCHIVED,
+    archivedAt: new Date('2026-06-20T10:00:00.000Z'),
+  };
+  const sold = {
+    ...createApprovedListing('listing-sold', '2026-06-18T10:00:00.000Z'),
+    status: ListingStatus.SOLD,
+    archivedAt: new Date('2026-06-21T10:00:00.000Z'),
+  };
+  const service = createService({
+    findMany: async (args?: Record<string, unknown>) => {
+      findManyArgs = args as Record<string, any>;
+      return [archived, sold];
+    },
+  });
+
+  const response = await service.findAll({
+    ownerId: 'owner-2',
+    publicMode: 'archive',
+    limit: 20,
+  });
+
+  assert.deepEqual(
+    response.items.map((item: { status: string }) => item.status),
+    ['archived', 'sold'],
+  );
+  assert.equal(findManyArgs?.where?.ownerId, 'owner-2');
+  assert.deepEqual(findManyArgs?.where?.status, {
+    in: [ListingStatus.ARCHIVED, ListingStatus.SOLD],
+  });
   assert.deepEqual(findManyArgs?.where?.photos, { some: {} });
   assert.deepEqual(findManyArgs?.where?.owner, {
     deletedAt: null,

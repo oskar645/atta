@@ -127,6 +127,75 @@ void main() {
     expect(api.lastCreateBody.containsKey('clothes_size'), isFalse);
   });
 
+  test('create auto parts listing sends optional OEM number', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.createListing(
+      ownerId: 'user-1',
+      ownerEmail: 'user@example.com',
+      ownerName: 'User',
+      title: 'Фара',
+      description: 'Описание',
+      category: 'Запчасти',
+      subcategory: 'Оптика',
+      price: 1000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Москва',
+      delivery: const <String, bool>{'pickup': true},
+      photos: const <File>[],
+      oemPartNumber: '81150-06C70',
+    );
+
+    expect(api.lastCreateBody['oem_part_number'], '81150-06C70');
+  });
+
+  test('create non-parts listing does not send optional OEM number', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.createListing(
+      ownerId: 'user-1',
+      ownerEmail: 'user@example.com',
+      ownerName: 'User',
+      title: 'Товар',
+      description: 'Описание',
+      category: 'Электроника',
+      subcategory: 'Телефоны',
+      price: 1000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Москва',
+      delivery: const <String, bool>{'pickup': true},
+      photos: const <File>[],
+      oemPartNumber: '81150-06C70',
+    );
+
+    expect(api.lastCreateBody.containsKey('oem_part_number'), isFalse);
+  });
+
+  test('update auto parts listing can clear optional OEM number', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.updateListing(
+      listingId: 'listing-1',
+      title: 'Фара',
+      description: 'Описание',
+      category: 'Запчасти',
+      subcategory: 'Оптика',
+      price: 1000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Москва',
+      delivery: const <String, bool>{'pickup': true},
+      oemPartNumber: '',
+    );
+
+    expect(api.lastUpdateBody['oem_part_number'], '');
+  });
+
   test('one failed photo reports partial failure without silent drop',
       () async {
     final mediaApi = _FakeMediaApi(failIndexes: <int>{1});
@@ -1236,6 +1305,108 @@ void main() {
     expect(api.listQueries.last['cursor'], firstPage.nextCursor);
   });
 
+  test('getListingsPage can request VIP interleave feed mode', () async {
+    final api = _FakeListingsApi(
+      listItems: List<Map<String, dynamic>>.generate(
+        3,
+        (index) => _listingMap(
+          const <String>[],
+          id: 'listing-$index',
+          status: 'approved',
+        ),
+      ),
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getListingsPage(
+      category: 'Все',
+      search: '',
+      limit: 20,
+      useVipInterleave: true,
+      vipRotation: 2,
+    );
+
+    expect(api.listQueries.single['feedMode'], 'vip_interleave_v1');
+    expect(api.listQueries.single['vipRotation'], 2);
+  });
+
+  test('getPublicOwnerListingsPage requests approved owner page', () async {
+    final api = _FakeListingsApi(
+      listItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'listing-1',
+          status: 'approved',
+          ownerId: 'seller-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getPublicOwnerListingsPage(
+      ownerId: 'seller-1',
+      status: 'approved',
+      limit: 20,
+    );
+
+    expect(page.items.map((item) => item.id), <String>['listing-1']);
+    expect(api.listQueries.single['ownerId'], 'seller-1');
+    expect(api.listQueries.single['status'], 'approved');
+    expect(api.listQueries.single['limit'], 20);
+    expect(api.listQueries.single.containsKey('publicMode'), isFalse);
+  });
+
+  test('getPublicOwnerListingsPage requests public archive mode and filters',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'archived-1',
+          status: 'archived',
+          ownerId: 'seller-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'sold-1',
+          status: 'sold',
+          ownerId: 'seller-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'deleted-1',
+          status: 'deleted',
+          ownerId: 'seller-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'rejected-1',
+          status: 'rejected',
+          ownerId: 'seller-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'pending-1',
+          status: 'pending',
+          ownerId: 'seller-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getPublicOwnerListingsPage(
+      ownerId: 'seller-1',
+      status: 'archive',
+      limit: 20,
+    );
+
+    expect(page.items.map((item) => item.id).toSet(),
+        <String>{'archived-1', 'sold-1'});
+    expect(api.listQueries.single['ownerId'], 'seller-1');
+    expect(api.listQueries.single['publicMode'], 'archive');
+    expect(api.listQueries.single.containsKey('status'), isFalse);
+  });
+
   test('getVipListingsPage calls dedicated VIP endpoint with pagination',
       () async {
     final api = _FakeListingsApi(
@@ -1302,6 +1473,41 @@ void main() {
     expect(api.vipQueries.first.containsKey('category'), isFalse);
     expect(api.vipQueries.last['category'], 'Авто');
   });
+
+  test('getVipListingsPage sends optional search without changing empty call',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: List<Map<String, dynamic>>.generate(
+        2,
+        (index) => _listingMap(
+          const <String>[],
+          id: 'vip-$index',
+          status: 'approved',
+          promotions: const <String, dynamic>{
+            'activeVip': <String, dynamic>{
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'endsAt': '2099-07-01T10:00:00.000Z',
+              'costBonus': 150,
+            },
+          },
+        ),
+      ),
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getVipListingsPage(limit: 10);
+    await service.getVipListingsPage(
+      limit: 10,
+      category: 'Запчасти',
+      search: '81150-06C70',
+    );
+
+    expect(api.vipQueries.first.containsKey('search'), isFalse);
+    expect(api.vipQueries.last['category'], 'Запчасти');
+    expect(api.vipQueries.last['search'], '81150-06C70');
+  });
 }
 
 class _FakeListingsApi extends ListingsApi {
@@ -1318,6 +1524,7 @@ class _FakeListingsApi extends ListingsApi {
   final List<Map<String, dynamic>> vipQueries = <Map<String, dynamic>>[];
   final List<Map<String, dynamic>> myListingsQueries = <Map<String, dynamic>>[];
   Map<String, dynamic> lastCreateBody = const <String, dynamic>{};
+  Map<String, dynamic> lastUpdateBody = const <String, dynamic>{};
   int myListingsCalls = 0;
   Object? myListingsError;
 
@@ -1327,6 +1534,23 @@ class _FakeListingsApi extends ListingsApi {
     return <String, dynamic>{
       'listing': _listingMap(
         const <String>[],
+        category: (body['category'] ?? 'Электроника').toString(),
+        subcategory: (body['subcategory'] ?? 'Телефоны').toString(),
+        clothesSize: body['clothes_size']?.toString(),
+      ),
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> update(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    lastUpdateBody = Map<String, dynamic>.from(body);
+    return <String, dynamic>{
+      'listing': _listingMap(
+        const <String>[],
+        id: id,
         category: (body['category'] ?? 'Электроника').toString(),
         subcategory: (body['subcategory'] ?? 'Телефоны').toString(),
         clothesSize: body['clothes_size']?.toString(),
@@ -1381,11 +1605,13 @@ class _FakeListingsApi extends ListingsApi {
     int? limit,
     String? cursor,
     String? category,
+    String? search,
   }) async {
     final query = <String, dynamic>{
       if (limit != null) 'limit': limit,
       if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
       if ((category ?? '').trim().isNotEmpty) 'category': category!.trim(),
+      if ((search ?? '').trim().isNotEmpty) 'search': search!.trim(),
     };
     vipQueries.add(query);
     final start =

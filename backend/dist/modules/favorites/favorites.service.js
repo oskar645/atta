@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FavoritesService = void 0;
 const common_1 = require("@nestjs/common");
 const serializers_1 = require("../../common/serializers");
+const listings_service_1 = require("../listings/listings.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const pageLimit = (value) => Math.max(1, Math.min(Number.isFinite(value ?? NaN) ? value : 50, 100));
 const encodeCursor = (payload) => Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -54,8 +55,28 @@ let FavoritesService = class FavoritesService {
         const pageItems = favorites.slice(0, limit);
         const hasMore = favorites.length > limit;
         const last = hasMore ? pageItems[pageItems.length - 1] : null;
+        const listingIds = Array.from(new Set(pageItems.map((favorite) => favorite.listingId)));
+        const listings = listingIds.length === 0
+            ? []
+            : await this.prisma.listing.findMany({
+                where: {
+                    id: {
+                        in: listingIds,
+                    },
+                },
+                include: listings_service_1.listingInclude,
+            });
+        const visibleListingsById = new Map(listings
+            .filter((listing) => (0, listings_service_1.canViewListing)(listing, authUser))
+            .map((listing) => [listing.id, (0, serializers_1.serializeListing)(listing)]));
         return {
-            items: pageItems.map((favorite) => (0, serializers_1.serializeFavorite)(favorite)),
+            items: pageItems.map((favorite) => {
+                const listing = visibleListingsById.get(favorite.listingId);
+                return {
+                    ...(0, serializers_1.serializeFavorite)(favorite),
+                    ...(listing ? { listing } : {}),
+                };
+            }),
             favorite_ids: pageItems.map((favorite) => favorite.listingId),
             nextCursor: last
                 ? encodeCursor({

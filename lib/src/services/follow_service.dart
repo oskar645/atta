@@ -452,8 +452,18 @@ class FollowedSellersPage {
 }
 
 extension<T> on Stream<T> {
-  Stream<T> startWith(T initial) async* {
-    yield initial;
-    yield* this;
+  Stream<T> startWith(T initial) {
+    return Stream<T>.multi(
+      (controller) {
+        controller.add(initial);
+        final subscription = listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+        controller.onCancel = subscription.cancel;
+      },
+      isBroadcast: isBroadcast,
+    );
   }
 }

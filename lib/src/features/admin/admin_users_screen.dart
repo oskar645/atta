@@ -22,12 +22,15 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   late Future<List<Map<String, dynamic>>> _future;
+  Future<Map<String, dynamic>>? _registrationStatsFuture;
   bool _busy = false;
+  bool _showRegistrationStats = false;
   List<Map<String, dynamic>> _items = const <Map<String, dynamic>>[];
   String? _nextCursor;
   bool _hasMore = true;
   bool _loadingMore = false;
   Object? _loadMoreError;
+  int? _selectedStatsYear;
   int _requestSerial = 0;
 
   static const Set<String> _protectedAdminPhones = <String>{
@@ -118,6 +121,41 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
       _loadMoreError = null;
       _future = _load(forceRefresh: true, serial: serial);
     });
+  }
+
+  void _showUsersTab() {
+    if (!_showRegistrationStats) return;
+    setState(() => _showRegistrationStats = false);
+  }
+
+  void _showRegistrationsTab() {
+    if (_showRegistrationStats) return;
+    setState(() {
+      _showRegistrationStats = true;
+      _registrationStatsFuture ??= _loadRegistrationStats();
+    });
+  }
+
+  Future<Map<String, dynamic>> _loadRegistrationStats({
+    bool forceRefresh = false,
+    int? year,
+  }) {
+    final statsYear = year ?? _selectedStatsYear;
+    return context.read<AdminService>().userRegistrationStats(
+          year: statsYear,
+          forceRefresh: forceRefresh,
+        );
+  }
+
+  Future<void> _reloadRegistrationStats({
+    bool forceRefresh = false,
+    int? year,
+  }) async {
+    final next = _loadRegistrationStats(forceRefresh: forceRefresh, year: year);
+    setState(() {
+      _registrationStatsFuture = next;
+    });
+    await next;
   }
 
   void _maybeLoadMore() {
@@ -363,211 +401,450 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _runSearch(),
-              decoration: InputDecoration(
-                labelText: 'Поиск по имени, телефону, userId',
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  tooltip: 'Найти',
-                  onPressed: _runSearch,
+            child: SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment<bool>(
+                  value: false,
+                  label: Text('Пользователи'),
+                ),
+                ButtonSegment<bool>(
+                  value: true,
+                  label: Text('Регистрации'),
+                ),
+              ],
+              selected: <bool>{_showRegistrationStats},
+              onSelectionChanged: (selection) {
+                final showStats = selection.first;
+                if (showStats) {
+                  _showRegistrationsTab();
+                } else {
+                  _showUsersTab();
+                }
+              },
+            ),
+          ),
+          if (!_showRegistrationStats)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: TextField(
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _runSearch(),
+                decoration: InputDecoration(
+                  labelText: 'Поиск по имени, телефону, userId',
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.search),
+                    tooltip: 'Найти',
+                    onPressed: _runSearch,
+                  ),
                 ),
               ),
             ),
-          ),
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState != ConnectionState.done) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError && _items.isEmpty) {
-                  return _AdminStateView(
-                    message:
-                        'Не удалось загрузить пользователей.\n${snap.error}',
-                    onRetry: _refresh,
-                  );
-                }
-
-                final items = _items.isNotEmpty
-                    ? _items
-                    : (snap.data ?? const <Map<String, dynamic>>[]);
-                if (items.isEmpty) {
-                  return _AdminStateView(
-                    message: 'Пользователи пока не получены из Timeweb.',
-                    onRetry: _refresh,
-                    showButton: false,
-                  );
-                }
-
-                return RefreshIndicator(
-                  onRefresh: _refresh,
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.all(12),
-                    itemCount: items.length + 1,
-                    itemBuilder: (context, index) {
-                      if (index == items.length) {
-                        if (_loadingMore) {
-                          return const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 16),
-                            child: Center(
-                              child: SizedBox(
-                                width: 20,
-                                height: 20,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            ),
-                          );
-                        }
-                        if (_loadMoreError != null) {
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            child: Center(
-                              child: Text(
-                                'Не удалось догрузить: $_loadMoreError',
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          );
-                        }
-                        return const SizedBox(height: 12);
-                      }
-                      final item = items[index];
-                      final name = _value(
-                        item,
-                        const ['display_name', 'name', 'email', 'phone'],
+            child: _showRegistrationStats
+                ? _RegistrationStatsView(
+                    future: _registrationStatsFuture ??=
+                        _loadRegistrationStats(),
+                    selectedYear: _selectedStatsYear,
+                    onRefresh: () => _reloadRegistrationStats(
+                      forceRefresh: true,
+                    ),
+                    onYearChanged: (year) {
+                      setState(() => _selectedStatsYear = year);
+                      return _reloadRegistrationStats(
+                        forceRefresh: true,
+                        year: year,
                       );
-                      final isAdmin =
-                          item['is_admin'] == true || item['isAdmin'] == true;
-                      final isProtectedAdmin = _isProtectedAdmin(item);
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: _busy ? null : () => _openUser(item),
-                          child: Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    RemoteAvatar(
-                                      imageUrl: _avatarUrl(item),
-                                      fallbackText:
-                                          name.isEmpty ? 'Пользователь' : name,
-                                      radius: 20,
+                    },
+                  )
+                : FutureBuilder<List<Map<String, dynamic>>>(
+                    future: _future,
+                    builder: (context, snap) {
+                      if (snap.connectionState != ConnectionState.done) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snap.hasError && _items.isEmpty) {
+                        return _AdminStateView(
+                          message:
+                              'Не удалось загрузить пользователей.\n${snap.error}',
+                          onRetry: _refresh,
+                        );
+                      }
+
+                      final items = _items.isNotEmpty
+                          ? _items
+                          : (snap.data ?? const <Map<String, dynamic>>[]);
+                      if (items.isEmpty) {
+                        return _AdminStateView(
+                          message: 'Пользователи пока не получены из Timeweb.',
+                          onRetry: _refresh,
+                          showButton: false,
+                        );
+                      }
+
+                      return RefreshIndicator(
+                        onRefresh: _refresh,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(12),
+                          itemCount: items.length + 1,
+                          itemBuilder: (context, index) {
+                            if (index == items.length) {
+                              if (_loadingMore) {
+                                return const Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 16),
+                                  child: Center(
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
                                     ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                  ),
+                                );
+                              }
+                              if (_loadMoreError != null) {
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 12),
+                                  child: Center(
+                                    child: Text(
+                                      'Не удалось догрузить: $_loadMoreError',
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                );
+                              }
+                              return const SizedBox(height: 12);
+                            }
+                            final item = items[index];
+                            final name = _value(
+                              item,
+                              const ['display_name', 'name', 'email', 'phone'],
+                            );
+                            final isAdmin = item['is_admin'] == true ||
+                                item['isAdmin'] == true;
+                            final isProtectedAdmin = _isProtectedAdmin(item);
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: _busy ? null : () => _openUser(item),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
                                         children: [
-                                          Text(
-                                            name.isEmpty
+                                          RemoteAvatar(
+                                            imageUrl: _avatarUrl(item),
+                                            fallbackText: name.isEmpty
                                                 ? 'Пользователь'
                                                 : name,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w800,
+                                            radius: 20,
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  name.isEmpty
+                                                      ? 'Пользователь'
+                                                      : name,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  _statusLabel(item),
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .outline,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            _statusLabel(item),
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .outline,
+                                          const Icon(Icons.chevron_right),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Телефон: ${formatRussianPhone(_value(item, const [
+                                              'phone'
+                                            ]))}',
+                                      ),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              'User ID: ${_value(item, const [
+                                                    'id'
+                                                  ])}',
                                             ),
+                                          ),
+                                          IconButton(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            tooltip: 'Скопировать ID',
+                                            onPressed: _busy
+                                                ? null
+                                                : () => _copyUserId(
+                                                      _value(
+                                                          item, const ['id']),
+                                                    ),
+                                            icon: const Icon(Icons.copy,
+                                                size: 18),
                                           ),
                                         ],
                                       ),
-                                    ),
-                                    const Icon(Icons.chevron_right),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  'Телефон: ${formatRussianPhone(_value(item, const [
-                                        'phone'
-                                      ]))}',
-                                ),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        'User ID: ${_value(item, const [
-                                              'id'
-                                            ])}',
-                                      ),
-                                    ),
-                                    IconButton(
-                                      visualDensity: VisualDensity.compact,
-                                      tooltip: 'Скопировать ID',
-                                      onPressed: _busy
-                                          ? null
-                                          : () => _copyUserId(
-                                                _value(item, const ['id']),
+                                      Text(
+                                          'Дата регистрации: ${_value(item, const [
+                                            'created_at'
+                                          ])}'),
+                                      Text('Last seen: ${_value(item, const [
+                                            'last_seen',
+                                            'last_login_at'
+                                          ])}'),
+                                      Text('Admin: ${isAdmin ? 'да' : 'нет'}'),
+                                      if (isProtectedAdmin)
+                                        const Text('Защита: включена'),
+                                      const SizedBox(height: 10),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          alignment: WrapAlignment.end,
+                                          children: [
+                                            FilledButton.tonalIcon(
+                                              onPressed: _busy
+                                                  ? null
+                                                  : () => _writeSupportMessage(
+                                                      item),
+                                              icon: const Icon(
+                                                  Icons.support_agent),
+                                              label: const Text('Написать'),
+                                            ),
+                                            OutlinedButton(
+                                              onPressed:
+                                                  _busy || isProtectedAdmin
+                                                      ? null
+                                                      : () => _deleteUser(item),
+                                              child: Text(
+                                                isProtectedAdmin
+                                                    ? 'Защищён'
+                                                    : 'Удалить',
                                               ),
-                                      icon: const Icon(Icons.copy, size: 18),
-                                    ),
-                                  ],
-                                ),
-                                Text('Дата регистрации: ${_value(item, const [
-                                      'created_at'
-                                    ])}'),
-                                Text('Last seen: ${_value(item, const [
-                                      'last_seen',
-                                      'last_login_at'
-                                    ])}'),
-                                Text('Admin: ${isAdmin ? 'да' : 'нет'}'),
-                                if (isProtectedAdmin)
-                                  const Text('Защита: включена'),
-                                const SizedBox(height: 10),
-                                Align(
-                                  alignment: Alignment.centerRight,
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    alignment: WrapAlignment.end,
-                                    children: [
-                                      FilledButton.tonalIcon(
-                                        onPressed: _busy
-                                            ? null
-                                            : () => _writeSupportMessage(item),
-                                        icon: const Icon(Icons.support_agent),
-                                        label: const Text('Написать'),
-                                      ),
-                                      OutlinedButton(
-                                        onPressed: _busy || isProtectedAdmin
-                                            ? null
-                                            : () => _deleteUser(item),
-                                        child: Text(
-                                          isProtectedAdmin
-                                              ? 'Защищён'
-                                              : 'Удалить',
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
+                              ),
+                            );
+                          },
                         ),
                       );
                     },
                   ),
-                );
-              },
-            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RegistrationStatsView extends StatelessWidget {
+  const _RegistrationStatsView({
+    required this.future,
+    required this.selectedYear,
+    required this.onRefresh,
+    required this.onYearChanged,
+  });
+
+  final Future<Map<String, dynamic>> future;
+  final int? selectedYear;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function(int year) onYearChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return _AdminStateView(
+            message: 'Не удалось загрузить регистрации.\n${snapshot.error}',
+            onRetry: onRefresh,
+          );
+        }
+
+        final data = snapshot.data ?? const <String, dynamic>{};
+        final years = _intList(data['available_years']);
+        final year = _intValue(data['year']) ??
+            selectedYear ??
+            (years.isNotEmpty ? years.last : DateTime.now().year);
+        final months = _monthRows(data['months']);
+        final totalUsers = _intValue(data['total_users']) ?? 0;
+        final currentMonthCount = _intValue(data['current_month_count']) ?? 0;
+
+        if (totalUsers == 0 && months.isEmpty) {
+          return _AdminStateView(
+            message: 'Регистраций пока нет.',
+            onRetry: onRefresh,
+            showButton: false,
+          );
+        }
+
+        return RefreshIndicator(
+          onRefresh: onRefresh,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Регистрации',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  if (years.isNotEmpty)
+                    DropdownButton<int>(
+                      value: years.contains(year) ? year : years.last,
+                      items: years
+                          .map(
+                            (value) => DropdownMenuItem<int>(
+                              value: value,
+                              child: Text('$value'),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (value) {
+                        if (value != null) {
+                          onYearChanged(value);
+                        }
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              _StatsMetricRow(
+                label: 'Всего пользователей',
+                value: totalUsers,
+              ),
+              _StatsMetricRow(
+                label: 'За этот месяц',
+                value: currentMonthCount,
+              ),
+              const SizedBox(height: 12),
+              if (months.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Text('За выбранный год регистраций нет.'),
+                )
+              else
+                ...months.map(
+                  (row) => _StatsMetricRow(
+                    label: _monthName(row.month),
+                    value: row.count,
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static int? _intValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse((value ?? '').toString());
+  }
+
+  static List<int> _intList(Object? value) {
+    if (value is! List) return const <int>[];
+    return value.map(_intValue).whereType<int>().toList(growable: false);
+  }
+
+  static List<_MonthRegistrationRow> _monthRows(Object? value) {
+    if (value is! List) return const <_MonthRegistrationRow>[];
+    return value.whereType<Map>().map((raw) {
+      return _MonthRegistrationRow(
+        month: _intValue(raw['month']) ?? 0,
+        count: _intValue(raw['count']) ?? 0,
+      );
+    }).where((row) {
+      return row.month >= 1 && row.month <= 12;
+    }).toList(growable: false);
+  }
+
+  static String _monthName(int month) {
+    const names = <int, String>{
+      1: 'Январь',
+      2: 'Февраль',
+      3: 'Март',
+      4: 'Апрель',
+      5: 'Май',
+      6: 'Июнь',
+      7: 'Июль',
+      8: 'Август',
+      9: 'Сентябрь',
+      10: 'Октябрь',
+      11: 'Ноябрь',
+      12: 'Декабрь',
+    };
+    return names[month] ?? '$month';
+  }
+}
+
+class _MonthRegistrationRow {
+  const _MonthRegistrationRow({
+    required this.month,
+    required this.count,
+  });
+
+  final int month;
+  final int count;
+}
+
+class _StatsMetricRow extends StatelessWidget {
+  const _StatsMetricRow({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: textTheme.bodyLarge)),
+          Text(
+            '$value',
+            style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w800),
           ),
         ],
       ),

@@ -840,10 +840,13 @@ class _TimewebFavoriteListingsTabState
         cursor: reset ? null : _nextCursor,
         resetCache: reset || forceFavorites,
       );
+      widget.listings.cacheListings(page.embeddedListings.values);
       final favoriteIds =
           reset ? page.ids.toSet() : <String>{..._favoriteIds, ...page.ids};
-      final resolvedPageItems =
-          await _resolveFavoriteListings(page.ids.toSet());
+      final resolvedPageItems = await _resolveFavoriteListings(
+        page.ids.toSet(),
+        embeddedListings: page.embeddedListings,
+      );
       final items = reset
           ? resolvedPageItems
           : _appendListings(_items, resolvedPageItems);
@@ -890,17 +893,24 @@ class _TimewebFavoriteListingsTabState
   }
 
   Future<List<Listing>> _resolveFavoriteListings(
-      Set<String> favoriteIds) async {
+    Set<String> favoriteIds, {
+    Map<String, Listing> embeddedListings = const <String, Listing>{},
+  }) async {
     if (favoriteIds.isEmpty) {
       _missingListingIds.clear();
       return const <Listing>[];
     }
+    final byId = <String, Listing>{
+      for (final entry in embeddedListings.entries)
+        if (favoriteIds.contains(entry.key)) entry.key: entry.value,
+    };
     final cachedFeed =
         widget.listings.peekListings(category: 'Все', search: '');
-    final byId = <String, Listing>{
-      for (final listing in cachedFeed)
-        if (favoriteIds.contains(listing.id)) listing.id: listing,
-    };
+    for (final listing in cachedFeed) {
+      if (favoriteIds.contains(listing.id)) {
+        byId.putIfAbsent(listing.id, () => listing);
+      }
+    }
     final missingIds = favoriteIds
         .where(
             (id) => !byId.containsKey(id) && !_missingListingIds.contains(id))
@@ -1690,41 +1700,47 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
           onRefresh: _refresh,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
-            child: GridView.builder(
-              padding: const EdgeInsets.all(10),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 0.72,
-              ),
-              itemCount: items.length + (_isLoadingMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index >= items.length) {
-                  return const _LoadMoreFooter();
-                }
-                final item = items[index];
-                return FavoriteListingCard(
-                  listing: item,
-                  favoritesService: widget.favs,
-                  userId: widget.userId,
-                  isSeen: widget.history.hasViewed(item.id),
-                  reviews: widget.reviews,
-                  onError: (error) {
-                    if (!context.mounted) return;
-                    showAppSnack(
-                      context,
-                      'Не удалось изменить избранное: $error',
-                      isError: true,
-                    );
-                  },
-                  onOpen: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ListingDetailScreen(listingId: item.id),
+            child: Column(
+              children: [
+                Expanded(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.all(10),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 0.72,
                     ),
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return FavoriteListingCard(
+                        listing: item,
+                        favoritesService: widget.favs,
+                        userId: widget.userId,
+                        isSeen: widget.history.hasViewed(item.id),
+                        reviews: widget.reviews,
+                        onError: (error) {
+                          if (!context.mounted) return;
+                          showAppSnack(
+                            context,
+                            'Не удалось изменить избранное: $error',
+                            isError: true,
+                          );
+                        },
+                        onOpen: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ListingDetailScreen(listingId: item.id),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
+                ),
+                if (_isLoadingMore) const _LoadMoreFooter(),
+              ],
             ),
           ),
         );
@@ -1959,41 +1975,47 @@ class _TimewebFollowedListingsTabState
           onRefresh: _refresh,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
-            child: GridView.builder(
-              padding: const EdgeInsets.all(10),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8,
-                childAspectRatio: 0.72,
-              ),
-              itemCount: items.length + (_isLoadingMore ? 1 : 0),
-              itemBuilder: (context, index) {
-                if (index >= items.length) {
-                  return const _LoadMoreFooter();
-                }
-                final item = items[index];
-                return FavoriteListingCard(
-                  listing: item,
-                  favoritesService: widget.favs,
-                  userId: widget.userId,
-                  isSeen: widget.history.hasViewed(item.id),
-                  reviews: widget.reviews,
-                  onError: (error) {
-                    if (!context.mounted) return;
-                    showAppSnack(
-                      context,
-                      'Не удалось изменить избранное: $error',
-                      isError: true,
-                    );
-                  },
-                  onOpen: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ListingDetailScreen(listingId: item.id),
+            child: Column(
+              children: [
+                Expanded(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.all(10),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 0.72,
                     ),
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return FavoriteListingCard(
+                        listing: item,
+                        favoritesService: widget.favs,
+                        userId: widget.userId,
+                        isSeen: widget.history.hasViewed(item.id),
+                        reviews: widget.reviews,
+                        onError: (error) {
+                          if (!context.mounted) return;
+                          showAppSnack(
+                            context,
+                            'Не удалось изменить избранное: $error',
+                            isError: true,
+                          );
+                        },
+                        onOpen: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ListingDetailScreen(listingId: item.id),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
+                ),
+                if (_isLoadingMore) const _LoadMoreFooter(),
+              ],
             ),
           ),
         );
