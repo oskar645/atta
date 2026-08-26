@@ -19,6 +19,8 @@ const adminUser = {
   role: 'admin' as const,
 };
 
+const moscowNow = () => new Date(Date.now() + 3 * 60 * 60 * 1000);
+
 test('moderation list uses pending filter without deleted or archived items', async () => {
   let capturedWhere: Record<string, unknown> | undefined;
 
@@ -163,19 +165,25 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
 });
 
 test('admin registration stats aggregate users by selected year without personal data', async () => {
-  const now = new Date();
+  const now = moscowNow();
   const currentYear = now.getUTCFullYear();
   const previousYear = currentYear - 1;
   const currentMonth = now.getUTCMonth() + 1;
   const firstCreatedAt = new Date(Date.UTC(previousYear, 5, 10));
   const queryYears: number[] = [];
+  const countRanges: Array<{ gte: Date; lt: Date }> = [];
 
   const service = new AdminService(
     {
       user: {
         count: async (args?: any) => {
           const createdAt = args?.where?.createdAt;
-          if (createdAt?.gte && createdAt?.lt) return 2;
+          if (createdAt?.gte && createdAt?.lt) {
+            countRanges.push({ gte: createdAt.gte, lt: createdAt.lt });
+            const rangeMs =
+              createdAt.lt.getTime() - createdAt.gte.getTime();
+            return rangeMs <= 24 * 60 * 60 * 1000 ? 1 : 2;
+          }
           return 9;
         },
         findFirst: async () => ({ createdAt: firstCreatedAt }),
@@ -186,10 +194,15 @@ test('admin registration stats aggregate users by selected year without personal
       ) => {
         assert.ok(strings.join('').includes('GROUP BY month'));
         const yearStart = values.find(
-          (value) => value instanceof Date && value.getUTCMonth() === 0,
+          (value) =>
+            value instanceof Date &&
+            value.getUTCMonth() === 11 &&
+            value.getUTCDate() === 31 &&
+            value.getUTCHours() === 21,
         ) as Date;
-        queryYears.push(yearStart.getUTCFullYear());
-        if (yearStart.getUTCFullYear() === currentYear) {
+        const moscowYear = yearStart.getUTCFullYear() + 1;
+        queryYears.push(moscowYear);
+        if (moscowYear === currentYear) {
           return [
             { month: currentMonth, count: BigInt(2) },
             { month: Math.max(currentMonth - 2, 1), count: BigInt(3) },
@@ -216,7 +229,15 @@ test('admin registration stats aggregate users by selected year without personal
   });
 
   assert.deepEqual(queryYears, [currentYear, previousYear]);
+  assert.ok(
+    countRanges.some(
+      (range) =>
+        range.lt.getTime() - range.gte.getTime() === 24 * 60 * 60 * 1000 &&
+        range.gte.getUTCHours() === 21,
+    ),
+  );
   assert.equal(currentStats.total_users, 9);
+  assert.equal(currentStats.todayCount, 1);
   assert.equal(currentStats.current_month_count, 2);
   assert.deepEqual(currentStats.available_years, [previousYear, currentYear]);
   assert.equal(currentStats.months[0].month, currentMonth);
@@ -257,6 +278,7 @@ test('admin registration stats returns empty months without users', async () => 
   const stats = await service.getUserRegistrationStats({});
 
   assert.equal(stats.total_users, 0);
+  assert.equal(stats.todayCount, 0);
   assert.equal(stats.current_month_count, 0);
   assert.deepEqual(stats.months, []);
 });

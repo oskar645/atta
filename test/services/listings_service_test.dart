@@ -1305,6 +1305,122 @@ void main() {
     expect(api.listQueries.last['cursor'], firstPage.nextCursor);
   });
 
+  test('getListingsPage trusts server search matches for smart search cases',
+      () async {
+    final cases = <({String id, String query, String title, String? oem})>[
+      (
+        id: 'oem-plain',
+        query: '778899',
+        title: 'Фара',
+        oem: '778899',
+      ),
+      (
+        id: 'oem-dashed',
+        query: '778899',
+        title: 'Фара',
+        oem: '77-88-99',
+      ),
+      (
+        id: 'oem-mixed',
+        query: '8115006C70',
+        title: 'Фара',
+        oem: '81150-06C70',
+      ),
+      (
+        id: 'oem-short',
+        query: '1234',
+        title: 'Кронштейн',
+        oem: '1234',
+      ),
+      (
+        id: 'oem-long',
+        query: '123456789012345',
+        title: 'Блок',
+        oem: '123456789012345',
+      ),
+      (
+        id: 'translit-toyota',
+        query: 'Тойота Камри',
+        title: 'Toyota Camry',
+        oem: null,
+      ),
+      (
+        id: 'alias-rayban',
+        query: 'Рейбан',
+        title: 'Ray-Ban',
+        oem: null,
+      ),
+      (
+        id: 'typo-samsung',
+        query: 'Samsng',
+        title: 'Samsung',
+        oem: null,
+      ),
+    ];
+
+    for (final testCase in cases) {
+      final api = _FakeListingsApi(
+        listItems: <Map<String, dynamic>>[
+          _listingMap(
+            const <String>[],
+            id: testCase.id,
+            title: testCase.title,
+            status: 'approved',
+            oemPartNumber: testCase.oem,
+          ),
+        ],
+      );
+      final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+      final page = await service.getListingsPage(
+        category: 'Все',
+        search: testCase.query,
+        limit: 20,
+      );
+
+      expect(page.items.map((item) => item.id), <String>[testCase.id]);
+      expect(api.listQueries.single['search'], testCase.query);
+    }
+  });
+
+  test('getListingsPage still applies non-search filters to server results',
+      () async {
+    final api = _FakeListingsApi(
+      listItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'matching-category',
+          title: 'Toyota Camry',
+          category: 'Авто',
+          status: 'approved',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'wrong-category',
+          title: 'Toyota Camry',
+          category: 'Электроника',
+          status: 'approved',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'pending',
+          title: 'Toyota Camry',
+          category: 'Авто',
+          status: 'pending',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getListingsPage(
+      category: 'Авто',
+      search: 'Тойота Камри',
+      limit: 20,
+    );
+
+    expect(page.items.map((item) => item.id), <String>['matching-category']);
+  });
+
   test('getListingsPage can request VIP interleave feed mode', () async {
     final api = _FakeListingsApi(
       listItems: List<Map<String, dynamic>>.generate(
@@ -1507,6 +1623,37 @@ void main() {
     expect(api.vipQueries.first.containsKey('search'), isFalse);
     expect(api.vipQueries.last['category'], 'Запчасти');
     expect(api.vipQueries.last['search'], '81150-06C70');
+  });
+
+  test('getVipListingsPage trusts dedicated server search response', () async {
+    final api = _FakeListingsApi(
+      listItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'vip-smart-match',
+          title: 'Ray-Ban',
+          status: 'approved',
+          promotions: const <String, dynamic>{
+            'activeVip': <String, dynamic>{
+              'type': 'vip',
+              'title': 'VIP',
+              'status': 'active',
+              'endsAt': '2099-07-01T10:00:00.000Z',
+              'costBonus': 150,
+            },
+          },
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final page = await service.getVipListingsPage(
+      limit: 10,
+      search: 'Рейбан',
+    );
+
+    expect(page.items.map((item) => item.id), <String>['vip-smart-match']);
+    expect(api.vipQueries.single['search'], 'Рейбан');
   });
 }
 
@@ -1728,6 +1875,8 @@ Map<String, dynamic> _listingMap(
   String category = 'Электроника',
   String subcategory = 'Телефоны',
   String? clothesSize,
+  String title = 'Товар',
+  String? oemPartNumber,
   int price = 1000,
   CarSpecs? car,
   Map<String, dynamic>? promotions,
@@ -1735,11 +1884,12 @@ Map<String, dynamic> _listingMap(
     <String, dynamic>{
       'id': id,
       'owner_id': ownerId,
-      'title': 'Товар',
+      'title': title,
       'description': 'Описание',
       'category': category,
       'subcategory': subcategory,
       'clothes_size': clothesSize,
+      if (oemPartNumber != null) 'oem_part_number': oemPartNumber,
       'price': price,
       'city': 'Москва',
       'address': 'Москва',

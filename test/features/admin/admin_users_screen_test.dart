@@ -24,6 +24,7 @@ void main() {
   testWidgets('registration stats tab shows months and changes year',
       (tester) async {
     final adminService = _FakeAdminService();
+    final currentMonth = _moscowNow().month;
 
     await tester.pumpWidget(_wrap(adminService));
     await tester.pumpAndSettle();
@@ -31,22 +32,99 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Всего пользователей'), findsOneWidget);
-    expect(find.text('За этот месяц'), findsOneWidget);
-    expect(find.text('Август'), findsOneWidget);
-    expect(find.text('Июль'), findsOneWidget);
-    expect(find.text('Июнь'), findsOneWidget);
-    expect(find.text('143'), findsWidgets);
-    expect(find.text('0'), findsOneWidget);
+    expect(find.text('Сегодня'), findsOneWidget);
+    expect(find.text('В этом месяце'), findsOneWidget);
+    expect(find.text('Лучший месяц'), findsOneWidget);
+    expect(find.text('Динамика за год'), findsOneWidget);
+    expect(find.text('Июнь · 54'), findsOneWidget);
+    expect(find.byKey(const ValueKey('registration-total-users-card')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('registration-today-card')), findsOneWidget);
+    expect(find.byKey(const ValueKey('registration-current-month-card')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('registration-best-month-card')),
+        findsOneWidget);
+    for (var month = 1; month <= 12; month += 1) {
+      expect(
+        find.byKey(ValueKey('registration-month-bar-$month')),
+        findsOneWidget,
+      );
+    }
+    final selectedMonthSummary = tester.widget<Text>(
+      find.byKey(const ValueKey('registration-selected-month-summary')),
+    );
+    expect(selectedMonthSummary.data, contains(_monthName(currentMonth)));
+    final currentMonthBar = find.byKey(
+      ValueKey('registration-month-bar-$currentMonth'),
+    );
+    final currentMonthFill = tester.widget<AnimatedContainer>(
+      find.descendant(
+        of: currentMonthBar,
+        matching: find.byType(AnimatedContainer),
+      ),
+    );
+    expect((currentMonthFill.decoration as BoxDecoration).color,
+        const Color(0xFF0B6BFF));
+    expect(find.textContaining('+12% к'), findsOneWidget);
     expect(adminService.registrationStatsCalls, 1);
 
-    await tester.tap(find.text('${DateTime.now().year}').last);
+    await tester.tap(find.text('${_moscowNow().year}').last);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('${DateTime.now().year - 1}').last);
+    await tester.tap(find.text('${_moscowNow().year - 1}').last);
     await tester.pumpAndSettle();
 
-    expect(adminService.requestedYears.last, DateTime.now().year - 1);
-    expect(find.text('Май'), findsOneWidget);
-    expect(find.text('12'), findsOneWidget);
+    expect(adminService.requestedYears.last, _moscowNow().year - 1);
+    expect(find.text('Май · 12'), findsOneWidget);
+  });
+
+  testWidgets('registration stats handles selected month comparison and zeros',
+      (tester) async {
+    final adminService = _FakeAdminService();
+
+    await tester.pumpWidget(_wrap(adminService));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Регистрации'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('registration-month-bar-3')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Март — 0 регистраций'), findsOneWidget);
+    expect(
+        find.text('В предыдущем месяце регистраций не было'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('registration-month-bar-5')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Май — 30 регистраций'), findsOneWidget);
+    expect(find.text('−25% к апрелю'), findsOneWidget);
+  });
+
+  testWidgets('registration stats avoids overflow on a narrow phone',
+      (tester) async {
+    final originalOnError = FlutterError.onError;
+    final details = <FlutterErrorDetails>[];
+    FlutterError.onError = details.add;
+    addTearDown(() => FlutterError.onError = originalOnError);
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final adminService = _FakeAdminService();
+
+    await tester.pumpWidget(_wrap(adminService));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Регистрации'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('registration-month-bar-12')),
+        findsOneWidget);
+    expect(
+      details
+          .where((detail) => detail.exceptionAsString().contains('overflowed'))
+          .toList(),
+      isEmpty,
+    );
   });
 
   testWidgets('registration stats handles loading and error states',
@@ -128,13 +206,25 @@ class _FakeAdminService extends AdminService {
     if (statsCompleter != null) {
       return statsCompleter!.future;
     }
-    final currentYear = DateTime.now().year;
+    final currentYear = _moscowNow().year;
+    final currentMonth = _moscowNow().month;
+    final previousMonth = currentMonth == 1 ? 12 : currentMonth - 1;
+    final stats = <int, int>{
+      2: 0,
+      3: 0,
+      4: 40,
+      5: 30,
+      6: 54,
+      previousMonth: 25,
+      currentMonth: 28,
+    };
     if (year == currentYear - 1) {
       return <String, dynamic>{
         'year': currentYear - 1,
         'available_years': <int>[currentYear - 1, currentYear],
         'total_users': 327,
-        'current_month_count': 143,
+        'todayCount': 7,
+        'current_month_count': 28,
         'months': <Map<String, dynamic>>[
           <String, dynamic>{'month': 5, 'count': 12},
         ],
@@ -144,12 +234,38 @@ class _FakeAdminService extends AdminService {
       'year': currentYear,
       'available_years': <int>[currentYear - 1, currentYear],
       'total_users': 327,
-      'current_month_count': 143,
-      'months': <Map<String, dynamic>>[
-        <String, dynamic>{'month': 8, 'count': 143},
-        <String, dynamic>{'month': 7, 'count': 0},
-        <String, dynamic>{'month': 6, 'count': 54},
-      ],
+      'todayCount': 7,
+      'current_month_count': 28,
+      'months': stats.entries
+          .map(
+            (entry) => <String, dynamic>{
+              'month': entry.key,
+              'count': entry.value,
+            },
+          )
+          .toList(growable: false),
     };
   }
+}
+
+String _monthName(int month) {
+  const names = <int, String>{
+    1: 'Январь',
+    2: 'Февраль',
+    3: 'Март',
+    4: 'Апрель',
+    5: 'Май',
+    6: 'Июнь',
+    7: 'Июль',
+    8: 'Август',
+    9: 'Сентябрь',
+    10: 'Октябрь',
+    11: 'Ноябрь',
+    12: 'Декабрь',
+  };
+  return names[month] ?? '$month';
+}
+
+DateTime _moscowNow() {
+  return DateTime.now().toUtc().add(const Duration(hours: 3));
 }

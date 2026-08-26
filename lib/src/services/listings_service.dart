@@ -462,7 +462,13 @@ class ListingsService {
       );
       final items = _extractItems(response);
       final filtered = items
-          .where((item) => _matchesFilters(item, effectiveFilters))
+          .where(
+            (item) => _matchesFilters(
+              item,
+              effectiveFilters,
+              applySearch: effectiveFilters.search.trim().isEmpty,
+            ),
+          )
           .toList();
       _cacheListings(items);
       return ListingsFeedPage(
@@ -1115,7 +1121,11 @@ class ListingsService {
     throw UnimplementedError('Legacy listing photo delete is not handled here');
   }
 
-  bool _matchesFilters(Listing listing, ListingFeedFilters filters) {
+  bool _matchesFilters(
+    Listing listing,
+    ListingFeedFilters filters, {
+    bool applySearch = true,
+  }) {
     if (listing.status != 'approved') return false;
 
     if (!_isAllCategory(filters.category) &&
@@ -1130,7 +1140,7 @@ class ListingsService {
       return false;
     }
 
-    if (!_matchesSearch(listing, filters.search)) return false;
+    if (applySearch && !_matchesSearch(listing, filters.search)) return false;
     if (!_matchesPriceFilters(listing, filters)) return false;
     if (!_matchesAutoFilters(listing, filters)) return false;
     if (!_matchesLocationFilter(listing, filters)) return false;

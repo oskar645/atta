@@ -664,7 +664,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   }
 }
 
-class _RegistrationStatsView extends StatelessWidget {
+class _RegistrationStatsView extends StatefulWidget {
   const _RegistrationStatsView({
     required this.future,
     required this.selectedYear,
@@ -678,9 +678,16 @@ class _RegistrationStatsView extends StatelessWidget {
   final Future<void> Function(int year) onYearChanged;
 
   @override
+  State<_RegistrationStatsView> createState() => _RegistrationStatsViewState();
+}
+
+class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
+  int? _selectedMonth;
+
+  @override
   Widget build(BuildContext context) {
     return FutureBuilder<Map<String, dynamic>>(
-      future: future,
+      future: widget.future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator());
@@ -688,29 +695,37 @@ class _RegistrationStatsView extends StatelessWidget {
         if (snapshot.hasError) {
           return _AdminStateView(
             message: 'Не удалось загрузить регистрации.\n${snapshot.error}',
-            onRetry: onRefresh,
+            onRetry: widget.onRefresh,
           );
         }
 
         final data = snapshot.data ?? const <String, dynamic>{};
         final years = _intList(data['available_years']);
+        final moscowNow = _moscowNow();
         final year = _intValue(data['year']) ??
-            selectedYear ??
-            (years.isNotEmpty ? years.last : DateTime.now().year);
-        final months = _monthRows(data['months']);
+            widget.selectedYear ??
+            (years.isNotEmpty ? years.last : moscowNow.year);
+        final months = _completeMonthRows(_monthRows(data['months']));
         final totalUsers = _intValue(data['total_users']) ?? 0;
+        final todayCount =
+            _intValue(data['todayCount'] ?? data['today_count']) ?? 0;
         final currentMonthCount = _intValue(data['current_month_count']) ?? 0;
 
-        if (totalUsers == 0 && months.isEmpty) {
-          return _AdminStateView(
-            message: 'Регистраций пока нет.',
-            onRetry: onRefresh,
-            showButton: false,
-          );
-        }
+        final currentMonth = year == moscowNow.year ? moscowNow.month : 0;
+        final selectedMonth =
+            _selectedMonth ?? (currentMonth == 0 ? 1 : currentMonth);
+        final selectedRow = months.firstWhere(
+          (row) => row.month == selectedMonth,
+          orElse: () => months.first,
+        );
+        final bestRow = _bestMonth(months);
+        final bestMonthLabel = bestRow.count == 0
+            ? 'Нет данных'
+            : '${_monthName(bestRow.month)} · ${bestRow.count}';
+        final compareText = _comparisonText(months, selectedRow.month);
 
         return RefreshIndicator(
-          onRefresh: onRefresh,
+          onRefresh: widget.onRefresh,
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -726,51 +741,149 @@ class _RegistrationStatsView extends StatelessWidget {
                     ),
                   ),
                   if (years.isNotEmpty)
-                    DropdownButton<int>(
-                      value: years.contains(year) ? year : years.last,
-                      items: years
-                          .map(
-                            (value) => DropdownMenuItem<int>(
-                              value: value,
-                              child: Text('$value'),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        if (value != null) {
-                          onYearChanged(value);
-                        }
-                      },
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F7FA),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFFE6EAF0)),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            key: const ValueKey('registration-year-selector'),
+                            value: years.contains(year) ? year : years.last,
+                            borderRadius: BorderRadius.circular(8),
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                            items: years
+                                .map(
+                                  (value) => DropdownMenuItem<int>(
+                                    value: value,
+                                    child: Text('$value'),
+                                  ),
+                                )
+                                .toList(growable: false),
+                            onChanged: (value) {
+                              if (value != null) {
+                                widget.onYearChanged(value);
+                              }
+                            },
+                          ),
+                        ),
+                      ),
                     ),
                 ],
               ),
               const SizedBox(height: 16),
-              _StatsMetricRow(
-                label: 'Всего пользователей',
-                value: totalUsers,
+              _RegistrationSummaryCards(
+                totalUsers: totalUsers,
+                todayCount: todayCount,
+                currentMonthCount: currentMonthCount,
+                bestMonthLabel: bestMonthLabel,
               ),
-              _StatsMetricRow(
-                label: 'За этот месяц',
-                value: currentMonthCount,
+              const SizedBox(height: 18),
+              _RegistrationYearChart(
+                months: months,
+                currentMonth: currentMonth,
+                selectedMonth: selectedRow.month,
+                onMonthSelected: (month) {
+                  setState(() => _selectedMonth = month);
+                },
               ),
-              const SizedBox(height: 12),
-              if (months.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Text('За выбранный год регистраций нет.'),
-                )
-              else
-                ...months.map(
-                  (row) => _StatsMetricRow(
-                    label: _monthName(row.month),
-                    value: row.count,
-                  ),
-                ),
+              const SizedBox(height: 14),
+              Text(
+                '${_monthName(selectedRow.month)} — ${selectedRow.count} '
+                '${_registrationsWord(selectedRow.count)}',
+                key: const ValueKey('registration-selected-month-summary'),
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                compareText,
+                key: const ValueKey('registration-month-comparison'),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFF667085),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
             ],
           ),
         );
       },
     );
+  }
+
+  static _MonthRegistrationRow _bestMonth(List<_MonthRegistrationRow> months) {
+    return months.reduce(
+      (best, row) => row.count > best.count ? row : best,
+    );
+  }
+
+  static DateTime _moscowNow() {
+    return DateTime.now().toUtc().add(const Duration(hours: 3));
+  }
+
+  static List<_MonthRegistrationRow> _completeMonthRows(
+    List<_MonthRegistrationRow> source,
+  ) {
+    final byMonth = <int, int>{
+      for (final row in source) row.month: row.count,
+    };
+    return List<_MonthRegistrationRow>.generate(
+      12,
+      (index) => _MonthRegistrationRow(
+        month: index + 1,
+        count: byMonth[index + 1] ?? 0,
+      ),
+      growable: false,
+    );
+  }
+
+  static String _comparisonText(List<_MonthRegistrationRow> months, int month) {
+    if (month <= 1) {
+      return 'Нет данных для сравнения с предыдущим месяцем';
+    }
+    final current = months.firstWhere((row) => row.month == month).count;
+    final previous = months.firstWhere((row) => row.month == month - 1).count;
+    if (previous == 0) {
+      return 'В предыдущем месяце регистраций не было';
+    }
+    final diff = ((current - previous) / previous * 100).round();
+    if (diff == 0) {
+      return 'Без изменений к ${_monthDativeName(month - 1)}';
+    }
+    final sign = diff > 0 ? '+' : '−';
+    return '$sign${diff.abs()}% к ${_monthDativeName(month - 1)}';
+  }
+
+  static String _registrationsWord(int value) {
+    final mod10 = value % 10;
+    final mod100 = value % 100;
+    if (mod10 == 1 && mod100 != 11) return 'регистрация';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'регистрации';
+    }
+    return 'регистраций';
+  }
+
+  static String _monthDativeName(int month) {
+    const names = <int, String>{
+      1: 'январю',
+      2: 'февралю',
+      3: 'марту',
+      4: 'апрелю',
+      5: 'маю',
+      6: 'июню',
+      7: 'июлю',
+      8: 'августу',
+      9: 'сентябрю',
+      10: 'октябрю',
+      11: 'ноябрю',
+      12: 'декабрю',
+    };
+    return names[month] ?? 'прошлому месяцу';
   }
 
   static int? _intValue(Object? value) {
@@ -813,6 +926,298 @@ class _RegistrationStatsView extends StatelessWidget {
     };
     return names[month] ?? '$month';
   }
+
+  static String _monthShortName(int month) {
+    const names = <int, String>{
+      1: 'Янв',
+      2: 'Фев',
+      3: 'Мар',
+      4: 'Апр',
+      5: 'Май',
+      6: 'Июн',
+      7: 'Июл',
+      8: 'Авг',
+      9: 'Сен',
+      10: 'Окт',
+      11: 'Ноя',
+      12: 'Дек',
+    };
+    return names[month] ?? '$month';
+  }
+}
+
+class _RegistrationSummaryCards extends StatelessWidget {
+  const _RegistrationSummaryCards({
+    required this.totalUsers,
+    required this.todayCount,
+    required this.currentMonthCount,
+    required this.bestMonthLabel,
+  });
+
+  final int totalUsers;
+  final int todayCount;
+  final int currentMonthCount;
+  final String bestMonthLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = constraints.maxWidth < 560;
+        const spacing = 8.0;
+        final columns = isCompact ? 2 : 4;
+        final cardWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-total-users-card'),
+              width: cardWidth,
+              label: 'Всего пользователей',
+              value: '$totalUsers',
+            ),
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-today-card'),
+              width: cardWidth,
+              label: 'Сегодня',
+              value: '$todayCount',
+            ),
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-current-month-card'),
+              width: cardWidth,
+              label: 'В этом месяце',
+              value: '$currentMonthCount',
+            ),
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-best-month-card'),
+              width: cardWidth,
+              label: 'Лучший месяц',
+              value: bestMonthLabel,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _RegistrationSummaryCard extends StatelessWidget {
+  const _RegistrationSummaryCard({
+    super.key,
+    required this.width,
+    required this.label,
+    required this.value,
+  });
+
+  final double width;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return SizedBox(
+      width: width,
+      height: 94,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFE8ECF2)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0A101828),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF667085),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  value,
+                  style: textTheme.titleLarge?.copyWith(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RegistrationYearChart extends StatelessWidget {
+  const _RegistrationYearChart({
+    required this.months,
+    required this.currentMonth,
+    required this.selectedMonth,
+    required this.onMonthSelected,
+  });
+
+  final List<_MonthRegistrationRow> months;
+  final int currentMonth;
+  final int selectedMonth;
+  final ValueChanged<int> onMonthSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxCount = months.fold<int>(
+      0,
+      (max, row) => row.count > max ? row.count : max,
+    );
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFE8ECF2)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Динамика за год',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 168,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: months.map((row) {
+                  final isCurrent = row.month == currentMonth;
+                  final isSelected = row.month == selectedMonth;
+                  return Expanded(
+                    child: _RegistrationMonthBar(
+                      key: ValueKey('registration-month-bar-${row.month}'),
+                      row: row,
+                      maxCount: maxCount,
+                      isCurrent: isCurrent,
+                      isSelected: isSelected,
+                      onTap: () => onMonthSelected(row.month),
+                    ),
+                  );
+                }).toList(growable: false),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RegistrationMonthBar extends StatelessWidget {
+  const _RegistrationMonthBar({
+    super.key,
+    required this.row,
+    required this.maxCount,
+    required this.isCurrent,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final _MonthRegistrationRow row;
+  final int maxCount;
+  final bool isCurrent;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = maxCount == 0 ? 0.0 : row.count / maxCount;
+    final barHeight = row.count == 0 ? 5.0 : 18.0 + normalized * 86.0;
+    final barColor = isCurrent
+        ? const Color(0xFF0B6BFF)
+        : isSelected
+            ? const Color(0xFF98A2B3)
+            : const Color(0xFFD9DEE7);
+    final labelColor = isCurrent || isSelected
+        ? const Color(0xFF101828)
+        : const Color(0xFF667085);
+
+    return Semantics(
+      button: true,
+      label:
+          '${_RegistrationStatsViewState._monthName(row.month)}: ${row.count}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              SizedBox(
+                height: 24,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    '${row.count}',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: const Color(0xFF667085),
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                width: isSelected ? 15 : 12,
+                height: barHeight,
+                decoration: BoxDecoration(
+                  color: barColor,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  _RegistrationStatsViewState._monthShortName(row.month),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: labelColor,
+                        fontWeight: isCurrent || isSelected
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _MonthRegistrationRow {
@@ -823,33 +1228,6 @@ class _MonthRegistrationRow {
 
   final int month;
   final int count;
-}
-
-class _StatsMetricRow extends StatelessWidget {
-  const _StatsMetricRow({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final int value;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: textTheme.bodyLarge)),
-          Text(
-            '$value',
-            style: textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w800),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 class _AdminStateView extends StatelessWidget {

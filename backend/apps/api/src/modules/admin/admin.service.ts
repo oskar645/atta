@@ -61,6 +61,33 @@ const promotionStatusFromInput = (
   }
 };
 
+const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+const moscowCalendarBounds = (date: Date) => {
+  const shifted = new Date(date.getTime() + MOSCOW_OFFSET_MS);
+  const year = shifted.getUTCFullYear();
+  const monthIndex = shifted.getUTCMonth();
+  const day = shifted.getUTCDate();
+  const utcFromMoscow = (
+    yearValue: number,
+    monthIndexValue: number,
+    dayValue: number,
+  ) => new Date(
+    Date.UTC(yearValue, monthIndexValue, dayValue) - MOSCOW_OFFSET_MS,
+  );
+
+  return {
+    year,
+    month: monthIndex + 1,
+    yearStart: utcFromMoscow(year, 0, 1),
+    yearEnd: utcFromMoscow(year + 1, 0, 1),
+    monthStart: utcFromMoscow(year, monthIndex, 1),
+    nextMonthStart: utcFromMoscow(year, monthIndex + 1, 1),
+    dayStart: utcFromMoscow(year, monthIndex, day),
+    nextDayStart: utcFromMoscow(year, monthIndex, day + 1),
+  };
+};
+
 const promotionTypeFromInput = (
   value?: string,
 ): PromotionType | undefined => {
@@ -377,17 +404,13 @@ export class AdminService {
 
   async getUserRegistrationStats(query: AdminRegistrationStatsDto = {}) {
     const now = new Date();
-    const currentYear = now.getUTCFullYear();
-    const currentMonth = now.getUTCMonth() + 1;
+    const currentBounds = moscowCalendarBounds(now);
+    const currentYear = currentBounds.year;
+    const currentMonth = currentBounds.month;
     const requestedYear = Number.isInteger(query.year) ? query.year! : currentYear;
     const year = Math.min(Math.max(requestedYear, 2000), 2100);
-    const yearStart = new Date(Date.UTC(year, 0, 1));
-    const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-    const currentMonthStart = new Date(
-      Date.UTC(currentYear, now.getUTCMonth(), 1),
-    );
-    const nextMonthStart = new Date(
-      Date.UTC(currentYear, now.getUTCMonth() + 1, 1),
+    const yearBounds = moscowCalendarBounds(
+      new Date(Date.UTC(year, 0, 1) - MOSCOW_OFFSET_MS),
     );
     const activeUserWhere: Prisma.UserWhereInput = {
       deletedAt: null,
@@ -396,7 +419,7 @@ export class AdminService {
       },
     };
 
-    const [totalUsers, firstUser, currentMonthCount, monthRows] =
+    const [totalUsers, firstUser, currentMonthCount, todayCount, monthRows] =
       await Promise.all([
         this.prisma.user.count({ where: activeUserWhere }),
         this.prisma.user.findFirst({
@@ -408,8 +431,17 @@ export class AdminService {
           where: {
             ...activeUserWhere,
             createdAt: {
-              gte: currentMonthStart,
-              lt: nextMonthStart,
+              gte: currentBounds.monthStart,
+              lt: currentBounds.nextMonthStart,
+            },
+          },
+        }),
+        this.prisma.user.count({
+          where: {
+            ...activeUserWhere,
+            createdAt: {
+              gte: currentBounds.dayStart,
+              lt: currentBounds.nextDayStart,
             },
           },
         }),
@@ -417,18 +449,20 @@ export class AdminService {
           Array<{ month: number | bigint; count: number | bigint }>
         >`
           SELECT
-            EXTRACT(MONTH FROM u."created_at")::int AS month,
+            EXTRACT(MONTH FROM u."created_at" AT TIME ZONE 'Europe/Moscow')::int AS month,
             COUNT(*)::bigint AS count
           FROM "users" u
           WHERE u."deleted_at" IS NULL
             AND u."status" <> ${UserStatus.DELETED}::"UserStatus"
-            AND u."created_at" >= ${yearStart}
-            AND u."created_at" < ${yearEnd}
+            AND u."created_at" >= ${yearBounds.yearStart}
+            AND u."created_at" < ${yearBounds.yearEnd}
           GROUP BY month
         `,
       ]);
 
-    const firstYear = firstUser?.createdAt.getUTCFullYear() ?? currentYear;
+    const firstYear = firstUser
+      ? moscowCalendarBounds(firstUser.createdAt).year
+      : currentYear;
     const availableYears = Array.from(
       { length: Math.max(currentYear - firstYear + 1, 0) },
       (_, index) => firstYear + index,
@@ -441,7 +475,7 @@ export class AdminService {
       );
     }
     const startMonth = year === firstYear && firstUser
-      ? firstUser.createdAt.getUTCMonth() + 1
+      ? moscowCalendarBounds(firstUser.createdAt).month
       : 1;
     const endMonth = year === currentYear ? currentMonth : 12;
     const months = !firstUser || year < firstYear || year > currentYear || startMonth > endMonth
@@ -459,6 +493,7 @@ export class AdminService {
       year,
       available_years: availableYears,
       total_users: totalUsers,
+      todayCount,
       current_month_count: currentMonthCount,
       months,
     };
