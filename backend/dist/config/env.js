@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseAdminPhoneNumbers = exports.parseCorsOrigins = exports.env = void 0;
+exports.parseRestoreCredentialOrigins = exports.parseAdminPhoneNumbers = exports.parseCorsOrigins = exports.env = void 0;
 require("dotenv/config");
 const zod_1 = require("zod");
 const phone_1 = require("../common/phone");
@@ -82,6 +82,9 @@ const envSchema = zod_1.z.object({
     YOOKASSA_MIN_AMOUNT_RUB: zod_1.z.coerce.number().int().positive().default(100),
     YOOKASSA_MAX_AMOUNT_RUB: zod_1.z.coerce.number().int().positive().default(1500),
     YOOKASSA_POINTS_PER_RUBLE: zod_1.z.coerce.number().int().positive().default(1),
+    RESTORE_CREDENTIALS_RP_ID: zod_1.z.string().min(1).default('attamarket.online'),
+    RESTORE_CREDENTIALS_RP_NAME: zod_1.z.string().min(1).default('ATTA'),
+    RESTORE_CREDENTIALS_ANDROID_ORIGINS: zod_1.z.string().optional().default(''),
 });
 const parsedEnv = envSchema.safeParse(process.env);
 if (!parsedEnv.success) {
@@ -117,4 +120,8 @@ const parseAdminPhoneNumbers = () => Array.from(new Set([
     .map((phone) => (0, phone_1.normalizeRussianPhone)(phone.trim()))
     .filter((phone) => phone.length > 0);
 exports.parseAdminPhoneNumbers = parseAdminPhoneNumbers;
+const parseRestoreCredentialOrigins = () => exports.env.RESTORE_CREDENTIALS_ANDROID_ORIGINS.split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+exports.parseRestoreCredentialOrigins = parseRestoreCredentialOrigins;
 //# sourceMappingURL=env.js.map

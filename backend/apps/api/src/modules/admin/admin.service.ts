@@ -26,6 +26,11 @@ import {
   serializeUser,
   toIsoString,
 } from '../../common/serializers';
+import {
+  LISTING_PUBLICATION_NOT_READY,
+  isListingReadyForPublication,
+  listingPublicationReadyWhere,
+} from '../../common/listing-publication';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { AppVisitsService } from '../app-visits/app-visits.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -1117,6 +1122,7 @@ export class AdminService {
       ...(normalizedStatus == 'all' || normalizedStatus.length === 0
         ? {}
         : { status: listingStatusFromInput(normalizedStatus) }),
+      ...(isPending ? listingPublicationReadyWhere() : {}),
     };
     const [items, total, pendingModeration] = await Promise.all([
       this.prisma.listing.findMany({
@@ -1151,6 +1157,7 @@ export class AdminService {
           deletedAt: null,
           archivedAt: null,
           status: ListingStatus.PENDING,
+          ...listingPublicationReadyWhere(),
         },
       }),
     ]);
@@ -1161,7 +1168,9 @@ export class AdminService {
 
     return {
       source: 'timeweb',
-      items: page.items.map((listing) => this.serializeAdminListing(listing)),
+      items: page.items
+        .filter((listing) => !isPending || isListingReadyForPublication(listing))
+        .map((listing) => this.serializeAdminListing(listing)),
       total,
       pendingModeration,
       pending_moderation: pendingModeration,
@@ -2238,6 +2247,9 @@ export class AdminService {
     }
     if (listing.photos.length === 0) {
       throw new BadRequestException(LISTING_PHOTO_REQUIRED);
+    }
+    if (!isListingReadyForPublication(listing)) {
+      throw new BadRequestException(LISTING_PUBLICATION_NOT_READY);
     }
 
     const now = new Date();

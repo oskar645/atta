@@ -12,6 +12,9 @@ class TokenStorage {
   static const String _accessTokenKey = 'timeweb_access_token';
   static const String _refreshTokenKey = 'timeweb_refresh_token';
   static const String _currentUserKey = 'timeweb_current_user';
+  static const String _restoreCredentialSyncedKey =
+      'has_synced_restore_credential';
+  static const String _restoreCredentialIdKey = 'restore_credential_id';
 
   final FlutterSecureStorage _secureStorage;
   Future<void>? _migrationInFlight;
@@ -61,6 +64,32 @@ class TokenStorage {
     await prefs.remove(_accessTokenKey);
     await prefs.remove(_refreshTokenKey);
     await prefs.remove(_currentUserKey);
+  }
+
+  Future<bool> hasSyncedRestoreCredential() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_restoreCredentialSyncedKey) ?? false;
+  }
+
+  Future<void> markRestoreCredentialSynced(String credentialId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_restoreCredentialSyncedKey, true);
+    if (credentialId.trim().isNotEmpty) {
+      await prefs.setString(_restoreCredentialIdKey, credentialId.trim());
+    }
+  }
+
+  Future<String?> readRestoreCredentialId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final credentialId = prefs.getString(_restoreCredentialIdKey)?.trim();
+    if (credentialId == null || credentialId.isEmpty) return null;
+    return credentialId;
+  }
+
+  Future<void> clearRestoreCredentialState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_restoreCredentialSyncedKey);
+    await prefs.remove(_restoreCredentialIdKey);
   }
 
   Future<void> _migrateLegacyTokensIfNeeded() {

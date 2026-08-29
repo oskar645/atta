@@ -6,6 +6,7 @@ import 'package:atta/src/services/api/auth_api.dart';
 import 'package:atta/src/services/api/users_api.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/restore_credentials_service.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart';
 
@@ -44,13 +45,17 @@ class BackendAuthService {
     required AuthApi authApi,
     required UsersApi usersApi,
     required TokenStorage tokenStorage,
+    RestoreCredentialsService restoreCredentialsService =
+        const RestoreCredentialsService(),
   })  : _authApi = authApi,
         _usersApi = usersApi,
-        _tokenStorage = tokenStorage;
+        _tokenStorage = tokenStorage,
+        _restoreCredentialsService = restoreCredentialsService;
 
   final AuthApi _authApi;
   final UsersApi _usersApi;
   final TokenStorage _tokenStorage;
+  final RestoreCredentialsService _restoreCredentialsService;
   final StreamController<AuthSessionEvent> _events =
       StreamController<AuthSessionEvent>.broadcast();
 
@@ -59,8 +64,10 @@ class BackendAuthService {
   Future<bool>? _refreshInFlight;
   Future<AuthUser?>? _resumeRestoreInFlight;
   Future<void>? _privateAuthReadyInFlight;
+  Future<void>? _restoreCredentialSyncInFlight;
   AuthUser? _currentUser;
   DateTime? _lastResumeRestoreAt;
+  bool _startupRestoreAttempted = false;
 
   static const Duration _resumeRestoreCooldown = Duration(seconds: 5);
 
@@ -78,11 +85,13 @@ class BackendAuthService {
   Future<void> _restoreSession() async {
     _currentUser = await _tokenStorage.readCurrentUser();
     if (_currentUser == null) {
+      await _restoreSessionWithRestoreCredential();
       return;
     }
 
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
     _primePrivateAuthReady();
+    _scheduleRestoreCredentialSync();
   }
 
   void _primePrivateAuthReady() {
@@ -187,7 +196,9 @@ class BackendAuthService {
 
   Future<void> signOut() async {
     final refreshToken = await _tokenStorage.readRefreshToken();
+    final restoreCredentialId = await _tokenStorage.readRestoreCredentialId();
     try {
+      await _clearRestoreCredentialForLogout(restoreCredentialId);
       if (refreshToken != null && refreshToken.isNotEmpty) {
         await _authApi.logout(refreshToken: refreshToken);
       }
@@ -197,6 +208,8 @@ class BackendAuthService {
   }
 
   Future<void> deleteAccount() async {
+    final restoreCredentialId = await _tokenStorage.readRestoreCredentialId();
+    await _clearRestoreCredentialForLogout(restoreCredentialId);
     await _authApi.deleteAccount();
     await _clearSession();
   }
@@ -583,7 +596,108 @@ class BackendAuthService {
 
     _currentUser = user;
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
+    _scheduleRestoreCredentialSync();
     return user;
+  }
+
+  Future<AuthUser?> _restoreSessionWithRestoreCredential() async {
+    if (_startupRestoreAttempted ||
+        !_restoreCredentialsService.isAndroidRuntime) {
+      return null;
+    }
+    _startupRestoreAttempted = true;
+
+    try {
+      final options = await _authApi.restoreCredentialAuthenticationOptions();
+      final nativeResult = await _restoreCredentialsService.get(options);
+      final responseJson = nativeResult.responseJson;
+      if (!nativeResult.isSuccess || responseJson == null) {
+        return null;
+      }
+
+      final response = await _authApi.authenticateWithRestoreCredential(
+        responseJson: responseJson,
+      );
+      final user = await _consumeAuthPayload(response);
+      final credentialId = _pickCredentialId(responseJson);
+      if (credentialId.isNotEmpty) {
+        await _tokenStorage.markRestoreCredentialSynced(credentialId);
+      }
+      _primePrivateAuthReady();
+      return user;
+    } catch (error) {
+      _debugAuthLog('Restore credential startup skipped: $error');
+      return null;
+    }
+  }
+
+  void _scheduleRestoreCredentialSync() {
+    if (_currentUser == null || !_restoreCredentialsService.isAndroidRuntime) {
+      return;
+    }
+    final existing = _restoreCredentialSyncInFlight;
+    if (existing != null) {
+      return;
+    }
+
+    late final Future<void> future;
+    future = _syncRestoreCredentialIfNeeded().whenComplete(() {
+      if (identical(_restoreCredentialSyncInFlight, future)) {
+        _restoreCredentialSyncInFlight = null;
+      }
+    });
+    _restoreCredentialSyncInFlight = future;
+    unawaited(future);
+  }
+
+  Future<void> _syncRestoreCredentialIfNeeded() async {
+    try {
+      if (await _tokenStorage.hasSyncedRestoreCredential()) {
+        return;
+      }
+      final accessToken = await _tokenStorage.readAccessToken();
+      if (accessToken == null || accessToken.trim().isEmpty) {
+        return;
+      }
+
+      final options = await _authApi.restoreCredentialRegistrationOptions();
+      final nativeResult = await _restoreCredentialsService.create(options);
+      final responseJson = nativeResult.responseJson;
+      if (!nativeResult.isSuccess || responseJson == null) {
+        return;
+      }
+
+      final response = await _authApi.registerRestoreCredential(
+        responseJson: responseJson,
+      );
+      final credentialId =
+          (response['credential_id'] ?? _pickCredentialId(responseJson))
+              .toString()
+              .trim();
+      await _tokenStorage.markRestoreCredentialSynced(credentialId);
+    } catch (error) {
+      _debugAuthLog('Restore credential sync skipped: $error');
+    }
+  }
+
+  Future<void> _clearRestoreCredentialForLogout(String? credentialId) async {
+    try {
+      await _restoreCredentialsService.clear();
+    } catch (_) {
+      // Explicit logout must continue even if Credential Manager is unavailable.
+    }
+    try {
+      await _authApi.revokeRestoreCredential(credentialId: credentialId ?? '');
+    } catch (_) {
+      // Backend revoke is best-effort from the client side; local logout wins.
+    }
+    await _tokenStorage.clearRestoreCredentialState();
+  }
+
+  String _pickCredentialId(Map<String, dynamic> responseJson) {
+    return (responseJson['id'] ?? responseJson['rawId'] ?? '')
+        .toString()
+        .trim();
   }
 
   bool _isJwtExpired(String? token) {

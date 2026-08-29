@@ -13,7 +13,11 @@ import {
   UserStatus,
 } from '@prisma/client';
 
-import { ListingsService, normalizeOemPartNumber } from './listings.service';
+import {
+  LISTING_PUBLICATION_NOT_READY,
+  ListingsService,
+  normalizeOemPartNumber,
+} from './listings.service';
 import { listingSearchDebugVariants } from '../../common/listing-search';
 
 const ownerUser = {
@@ -49,7 +53,7 @@ const adminOwnerUser = {
 function createApprovedListing(
   id: string,
   publishedAt: string,
-  category = 'misc',
+  category = 'Другое',
 ) {
   const published = new Date(publishedAt);
   return {
@@ -58,10 +62,10 @@ function createApprovedListing(
     ownerEmail: 'owner@example.com',
     ownerName: 'Owner',
     title: `Listing ${id}`,
-    description: '',
+    description: 'Описание объявления',
     category,
     subcategory: '',
-    price: BigInt(0),
+    price: BigInt(1000),
     phone: '',
     phoneHidden: false,
     city: '',
@@ -91,6 +95,41 @@ function createApprovedListing(
     owner: null,
     photos: [],
     promotions: [],
+  };
+}
+
+function listingPhoto(id = 'photo-1', listingId = 'listing-1') {
+  return {
+    id,
+    listingId,
+    storageBucket: 'local',
+    storageKey: `listings/${listingId}/${id}.jpg`,
+    publicUrl: `https://example.com/${id}.jpg`,
+    sortOrder: 0,
+    sizeBytes: 128,
+    mimeType: 'image/jpeg',
+    createdAt: new Date('2026-07-01T10:00:00.000Z'),
+  };
+}
+
+function listingOwner() {
+  return {
+    id: ownerUser.userId,
+    email: 'owner@example.com',
+    phone: '79281234567',
+    phoneVerified: true,
+    displayName: 'Owner',
+    name: 'Owner',
+    avatarUrl: null,
+    photoUrl: null,
+    status: UserStatus.ACTIVE,
+    blockedAt: null,
+    blockReason: null,
+    lastLoginAt: null,
+    createdAt: new Date('2026-07-01T10:00:00.000Z'),
+    updatedAt: new Date('2026-07-01T10:00:00.000Z'),
+    deletedAt: null,
+    adminProfile: null,
   };
 }
 
@@ -159,6 +198,7 @@ function createService(overrides?: {
   createListingView?: (args: Record<string, unknown>) => Promise<unknown>;
   findPromotions?: (args?: Record<string, unknown>) => Promise<unknown>;
   queryRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+  executeRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
 }) {
   const prisma = {
     user: {
@@ -273,6 +313,10 @@ function createService(overrides?: {
           ...args,
         })),
     },
+    listingPhoto: {
+      deleteMany: async () => ({}),
+      createMany: async () => ({}),
+    },
     favorite: {
       findMany: overrides?.findFavorites ?? (async () => []),
     },
@@ -290,6 +334,7 @@ function createService(overrides?: {
     },
     $transaction: async <T>(handler: (tx: any) => Promise<T>) => handler(prisma),
     ...(overrides?.queryRaw ? { $queryRaw: overrides.queryRaw } : {}),
+    ...(overrides?.executeRaw ? { $executeRaw: overrides.executeRaw } : {}),
   };
 
   return new ListingsService(
@@ -343,12 +388,12 @@ function createListingViewCounterService(options?: {
         return { id: `view-${views.length}`, ...view };
       },
     },
-    $queryRaw: async (
+    $executeRaw: async (
       strings: TemplateStringsArray,
       ...values: unknown[]
     ) => {
       advisoryLocks.push(values);
-      return [];
+      return 1;
     },
     $transaction: async <T>(handler: (tx: any) => Promise<T>) => {
       const run = transactionQueue.then(() => handler(prisma));
@@ -1317,34 +1362,29 @@ test('owner edit of approved listing sends it back to moderation', async () => {
   );
   let updateArgs: Record<string, unknown> | undefined;
   let revisionCreateArgs: Record<string, unknown> | undefined;
-  let savedListing = listing;
+  let savedListing = {
+    ...listing,
+    price: BigInt(100000),
+    city: 'Грозный',
+    oemPartNumber: '81150-06C70',
+    oemPartNumberNormalized: '8115006C70',
+    owner: listingOwner(),
+    photos: [listingPhoto()],
+  };
   const prisma = {
     listing: {
-      findUnique: async () => ({
-        ...listing,
-        price: BigInt(100000),
-        city: 'Грозный',
-        oemPartNumber: '81150-06C70',
-        oemPartNumberNormalized: '8115006C70',
-        owner: {
-          phone: '79281234567',
-        },
-        photos: [
-          {
-            id: 'photo-1',
-            storageKey: 'listing-photos/listing-1/old.jpg',
-            publicUrl: 'https://example.com/old.jpg',
-            sortOrder: 0,
-          },
-        ],
-      }),
+      findUnique: async () => savedListing,
       update: async (args: Record<string, unknown>) => {
         updateArgs = args;
         savedListing = {
           ...savedListing,
-          ...(args.data as Record<string, unknown>),
+          ...Object.fromEntries(
+            Object.entries(args.data as Record<string, unknown>).filter(
+              ([, value]) => value !== undefined,
+            ),
+          ),
           updatedAt: new Date(),
-        } as typeof listing;
+        };
         return savedListing;
       },
       findUniqueOrThrow: async () => savedListing,
@@ -1387,8 +1427,8 @@ test('owner edit of approved listing sends it back to moderation', async () => {
   assert.deepEqual(snapshot['photos'], [
     {
       id: 'photo-1',
-      storage_key: 'listing-photos/listing-1/old.jpg',
-      url: 'https://example.com/old.jpg',
+      storage_key: 'listings/listing-1/photo-1.jpg',
+      url: 'https://example.com/photo-1.jpg',
       sort_order: 0,
     },
   ]);
@@ -1399,24 +1439,10 @@ test('update can add, change and clear OEM for auto parts listings', async () =>
   const listing = {
     ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Запчасти'),
     status: ListingStatus.PENDING,
-    owner: {
-      id: ownerUser.userId,
-      email: 'owner@example.com',
-      phone: '79281234567',
-      phoneVerified: true,
-      displayName: 'Owner',
-      name: 'Owner',
-      avatarUrl: null,
-      photoUrl: null,
-      status: UserStatus.ACTIVE,
-      blockedAt: null,
-      blockReason: null,
-      lastLoginAt: null,
-      createdAt: new Date('2026-07-01T10:00:00.000Z'),
-      updatedAt: new Date('2026-07-01T10:00:00.000Z'),
-      deletedAt: null,
-      adminProfile: null,
-    },
+    subcategory: 'Оптика',
+    city: 'Грозный',
+    photos: [listingPhoto()],
+    owner: listingOwner(),
   };
   const updateData: Array<Record<string, unknown>> = [];
   let savedListing: Record<string, unknown> = {
@@ -1431,7 +1457,9 @@ test('update can add, change and clear OEM for auto parts listings', async () =>
         updateData.push(args.data);
         savedListing = {
           ...savedListing,
-          ...args.data,
+          ...Object.fromEntries(
+            Object.entries(args.data ?? {}).filter(([, value]) => value !== undefined),
+          ),
           updatedAt: new Date(),
         };
         return savedListing;
@@ -3283,6 +3311,231 @@ test('pending create without photos is allowed as temporary listing', async () =
   assert.equal(createArgs?.data.status, ListingStatus.PENDING);
   assert.equal(createArgs?.data.publishedAt, null);
   assert.equal(response.listing.status, 'pending');
+});
+
+test('placeholder create stays as non-ready pending draft for upload flow', async () => {
+  let createArgs: Record<string, any> | undefined;
+  const service = createService({
+    create: async (args: Record<string, any>) => {
+      createArgs = args;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+        title: args.data.title,
+        description: args.data.description,
+        category: args.data.category,
+        subcategory: args.data.subcategory,
+        price: BigInt(args.data.price),
+        city: args.data.city,
+        status: args.data.status,
+        publishedAt: args.data.publishedAt,
+        photos: [],
+      };
+    },
+  });
+
+  const response = await service.create(ownerUser, {
+    title: 'Черновик объявления',
+    description: 'Черновик объявления',
+    category: 'Авто',
+    subcategory: 'Легковые автомобили',
+    price: 0,
+    city: 'Грозный',
+    status: 'pending',
+    photo_urls: [],
+  });
+
+  assert.equal(createArgs?.data.status, ListingStatus.PENDING);
+  assert.equal(createArgs?.data.publishedAt, null);
+  assert.equal(response.listing.status, 'pending');
+});
+
+test('valid old create plus later photo upload remains pending-compatible', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Авто'),
+    subcategory: 'Легковые автомобили',
+    status: ListingStatus.PENDING,
+    publishedAt: null,
+    photos: [],
+    owner: listingOwner(),
+  };
+  let savedListing: Record<string, any> = listing;
+  const prisma = {
+    listing: {
+      findUnique: async () => savedListing,
+      findUniqueOrThrow: async () => savedListing,
+      update: async (args: Record<string, any>) => {
+        savedListing = {
+          ...savedListing,
+          ...Object.fromEntries(
+            Object.entries(args.data ?? {}).filter(([, value]) => value !== undefined),
+          ),
+        };
+        return savedListing;
+      },
+    },
+    listingPhoto: {
+      create: async () => {
+        const photo = listingPhoto('photo-1');
+        savedListing = {
+          ...savedListing,
+          photos: [photo],
+        };
+        return photo;
+      },
+    },
+    listingModerationRevision: {
+      findFirst: async () => null,
+      create: async () => ({ id: 'revision-1' }),
+    },
+    $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
+      handler(prisma),
+  };
+  const service = new ListingsService(
+    prisma as never,
+    {
+      saveUploadedFile: async () => ({
+        bucket: 'local',
+        key: 'listings/listing-1/photo.jpg',
+        url: 'https://example.com/photo.jpg',
+        sizeBytes: 128,
+        mimeType: 'image/jpeg',
+      }),
+    } as never,
+    {} as never,
+  );
+
+  const response = await service.uploadPhoto(
+    ownerUser,
+    'listing-1',
+    {
+      buffer: Buffer.from('photo'),
+      mimetype: 'image/jpeg',
+      originalname: 'photo.jpg',
+    } as never,
+  );
+
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(response.listing.photo_urls.length, 1);
+});
+
+function createPendingPatchService(initial: Record<string, any>) {
+  let savedListing: Record<string, any> = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Авто'),
+    subcategory: 'Легковые автомобили',
+    status: ListingStatus.PENDING,
+    publishedAt: null,
+    photos: [listingPhoto()],
+    owner: listingOwner(),
+    ...initial,
+  };
+  const prisma = {
+    listing: {
+      findUnique: async () => savedListing,
+      update: async (args: Record<string, any>) => {
+        savedListing = {
+          ...savedListing,
+          ...Object.fromEntries(
+            Object.entries(args.data ?? {}).filter(([, value]) => value !== undefined),
+          ),
+          updatedAt: new Date(),
+        };
+        return savedListing;
+      },
+      findUniqueOrThrow: async () => savedListing,
+    },
+    listingPhoto: {
+      deleteMany: async () => {
+        savedListing = { ...savedListing, photos: [] };
+        return {};
+      },
+      createMany: async (args: Record<string, any>) => {
+        savedListing = {
+          ...savedListing,
+          photos: args.data.map((item: Record<string, any>, index: number) => ({
+            ...listingPhoto(`photo-${index + 1}`),
+            ...item,
+            id: `photo-${index + 1}`,
+          })),
+        };
+        return {};
+      },
+    },
+    listingModerationRevision: {
+      findFirst: async () => null,
+      create: async () => ({ id: 'revision-1' }),
+    },
+    $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
+      handler(prisma),
+  };
+
+  return new ListingsService(prisma as never, {} as never, {} as never);
+}
+
+test('pending PATCH rejects zero price direct API bypass', async () => {
+  const service = createPendingPatchService({});
+
+  await assert.rejects(
+    () => service.update('listing-1', ownerUser, { price: 0 }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === LISTING_PUBLICATION_NOT_READY,
+  );
+});
+
+test('pending PATCH rejects missing photos direct API bypass', async () => {
+  const service = createPendingPatchService({});
+
+  await assert.rejects(
+    () => service.update('listing-1', ownerUser, { photo_urls: [] }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === LISTING_PUBLICATION_NOT_READY,
+  );
+});
+
+test('pending PATCH rejects whitespace title direct API bypass', async () => {
+  const service = createPendingPatchService({});
+
+  await assert.rejects(
+    () => service.update('listing-1', ownerUser, { title: '   ' }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === LISTING_PUBLICATION_NOT_READY,
+  );
+});
+
+test('valid final draft PATCH passes in pending moderation', async () => {
+  const service = createPendingPatchService({
+    title: 'Черновик объявления',
+    description: 'Черновик объявления',
+    price: BigInt(0),
+  });
+
+  const response = await service.update('listing-1', ownerUser, {
+    title: 'Toyota Camry',
+    description: 'Живой автомобиль',
+    category: 'Авто',
+    subcategory: 'Легковые автомобили',
+    price: 1200000,
+    city: 'Грозный',
+  });
+
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(response.listing.title, 'Toyota Camry');
+});
+
+test('approved PATCH cannot make listing incomplete', async () => {
+  const service = createPendingPatchService({
+    status: ListingStatus.APPROVED,
+    publishedAt: new Date('2026-07-01T10:00:00.000Z'),
+  });
+
+  await assert.rejects(
+    () => service.update('listing-1', ownerUser, { photo_urls: [] }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === LISTING_PUBLICATION_NOT_READY,
+  );
 });
 
 test('public feed only returns approved listings with at least one photo', async () => {

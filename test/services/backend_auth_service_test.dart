@@ -5,6 +5,8 @@ import 'package:atta/src/services/api/users_api.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/backend_auth_service.dart';
+import 'package:atta/src/services/restore_credentials_service.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -537,6 +539,169 @@ void main() {
     final event = await eventFuture;
     expect(event.type, AuthSessionEventType.userUpdated);
   });
+
+  test('valid local session does not run restore credential authentication',
+      () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final restoreCredentials = _FakeRestoreCredentialsService();
+    final service = BackendAuthService(
+      authApi: _FakeAuthApi(),
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    await service.ensureInitialized();
+
+    expect(service.currentUser?.uid, 'user-1');
+    expect(restoreCredentials.getCalls, 0);
+  });
+
+  test('no local session restores through Android restore credential',
+      () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    final restoreCredentials = _FakeRestoreCredentialsService(
+      getResult: const RestoreCredentialResult(
+        status: RestoreCredentialStatus.success,
+        responseJson: <String, dynamic>{
+          'id': 'restore-credential-1',
+          'response': <String, dynamic>{
+            'clientDataJSON': 'client-data',
+          },
+        },
+      ),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    await service.ensureInitialized();
+
+    expect(authApi.restoreAuthenticationOptionsCalls, 1);
+    expect(authApi.restoreAuthenticateCalls, 1);
+    expect(service.currentUser?.uid, 'restored-user');
+    expect(await tokenStorage.readAccessToken(), 'restore-access-token');
+    expect(
+        await tokenStorage.readRestoreCredentialId(), 'restore-credential-1');
+  });
+
+  test('missing Android restore credential falls back to normal login',
+      () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    final restoreCredentials = _FakeRestoreCredentialsService(
+      getResult: const RestoreCredentialResult(
+        status: RestoreCredentialStatus.notAvailable,
+        reason: 'no_credential',
+      ),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    await service.ensureInitialized();
+
+    expect(service.currentUser, isNull);
+    expect(authApi.restoreAuthenticateCalls, 0);
+    expect(await tokenStorage.readAccessToken(), isNull);
+  });
+
+  test('successful ordinary login schedules restore credential creation',
+      () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    final restoreCredentials = _FakeRestoreCredentialsService(
+      createResult: const RestoreCredentialResult(
+        status: RestoreCredentialStatus.success,
+        responseJson: <String, dynamic>{
+          'id': 'created-restore-credential',
+        },
+      ),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    await service.signIn(email: 'user@example.com', password: 'secret');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(authApi.restoreRegistrationOptionsCalls, 1);
+    expect(authApi.restoreRegisterCalls, 1);
+    expect(
+      await tokenStorage.readRestoreCredentialId(),
+      'created-restore-credential',
+    );
+  });
+
+  test('restore credential creation failure does not break login', () async {
+    final authApi = _FakeAuthApi();
+    final restoreCredentials = _FakeRestoreCredentialsService(
+      createResult: const RestoreCredentialResult(
+        status: RestoreCredentialStatus.error,
+        reason: 'native_error',
+      ),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    final user =
+        await service.signIn(email: 'user@example.com', password: 'secret');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(user.uid, 'user-1');
+    expect(authApi.restoreRegisterCalls, 0);
+  });
+
+  test(
+      'logout clears restore state and local tokens even if native clear fails',
+      () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    await tokenStorage.markRestoreCredentialSynced('restore-credential-1');
+    final restoreCredentials = _FakeRestoreCredentialsService(
+      clearThrows: true,
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    await service.ensureInitialized();
+    await service.signOut();
+
+    expect(restoreCredentials.clearCalls, 1);
+    expect(
+        authApi.restoreRevokeCredentialIds, contains('restore-credential-1'));
+    expect(await tokenStorage.readAccessToken(), isNull);
+    expect(await tokenStorage.readRestoreCredentialId(), isNull);
+    expect(service.currentUser, isNull);
+  });
 }
 
 class _FakeAuthApi extends AuthApi {
@@ -558,6 +723,11 @@ class _FakeAuthApi extends AuthApi {
   int failMeCalls = 0;
   Duration meDelay = Duration.zero;
   Duration refreshDelay = Duration.zero;
+  int restoreRegistrationOptionsCalls = 0;
+  int restoreRegisterCalls = 0;
+  int restoreAuthenticationOptionsCalls = 0;
+  int restoreAuthenticateCalls = 0;
+  final List<String> restoreRevokeCredentialIds = <String>[];
 
   @override
   Future<Map<String, dynamic>> login({
@@ -694,6 +864,109 @@ class _FakeAuthApi extends AuthApi {
         'referral_code': 'OWN_REFERRAL_CODE',
       },
     };
+  }
+
+  @override
+  Future<Map<String, dynamic>> restoreCredentialRegistrationOptions() async {
+    restoreRegistrationOptionsCalls += 1;
+    return <String, dynamic>{
+      'challenge': 'registration-challenge',
+      'rp': <String, dynamic>{'id': 'attamarket.online', 'name': 'ATTA'},
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> registerRestoreCredential({
+    required Map<String, dynamic> responseJson,
+  }) async {
+    restoreRegisterCalls += 1;
+    return <String, dynamic>{
+      'registered': true,
+      'credential_id': responseJson['id'] ?? 'registered-credential',
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> restoreCredentialAuthenticationOptions() async {
+    restoreAuthenticationOptionsCalls += 1;
+    return <String, dynamic>{
+      'challenge': 'authentication-challenge',
+      'rpId': 'attamarket.online',
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> authenticateWithRestoreCredential({
+    required Map<String, dynamic> responseJson,
+  }) async {
+    restoreAuthenticateCalls += 1;
+    return <String, dynamic>{
+      'auth': <String, dynamic>{
+        'access_token': 'restore-access-token',
+        'refresh_token': 'restore-refresh-token',
+      },
+      'user': <String, dynamic>{
+        'id': 'restored-user',
+        'display_name': 'Restored User',
+      },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> revokeRestoreCredential({
+    String credentialId = '',
+  }) async {
+    restoreRevokeCredentialIds.add(credentialId);
+    return <String, dynamic>{'revoked': 1};
+  }
+}
+
+class _FakeRestoreCredentialsService extends RestoreCredentialsService {
+  _FakeRestoreCredentialsService({
+    this.createResult = const RestoreCredentialResult(
+      status: RestoreCredentialStatus.notAvailable,
+      reason: 'not_configured',
+    ),
+    this.getResult = const RestoreCredentialResult(
+      status: RestoreCredentialStatus.notAvailable,
+      reason: 'not_configured',
+    ),
+    this.clearThrows = false,
+  });
+
+  final RestoreCredentialResult createResult;
+  final RestoreCredentialResult getResult;
+  final bool clearThrows;
+  int createCalls = 0;
+  int getCalls = 0;
+  int clearCalls = 0;
+
+  @override
+  bool get isAndroidRuntime => true;
+
+  @override
+  Future<RestoreCredentialResult> create(
+    Map<String, dynamic> requestJson,
+  ) async {
+    createCalls += 1;
+    return createResult;
+  }
+
+  @override
+  Future<RestoreCredentialResult> get(Map<String, dynamic> requestJson) async {
+    getCalls += 1;
+    return getResult;
+  }
+
+  @override
+  Future<RestoreCredentialResult> clear() async {
+    clearCalls += 1;
+    if (clearThrows) {
+      throw PlatformException(code: 'clear_failed');
+    }
+    return const RestoreCredentialResult(
+      status: RestoreCredentialStatus.success,
+    );
   }
 }
 

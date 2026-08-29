@@ -547,6 +547,20 @@ let AuthService = class AuthService {
             user_id: userId,
         };
     }
+    async createSessionForUser(user) {
+        const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
+        const session = await this.createSession(userWithAdmin);
+        await this.ensureWalletBootstrapSafely(userWithAdmin.id);
+        return this.buildAuthResponse(userWithAdmin, session.auth);
+    }
+    async findActiveUserByIdOrThrow(userId) {
+        const user = await this.findActiveUserById(userId);
+        const activeBlock = await this.userBlocksService.getActiveBlock(user.id);
+        if (activeBlock || user.status !== client_1.UserStatus.ACTIVE) {
+            throw this.createUnauthorizedError('ACCOUNT_BLOCKED', 'Аккаунт заблокирован');
+        }
+        return user;
+    }
     async createSession(user, tx) {
         const prisma = tx ?? this.prisma;
         const sessionId = (0, crypto_1.randomUUID)();

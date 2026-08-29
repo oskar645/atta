@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 
 import { buildReferralCode } from '../../common/referral-code';
+import { LISTING_DRAFT_TITLE_PLACEHOLDER } from '../../common/listing-publication';
 import { AdminGuard } from '../auth/admin.guard';
 import { AdminService } from './admin.service';
 
@@ -51,11 +52,105 @@ test('moderation list uses pending filter without deleted or archived items', as
 
   await service.listListings('pending');
 
-  assert.deepEqual(capturedWhere, {
-    deletedAt: null,
-    archivedAt: null,
+  assert.equal(capturedWhere?.deletedAt, null);
+  assert.equal(capturedWhere?.archivedAt, null);
+  assert.equal(capturedWhere?.status, ListingStatus.PENDING);
+  assert.deepEqual(capturedWhere?.photos, { some: {} });
+  assert.deepEqual(capturedWhere?.price, { gt: BigInt(0) });
+});
+
+test('moderation list excludes incomplete legacy pending records defensively', async () => {
+  const createdAt = new Date('2026-07-01T10:00:00.000Z');
+  const baseListing = {
+    id: 'listing-valid',
+    ownerId: 'owner-1',
+    ownerEmail: 'owner@example.com',
+    ownerName: 'Owner',
+    title: 'Фара Toyota',
+    description: 'Оригинальная фара',
+    category: 'Запчасти',
+    subcategory: 'Оптика',
+    price: BigInt(1000),
+    phone: '',
+    phoneHidden: false,
+    city: 'Грозный',
+    address: '',
+    latitude: null,
+    longitude: null,
+    locationJson: {},
+    delivery: {},
+    car: null,
+    dealType: null,
+    realEstateType: null,
+    clothesType: null,
+    clothesSize: null,
+    oemPartNumber: null,
+    oemPartNumberNormalized: null,
     status: ListingStatus.PENDING,
-  });
+    rejectionReason: null,
+    moderationNote: null,
+    moderatedBy: null,
+    moderatedAt: null,
+    publishedAt: null,
+    archivedAt: null,
+    deletedAt: null,
+    viewCount: 0,
+    createdAt,
+    updatedAt: createdAt,
+    owner: null,
+    photos: [
+      {
+        id: 'photo-1',
+        listingId: 'listing-valid',
+        storageBucket: 'local',
+        storageKey: 'listings/photo.jpg',
+        publicUrl: 'https://example.com/photo.jpg',
+        sortOrder: 0,
+        sizeBytes: 128,
+        mimeType: 'image/jpeg',
+        createdAt,
+      },
+    ],
+    moderationRevisions: [],
+  };
+
+  const service = new AdminService(
+    {
+      listing: {
+        findMany: async () => [
+          baseListing,
+          {
+            ...baseListing,
+            id: 'listing-broken',
+            title: LISTING_DRAFT_TITLE_PLACEHOLDER,
+            price: BigInt(0),
+            photos: [],
+          },
+        ],
+        count: async () => 1,
+      },
+      user: { count: async () => 0 },
+      userPresence: { count: async () => 0 },
+      supportTicket: { count: async () => 0 },
+      report: { count: async () => 0 },
+      feedAd: { count: async () => 0 },
+      promotion: { aggregate: async () => ({ _sum: { price: 0 } }) },
+      walletTransaction: { aggregate: async () => ({ _sum: { amount: 0 } }) },
+      $queryRaw: async () => [],
+    } as any,
+    { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
+    { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
+    { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
+    {} as any,
+    {} as any,
+  );
+
+  const response = await service.getModerationQueue();
+
+  assert.deepEqual(
+    response.items.map((item: { id: string }) => item.id),
+    ['listing-valid'],
+  );
 });
 
 test('users list excludes soft-deleted users', async () => {
@@ -484,6 +579,21 @@ test('re-moderation without photos is rejected', async () => {
   );
 });
 
+test('moderator approval rejects incomplete pending listing with placeholder title', async () => {
+  const service = createApproveListingService({
+    photos: [listingPhoto('photo-1')],
+    status: ListingStatus.PENDING,
+    title: LISTING_DRAFT_TITLE_PLACEHOLDER,
+  });
+
+  await assert.rejects(
+    () => service.approveListing('listing-1', adminUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_PUBLICATION_NOT_READY',
+  );
+});
+
 test('points purchases summary serializes successful paid totals', async () => {
   const service = new AdminService(
     {
@@ -650,6 +760,7 @@ function createReferralSearchService() {
 function createApproveListingService(params: {
   photos: ReturnType<typeof listingPhoto>[];
   status: ListingStatus;
+  title?: string;
   price?: bigint;
   oemPartNumber?: string | null;
   oemPartNumberNormalized?: string | null;
@@ -661,6 +772,7 @@ function createApproveListingService(params: {
       listing: {
         findUnique: async () =>
           listingForModeration(params.status, params.photos, {
+            title: params.title,
             price: params.price,
             oemPartNumber: params.oemPartNumber,
             oemPartNumberNormalized: params.oemPartNumberNormalized,
@@ -674,6 +786,7 @@ function createApproveListingService(params: {
               params.photos,
               {
                 price: params.price,
+                title: params.title,
                 previousPrice:
                   (args.data as { previousPrice?: bigint | null }).previousPrice ??
                   null,
@@ -714,6 +827,7 @@ function listingForModeration(
   status: ListingStatus,
   photos: ReturnType<typeof listingPhoto>[],
   options?: {
+    title?: string;
     price?: bigint;
     previousPrice?: bigint | null;
     priceReducedAt?: Date | null;
@@ -728,16 +842,16 @@ function listingForModeration(
     ownerId: 'owner-1',
     ownerEmail: 'owner@example.com',
     ownerName: 'Owner',
-    title: 'Listing',
+    title: options?.title ?? 'Listing',
     description: 'Description',
-    category: 'misc',
+    category: 'Другое',
     subcategory: '',
     price: options?.price ?? BigInt(100),
     previousPrice: options?.previousPrice ?? null,
     priceReducedAt: options?.priceReducedAt ?? null,
     phone: '',
     phoneHidden: false,
-    city: '',
+    city: 'Грозный',
     address: '',
     latitude: null,
     longitude: null,

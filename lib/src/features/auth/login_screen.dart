@@ -144,7 +144,12 @@ class _PhoneRegistrationDraft {
 }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({
+    super.key,
+    this.initialIsLogin = true,
+  });
+
+  final bool initialIsLogin;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -160,7 +165,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _registrationNameFocusNode = FocusNode();
   final _registrationPhoneFocusNode = FocusNode();
 
-  bool _isLogin = true;
+  late bool _isLogin;
   bool _loading = false;
   bool _hasAcceptedLegal = false;
   _AuthMethod _authMethod = _AuthMethod.phone;
@@ -176,6 +181,12 @@ class _LoginScreenState extends State<LoginScreen> {
       _hasAcceptedLegal;
   bool get _canContinuePhoneLogin =>
       !_loading && _isValidRuPhone(_loginCtrl.text);
+
+  @override
+  void initState() {
+    super.initState();
+    _isLogin = widget.initialIsLogin;
+  }
 
   @override
   void dispose() {

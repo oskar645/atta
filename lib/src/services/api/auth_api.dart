@@ -85,6 +85,59 @@ class AuthApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> restoreCredentialRegistrationOptions() async {
+    final response = await _client.post(
+      '/auth/restore-credentials/registration-options',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> registerRestoreCredential({
+    required Map<String, dynamic> responseJson,
+  }) async {
+    final response = await _client.post(
+      '/auth/restore-credentials/register',
+      authorized: true,
+      body: {
+        'response': responseJson,
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> restoreCredentialAuthenticationOptions() async {
+    final response = await _client.post(
+      '/auth/restore-credentials/authentication-options',
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> authenticateWithRestoreCredential({
+    required Map<String, dynamic> responseJson,
+  }) async {
+    final response = await _client.post(
+      '/auth/restore-credentials/authenticate',
+      body: {
+        'response': responseJson,
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> revokeRestoreCredential({
+    String credentialId = '',
+  }) async {
+    final response = await _client.post(
+      '/auth/restore-credentials/revoke',
+      authorized: true,
+      body: {
+        if (credentialId.trim().isNotEmpty) 'credentialId': credentialId.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> deleteAccount() async {
     final response = await _client.delete('/auth/account', authorized: true);
     return Map<String, dynamic>.from(response as Map);

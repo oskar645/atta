@@ -26,11 +26,14 @@ const signup_dto_1 = require("./dto/signup.dto");
 const signup_phone_dto_1 = require("./dto/signup-phone.dto");
 const jwt_auth_guard_1 = require("./jwt-auth.guard");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
+const restore_credentials_service_1 = require("./restore-credentials.service");
+const restore_credentials_dto_1 = require("./dto/restore-credentials.dto");
 let AuthController = class AuthController {
-    constructor(authService, appVisitsService, rateLimitService) {
+    constructor(authService, appVisitsService, rateLimitService, restoreCredentialsService) {
         this.authService = authService;
         this.appVisitsService = appVisitsService;
         this.rateLimitService = rateLimitService;
+        this.restoreCredentialsService = restoreCredentialsService;
     }
     rateKey(request, action) {
         const forwarded = request?.headers?.['x-forwarded-for']?.toString() ?? '';
@@ -83,6 +86,29 @@ let AuthController = class AuthController {
     }
     getMe(authUser) {
         return this.authService.getMe(authUser);
+    }
+    createRestoreCredentialRegistrationOptions(authUser) {
+        return this.restoreCredentialsService.createRegistrationOptions(authUser);
+    }
+    verifyRestoreCredentialRegistration(authUser, dto) {
+        return this.restoreCredentialsService.verifyRegistration(authUser, dto.response);
+    }
+    async createRestoreCredentialAuthenticationOptions(request) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'restore-credentials-authentication-options'), {
+            limit: 10,
+            windowMs: 60 * 1000,
+        });
+        return this.restoreCredentialsService.createAuthenticationOptions();
+    }
+    async verifyRestoreCredentialAuthentication(request, dto) {
+        await this.rateLimitService.consumeOrThrow(this.rateKey(request, 'restore-credentials-authenticate'), {
+            limit: 8,
+            windowMs: 60 * 1000,
+        });
+        return this.restoreCredentialsService.verifyAuthentication(dto.response);
+    }
+    revokeRestoreCredential(authUser, dto) {
+        return this.restoreCredentialsService.revoke(authUser, dto.credentialId ?? dto.credential_id);
     }
     markAppOpened(authUser) {
         return this.appVisitsService.markAppOpened(authUser.userId);
@@ -162,6 +188,47 @@ __decorate([
 ], AuthController.prototype, "getMe", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('restore-credentials/registration-options'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "createRestoreCredentialRegistrationOptions", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('restore-credentials/register'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, restore_credentials_dto_1.VerifyRestoreCredentialRegistrationDto]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "verifyRestoreCredentialRegistration", null);
+__decorate([
+    (0, common_1.Post)('restore-credentials/authentication-options'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], AuthController.prototype, "createRestoreCredentialAuthenticationOptions", null);
+__decorate([
+    (0, common_1.Post)('restore-credentials/authenticate'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, restore_credentials_dto_1.VerifyRestoreCredentialAuthenticationDto]),
+    __metadata("design:returntype", Promise)
+], AuthController.prototype, "verifyRestoreCredentialAuthentication", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('restore-credentials/revoke'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, restore_credentials_dto_1.RevokeRestoreCredentialDto]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "revokeRestoreCredential", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('app-open'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
@@ -212,6 +279,7 @@ exports.AuthController = AuthController = __decorate([
     (0, common_1.Controller)('auth'),
     __metadata("design:paramtypes", [auth_service_1.AuthService,
         app_visits_service_1.AppVisitsService,
-        rate_limit_service_1.RateLimitService])
+        rate_limit_service_1.RateLimitService,
+        restore_credentials_service_1.RestoreCredentialsService])
 ], AuthController);
 //# sourceMappingURL=auth.controller.js.map

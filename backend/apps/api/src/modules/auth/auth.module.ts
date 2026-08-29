@@ -11,6 +11,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
+import { RestoreCredentialsService } from './restore-credentials.service';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [
@@ -18,12 +20,19 @@ import { OptionalJwtAuthGuard } from './optional-jwt-auth.guard';
     forwardRef(() => StorageModule),
     WalletModule,
     UserBlocksModule,
+    RedisModule,
     JwtModule.register({
       secret: env.JWT_ACCESS_SECRET,
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard, OptionalJwtAuthGuard, AdminGuard],
+  providers: [
+    AuthService,
+    RestoreCredentialsService,
+    JwtAuthGuard,
+    OptionalJwtAuthGuard,
+    AdminGuard,
+  ],
   exports: [AuthService, JwtAuthGuard, OptionalJwtAuthGuard, AdminGuard, JwtModule],
 })
 export class AuthModule {}

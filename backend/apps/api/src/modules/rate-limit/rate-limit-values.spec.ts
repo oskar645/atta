@@ -57,6 +57,7 @@ const authUser = {
   userId: 'user-1',
   role: 'user' as const,
 };
+const restoreCredentialsService = {};
 
 test('existing auth rate limit values are preserved', async () => {
   const cases = [
@@ -70,7 +71,12 @@ test('existing auth rate limit values are preserved', async () => {
 
   for (const [method, limit] of cases) {
     const options = await captureLimit(async (rateLimit) => {
-      const controller = new AuthController({} as never, {} as never, rateLimit as never);
+      const controller = new AuthController(
+        {} as never,
+        {} as never,
+        rateLimit as never,
+        restoreCredentialsService as never,
+      );
       await (controller[method] as (request: unknown, dto: unknown) => Promise<unknown>)(
         request,
         {},
@@ -84,7 +90,12 @@ test('existing auth rate limit values are preserved', async () => {
 
 test('signup-phone rate limit source follows trusted request.ip per client', async () => {
   const first = await captureRateLimitCall((rateLimit) => {
-    const testedController = new AuthController({} as never, {} as never, rateLimit as never);
+    const testedController = new AuthController(
+      {} as never,
+      {} as never,
+      rateLimit as never,
+      restoreCredentialsService as never,
+    );
     return testedController.signupPhone(
       {
         ip: '198.51.100.10',
@@ -96,7 +107,12 @@ test('signup-phone rate limit source follows trusted request.ip per client', asy
     );
   });
   const second = await captureRateLimitCall((rateLimit) => {
-    const testedController = new AuthController({} as never, {} as never, rateLimit as never);
+    const testedController = new AuthController(
+      {} as never,
+      {} as never,
+      rateLimit as never,
+      restoreCredentialsService as never,
+    );
     return testedController.signupPhone(
       {
         ip: '198.51.100.11',

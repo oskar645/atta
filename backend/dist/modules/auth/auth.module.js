@@ -19,6 +19,8 @@ const auth_controller_1 = require("./auth.controller");
 const auth_service_1 = require("./auth.service");
 const jwt_auth_guard_1 = require("./jwt-auth.guard");
 const optional_jwt_auth_guard_1 = require("./optional-jwt-auth.guard");
+const restore_credentials_service_1 = require("./restore-credentials.service");
+const redis_module_1 = require("../redis/redis.module");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -29,12 +31,19 @@ exports.AuthModule = AuthModule = __decorate([
             (0, common_1.forwardRef)(() => storage_module_1.StorageModule),
             wallet_module_1.WalletModule,
             user_blocks_module_1.UserBlocksModule,
+            redis_module_1.RedisModule,
             jwt_1.JwtModule.register({
                 secret: env_1.env.JWT_ACCESS_SECRET,
             }),
         ],
         controllers: [auth_controller_1.AuthController],
-        providers: [auth_service_1.AuthService, jwt_auth_guard_1.JwtAuthGuard, optional_jwt_auth_guard_1.OptionalJwtAuthGuard, admin_guard_1.AdminGuard],
+        providers: [
+            auth_service_1.AuthService,
+            restore_credentials_service_1.RestoreCredentialsService,
+            jwt_auth_guard_1.JwtAuthGuard,
+            optional_jwt_auth_guard_1.OptionalJwtAuthGuard,
+            admin_guard_1.AdminGuard,
+        ],
         exports: [auth_service_1.AuthService, jwt_auth_guard_1.JwtAuthGuard, optional_jwt_auth_guard_1.OptionalJwtAuthGuard, admin_guard_1.AdminGuard, jwt_1.JwtModule],
     })
 ], AuthModule);

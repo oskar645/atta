@@ -9,10 +9,12 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ListingsService = exports.LISTING_PHOTO_REQUIRED = exports.LISTING_STATUSES = exports.canViewListing = exports.listingInclude = exports.normalizeOemPartNumber = void 0;
+exports.ListingsService = exports.LISTING_PUBLICATION_NOT_READY = exports.LISTING_PHOTO_REQUIRED = exports.LISTING_STATUSES = exports.canViewListing = exports.listingInclude = exports.normalizeOemPartNumber = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const listing_search_1 = require("../../common/listing-search");
+const listing_publication_1 = require("../../common/listing-publication");
+Object.defineProperty(exports, "LISTING_PUBLICATION_NOT_READY", { enumerable: true, get: function () { return listing_publication_1.LISTING_PUBLICATION_NOT_READY; } });
 const serializers_1 = require("../../common/serializers");
 const phone_1 = require("../../common/phone");
 const prisma_service_1 = require("../prisma/prisma.service");
@@ -338,8 +340,18 @@ let ListingsService = class ListingsService {
         const oemPartNumber = isAutoPartsCategory(category)
             ? trimOptional(dto.oem_part_number)
             : null;
-        if (nextStatus === client_1.ListingStatus.APPROVED && !dto.photo_urls?.length) {
-            throw new common_1.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
+        if (nextStatus === client_1.ListingStatus.APPROVED &&
+            !(0, listing_publication_1.isListingReadyForPublication)({
+                ...dto,
+                title: dto.title,
+                description: dto.description,
+                category: dto.category,
+                subcategory: dto.subcategory,
+                price: dto.price,
+                city: dto.city,
+                photos: dto.photo_urls ?? [],
+            })) {
+            throw new common_1.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
         const listing = await this.prisma.listing.create({
             data: {
@@ -1048,10 +1060,12 @@ let ListingsService = class ListingsService {
                     });
                 }
             }
-            return tx.listing.findUniqueOrThrow({
+            const updatedListing = await tx.listing.findUniqueOrThrow({
                 where: { id },
                 include: exports.listingInclude,
             });
+            this.assertListingReadyForStatus(updatedListing, nextStatus);
+            return updatedListing;
         });
         return {
             listing: (0, serializers_1.serializeListing)(updated),
@@ -1146,7 +1160,7 @@ let ListingsService = class ListingsService {
         }
         const updated = await this.prisma.$transaction(async (tx) => {
             if (viewerUserId != null && authUser?.role !== 'admin') {
-                await tx.$queryRaw `
+                await tx.$executeRaw `
           SELECT pg_advisory_xact_lock(
             hashtextextended(${`listing-view:${listingId}:${viewerUserId}`}, 0)
           )
@@ -1397,6 +1411,14 @@ let ListingsService = class ListingsService {
                 return true;
             default:
                 return false;
+        }
+    }
+    assertListingReadyForStatus(listing, status) {
+        if (!(0, listing_publication_1.requiresPublicationReadiness)(status)) {
+            return;
+        }
+        if (!(0, listing_publication_1.isListingReadyForPublication)(listing)) {
+            throw new common_1.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
     }
     async resubmitPublishedListingAfterOwnerEdit(listing, authUser, tx = this.prisma) {

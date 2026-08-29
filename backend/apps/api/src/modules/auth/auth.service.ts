@@ -701,6 +701,27 @@ export class AuthService {
     };
   }
 
+  async createSessionForUser(user: UserWithAdminProfile) {
+    const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
+    const session = await this.createSession(userWithAdmin);
+    await this.ensureWalletBootstrapSafely(userWithAdmin.id);
+
+    return this.buildAuthResponse(userWithAdmin, session.auth);
+  }
+
+  async findActiveUserByIdOrThrow(userId: string) {
+    const user = await this.findActiveUserById(userId);
+    const activeBlock = await this.userBlocksService.getActiveBlock(user.id);
+    if (activeBlock || user.status !== UserStatus.ACTIVE) {
+      throw this.createUnauthorizedError(
+        'ACCOUNT_BLOCKED',
+        'Аккаунт заблокирован',
+      );
+    }
+
+    return user;
+  }
+
   private async createSession(
     user: UserWithAdminProfile,
     tx?: Prisma.TransactionClient,

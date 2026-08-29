@@ -84,6 +84,9 @@ const envSchema = z.object({
   YOOKASSA_MIN_AMOUNT_RUB: z.coerce.number().int().positive().default(100),
   YOOKASSA_MAX_AMOUNT_RUB: z.coerce.number().int().positive().default(1500),
   YOOKASSA_POINTS_PER_RUBLE: z.coerce.number().int().positive().default(1),
+  RESTORE_CREDENTIALS_RP_ID: z.string().min(1).default('attamarket.online'),
+  RESTORE_CREDENTIALS_RP_NAME: z.string().min(1).default('ATTA'),
+  RESTORE_CREDENTIALS_ANDROID_ORIGINS: z.string().optional().default(''),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -128,3 +131,8 @@ export const parseAdminPhoneNumbers = () =>
   )
     .map((phone) => normalizeRussianPhone(phone.trim()))
     .filter((phone) => phone.length > 0);
+
+export const parseRestoreCredentialOrigins = () =>
+  env.RESTORE_CREDENTIALS_ANDROID_ORIGINS.split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);

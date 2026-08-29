@@ -21,6 +21,12 @@ import { SignupPhoneDto } from './dto/signup-phone.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { AuthenticatedUser } from './auth.types';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
+import { RestoreCredentialsService } from './restore-credentials.service';
+import {
+  RevokeRestoreCredentialDto,
+  VerifyRestoreCredentialAuthenticationDto,
+  VerifyRestoreCredentialRegistrationDto,
+} from './dto/restore-credentials.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -28,6 +34,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly appVisitsService: AppVisitsService,
     private readonly rateLimitService: RateLimitService,
+    private readonly restoreCredentialsService: RestoreCredentialsService,
   ) {}
 
   private rateKey(request: any, action: string) {
@@ -109,6 +116,65 @@ export class AuthController {
   @Get('me')
   getMe(@CurrentUser() authUser: AuthenticatedUser) {
     return this.authService.getMe(authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('restore-credentials/registration-options')
+  createRestoreCredentialRegistrationOptions(
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.restoreCredentialsService.createRegistrationOptions(authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('restore-credentials/register')
+  verifyRestoreCredentialRegistration(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() dto: VerifyRestoreCredentialRegistrationDto,
+  ) {
+    return this.restoreCredentialsService.verifyRegistration(
+      authUser,
+      dto.response,
+    );
+  }
+
+  @Post('restore-credentials/authentication-options')
+  async createRestoreCredentialAuthenticationOptions(@Req() request: any) {
+    await this.rateLimitService.consumeOrThrow(
+      this.rateKey(request, 'restore-credentials-authentication-options'),
+      {
+        limit: 10,
+        windowMs: 60 * 1000,
+      },
+    );
+    return this.restoreCredentialsService.createAuthenticationOptions();
+  }
+
+  @Post('restore-credentials/authenticate')
+  async verifyRestoreCredentialAuthentication(
+    @Req() request: any,
+    @Body() dto: VerifyRestoreCredentialAuthenticationDto,
+  ) {
+    await this.rateLimitService.consumeOrThrow(
+      this.rateKey(request, 'restore-credentials-authenticate'),
+      {
+        limit: 8,
+        windowMs: 60 * 1000,
+      },
+    );
+    return this.restoreCredentialsService.verifyAuthentication(dto.response);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('restore-credentials/revoke')
+  revokeRestoreCredential(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() dto: RevokeRestoreCredentialDto,
+  ) {
+    return this.restoreCredentialsService.revoke(
+      authUser,
+      dto.credentialId ?? dto.credential_id,
+    );
   }
 
   @UseGuards(JwtAuthGuard)

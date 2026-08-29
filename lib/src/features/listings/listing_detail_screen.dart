@@ -1979,12 +1979,13 @@ class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
           ? mediaQueryElement!.widget as MediaQuery
           : null;
       final position = _scrollPositionOrNull();
+      final hasDimensions = position?.hasContentDimensions ?? false;
       final height = _sectionKey.currentContext?.size?.height;
       debugPrint(
         'ATTA listing detail bottom: $reason '
-        'pixels=${position?.pixels.toStringAsFixed(1)} '
-        'max=${position?.maxScrollExtent.toStringAsFixed(1)} '
-        'after=${position?.extentAfter.toStringAsFixed(1)} '
+        'pixels=${hasDimensions ? position?.pixels.toStringAsFixed(1) : null} '
+        'max=${hasDimensions ? position?.maxScrollExtent.toStringAsFixed(1) : null} '
+        'after=${hasDimensions ? position?.extentAfter.toStringAsFixed(1) : null} '
         'safeBottom=${mediaQuery?.data.padding.bottom.toStringAsFixed(1)} '
         'viewBottom=${mediaQuery?.data.viewPadding.bottom.toStringAsFixed(1)} '
         'similarHeight=${height?.toStringAsFixed(1)} '

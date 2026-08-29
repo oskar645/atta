@@ -15,6 +15,7 @@ const client_1 = require("@prisma/client");
 const phone_1 = require("../../common/phone");
 const referral_code_1 = require("../../common/referral-code");
 const serializers_1 = require("../../common/serializers");
+const listing_publication_1 = require("../../common/listing-publication");
 const app_visits_service_1 = require("../app-visits/app-visits.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
@@ -980,6 +981,7 @@ let AdminService = class AdminService {
             ...(normalizedStatus == 'all' || normalizedStatus.length === 0
                 ? {}
                 : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),
+            ...(isPending ? (0, listing_publication_1.listingPublicationReadyWhere)() : {}),
         };
         const [items, total, pendingModeration] = await Promise.all([
             this.prisma.listing.findMany({
@@ -1014,6 +1016,7 @@ let AdminService = class AdminService {
                     deletedAt: null,
                     archivedAt: null,
                     status: client_1.ListingStatus.PENDING,
+                    ...(0, listing_publication_1.listingPublicationReadyWhere)(),
                 },
             }),
         ]);
@@ -1023,7 +1026,9 @@ let AdminService = class AdminService {
         }));
         return {
             source: 'timeweb',
-            items: page.items.map((listing) => this.serializeAdminListing(listing)),
+            items: page.items
+                .filter((listing) => !isPending || (0, listing_publication_1.isListingReadyForPublication)(listing))
+                .map((listing) => this.serializeAdminListing(listing)),
             total,
             pendingModeration,
             pending_moderation: pendingModeration,
@@ -1963,6 +1968,9 @@ let AdminService = class AdminService {
         }
         if (listing.photos.length === 0) {
             throw new common_1.BadRequestException(listings_service_1.LISTING_PHOTO_REQUIRED);
+        }
+        if (!(0, listing_publication_1.isListingReadyForPublication)(listing)) {
+            throw new common_1.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
         const now = new Date();
         const updated = await this.prisma.listing.update({

@@ -19,6 +19,11 @@ import {
   normalizeOemPartNumber,
 } from '../../common/listing-search';
 import {
+  LISTING_PUBLICATION_NOT_READY,
+  isListingReadyForPublication,
+  requiresPublicationReadiness,
+} from '../../common/listing-publication';
+import {
   listingStatusFromInput,
   listingStatusToResponse,
   serializeListing,
@@ -87,6 +92,7 @@ export const LISTING_STATUSES = [
 ] as const;
 
 export const LISTING_PHOTO_REQUIRED = 'LISTING_PHOTO_REQUIRED';
+export { LISTING_PUBLICATION_NOT_READY };
 
 const toInputJson = (value: Record<string, unknown> | undefined) =>
   (value ?? {}) as Prisma.InputJsonValue;
@@ -127,6 +133,11 @@ type ListingWithModerationSnapshot = Prisma.ListingGetPayload<{
     photos: true;
   };
 }>;
+
+type ListingPublicationCandidate = Pick<
+  ListingWithPublicRelations,
+  'title' | 'description' | 'category' | 'subcategory' | 'price' | 'city' | 'photos'
+>;
 
 const PROTECTED_FEED_HEAD_SIZE = 10;
 const VIP_INTERLEAVE_FEED_MODE = 'vip_interleave_v1';
@@ -488,8 +499,20 @@ export class ListingsService {
       ? trimOptional(dto.oem_part_number)
       : null;
 
-    if (nextStatus === ListingStatus.APPROVED && !dto.photo_urls?.length) {
-      throw new BadRequestException(LISTING_PHOTO_REQUIRED);
+    if (
+      nextStatus === ListingStatus.APPROVED &&
+      !isListingReadyForPublication({
+        ...dto,
+        title: dto.title,
+        description: dto.description,
+        category: dto.category,
+        subcategory: dto.subcategory,
+        price: dto.price,
+        city: dto.city,
+        photos: dto.photo_urls ?? [],
+      })
+    ) {
+      throw new BadRequestException(LISTING_PUBLICATION_NOT_READY);
     }
 
     const listing = await this.prisma.listing.create({
@@ -1319,10 +1342,14 @@ export class ListingsService {
         }
       }
 
-      return tx.listing.findUniqueOrThrow({
+      const updatedListing = await tx.listing.findUniqueOrThrow({
         where: { id },
         include: listingInclude,
       });
+
+      this.assertListingReadyForStatus(updatedListing, nextStatus);
+
+      return updatedListing;
     });
 
     return {
@@ -1446,7 +1473,7 @@ export class ListingsService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       if (viewerUserId != null && authUser?.role !== 'admin') {
-        await tx.$queryRaw`
+        await tx.$executeRaw`
           SELECT pg_advisory_xact_lock(
             hashtextextended(${`listing-view:${listingId}:${viewerUserId}`}, 0)
           )
@@ -1756,6 +1783,19 @@ export class ListingsService {
         return true;
       default:
         return false;
+    }
+  }
+
+  private assertListingReadyForStatus(
+    listing: ListingPublicationCandidate,
+    status: ListingStatus,
+  ) {
+    if (!requiresPublicationReadiness(status)) {
+      return;
+    }
+
+    if (!isListingReadyForPublication(listing)) {
+      throw new BadRequestException(LISTING_PUBLICATION_NOT_READY);
     }
   }
 

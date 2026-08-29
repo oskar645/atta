@@ -133,7 +133,7 @@ class _AuthGateState extends State<AuthGate> {
     final unauthenticatedBuilder = widget.unauthenticatedBuilder;
     return unauthenticatedBuilder != null
         ? unauthenticatedBuilder(context)
-        : const LoginScreen();
+        : const LoginScreen(initialIsLogin: false);
   }
 }
 
