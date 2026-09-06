@@ -105,6 +105,45 @@ test('listing search where is token-based and reusable by feed, VIP, and showcas
   ));
 });
 
+test('listing search includes title, description, and scalar characteristics', () => {
+  const where = buildListingSearchWhere('болгарка') as Record<string, any>;
+  const serialized = JSON.stringify(where);
+
+  assert.ok(serialized.includes('"title"'));
+  assert.ok(serialized.includes('"description"'));
+  assert.ok(serialized.includes('"realEstateType"'));
+  assert.ok(serialized.includes('"clothesType"'));
+  assert.ok(serialized.includes('"clothesSize"'));
+  assert.ok(serialized.includes('"dealType"'));
+});
+
+test('listing search includes all visible car characteristics, not only brand and model', () => {
+  const where = buildListingSearchWhere('XV70') as Record<string, any>;
+  const serialized = JSON.stringify(where);
+
+  assert.ok(serialized.includes('"path":["brand"]'));
+  assert.ok(serialized.includes('"path":["model"]'));
+  assert.ok(serialized.includes('"path":["generation"]'));
+  assert.ok(serialized.includes('"path":["bodyType"]'));
+  assert.ok(serialized.includes('"path":["vin"]'));
+  assert.ok(serialized.includes('"path":["note"]'));
+});
+
+test('listing search sql searches scalar and JSON characteristics DB-side', () => {
+  const sql = buildListingSearchSql('XL')!;
+
+  assert.match(sql.sql, /l\."clothes_size"/);
+  assert.match(sql.sql, /jsonb_each_text\(coalesce\(l\."car"::jsonb/);
+});
+
+test('listing search sql normalizes code candidates inside JSON characteristics', () => {
+  const sql = buildListingSearchSql('81150 06C70')!;
+
+  assert.match(sql.sql, /oem_part_number_normalized/);
+  assert.match(sql.sql, /regexp_replace\(upper\(car_search\."value"\)/);
+  assert.ok(sql.values.includes('8115006C70'));
+});
+
 test('listing search sql uses trigram operator for bounded fuzzy text only', () => {
   const fuzzySql = buildListingSearchSql('Toyta')!;
   const oemSql = buildListingSearchSql('81150-06C70')!;

@@ -1023,12 +1023,7 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
-    final lastRefreshAt = _lastRefreshAt;
-    if (lastRefreshAt != null &&
-        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
-      return;
-    }
-    _retry();
+    unawaited(_refreshAfterResume());
   }
 
   void _retry() {
@@ -1038,6 +1033,55 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile>
       _future = walletService.checkAccrual(forceRefresh: true);
     });
     _lastRefreshAt = DateTime.now();
+  }
+
+  Future<bool> _checkPendingTopUpStatus() async {
+    try {
+      final result =
+          await context.read<WalletService>().checkPendingTopUpStatus();
+      if (!mounted || result == null) {
+        return false;
+      }
+      if (result.status == WalletTopUpStatus.succeeded) {
+        _retry();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Оплата прошла. Начислено ${result.pointsAmount} баллов',
+            ),
+          ),
+        );
+        return true;
+      }
+      if (result.status == WalletTopUpStatus.canceled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Оплата не завершена')),
+        );
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _refreshAfterResume() async {
+    final refreshedFromTopUp = await _checkPendingTopUpStatus();
+    if (refreshedFromTopUp || !mounted) return;
+    final lastRefreshAt = _lastRefreshAt;
+    if (lastRefreshAt != null &&
+        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
+      return;
+    }
+    _retry();
+  }
+
+  Future<void> _openTopUpSheet() async {
+    await showWalletTopUpSheet(
+      context,
+      onPaymentStarted: () {
+        unawaited(_checkPendingTopUpStatus());
+      },
+    );
   }
 
   String _walletErrorText(Object error) {
@@ -1063,7 +1107,6 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final walletService = context.read<WalletService>();
     return FutureBuilder<Wallet?>(
       future: _future,
@@ -1080,68 +1123,222 @@ class _ProfileWalletTileState extends State<_ProfileWalletTile>
         } else {
           _lastWalletErrorText = null;
         }
-        return Column(
-          children: [
-            ListTile(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-              tileColor: theme.colorScheme.surfaceContainerHighest,
-              leading: const Icon(Icons.account_balance_wallet_outlined),
-              title: const Text('ATTA Кошелёк'),
-              subtitle: const Text('Бонусы для продвижения'),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (wallet != null)
-                    Text(
-                      '${wallet.balance} бонусов',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: refreshing
-                        ? const Padding(
-                            padding: EdgeInsets.all(2),
-                            child: CircularProgressIndicator(strokeWidth: 2.2),
-                          )
-                        : hasError
-                            ? IconButton(
-                                padding: EdgeInsets.zero,
-                                splashRadius: 18,
-                                tooltip: 'Обновить кошелёк',
-                                onPressed: _retry,
-                                icon: const Icon(
-                                  Icons.refresh_rounded,
-                                  size: 20,
-                                ),
-                              )
-                            : IconButton(
-                                padding: EdgeInsets.zero,
-                                splashRadius: 18,
-                                tooltip: 'Обновить кошелёк',
-                                onPressed: _retry,
-                                icon: const Icon(
-                                  Icons.refresh_rounded,
-                                  size: 20,
-                                ),
-                              ),
-                  ),
-                ],
-              ),
-              onTap: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const WalletScreen(),
-                  ),
-                );
-              },
-            ),
-          ],
+        return _ProfileWalletCard(
+          wallet: wallet,
+          refreshing: refreshing,
+          onRefresh: _retry,
+          onTopUp: _openTopUpSheet,
         );
       },
+    );
+  }
+}
+
+class _ProfileWalletCard extends StatelessWidget {
+  const _ProfileWalletCard({
+    required this.wallet,
+    required this.refreshing,
+    required this.onRefresh,
+    required this.onTopUp,
+  });
+
+  final Wallet? wallet;
+  final bool refreshing;
+  final VoidCallback onRefresh;
+  final VoidCallback onTopUp;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: InkWell(
+        key: const Key('profile-wallet-card'),
+        borderRadius: BorderRadius.circular(14),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const WalletScreen(),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 340;
+              final info = _ProfileWalletInfo(
+                wallet: wallet,
+                showBalance: !narrow,
+              );
+              final refresh = _ProfileWalletRefreshButton(
+                refreshing: refreshing,
+                onRefresh: onRefresh,
+              );
+              final button = _ProfileWalletTopUpButton(onPressed: onTopUp);
+
+              if (narrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.account_balance_wallet_outlined),
+                        const SizedBox(width: 16),
+                        Expanded(child: info),
+                        const SizedBox(width: 8),
+                        refresh,
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(child: _ProfileWalletBalance(wallet: wallet)),
+                        const SizedBox(width: 10),
+                        button,
+                      ],
+                    ),
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  const Icon(Icons.account_balance_wallet_outlined),
+                  const SizedBox(width: 16),
+                  Expanded(child: info),
+                  const SizedBox(width: 10),
+                  refresh,
+                  const SizedBox(width: 8),
+                  button,
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileWalletInfo extends StatelessWidget {
+  const _ProfileWalletInfo({
+    required this.wallet,
+    required this.showBalance,
+  });
+
+  final Wallet? wallet;
+  final bool showBalance;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'ATTA Кошелёк',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Бонусы для продвижения',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+        ),
+        if (showBalance && wallet != null) ...[
+          const SizedBox(height: 4),
+          _ProfileWalletBalance(wallet: wallet),
+        ],
+      ],
+    );
+  }
+}
+
+class _ProfileWalletBalance extends StatelessWidget {
+  const _ProfileWalletBalance({required this.wallet});
+
+  final Wallet? wallet;
+
+  @override
+  Widget build(BuildContext context) {
+    final wallet = this.wallet;
+    if (wallet == null) {
+      return const SizedBox.shrink();
+    }
+    return Text(
+      '${wallet.balance} бонусов',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontWeight: FontWeight.w800),
+    );
+  }
+}
+
+class _ProfileWalletRefreshButton extends StatelessWidget {
+  const _ProfileWalletRefreshButton({
+    required this.refreshing,
+    required this.onRefresh,
+  });
+
+  final bool refreshing;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    if (refreshing) {
+      return const SizedBox(
+        width: 22,
+        height: 22,
+        child: Padding(
+          padding: EdgeInsets.all(2),
+          child: CircularProgressIndicator(strokeWidth: 2.2),
+        ),
+      );
+    }
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: IconButton(
+        padding: EdgeInsets.zero,
+        splashRadius: 18,
+        tooltip: 'Обновить кошелёк',
+        onPressed: onRefresh,
+        icon: const Icon(
+          Icons.refresh_rounded,
+          size: 20,
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileWalletTopUpButton extends StatelessWidget {
+  const _ProfileWalletTopUpButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton(
+      key: const Key('profile-wallet-top-up-button'),
+      onPressed: onPressed,
+      style: FilledButton.styleFrom(
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        minimumSize: const Size(0, 40),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+      child: const Text('Пополнить'),
     );
   }
 }

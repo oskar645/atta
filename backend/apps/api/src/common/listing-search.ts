@@ -10,6 +10,39 @@ const TEXT_FIELDS = [
   { prisma: 'ownerName', sql: 'owner_name' },
 ] as const;
 
+const CHARACTERISTIC_TEXT_FIELDS = [
+  { prisma: 'dealType', sql: 'deal_type' },
+  { prisma: 'realEstateType', sql: 'real_estate_type' },
+  { prisma: 'clothesType', sql: 'clothes_type' },
+  { prisma: 'clothesSize', sql: 'clothes_size' },
+] as const;
+
+const SEARCHABLE_TEXT_FIELDS = [
+  ...TEXT_FIELDS,
+  ...CHARACTERISTIC_TEXT_FIELDS,
+] as const;
+
+const CAR_CHARACTERISTIC_KEYS = [
+  'brand',
+  'model',
+  'generation',
+  'year',
+  'mileageKm',
+  'bodyType',
+  'fuel',
+  'engineVolume',
+  'powerHp',
+  'transmission',
+  'drive',
+  'condition',
+  'color',
+  'isCleared',
+  'pts',
+  'owners',
+  'vin',
+  'note',
+] as const;
+
 const SEARCH_ALIASES = [
   ['xiaomi', 'сяоми'],
   ['huawei', 'хуавей'],
@@ -319,7 +352,7 @@ const deletionTypoVariants = (value: string) => {
 };
 
 const textFieldContains = (
-  field: (typeof TEXT_FIELDS)[number]['prisma'],
+  field: (typeof SEARCHABLE_TEXT_FIELDS)[number]['prisma'],
   variant: string,
 ) =>
   ({
@@ -328,6 +361,14 @@ const textFieldContains = (
       mode: 'insensitive' as const,
     },
   }) satisfies Prisma.ListingWhereInput;
+
+const carCharacteristicContains = (key: (typeof CAR_CHARACTERISTIC_KEYS)[number], variant: string) =>
+  ({
+    car: {
+      path: [key],
+      string_contains: variant,
+    },
+  }) as unknown as Prisma.ListingWhereInput;
 
 const buildTokenSearchWhere = (token: string): Prisma.ListingWhereInput | null => {
   const variants = new Set(searchTextVariants(token));
@@ -338,21 +379,30 @@ const buildTokenSearchWhere = (token: string): Prisma.ListingWhereInput | null =
   }
 
   const textConditions: Prisma.ListingWhereInput[] = [...variants].flatMap((variant) =>
-    TEXT_FIELDS.map((field) => textFieldContains(field.prisma, variant)),
+    SEARCHABLE_TEXT_FIELDS.map((field) => textFieldContains(field.prisma, variant)),
   );
   const compactVariants = [...variants].map(compactSearchText).filter(Boolean);
   for (const compact of compactVariants) {
     textConditions.push(
-      ...TEXT_FIELDS.map((field) => textFieldContains(field.prisma, compact)),
+      ...SEARCHABLE_TEXT_FIELDS.map((field) => textFieldContains(field.prisma, compact)),
     );
   }
+
+  textConditions.push(
+    ...[...variants, ...compactVariants].flatMap((variant) =>
+      CAR_CHARACTERISTIC_KEYS.map((key) => carCharacteristicContains(key, variant)),
+    ),
+  );
 
   const fragments = typoFragments(token);
   if (fragments.length > 1) {
     textConditions.push(
-      ...TEXT_FIELDS.map((field) => ({
+      ...SEARCHABLE_TEXT_FIELDS.map((field) => ({
         AND: fragments.map((fragment) => textFieldContains(field.prisma, fragment)),
       })),
+      ...CAR_CHARACTERISTIC_KEYS.map((key) => ({
+        AND: fragments.map((fragment) => carCharacteristicContains(key, fragment)),
+      }) as unknown as Prisma.ListingWhereInput),
     );
   }
 
@@ -370,7 +420,12 @@ const buildTokenSearchWhere = (token: string): Prisma.ListingWhereInput | null =
 const buildPhraseSearchWhere = (value: string): Prisma.ListingWhereInput | null => {
   const variants = new Set(searchTextVariants(value));
   const textConditions: Prisma.ListingWhereInput[] = [...variants].flatMap((variant) =>
-    TEXT_FIELDS.map((field) => textFieldContains(field.prisma, variant)),
+    SEARCHABLE_TEXT_FIELDS.map((field) => textFieldContains(field.prisma, variant)),
+  );
+  textConditions.push(
+    ...[...variants].flatMap((variant) =>
+      CAR_CHARACTERISTIC_KEYS.map((key) => carCharacteristicContains(key, variant)),
+    ),
   );
   const oemConditions = extractOemSearchCandidates(value).map(
     (candidate) =>
@@ -403,7 +458,7 @@ export const buildListingSearchWhere = (
 
 const sqlTextContains = (
   alias: string,
-  field: (typeof TEXT_FIELDS)[number]['sql'],
+  field: (typeof SEARCHABLE_TEXT_FIELDS)[number]['sql'],
   variant: string,
 ) => {
   const table = Prisma.raw(alias);
@@ -413,7 +468,7 @@ const sqlTextContains = (
 
 const sqlTextCompactContains = (
   alias: string,
-  field: (typeof TEXT_FIELDS)[number]['sql'],
+  field: (typeof SEARCHABLE_TEXT_FIELDS)[number]['sql'],
   variant: string,
 ) => {
   const table = Prisma.raw(alias);
@@ -423,12 +478,51 @@ const sqlTextCompactContains = (
 
 const sqlTextFuzzyContains = (
   alias: string,
-  field: (typeof TEXT_FIELDS)[number]['sql'],
+  field: (typeof SEARCHABLE_TEXT_FIELDS)[number]['sql'],
   token: string,
 ) => {
   const compact = compactSearchText(token);
   const table = Prisma.raw(alias);
   return Prisma.sql`${table}.${Prisma.raw(`"${field}"`)} % ${compact}`;
+};
+
+const sqlCarValuesContain = (alias: string, variant: string) => {
+  const table = Prisma.raw(alias);
+  const searchPattern = `%${escapeLikePattern(variant)}%`;
+  return Prisma.sql`EXISTS (
+    SELECT 1
+    FROM jsonb_each_text(coalesce(${table}."car"::jsonb, '{}'::jsonb)) AS car_search("key", "value")
+    WHERE car_search."value" ILIKE ${searchPattern} ESCAPE '\\'
+  )`;
+};
+
+const sqlCarValuesCompactContain = (alias: string, variant: string) => {
+  const table = Prisma.raw(alias);
+  const compactPattern = `%${escapeLikePattern(compactSearchText(variant))}%`;
+  return Prisma.sql`EXISTS (
+    SELECT 1
+    FROM jsonb_each_text(coalesce(${table}."car"::jsonb, '{}'::jsonb)) AS car_search("key", "value")
+    WHERE regexp_replace(lower(car_search."value"), '[^[:alnum:]]+', '', 'g') LIKE ${compactPattern} ESCAPE '\\'
+  )`;
+};
+
+const sqlCarValuesFuzzyContain = (alias: string, token: string) => {
+  const compact = compactSearchText(token);
+  const table = Prisma.raw(alias);
+  return Prisma.sql`EXISTS (
+    SELECT 1
+    FROM jsonb_each_text(coalesce(${table}."car"::jsonb, '{}'::jsonb)) AS car_search("key", "value")
+    WHERE car_search."value" % ${compact}
+  )`;
+};
+
+const sqlCarValuesNormalizedCodeEquals = (alias: string, candidate: string) => {
+  const table = Prisma.raw(alias);
+  return Prisma.sql`EXISTS (
+    SELECT 1
+    FROM jsonb_each_text(coalesce(${table}."car"::jsonb, '{}'::jsonb)) AS car_search("key", "value")
+    WHERE regexp_replace(upper(car_search."value"), '[[:space:]\\-–—_/\\.]+', '', 'g') = ${candidate}
+  )`;
 };
 
 export const buildListingSearchSql = (
@@ -440,14 +534,23 @@ export const buildListingSearchSql = (
 
   const phraseVariants = new Set(searchTextVariants(value));
   const phraseConditions = [...phraseVariants].flatMap((variant) =>
-    TEXT_FIELDS.flatMap((field) => [
+    SEARCHABLE_TEXT_FIELDS.flatMap((field) => [
       sqlTextContains(alias, field.sql, variant),
       sqlTextCompactContains(alias, field.sql, variant),
     ]),
   );
+  phraseConditions.push(
+    ...[...phraseVariants].flatMap((variant) => [
+      sqlCarValuesContain(alias, variant),
+      sqlCarValuesCompactContain(alias, variant),
+    ]),
+  );
   const phraseOemConditions = extractOemSearchCandidates(value).map((candidate) => {
     const table = Prisma.raw(alias);
-    return Prisma.sql`${table}."oem_part_number_normalized" = ${candidate}`;
+    return Prisma.sql`(
+      ${table}."oem_part_number_normalized" = ${candidate}
+      OR ${sqlCarValuesNormalizedCodeEquals(alias, candidate)}
+    )`;
   });
   const phraseSql = Prisma.sql`(${Prisma.join(
     [...phraseConditions, ...phraseOemConditions],
@@ -462,19 +565,29 @@ export const buildListingSearchSql = (
       }
     }
     const textConditions = [...variants].flatMap((variant) =>
-      TEXT_FIELDS.flatMap((field) => [
+      SEARCHABLE_TEXT_FIELDS.flatMap((field) => [
         sqlTextContains(alias, field.sql, variant),
         sqlTextCompactContains(alias, field.sql, variant),
       ]),
     );
+    textConditions.push(
+      ...[...variants].flatMap((variant) => [
+        sqlCarValuesContain(alias, variant),
+        sqlCarValuesCompactContain(alias, variant),
+      ]),
+    );
     if (typoFragments(token).length > 1) {
       textConditions.push(
-        ...TEXT_FIELDS.map((field) => sqlTextFuzzyContains(alias, field.sql, token)),
+        ...SEARCHABLE_TEXT_FIELDS.map((field) => sqlTextFuzzyContains(alias, field.sql, token)),
+        sqlCarValuesFuzzyContain(alias, token),
       );
     }
     const oemConditions = extractOemSearchCandidates(token).map((candidate) => {
       const table = Prisma.raw(alias);
-      return Prisma.sql`${table}."oem_part_number_normalized" = ${candidate}`;
+      return Prisma.sql`(
+        ${table}."oem_part_number_normalized" = ${candidate}
+        OR ${sqlCarValuesNormalizedCodeEquals(alias, candidate)}
+      )`;
     });
     return Prisma.sql`(${Prisma.join([...textConditions, ...oemConditions], ' OR ')})`;
   });

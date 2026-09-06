@@ -473,3 +473,22 @@ test('getShowcase uses shared transliteration search inside showcase scope', asy
   assert.ok(serializedSearchWhere.includes('"contains":"samsung"'));
   assert.ok(serializedSearchWhere.includes('"contains":"galaxy"'));
 });
+
+test('getShowcase applies shared characteristics search inside showcase scope', async () => {
+  const harness = createShowcaseService();
+
+  await harness.service.getShowcase({
+    limit: 20,
+    category: 'Недвижимость',
+    search: 'Дом',
+  });
+
+  const serializedSearchWhere = JSON.stringify(
+    harness.capturedArgs?.where?.listing?.AND?.[0],
+  );
+  assert.equal(harness.capturedArgs?.where?.type, PromotionType.SHOWCASE);
+  assert.equal(harness.capturedArgs?.where?.listing?.category, 'Недвижимость');
+  assert.ok(serializedSearchWhere.includes('"realEstateType"'));
+  assert.ok(serializedSearchWhere.includes('"path":["brand"]'));
+  assert.ok(serializedSearchWhere.includes('"path":["note"]'));
+});

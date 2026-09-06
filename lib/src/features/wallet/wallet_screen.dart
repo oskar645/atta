@@ -203,15 +203,9 @@ class _WalletScreenState extends State<WalletScreen>
   }
 
   Future<void> _openTopUpSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => WalletTopUpSheet(
-        walletService: context.read<WalletService>(),
-        onPaymentStarted: _checkPendingTopUpStatus,
-      ),
+    await showWalletTopUpSheet(
+      context,
+      onPaymentStarted: _checkPendingTopUpStatus,
     );
   }
 
@@ -583,6 +577,24 @@ class _WalletBundle {
   final Wallet wallet;
   final List<WalletTransaction> transactions;
   final String? transactionsErrorText;
+}
+
+Future<void> showWalletTopUpSheet(
+  BuildContext context, {
+  WalletService? walletService,
+  VoidCallback? onPaymentStarted,
+}) async {
+  final service = walletService ?? context.read<WalletService>();
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => WalletTopUpSheet(
+      walletService: service,
+      onPaymentStarted: onPaymentStarted,
+    ),
+  );
 }
 
 class WalletTopUpSheet extends StatefulWidget {

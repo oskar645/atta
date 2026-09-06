@@ -754,6 +754,29 @@ test('findVipListings applies mixed text and OEM search inside VIP scope', async
   );
 });
 
+test('findVipListings applies shared characteristics search inside VIP scope', async () => {
+  let capturedArgs: Record<string, any> | undefined;
+  const service = createService({
+    findPromotions: async (args?: Record<string, unknown>) => {
+      capturedArgs = args as Record<string, any>;
+      return [];
+    },
+  });
+
+  await service.findVipListings({
+    limit: 20,
+    category: 'Одежда',
+    search: 'XL',
+  });
+
+  const serializedSearchWhere = JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]);
+  assert.equal(capturedArgs?.where?.type, PromotionType.VIP);
+  assert.equal(capturedArgs?.where?.listing?.category, 'Одежда');
+  assert.ok(serializedSearchWhere.includes('"clothesSize"'));
+  assert.ok(serializedSearchWhere.includes('"path":["vin"]'));
+  assert.ok(serializedSearchWhere.includes('"path":["note"]'));
+});
+
 test('incrementView counts a regular user once per listing', async () => {
   const harness = createListingViewCounterService();
 
@@ -871,8 +894,13 @@ type RawFeedRow = {
 
 type TestApprovedListing = Omit<
   ReturnType<typeof createApprovedListing>,
-  'promotions'
+  'car' | 'dealType' | 'realEstateType' | 'clothesType' | 'clothesSize' | 'promotions'
 > & {
+  car?: Record<string, unknown> | null;
+  dealType?: string | null;
+  realEstateType?: string | null;
+  clothesType?: string | null;
+  clothesSize?: string | null;
   promotions?: unknown[] | null;
 };
 
@@ -1234,6 +1262,11 @@ function listingMatchesRawSearch(
     listing.city,
     listing.address,
     listing.ownerName,
+    listing.dealType,
+    listing.realEstateType,
+    listing.clothesType,
+    listing.clothesSize,
+    ...Object.values((listing.car ?? {}) as Record<string, unknown>),
   ].join(' ').toLowerCase();
   const searchableCompact = compactTestSearchText(searchableText);
   const searchableWords = searchableText
@@ -1254,10 +1287,33 @@ function listingMatchesRawSearch(
     .map(compactTestSearchText);
   const normalizedSearches = new Set(
     flattenedValues
-      .filter((value): value is string => typeof value === 'string')
+      .filter((value): value is string =>
+        typeof value === 'string' &&
+        !value.startsWith('%') &&
+        /\d/.test(value) &&
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value),
+      )
       .map((value) => normalizeOemPartNumber(value))
       .filter((value): value is string => value != null),
   );
+  const exactCodeSearch = [...normalizedSearches].sort(
+    (left, right) => right.length - left.length,
+  )[0];
+
+  if (exactCodeSearch != null) {
+    const embeddedCodeSearches = [...normalizedSearches].filter(
+      (candidate) => candidate.length >= 6 || normalizedSearches.size === 1,
+    );
+    return (
+      embeddedCodeSearches.some((candidate) =>
+        searchableCompact.includes(candidate.toLowerCase()),
+      ) ||
+      (
+        listing.oemPartNumberNormalized != null &&
+        normalizedSearches.has(listing.oemPartNumberNormalized)
+      )
+    );
+  }
 
   return (
     likeSearches.some((search) =>
@@ -1266,10 +1322,6 @@ function listingMatchesRawSearch(
     ) ||
     fuzzySearches.some((search) =>
       searchableWords.some((word) => editDistanceAtMostOne(word, search)),
-    ) ||
-    (
-      listing.oemPartNumberNormalized != null &&
-      normalizedSearches.has(listing.oemPartNumberNormalized)
     )
   );
 }
@@ -3022,6 +3074,119 @@ test('public feed search supports transliteration in title and description', asy
     (await service.findAll({ search: 'Самсунг Galaxy', category: 'Электроника', limit: 10 }))
       .items.map((item: { id: string }) => item.id),
     [samsungGalaxy.id],
+  );
+});
+
+test('public feed search finds visible characteristics across categories', async () => {
+  const carByBrandModel = {
+    ...createApprovedListing(uuidFromNumber(438), '2026-07-03T10:10:00.000Z', 'Автомобили'),
+    title: 'Седан',
+    car: {
+      brand: 'Toyota',
+      model: 'Camry',
+      generation: 'XV70',
+      vin: 'JTDBE32K',
+    },
+  };
+  const realEstateByType = {
+    ...createApprovedListing(uuidFromNumber(437), '2026-07-03T10:09:00.000Z', 'Недвижимость'),
+    title: 'Участок у реки',
+    realEstateType: 'Дом',
+  };
+  const clothesByTypeAndSize = {
+    ...createApprovedListing(uuidFromNumber(436), '2026-07-03T10:08:00.000Z', 'Одежда'),
+    title: 'Куртка',
+    clothesType: 'Верхняя одежда',
+    clothesSize: 'XL',
+  };
+  const genericCarNote = {
+    ...createApprovedListing(uuidFromNumber(431), '2026-07-03T10:07:00.000Z'),
+    title: 'Машина',
+    car: {
+      brand: 'Lada',
+      model: 'Vesta',
+      note: 'безключевой доступ',
+    },
+  };
+  const { service, rawCalls } = createRawFeedHarness([
+    carByBrandModel,
+    realEstateByType,
+    clothesByTypeAndSize,
+    genericCarNote,
+  ]);
+
+  assert.deepEqual(
+    (await service.findAll({ search: 'Toyota Camry', category: 'Автомобили', limit: 10 }))
+      .items.map((item: { id: string }) => item.id),
+    [carByBrandModel.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'Дом', category: 'Недвижимость', limit: 10 }))
+      .items.map((item: { id: string }) => item.id),
+    [realEstateByType.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'XL', category: 'Одежда', limit: 10 }))
+      .items.map((item: { id: string }) => item.id),
+    [clothesByTypeAndSize.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'безключевой', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [genericCarNote.id],
+  );
+  assert.match(rawCalls[0]!.text, /jsonb_each_text/);
+});
+
+test('public feed search finds codes in title, description, and characteristics', async () => {
+  const codeInTitle = {
+    ...createApprovedListing(uuidFromNumber(430), '2026-07-03T10:10:00.000Z', 'Запчасти'),
+    title: 'Фара 81150-06C70',
+  };
+  const codeInDescription = {
+    ...createApprovedListing(uuidFromNumber(421), '2026-07-03T10:09:00.000Z', 'Запчасти'),
+    title: 'Фара левая',
+    description: 'Маркировка 81150 06C71',
+  };
+  const codeInCharacteristic = {
+    ...createApprovedListing(uuidFromNumber(420), '2026-07-03T10:08:00.000Z', 'Автомобили'),
+    title: 'Toyota Camry',
+    car: {
+      brand: 'Toyota',
+      model: 'Camry',
+      vin: 'JT2-ABC 1234567890',
+    },
+  };
+  const { service } = createRawFeedHarness([
+    codeInTitle,
+    codeInDescription,
+    codeInCharacteristic,
+  ]);
+
+  for (const search of ['81150-06C70', '8115006C70', '81150 06C70']) {
+    assert.deepEqual(
+      (await service.findAll({ search, limit: 10 })).items.map(
+        (item: { id: string }) => item.id,
+      ),
+      [codeInTitle.id],
+    );
+  }
+  assert.deepEqual(
+    (await service.findAll({ search: '8115006C71', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [codeInDescription.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'JT2ABC1234567890', limit: 10 })).items.map(
+      (item: { id: string }) => item.id,
+    ),
+    [codeInCharacteristic.id],
+  );
+  assert.deepEqual(
+    (await service.findAll({ search: 'JT2ABC1234567891', limit: 10 })).items,
+    [],
   );
 });
 

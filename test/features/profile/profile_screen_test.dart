@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:atta/src/features/profile/profile_screen.dart';
+import 'package:atta/src/features/wallet/wallet_screen.dart';
 import 'package:atta/src/models/wallet.dart';
+import 'package:atta/src/models/wallet_transaction.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/follow_service.dart';
@@ -59,6 +61,100 @@ void main() {
     expect(find.text('150 бонусов'), findsOneWidget);
     expect(find.text('Загрузка бонусов...'), findsNothing);
     expect(find.text('0 бонусов'), findsNothing);
+  });
+
+  testWidgets('profile shows wallet top up button', (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletTopUpService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('profile-wallet-top-up-button')),
+    );
+
+    expect(find.text('Пополнить'), findsOneWidget);
+  });
+
+  testWidgets('profile wallet top up button opens existing sheet',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletTopUpService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('profile-wallet-top-up-button')),
+    );
+
+    await tester.tap(find.byKey(const Key('profile-wallet-top-up-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(WalletTopUpSheet), findsOneWidget);
+    expect(find.text('Пополнение кошелька'), findsOneWidget);
+    expect(find.byType(WalletScreen), findsNothing);
+  });
+
+  testWidgets('profile wallet card still opens wallet screen', (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletTopUpService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(const Key('profile-wallet-card')));
+
+    await tester.tap(find.byKey(const Key('profile-wallet-card')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(WalletScreen), findsOneWidget);
+    expect(find.byType(WalletTopUpSheet), findsNothing);
+  });
+
+  testWidgets('profile wallet tile fits a small screen without overflow',
+      (tester) async {
+    addTearDown(() => tester.view.resetPhysicalSize());
+    addTearDown(() => tester.view.resetDevicePixelRatio());
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletTopUpService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const Key('profile-wallet-top-up-button')),
+    );
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('Пополнить'), findsOneWidget);
+  });
+
+  testWidgets('profile wallet tile handles a large balance without overflow',
+      (tester) async {
+    addTearDown(() => tester.view.resetPhysicalSize());
+    addTearDown(() => tester.view.resetDevicePixelRatio());
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletTopUpService(balance: 150000),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('150000 бонусов'));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('150000 бонусов'), findsOneWidget);
   });
 
   testWidgets('profile shows retry state when wallet failed', (tester) async {
@@ -746,6 +842,35 @@ class _ProfileWalletSuccessService extends WalletService {
       'canClaimDailyBonus': false,
     });
   }
+}
+
+class _ProfileWalletTopUpService extends WalletService {
+  _ProfileWalletTopUpService({this.balance = 150});
+
+  final int balance;
+
+  Wallet get _currentWallet => _wallet(balance: balance);
+
+  @override
+  Wallet? get cachedWallet => _currentWallet;
+
+  @override
+  Future<Wallet?> maybeCheckAccrualOncePerSession() async => _currentWallet;
+
+  @override
+  Future<Wallet> checkAccrual({bool forceRefresh = false}) async {
+    return _currentWallet;
+  }
+
+  @override
+  Future<List<WalletTransaction>> getTransactions({
+    bool forceRefresh = false,
+  }) async {
+    return const <WalletTransaction>[];
+  }
+
+  @override
+  Future<WalletTopUpStatusResult?> checkPendingTopUpStatus() async => null;
 }
 
 class _ProfileWalletCachedRefreshService extends WalletService {
