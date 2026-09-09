@@ -12,7 +12,8 @@ import 'package:atta/src/services/api/media_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/image_preparation_service.dart';
 import 'package:atta/src/utils/media_url.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kDebugMode, ValueNotifier, ValueListenable;
 
 class ListingFeedFilters {
   final String category;
@@ -423,6 +424,7 @@ class ListingsService {
     String? cursor,
     bool useVipInterleave = false,
     int vipRotation = 0,
+    int bumpRotation = 0,
   }) async {
     final effectiveFilters = filters ??
         ListingFeedFilters(
@@ -433,7 +435,7 @@ class ListingsService {
       _filtersCacheKey(effectiveFilters),
       limit,
       (cursor ?? '').trim(),
-      if (useVipInterleave) 'vip_interleave_v1:$vipRotation',
+      if (useVipInterleave) 'vip_interleave_v1:$vipRotation:$bumpRotation',
     ].join('|');
     final existing = _feedPageInFlight[requestKey];
     if (existing != null) {
@@ -458,6 +460,7 @@ class ListingsService {
           if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
           if (useVipInterleave) 'feedMode': 'vip_interleave_v1',
           if (useVipInterleave) 'vipRotation': vipRotation,
+          if (useVipInterleave) 'bumpRotation': bumpRotation,
         },
       );
       final items = _extractItems(response);
@@ -1766,6 +1769,11 @@ class ListingsService {
     _listingById[listing.id] = listing;
     _replaceListingInCollectionCaches(listing);
   }
+
+  final _bumpPurchases = ValueNotifier<int>(0);
+  ValueListenable<int> get bumpPurchases => _bumpPurchases;
+
+  void notifyBumpPurchased() => _bumpPurchases.value++;
 
   void refreshFeedAfterPromotion({Listing? listing}) {
     if (listing != null) {

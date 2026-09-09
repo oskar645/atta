@@ -115,6 +115,7 @@ type PaidFeedRank = {
 };
 
 type FeedCursorPayload = {
+  bumpRotation?: number;
   promotedAt: string | null;
   sortGroup: number | null;
   sortAt: string | null;
@@ -390,6 +391,9 @@ const parseFeedCursor = (rawCursor?: string): FeedCursorPayload | null => {
     }
 
     return {
+      // Keep BUMP rotation fixed for every page in this feed session.
+      bumpRotation: typeof parsed.bumpRotation === 'number' && Number.isFinite(parsed.bumpRotation)
+        ? Math.max(0, Math.trunc(parsed.bumpRotation)) : undefined,
       promotedAt:
         typeof parsed.promotedAt === 'string' && parsed.promotedAt.trim().length > 0
           ? parsed.promotedAt
@@ -589,6 +593,7 @@ export class ListingsService {
     cursor?: string;
     feedMode?: string;
     vipRotation?: number;
+    bumpRotation?: number;
   }) {
     const search = params?.search?.trim();
     const category = params?.category?.trim();
@@ -603,6 +608,9 @@ export class ListingsService {
     const vipRotation = Number.isFinite(params?.vipRotation)
       ? Math.max(0, Math.trunc(params?.vipRotation ?? 0))
       : 0;
+    const bumpRotation = cursor?.bumpRotation ?? (Number.isFinite(params?.bumpRotation)
+      ? Math.max(0, Math.trunc(params?.bumpRotation ?? 0))
+      : 0);
     const andConditions: Prisma.ListingWhereInput[] = [];
 
     const where: Prisma.ListingWhereInput = {
@@ -712,6 +720,7 @@ export class ListingsService {
         limit,
         feedMode,
         vipRotation,
+        bumpRotation,
       });
       const pageRows = rankedRows.slice(0, limit);
       const hasMore = rankedRows.length > limit;
@@ -733,7 +742,10 @@ export class ListingsService {
       const nextCursor =
         hasMore && pageRows.length > 0
           ? Buffer.from(
-              JSON.stringify(toRankedFeedCursorPayload(pageRows[pageRows.length - 1]!)),
+              JSON.stringify({
+                ...toRankedFeedCursorPayload(pageRows[pageRows.length - 1]!),
+                ...(feedMode === VIP_INTERLEAVE_FEED_MODE ? { bumpRotation } : {}),
+              }),
             ).toString('base64url')
           : null;
 
@@ -887,6 +899,7 @@ export class ListingsService {
     limit: number;
     feedMode?: string;
     vipRotation: number;
+    bumpRotation: number;
   }): Promise<PublicFeedRankRow[]> {
     const whereParts: Prisma.Sql[] = [
       Prisma.sql`l."deleted_at" IS NULL`,
@@ -931,6 +944,7 @@ export class ListingsService {
         cursor,
         limit: params.limit,
         vipRotation: params.vipRotation,
+        bumpRotation: params.bumpRotation,
       });
     }
 
@@ -1052,6 +1066,7 @@ export class ListingsService {
     cursor: Prisma.Sql;
     limit: number;
     vipRotation: number;
+    bumpRotation: number;
   }): Promise<PublicFeedRankRow[]> {
     const rows = await this.prisma.$queryRaw<Array<{
       id: string;
@@ -1070,7 +1085,12 @@ export class ListingsService {
             WHERE p."status"::text = 'ACTIVE'
               AND p."ends_at" > NOW()
               AND p."type"::text = 'VIP'
-          ) AS vip_promoted_at
+          ) AS vip_promoted_at,
+          MAX(p."created_at") FILTER (
+            WHERE p."status"::text = 'ACTIVE'
+              AND p."ends_at" > NOW()
+              AND p."type"::text = 'BUMP'
+          ) AS bump_promoted_at
         FROM "listings" l
         JOIN "users" u ON u."id" = l."owner_id"
         LEFT JOIN "promotions" p ON p."listing_id" = l."id"
@@ -1101,6 +1121,49 @@ export class ListingsService {
           ) AS ordinary_head_count
         FROM base
       ),
+      -- Reorder only the ordinary tail; the VIP interleave below stays unchanged.
+      bump_candidates AS (
+        SELECT ranked.*,
+          (vip_promoted_at IS NULL AND ordinary_rank > ordinary_head_count
+            AND bump_promoted_at IS NOT NULL) AS is_bump
+        FROM ranked
+      ),
+      bump_ranked AS (
+        SELECT bump_candidates.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY is_bump
+            ORDER BY bump_promoted_at DESC, created_at DESC, "id" DESC
+          ) AS bump_queue_rank,
+          COUNT(*) FILTER (WHERE is_bump) OVER () AS bump_count,
+          COUNT(*) FILTER (
+            WHERE vip_promoted_at IS NULL AND ordinary_rank > ordinary_head_count
+              AND NOT is_bump
+          ) OVER (ORDER BY ordinary_rank ROWS UNBOUNDED PRECEDING) AS tail_rank
+        FROM bump_candidates
+      ),
+      bump_slots AS (
+        SELECT bump_ranked.*,
+          CASE
+            WHEN is_bump THEN 1 + (
+              (bump_queue_rank - 1 - (${params.bumpRotation} % GREATEST(bump_count, 1))
+                + bump_count) % GREATEST(bump_count, 1)
+            ) * 5
+            ELSE tail_rank + CEIL(tail_rank::numeric / 4.0)::int
+          END AS bump_slot
+        FROM bump_ranked
+      ),
+      ordinary_reordered AS (
+        SELECT bump_slots.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY (vip_promoted_at IS NULL)
+            ORDER BY
+              CASE WHEN ordinary_rank <= ordinary_head_count THEN 0 ELSE 1 END,
+              CASE WHEN ordinary_rank <= ordinary_head_count
+                THEN ordinary_rank ELSE bump_slot END,
+              ordinary_rank
+          ) AS bumped_ordinary_rank
+        FROM bump_slots
+      ),
       ordered AS (
         SELECT
           "id",
@@ -1108,8 +1171,8 @@ export class ListingsService {
           published_at,
           created_at,
           CASE
-            WHEN vip_promoted_at IS NULL AND ordinary_rank <= ordinary_head_count
-              THEN ordinary_rank
+            WHEN vip_promoted_at IS NULL AND bumped_ordinary_rank <= ordinary_head_count
+              THEN bumped_ordinary_rank
             WHEN vip_promoted_at IS NOT NULL
               THEN ordinary_head_count
                 + 1
@@ -1124,15 +1187,15 @@ export class ListingsService {
                   ) % GREATEST(vip_count, 1)
                 ) * 3
             ELSE ordinary_head_count
-              + (ordinary_rank - ordinary_head_count)
-              + CEIL((ordinary_rank - ordinary_head_count)::numeric / 2.0)::int
+              + (bumped_ordinary_rank - ordinary_head_count)
+              + CEIL((bumped_ordinary_rank - ordinary_head_count)::numeric / 2.0)::int
           END AS sort_group,
           CASE
             WHEN vip_promoted_at IS NOT NULL
               THEN vip_promoted_at
             ELSE COALESCE("published_at", "created_at")
           END AS sort_at
-        FROM ranked
+        FROM ordinary_reordered
       )
       SELECT
         "id",

@@ -976,7 +976,7 @@ function findVipRotationValue(
     if (
       typeof value === 'number' &&
       strings[index]?.includes('- (') &&
-      strings[index + 1]?.includes('% GREATEST')
+      strings[index + 1]?.includes('% GREATEST(vip_count')
     ) {
       return value;
     }
@@ -1132,6 +1132,7 @@ function buildVipInterleavedRawRows(
   listings: TestApprovedListing[],
   promotedIds?: Record<string, string>,
   vipRotation = 0,
+  bumpRotation = 0,
 ) {
   const natural = [...listings].sort(compareNaturalListings);
   const vipPromotedAtById = new Map<string, Date>();
@@ -1141,15 +1142,16 @@ function buildVipInterleavedRawRows(
       : promotionActivatedAt(listing);
     const hasVip = (listing.promotions ?? []).some((promotion) => {
       if (typeof promotion !== 'object' || promotion == null) return false;
-      const promo = promotion as { type?: PromotionType; status?: PromotionStatus };
-      return promo.type === PromotionType.VIP && promo.status === PromotionStatus.ACTIVE;
+      const promo = promotion as { type?: PromotionType; status?: PromotionStatus; endsAt?: Date };
+      return promo.type === PromotionType.VIP && promo.status === PromotionStatus.ACTIVE
+        && promo.endsAt != null && new Date(promo.endsAt) > new Date();
     });
     if (hasVip && promotedAt != null && !Number.isNaN(promotedAt.getTime())) {
       vipPromotedAtById.set(listing.id, promotedAt);
     }
   }
 
-  const ordinary = natural.filter((listing) => !vipPromotedAtById.has(listing.id));
+  let ordinary = natural.filter((listing) => !vipPromotedAtById.has(listing.id));
   const vipQueue = natural
     .filter((listing) => vipPromotedAtById.has(listing.id))
     .sort((a, b) => {
@@ -1172,6 +1174,20 @@ function buildVipInterleavedRawRows(
         ...vipQueue.slice(vipRotation % vipQueue.length),
         ...vipQueue.slice(0, vipRotation % vipQueue.length),
       ];
+  const head = ordinary.slice(0, 10);
+  const tail = ordinary.slice(10);
+  const bumps = tail.filter((listing) => (listing.promotions ?? []).some((p: any) =>
+    p.type === PromotionType.BUMP && p.status === PromotionStatus.ACTIVE && new Date(p.endsAt) > new Date(),
+  )).sort((a, b) => promotionActivatedAt(b)!.getTime() - promotionActivatedAt(a)!.getTime()
+    || b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id));
+  const rotated = [...bumps.slice(bumpRotation % (bumps.length || 1)), ...bumps.slice(0, bumpRotation % (bumps.length || 1))];
+  const plain = tail.filter((listing) => !bumps.includes(listing));
+  const mixed: TestApprovedListing[] = [];
+  while (rotated.length || plain.length) {
+    if (rotated.length) mixed.push(rotated.shift()!);
+    mixed.push(...plain.splice(0, 4));
+  }
+  ordinary = [...head, ...mixed];
   const headCount = Math.min(ordinary.length, 10);
   const rows: RawFeedRow[] = [];
 
@@ -1350,9 +1366,14 @@ function createRawFeedHarness(
         : 0;
       let filteredRows = isVipInterleaved
         ? buildVipInterleavedRawRows(
-            orderedListings,
+            orderedListings.filter((listing) =>
+              (!flattened.values.includes('auto') || listing.category === 'auto')
+              && (!flattened.values.some((value) => typeof value === 'string' && value.startsWith('%'))
+                || listingMatchesRawSearch(listing, flattened.values)),
+            ),
             options?.promotedIds,
             vipRotation,
+            Number(values[strings.findIndex((part) => part.includes("bump_queue_rank - 1 - ("))] ?? 0),
           )
         : orderedRows;
       if (flattened.values.includes('auto')) {
@@ -3978,4 +3999,61 @@ test('listing serialization normalizes duplicated bucket prefix in S3 photo url'
     response.listing.photo_items[0].url,
     '/media/object?category=listings&key=atta-media-prod%2Flisting-photos%2F1782423161346-photo.jpg',
   );
+});
+
+test('BUMP ordinary pool protects head, spaces bumps, rotates refreshes and pins cursor rotation without moving VIP slots', async () => {
+  const natural = createFreshListings(40).map((listing, index) => ({
+    ...listing,
+    id: uuidFromNumber(900 - index),
+    promotions: index === 1 || index === 25 || index === 30 || index === 35
+      ? [createPromotion(PromotionType.BUMP, `2026-07-02T12:${index}:00.000Z`)] : [],
+  }));
+  const vip = { ...createFreshListings(1)[0]!, id: uuidFromNumber(800), promotions: [
+    createPromotion(PromotionType.VIP, '2026-07-02T13:00:00.000Z'),
+    createPromotion(PromotionType.BUMP, '2026-07-02T14:00:00.000Z'),
+  ] };
+  const { service, rawCalls } = createRawFeedHarness([...natural, vip]);
+  const ids = (page: any) => page.items.map((item: any) => item.id);
+  const first = await service.findAll({ feedMode: 'vip_interleave_v1', limit: 50 });
+  const ordinary = ids(first).filter((id: string) => id !== vip.id);
+  assert.deepEqual(ordinary.slice(0, 10), natural.slice(0, 10).map((x) => x.id));
+  assert.equal(ordinary[10], natural[35]!.id);
+  assert.deepEqual(ordinary.slice(11, 15), natural.slice(10, 14).map((x) => x.id));
+  assert.equal(ordinary[15], natural[30]!.id);
+  assert.equal(ordinary[20], natural[25]!.id);
+  assert.equal(new Set(ids(first)).size, 41);
+  const next = await service.findAll({ feedMode: 'vip_interleave_v1', bumpRotation: 1, limit: 50 });
+  assert.equal(ids(next).filter((id: string) => id !== vip.id)[10], natural[30]!.id);
+  const third = await service.findAll({ feedMode: 'vip_interleave_v1', bumpRotation: 2, limit: 50 });
+  assert.equal(ids(third).filter((id: string) => id !== vip.id)[10], natural[25]!.id);
+  const page1 = await service.findAll({ feedMode: 'vip_interleave_v1', bumpRotation: 1, limit: 17 });
+  const page2 = await service.findAll({ feedMode: 'vip_interleave_v1', bumpRotation: 99, cursor: page1.nextCursor!, limit: 50 });
+  assert.deepEqual([...ids(page1), ...ids(page2)], ids(next));
+  const baseline = createRawFeedHarness([...natural.map((x) => ({ ...x, promotions: [] })), vip]).service;
+  const before = await baseline.findAll({ feedMode: 'vip_interleave_v1', limit: 50 });
+  assert.equal(ids(before).indexOf(vip.id), ids(first).indexOf(vip.id));
+  assert.deepEqual(ids(before).filter((id: string) => id !== vip.id), natural.map((x) => x.id));
+  const expired = createRawFeedHarness(natural.map((x) => ({ ...x, promotions: [createPromotion(PromotionType.BUMP, '2020-01-01', '2020-01-02')] }))).service;
+  assert.deepEqual(ids(await expired.findAll({ feedMode: 'vip_interleave_v1', limit: 50 })), natural.map((x) => x.id));
+  assert.match(rawCalls[0]!.text, /p\."ends_at" > NOW\(\)[\s\S]*p\."type"::text = 'BUMP'/);
+  assert.match(rawCalls[0]!.text, /FROM ordinary_reordered/);
+});
+
+
+test('BUMP ranks within category/search and active BUMP reenters ordinary after VIP expiry', async () => {
+  const natural = createFreshListings(35).map((listing, index) => ({
+    ...listing, id: uuidFromNumber(1100 - index), category: index < 5 ? 'other' : 'auto',
+    title: index < 8 ? 'other' : 'needle',
+    promotions: index === 32 ? [
+      createPromotion(PromotionType.VIP, '2020-01-01', '2020-01-02'),
+      createPromotion(PromotionType.BUMP, '2026-07-02'),
+    ] : [],
+  }));
+  const { service } = createRawFeedHarness(natural);
+  const page = await service.findAll({ feedMode: 'vip_interleave_v1', category: 'auto', search: 'needle', limit: 50 });
+  const ids = page.items.map((item: any) => item.id);
+  assert.deepEqual(ids.slice(0, 10), natural.slice(8, 18).map((x) => x.id));
+  assert.equal(ids[10], natural[32]!.id);
+  assert.equal(ids.length, 27);
+  assert.equal(new Set(ids).size, 27);
 });

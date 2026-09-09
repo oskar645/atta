@@ -34,7 +34,7 @@ let ListingsController = class ListingsController {
         });
         return this.listingsService.create(authUser, dto);
     }
-    findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status, publicMode, feedMode, vipRotation) {
+    findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status, publicMode, feedMode, vipRotation, bumpRotation) {
         return this.listingsService.findAll({
             search,
             category,
@@ -46,6 +46,7 @@ let ListingsController = class ListingsController {
             cursor,
             feedMode,
             vipRotation: vipRotation == null ? undefined : Number(vipRotation),
+            bumpRotation: bumpRotation == null ? undefined : Number(bumpRotation),
             minPrice: minPrice == null ? undefined : Number(minPrice),
             maxPrice: maxPrice == null ? undefined : Number(maxPrice),
         });
@@ -109,8 +110,9 @@ __decorate([
     __param(9, (0, common_1.Query)('publicMode')),
     __param(10, (0, common_1.Query)('feedMode')),
     __param(11, (0, common_1.Query)('vipRotation')),
+    __param(12, (0, common_1.Query)('bumpRotation')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String, String, String, String]),
+    __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String, String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "findAll", null);
 __decorate([

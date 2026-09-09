@@ -193,6 +193,9 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
             if (mounted) {
               listingsService.refreshFeedAfterPromotion(
                   listing: promotedListing);
+              if (plan.type == 'bump') {
+                listingsService.notifyBumpPurchased();
+              }
             }
             if (kDebugMode) {
               debugPrint(

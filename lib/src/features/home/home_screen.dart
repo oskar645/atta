@@ -125,10 +125,18 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   int _feedRequestSerial = 0;
   int _mainFeedVipRotationOffset = 0;
   int _activeMainFeedVipRotationOffset = 0;
+  int _bumpRotation = -1;
+  late final ListingsService _bumpListings;
+
+  void _onBumpPurchased() {
+    unawaited(_reloadFeed(reset: true, preserveVipRotation: true));
+  }
 
   @override
   void initState() {
     super.initState();
+    _bumpListings = context.read<ListingsService>();
+    _bumpListings.bumpPurchases.addListener(_onBumpPurchased);
     unawaited(_refreshShowcase());
     unawaited(_refreshVipShowcase());
     widget.controller?.attach(scrollToTop: _handleScrollToTop);
@@ -149,6 +157,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   @override
   void dispose() {
+    _bumpListings.bumpPurchases.removeListener(_onBumpPurchased);
     attaRouteObserver.unsubscribe(this);
     widget.controller?.detach();
     _searchCtrl.dispose();
@@ -218,8 +227,8 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     }
 
     setState(() {
-      _category = saved.category;
-      _subcategory = saved.subcategory;
+      _category = 'Все';
+      _subcategory = 'Все';
       _priceFrom = saved.priceFrom;
       _priceTo = saved.priceTo;
       _location = saved.location;
@@ -473,14 +482,47 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   }
 
   void _selectCategory(String c) {
-    setState(() {
-      _category = c;
-      _subcategory = 'Все';
-      _search = '';
-      _searchCtrl.clear();
-    });
-    _persistFilters();
-    unawaited(_reloadFeed(reset: true));
+    if (c == 'Все') {
+      if (_category == 'Все' && _subcategory == 'Все') return;
+      setState(() {
+        _category = 'Все';
+        _subcategory = 'Все';
+      });
+      _persistFilters();
+      unawaited(_reloadFeed(reset: true));
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CategoryFeedScreen(
+          category: c,
+          initialPriceFrom: _priceFrom,
+          initialPriceTo: _priceTo,
+          initialLocation: _location,
+          initialPreferFirst: _preferLocationFirst,
+          initialRadiusKm: _radiusKm,
+          initialAutoBrand: _autoBrand,
+          initialAutoModel: _autoModel,
+          initialAutoCondition: _autoCondition,
+          initialAutoYearFrom: _autoYearFrom,
+          initialAutoYearTo: _autoYearTo,
+          initialAutoMileageFrom: _autoMileageFrom,
+          initialAutoMileageTo: _autoMileageTo,
+          initialAutoTransmission: _autoTransmission,
+          initialAutoDrive: _autoDrive,
+          initialAutoBodyType: _autoBodyType,
+          initialAutoFuel: _autoFuel,
+          initialAutoColor: _autoColor,
+          initialAutoEngineVolumeFrom: _autoEngineVolumeFrom,
+          initialAutoEngineVolumeTo: _autoEngineVolumeTo,
+          initialAutoOwners: _autoOwners,
+          initialAutoCleared: _autoCleared,
+          initialOnlyUncrashed: _onlyUncrashed,
+          initialOnlyWithPhoto: _onlyWithPhoto,
+        ),
+      ),
+    );
   }
 
   List<Listing> _mergeUniqueListings(
@@ -500,11 +542,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   Future<void> _reloadFeed({
     required bool reset,
     bool clearExistingItems = true,
+    bool preserveVipRotation = false,
   }) async {
     final listings = context.read<ListingsService>();
     final requestId = ++_feedRequestSerial;
-    final vipRotationOffset =
-        reset ? _mainFeedVipRotationOffset : _activeMainFeedVipRotationOffset;
+    final vipRotationOffset = reset && !preserveVipRotation
+        ? _mainFeedVipRotationOffset
+        : _activeMainFeedVipRotationOffset;
+    if (reset) _bumpRotation++;
 
     setState(() {
       if (reset) {
@@ -531,6 +576,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         cursor: reset ? null : _nextCursor,
         useVipInterleave: true,
         vipRotation: vipRotationOffset,
+        bumpRotation: _bumpRotation,
       );
       if (!mounted || requestId != _feedRequestSerial) return;
       setState(() {
@@ -542,7 +588,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         _isInitialLoading = false;
         _isLoadingMore = false;
         _feedError = null;
-        if (reset) {
+        if (reset && !preserveVipRotation) {
           _activeMainFeedVipRotationOffset = vipRotationOffset;
           _mainFeedVipRotationOffset = vipRotationOffset + 1;
         }
@@ -781,6 +827,419 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         hasMore: _hasMore,
                         onLoadMore: _loadMoreFeed,
                         onLoadMoreVip: _loadMoreVipShowcase,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class CategoryFeedScreen extends StatefulWidget {
+  final String category;
+  final int? initialPriceFrom;
+  final int? initialPriceTo;
+  final String initialLocation;
+  final bool initialPreferFirst;
+  final int? initialRadiusKm;
+  final String initialAutoBrand;
+  final String initialAutoModel;
+  final String initialAutoCondition;
+  final int? initialAutoYearFrom;
+  final int? initialAutoYearTo;
+  final int? initialAutoMileageFrom;
+  final int? initialAutoMileageTo;
+  final String initialAutoTransmission;
+  final String initialAutoDrive;
+  final String initialAutoBodyType;
+  final String initialAutoFuel;
+  final String initialAutoColor;
+  final double? initialAutoEngineVolumeFrom;
+  final double? initialAutoEngineVolumeTo;
+  final int? initialAutoOwners;
+  final bool? initialAutoCleared;
+  final bool initialOnlyUncrashed;
+  final bool initialOnlyWithPhoto;
+
+  const CategoryFeedScreen({
+    super.key,
+    required this.category,
+    this.initialPriceFrom,
+    this.initialPriceTo,
+    this.initialLocation = '',
+    this.initialPreferFirst = false,
+    this.initialRadiusKm,
+    this.initialAutoBrand = '',
+    this.initialAutoModel = '',
+    this.initialAutoCondition = '',
+    this.initialAutoYearFrom,
+    this.initialAutoYearTo,
+    this.initialAutoMileageFrom,
+    this.initialAutoMileageTo,
+    this.initialAutoTransmission = '',
+    this.initialAutoDrive = '',
+    this.initialAutoBodyType = '',
+    this.initialAutoFuel = '',
+    this.initialAutoColor = '',
+    this.initialAutoEngineVolumeFrom,
+    this.initialAutoEngineVolumeTo,
+    this.initialAutoOwners,
+    this.initialAutoCleared,
+    this.initialOnlyUncrashed = false,
+    this.initialOnlyWithPhoto = false,
+  });
+
+  @override
+  State<CategoryFeedScreen> createState() => _CategoryFeedScreenState();
+}
+
+class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
+  static const int _pageSize = 20;
+  final _searchCtrl = TextEditingController();
+  final GlobalKey<_HomeFeedViewState> _feedKey =
+      GlobalKey<_HomeFeedViewState>();
+  String _subcategory = 'Все';
+  String _search = '';
+  late int? _priceFrom = widget.initialPriceFrom;
+  late int? _priceTo = widget.initialPriceTo;
+  late String _location = widget.initialLocation;
+  late bool _preferLocationFirst = widget.initialPreferFirst;
+  late int? _radiusKm = widget.initialRadiusKm;
+  late String _autoBrand = widget.initialAutoBrand;
+  late String _autoModel = widget.initialAutoModel;
+  late String _autoCondition = widget.initialAutoCondition;
+  late int? _autoYearFrom = widget.initialAutoYearFrom;
+  late int? _autoYearTo = widget.initialAutoYearTo;
+  late int? _autoMileageFrom = widget.initialAutoMileageFrom;
+  late int? _autoMileageTo = widget.initialAutoMileageTo;
+  late String _autoTransmission = widget.initialAutoTransmission;
+  late String _autoDrive = widget.initialAutoDrive;
+  late String _autoBodyType = widget.initialAutoBodyType;
+  late String _autoFuel = widget.initialAutoFuel;
+  late String _autoColor = widget.initialAutoColor;
+  late double? _autoEngineVolumeFrom = widget.initialAutoEngineVolumeFrom;
+  late double? _autoEngineVolumeTo = widget.initialAutoEngineVolumeTo;
+  late int? _autoOwners = widget.initialAutoOwners;
+  late bool? _autoCleared = widget.initialAutoCleared;
+  late bool _onlyUncrashed = widget.initialOnlyUncrashed;
+  late bool _onlyWithPhoto = widget.initialOnlyWithPhoto;
+  List<Listing> _items = const <Listing>[];
+  bool _isInitialLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  String? _nextCursor;
+  Object? _error;
+  int _requestSerial = 0;
+  int _bumpRotation = -1;
+  late final ListingsService _bumpListings;
+
+  void _onBumpPurchased() {
+    unawaited(_reload(reset: true));
+  }
+
+  List<String> get _subcategories =>
+      kSubcategories[widget.category] ?? const <String>[];
+
+  ListingFeedFilters get _feedFilters => ListingFeedFilters(
+        category: widget.category,
+        search: _search,
+        subcategory: _subcategory,
+        priceFrom: _priceFrom,
+        priceTo: _priceTo,
+        location: _location,
+        preferLocationFirst: _preferLocationFirst,
+        radiusKm: _radiusKm,
+        autoBrand: _autoBrand,
+        autoModel: _autoModel,
+        autoCondition: _autoCondition,
+        autoYearFrom: _autoYearFrom,
+        autoYearTo: _autoYearTo,
+        autoMileageFrom: _autoMileageFrom,
+        autoMileageTo: _autoMileageTo,
+        autoTransmission: _autoTransmission,
+        autoDrive: _autoDrive,
+        autoBodyType: _autoBodyType,
+        autoFuel: _autoFuel,
+        autoColor: _autoColor,
+        autoEngineVolumeFrom: _autoEngineVolumeFrom,
+        autoEngineVolumeTo: _autoEngineVolumeTo,
+        autoOwners: _autoOwners,
+        autoCleared: _autoCleared,
+        onlyUncrashed: _onlyUncrashed,
+        onlyWithPhoto: _onlyWithPhoto,
+      );
+
+  @override
+  void initState() {
+    super.initState();
+    _bumpListings = context.read<ListingsService>();
+    _bumpListings.bumpPurchases.addListener(_onBumpPurchased);
+    unawaited(_reload(reset: true));
+  }
+
+  @override
+  void dispose() {
+    _bumpListings.bumpPurchases.removeListener(_onBumpPurchased);
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Listing> _mergeUniqueListings(
+    List<Listing> current,
+    List<Listing> incoming,
+  ) {
+    final seenIds = current.map((item) => item.id).toSet();
+    final merged = List<Listing>.from(current);
+    for (final item in incoming) {
+      if (seenIds.add(item.id)) {
+        merged.add(item);
+      }
+    }
+    return merged;
+  }
+
+  Future<void> _reload({required bool reset}) async {
+    final listings = context.read<ListingsService>();
+    final requestId = ++_requestSerial;
+    if (reset) _bumpRotation++;
+    setState(() {
+      if (reset) {
+        _isInitialLoading = true;
+        _isLoadingMore = false;
+        _hasMore = true;
+        _nextCursor = null;
+        _error = null;
+        _items = const <Listing>[];
+      } else {
+        _isLoadingMore = true;
+      }
+    });
+
+    try {
+      final page = await listings.getListingsPage(
+        category: widget.category,
+        search: _search,
+        filters: _feedFilters,
+        limit: _pageSize,
+        cursor: reset ? null : _nextCursor,
+        useVipInterleave: true,
+        bumpRotation: _bumpRotation,
+      );
+      if (!mounted || requestId != _requestSerial) return;
+      setState(() {
+        _items = reset
+            ? List<Listing>.from(page.items)
+            : _mergeUniqueListings(_items, page.items);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _error = null;
+      });
+    } catch (error) {
+      if (!mounted || requestId != _requestSerial) return;
+      setState(() {
+        _isInitialLoading = false;
+        _isLoadingMore = false;
+        _error = error;
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_isInitialLoading || _isLoadingMore || !_hasMore) return;
+    await _reload(reset: false);
+  }
+
+  Future<void> _openFilters() async {
+    final res = await Navigator.of(context).push<_HomeFilters>(
+      MaterialPageRoute(
+        builder: (_) => _FiltersScreen(
+          initialCategory: widget.category,
+          initialSubcategory: _subcategory,
+          initialPriceFrom: _priceFrom,
+          initialPriceTo: _priceTo,
+          initialLocation: _location,
+          initialPreferFirst: _preferLocationFirst,
+          initialRadiusKm: _radiusKm,
+          initialAutoBrand: _autoBrand,
+          initialAutoModel: _autoModel,
+          initialAutoCondition: _autoCondition,
+          initialAutoYearFrom: _autoYearFrom,
+          initialAutoYearTo: _autoYearTo,
+          initialAutoMileageFrom: _autoMileageFrom,
+          initialAutoMileageTo: _autoMileageTo,
+          initialAutoTransmission: _autoTransmission,
+          initialAutoDrive: _autoDrive,
+          initialAutoBodyType: _autoBodyType,
+          initialAutoFuel: _autoFuel,
+          initialAutoColor: _autoColor,
+          initialAutoEngineVolumeFrom: _autoEngineVolumeFrom,
+          initialAutoEngineVolumeTo: _autoEngineVolumeTo,
+          initialAutoOwners: _autoOwners,
+          initialAutoCleared: _autoCleared,
+          initialOnlyUncrashed: _onlyUncrashed,
+          initialOnlyWithPhoto: _onlyWithPhoto,
+          lockCategory: true,
+        ),
+      ),
+    );
+
+    if (!mounted || res == null) return;
+    setState(() {
+      _subcategory = res.subcategory;
+      _priceFrom = res.priceFrom;
+      _priceTo = res.priceTo;
+      _location = res.location;
+      _preferLocationFirst = res.preferFirst;
+      _radiusKm = res.radiusKm;
+      _autoBrand = res.autoBrand;
+      _autoModel = res.autoModel;
+      _autoCondition = res.autoCondition;
+      _autoYearFrom = res.autoYearFrom;
+      _autoYearTo = res.autoYearTo;
+      _autoMileageFrom = res.autoMileageFrom;
+      _autoMileageTo = res.autoMileageTo;
+      _autoTransmission = res.autoTransmission;
+      _autoDrive = res.autoDrive;
+      _autoBodyType = res.autoBodyType;
+      _autoFuel = res.autoFuel;
+      _autoColor = res.autoColor;
+      _autoEngineVolumeFrom = res.autoEngineVolumeFrom;
+      _autoEngineVolumeTo = res.autoEngineVolumeTo;
+      _autoOwners = res.autoOwners;
+      _autoCleared = res.autoCleared;
+      _onlyUncrashed = res.onlyUncrashed;
+      _onlyWithPhoto = res.onlyWithPhoto;
+    });
+    unawaited(_reload(reset: true));
+  }
+
+  void _selectSubcategory(String value) {
+    if (value == _subcategory) return;
+    setState(() => _subcategory = value);
+    unawaited(_reload(reset: true));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final favs = context.read<FavoritesService>();
+    final feedAds = context.read<FeedAdsService>();
+    final history = context.watch<ListingHistoryService>();
+    final reviews = context.read<ReviewsService>();
+    final user = context.read<AuthService>().currentUser!;
+    final hint =
+        _location.trim().isEmpty ? 'Поиск по названию' : 'Поиск в $_location';
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.category),
+      ),
+      body: Column(
+        children: [
+          Container(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: Column(
+              children: [
+                if (_subcategories.isNotEmpty)
+                  _SubcategoryRow(
+                    selected: _subcategory,
+                    items: _subcategories,
+                    onSelect: _selectSubcategory,
+                  ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: IconButton(
+                        tooltip: 'Фильтры',
+                        onPressed: _openFilters,
+                        icon: const Icon(Icons.tune),
+                      ),
+                      hintText: hint,
+                      isDense: true,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide:
+                            BorderSide(color: Theme.of(context).dividerColor),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        borderSide: BorderSide(
+                          color: Theme.of(context).colorScheme.primary,
+                          width: 1.6,
+                        ),
+                      ),
+                    ),
+                    onChanged: (v) {
+                      setState(() => _search = v.trim());
+                      unawaited(_reload(reset: true));
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () => _reload(reset: true),
+              edgeOffset: 8,
+              child: Builder(
+                builder: (context) {
+                  if (_isInitialLoading && _items.isEmpty) {
+                    return const SkeletonListingGrid(
+                      physics: AlwaysScrollableScrollPhysics(),
+                    );
+                  }
+
+                  if (_error != null && _items.isEmpty) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        Padding(
+                          padding: EdgeInsets.only(top: 120),
+                          child: Center(
+                            child: Text(
+                              'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  return StreamBuilder<FeedAd?>(
+                    stream: feedAds.streamActiveAd(),
+                    builder: (context, adSnap) {
+                      return _HomeFeedView(
+                        key: _feedKey,
+                        items: _items,
+                        ad: adSnap.data,
+                        showcaseItems: const <ShowcaseItem>[],
+                        vipItems: const <Listing>[],
+                        vipHasMore: false,
+                        vipInitialIndex: 0,
+                        showcaseLoading: false,
+                        history: history,
+                        reviews: reviews,
+                        favs: favs,
+                        userId: user.uid,
+                        isLoadingMore: _isLoadingMore,
+                        hasMore: _hasMore,
+                        onLoadMore: _loadMore,
+                        onLoadMoreVip: () async {},
                       );
                     },
                   );
@@ -1912,6 +2371,49 @@ class _CategoryRow extends StatelessWidget {
   }
 }
 
+class _SubcategoryRow extends StatelessWidget {
+  final String selected;
+  final List<String> items;
+  final ValueChanged<String> onSelect;
+
+  const _SubcategoryRow({
+    required this.selected,
+    required this.items,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final options = <String>['Все', ...items];
+    return SizedBox(
+      height: 50,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        scrollDirection: Axis.horizontal,
+        itemCount: options.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        itemBuilder: (_, i) {
+          final value = options[i];
+          final isSel = value == selected;
+          return ChoiceChip(
+            label: Text(value),
+            selected: isSel,
+            selectedColor: Colors.blue,
+            checkmarkColor: Colors.white,
+            labelStyle: TextStyle(
+              color: isSel ? Colors.white : null,
+              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+            ),
+            onSelected: (_) => onSelect(value),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _HomeBrandTitle extends StatelessWidget {
   const _HomeBrandTitle();
 
@@ -2396,6 +2898,7 @@ class _FiltersScreen extends StatefulWidget {
   final bool? initialAutoCleared;
   final bool initialOnlyUncrashed;
   final bool initialOnlyWithPhoto;
+  final bool lockCategory;
 
   const _FiltersScreen({
     required this.initialCategory,
@@ -2423,6 +2926,7 @@ class _FiltersScreen extends StatefulWidget {
     required this.initialAutoCleared,
     required this.initialOnlyUncrashed,
     required this.initialOnlyWithPhoto,
+    this.lockCategory = false,
   });
 
   @override
@@ -2605,8 +3109,8 @@ class _FiltersScreenState extends State<_FiltersScreen> {
 
   void _resetFilters() {
     setState(() {
-      _category = 'Все';
-      _subcategory = 'Все';
+      _category = widget.lockCategory ? widget.initialCategory : 'Все';
+      _subcategory = widget.lockCategory ? widget.initialSubcategory : 'Все';
       _priceFrom = null;
       _priceTo = null;
       _location = '';
@@ -2823,48 +3327,50 @@ class _FiltersScreenState extends State<_FiltersScreen> {
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
         children: [
-          _selector(
-            label: 'Категория',
-            value: _category == 'Все' ? 'Все категории' : _category,
-            onTap: () => _pickOption(
-              title: 'Категория',
-              options: cats,
-              current: _category,
-              onSelected: (value) {
-                setState(() {
-                  _category = value;
-                  _subcategory = 'Все';
-                  if (!_isAutoCategory) {
-                    _autoBrand = '';
-                    _autoModel = '';
-                    _autoCondition = '';
-                    _autoYearFrom = null;
-                    _autoYearTo = null;
-                    _autoMileageFrom = null;
-                    _autoMileageTo = null;
-                    _autoTransmission = '';
-                    _autoDrive = '';
-                    _autoBodyType = '';
-                    _autoFuel = '';
-                    _autoColor = '';
-                    _autoEngineVolumeFrom = null;
-                    _autoEngineVolumeTo = null;
-                    _autoOwners = null;
-                    _autoCleared = null;
-                    _onlyUncrashed = false;
-                    _onlyWithPhoto = false;
-                    _yearFromCtrl.clear();
-                    _yearToCtrl.clear();
-                    _mileageFromCtrl.clear();
-                    _mileageCtrl.clear();
-                    _engineFromCtrl.clear();
-                    _engineToCtrl.clear();
-                  }
-                });
-              },
+          if (!widget.lockCategory) ...[
+            _selector(
+              label: 'Категория',
+              value: _category == 'Все' ? 'Все категории' : _category,
+              onTap: () => _pickOption(
+                title: 'Категория',
+                options: cats,
+                current: _category,
+                onSelected: (value) {
+                  setState(() {
+                    _category = value;
+                    _subcategory = 'Все';
+                    if (!_isAutoCategory) {
+                      _autoBrand = '';
+                      _autoModel = '';
+                      _autoCondition = '';
+                      _autoYearFrom = null;
+                      _autoYearTo = null;
+                      _autoMileageFrom = null;
+                      _autoMileageTo = null;
+                      _autoTransmission = '';
+                      _autoDrive = '';
+                      _autoBodyType = '';
+                      _autoFuel = '';
+                      _autoColor = '';
+                      _autoEngineVolumeFrom = null;
+                      _autoEngineVolumeTo = null;
+                      _autoOwners = null;
+                      _autoCleared = null;
+                      _onlyUncrashed = false;
+                      _onlyWithPhoto = false;
+                      _yearFromCtrl.clear();
+                      _yearToCtrl.clear();
+                      _mileageFromCtrl.clear();
+                      _mileageCtrl.clear();
+                      _engineFromCtrl.clear();
+                      _engineToCtrl.clear();
+                    }
+                  });
+                },
+              ),
             ),
-          ),
-          if (_category != 'Все') ...[
+          ],
+          if (!widget.lockCategory && _category != 'Все') ...[
             const SizedBox(height: 16),
             _selector(
               label: 'Подкатегория',

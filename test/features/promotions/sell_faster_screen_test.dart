@@ -244,6 +244,8 @@ void main() {
     final walletService = _FakeWalletService();
     final promotionsService = _FakePromotionsService(walletService);
     final listingsService = _FakeListingsService();
+    var bumpNotifications = 0;
+    listingsService.bumpPurchases.addListener(() => bumpNotifications++);
 
     await tester.pumpWidget(
       MultiProvider(
@@ -267,6 +269,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(listingsService.refreshCalls, 1);
+    expect(bumpNotifications, 1);
     expect(listingsService.lastListing?.activeBump?.type, 'bump');
   });
 }

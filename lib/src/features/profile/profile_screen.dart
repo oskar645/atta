@@ -1167,7 +1167,20 @@ class _ProfileWalletCard extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final narrow = constraints.maxWidth < 340;
+              final topUpLabel = TextPainter(
+                text: TextSpan(
+                  text: 'Пополнить',
+                  style: theme.textTheme.labelLarge,
+                ),
+                textDirection: Directionality.of(context),
+                textScaler: MediaQuery.textScalerOf(context),
+              )..layout();
+              // Icon, gaps, refresh area and the unchanged button padding.
+              // The info column can shrink because all its text uses ellipsis.
+              final minimumRowWidth =
+                  24 + 16 + 10 + 40 + 8 + 28 + topUpLabel.width.ceilToDouble();
+              topUpLabel.dispose();
+              final narrow = constraints.maxWidth < minimumRowWidth;
               final info = _ProfileWalletInfo(
                 wallet: wallet,
                 showBalance: !narrow,
@@ -1248,6 +1261,7 @@ class _ProfileWalletInfo extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontSize: 12,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
         ),
@@ -1293,11 +1307,14 @@ class _ProfileWalletRefreshButton extends StatelessWidget {
   Widget build(BuildContext context) {
     if (refreshing) {
       return const SizedBox(
-        width: 22,
-        height: 22,
-        child: Padding(
-          padding: EdgeInsets.all(2),
-          child: CircularProgressIndicator(strokeWidth: 2.2),
+        width: 40,
+        height: 40,
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.2),
+          ),
         ),
       );
     }

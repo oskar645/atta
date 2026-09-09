@@ -1440,10 +1440,12 @@ void main() {
       limit: 20,
       useVipInterleave: true,
       vipRotation: 2,
+      bumpRotation: 3,
     );
 
     expect(api.listQueries.single['feedMode'], 'vip_interleave_v1');
     expect(api.listQueries.single['vipRotation'], 2);
+    expect(api.listQueries.single['bumpRotation'], 3);
   });
 
   test('getPublicOwnerListingsPage requests approved owner page', () async {

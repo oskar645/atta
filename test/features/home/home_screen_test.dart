@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:atta/src/app.dart';
 import 'package:atta/src/features/home/home_screen.dart';
@@ -83,6 +84,8 @@ void main() {
 
       expect(listings.requests.length, 2);
       expect(listings.requests.last.cursor, 'cursor-1');
+      expect(listings.requests.last.bumpRotation,
+          listings.requests.first.bumpRotation);
       expect(showcase.homeShowcaseCalls, 1);
       expect(find.text('Дубль'), findsNothing);
       expect(find.text('Больше объявлений нет'), findsNothing);
@@ -1132,6 +1135,126 @@ void main() {
   );
 
   testWidgets(
+      'BUMP purchase refetches Home and CategoryFeed with preserved VIP rotation',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (request) async => ListingsFeedPage(
+        items: <Listing>[_listing(id: 'bump-item', title: 'Товар')],
+        hasMore: false,
+        nextCursor: null,
+      ),
+    );
+    await tester.pumpWidget(_buildHomeTestApp(listings: listings));
+    await tester.pumpAndSettle();
+    final homeBefore = listings.requests.last;
+    final count = listings.requests.length;
+    listings.notifyBumpPurchased();
+    await tester.pumpAndSettle();
+    expect(listings.requests.length, count + 1);
+    expect(listings.requests.last.cursor, isNull);
+    expect(listings.requests.last.bumpRotation, homeBefore.bumpRotation + 1);
+    expect(listings.requests.last.vipRotation, homeBefore.vipRotation);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Запчасти'));
+    await tester.pumpAndSettle();
+    final categoryBefore = listings.requests.last;
+    final categoryCount = listings.requests.length;
+    listings.notifyBumpPurchased();
+    await tester.pumpAndSettle();
+    expect(listings.requests.length, categoryCount + 2);
+    final categoryAfter =
+        listings.requests.lastWhere((r) => r.category == 'Запчасти');
+    expect(categoryAfter.cursor, isNull);
+    expect(categoryAfter.bumpRotation, categoryBefore.bumpRotation + 1);
+    expect(categoryAfter.vipRotation, categoryBefore.vipRotation);
+  });
+
+  testWidgets(
+    'home category chip opens category feed route with subcategory chips',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            20,
+            (index) => _listing(
+              id: '${request.category}-${request.filters?.subcategory}-$index',
+              title: 'Товар $index',
+              category: request.category,
+              subcategory: request.filters?.subcategory ?? 'Все',
+            ),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(_buildHomeTestApp(listings: listings));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Запчасти'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CategoryFeedScreen), findsOneWidget);
+      expect(
+          find.descendant(
+            of: find.byType(AppBar),
+            matching: find.text('Запчасти'),
+          ),
+          findsOneWidget);
+      expect(listings.requests.last.category, 'Запчасти');
+      expect(listings.requests.last.filters?.category, 'Запчасти');
+      expect(listings.requests.last.filters?.subcategory, 'Все');
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Запчасти авто'));
+      await tester.pumpAndSettle();
+
+      expect(listings.requests.last.category, 'Запчасти');
+      expect(listings.requests.last.filters?.category, 'Запчасти');
+      expect(listings.requests.last.filters?.subcategory, 'Запчасти авто');
+    },
+  );
+
+  testWidgets(
+    'home restore ignores saved category and subcategory',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'home_filters_user-1': json.encode(<String, Object?>{
+          'category': 'Электроника',
+          'subcategory': 'Телефоны',
+          'search': 'самсунг',
+          'location': 'Москва',
+          'preferLocationFirst': true,
+          'onlyUncrashed': false,
+          'onlyWithPhoto': true,
+        }),
+      });
+
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async => ListingsFeedPage(
+          items: <Listing>[
+            _listing(id: 'listing-1', title: 'Самсунг'),
+          ],
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(_buildHomeTestApp(listings: listings));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(listings.requests.last.category, 'Все');
+      expect(listings.requests.last.search, 'самсунг');
+      expect(listings.requests.last.filters?.category, 'Все');
+      expect(listings.requests.last.filters?.subcategory, 'Все');
+      expect(listings.requests.last.filters?.location, 'Москва');
+      expect(listings.requests.last.filters?.onlyWithPhoto, isTrue);
+      expect(find.widgetWithText(ChoiceChip, 'Все'), findsOneWidget);
+      expect(find.byType(CategoryFeedScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
     'favorite toggle updates card without listings reload',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(800, 1200));
@@ -2036,8 +2159,12 @@ class _PageRequest {
     required this.filters,
     required this.limit,
     required this.cursor,
+    this.bumpRotation = 0,
+    this.vipRotation = 0,
   });
 
+  final int bumpRotation;
+  final int vipRotation;
   final String category;
   final String search;
   final ListingFeedFilters? filters;
@@ -2067,6 +2194,7 @@ class _FakeListingsService extends ListingsService {
     String? cursor,
     bool useVipInterleave = false,
     int vipRotation = 0,
+    int bumpRotation = 0,
   }) {
     final request = _PageRequest(
       category: category,
@@ -2074,6 +2202,8 @@ class _FakeListingsService extends ListingsService {
       filters: filters,
       limit: limit,
       cursor: cursor,
+      bumpRotation: bumpRotation,
+      vipRotation: vipRotation,
     );
     requests.add(request);
     return onGetListingsPage(request);
@@ -2479,6 +2609,7 @@ Listing _listing({
   required String id,
   required String title,
   String category = 'Все',
+  String subcategory = 'Телефоны',
   bool hasVip = false,
   String vipStatus = 'active',
 }) {
@@ -2499,7 +2630,7 @@ Listing _listing({
     'title': title,
     'description': 'Описание',
     'category': category,
-    'subcategory': 'Телефоны',
+    'subcategory': subcategory,
     'price': 1000,
     'phone': '+79990000000',
     'phone_hidden': false,

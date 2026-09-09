@@ -1081,6 +1081,7 @@ class _FollowListingsService extends ListingsService {
     String? cursor,
     bool useVipInterleave = false,
     int vipRotation = 0,
+    int bumpRotation = 0,
   }) async {
     return ListingsFeedPage(
       items: peekListings(category: category, search: search),

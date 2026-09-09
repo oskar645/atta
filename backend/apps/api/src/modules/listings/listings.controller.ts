@@ -59,6 +59,7 @@ export class ListingsController {
     @Query('publicMode') publicMode?: string,
     @Query('feedMode') feedMode?: string,
     @Query('vipRotation') vipRotation?: string,
+    @Query('bumpRotation') bumpRotation?: string,
   ) {
     return this.listingsService.findAll({
       search,
@@ -71,6 +72,7 @@ export class ListingsController {
       cursor,
       feedMode,
       vipRotation: vipRotation == null ? undefined : Number(vipRotation),
+      bumpRotation: bumpRotation == null ? undefined : Number(bumpRotation),
       minPrice: minPrice == null ? undefined : Number(minPrice),
       maxPrice: maxPrice == null ? undefined : Number(maxPrice),
     });

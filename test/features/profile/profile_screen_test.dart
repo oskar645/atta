@@ -20,6 +20,54 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  for (final width in [280.0, 320.0, 360.0, 390.0, 414.0]) {
+    testWidgets('wallet layout and refresh stay stable at $width',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, 900);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final service = _ProfileWalletSlowService();
+      await tester.pumpWidget(_wrapProfile(
+        walletService: service,
+        profileService: _FakeProfileService(),
+      ));
+      await _pumpUntilFound(tester, find.text('Бонусы для продвижения'));
+      final card = find.byKey(const Key('profile-wallet-card'));
+      final progress = find.descendant(
+          of: card, matching: find.byType(CircularProgressIndicator));
+      final topUp = find.byKey(const Key('profile-wallet-top-up-button'));
+      final before = tester.getRect(topUp);
+      final progressCenter = tester.getCenter(progress);
+      expect(tester.getSize(progress), const Size(22, 22));
+      final subtitle = tester.widget<Text>(find.text('Бонусы для продвижения'));
+      expect(subtitle.style?.fontSize, 12);
+      expect(subtitle.maxLines, 1);
+      expect(subtitle.overflow, TextOverflow.ellipsis);
+      expect(tester.takeException(), isNull);
+
+      service.maybeCheckCompleter.complete(_wallet(balance: 150000));
+      service.checkAccrualCompleter.complete(_wallet(balance: 150000));
+      await _pumpUntilFound(tester, find.byTooltip('Обновить кошелёк'));
+      final refresh = find.byTooltip('Обновить кошелёк');
+      expect(tester.getSize(refresh), const Size(40, 40));
+      expect(tester.getCenter(refresh).dx, progressCenter.dx);
+      expect(tester.getRect(topUp).left, before.left);
+      if (width >= 320) {
+        expect(tester.getCenter(refresh).dy, tester.getCenter(topUp).dy);
+        expect(
+            tester
+                .getCenter(find.byIcon(Icons.account_balance_wallet_outlined))
+                .dy,
+            tester.getCenter(topUp).dy);
+      } else {
+        expect(
+            tester.getCenter(refresh).dy, lessThan(tester.getCenter(topUp).dy));
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('ordinary profile does not show technical user id',
       (tester) async {
     await tester.pumpWidget(
