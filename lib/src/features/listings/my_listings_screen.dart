@@ -19,7 +19,18 @@ import 'dart:async';
 
 void _debugMyListingsLog(String message) {
   assert(() {
-    debugPrint(message);
+    debugPrint('[MYLIST] $message');
+    return true;
+  }());
+}
+
+void _debugMyListingsStack(String source, {int maxFrames = 20}) {
+  assert(() {
+    final frames = StackTrace.current.toString().trimRight().split('\n');
+    debugPrint(
+      '[MYLIST] STACK source=$source maxFrames=$maxFrames\n'
+      '${frames.take(maxFrames).join('\n')}',
+    );
     return true;
   }());
 }
@@ -42,6 +53,8 @@ class MyListingsScreen extends StatefulWidget {
 
 class _MyListingsScreenState extends State<MyListingsScreen>
     with SingleTickerProviderStateMixin {
+  static const double _bottomCreateButtonReserve = 92;
+  static const double _scrollDirectionThreshold = 28;
   static const _tabs = <_MyListingsTabConfig>[
     _MyListingsTabConfig(
       title: 'Активные',
@@ -54,39 +67,102 @@ class _MyListingsScreenState extends State<MyListingsScreen>
       emptyText: 'Нет объявлений на модерации',
     ),
     _MyListingsTabConfig(
-      title: 'Архивные',
+      title: 'В архиве',
       statuses: {'archived'},
       emptyText: 'Нет архивных объявлений',
     ),
     _MyListingsTabConfig(
-      title: 'Удалённые',
-      statuses: {'deleted', 'rejected'},
-      emptyText: 'Нет удалённых объявлений',
+      title: 'Отклонённые',
+      statuses: {'rejected'},
+      emptyText: 'Нет отклонённых объявлений',
     ),
     _MyListingsTabConfig(
       title: 'Проданные',
       statuses: {'sold'},
       emptyText: 'Нет проданных объявлений',
     ),
+    _MyListingsTabConfig(
+      title: 'Удалённые',
+      statuses: {'deleted'},
+      emptyText: 'Нет удалённых объявлений',
+    ),
   ];
 
   late final TabController _tab;
+  bool _showCreateButton = true;
+  double _scrollDirectionDistance = 0;
 
   @override
   void initState() {
     super.initState();
-    _debugMyListingsLog('MyListings open');
+    _debugMyListingsLog('RUNTIME_SCREEN_INIT');
+    _debugMyListingsLog(
+      'init screen=${identityHashCode(this)} initialTab=${widget.initialTabIndex}',
+    );
     _tab = TabController(
       length: _tabs.length,
       vsync: this,
       initialIndex: widget.initialTabIndex.clamp(0, _tabs.length - 1),
     );
+    _tab.addListener(_handleTabChanged);
   }
 
   @override
   void dispose() {
+    _debugMyListingsLog('dispose screen=${identityHashCode(this)}');
+    _tab.removeListener(_handleTabChanged);
     _tab.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant MyListingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _debugMyListingsLog(
+      'didUpdateWidget screen=${identityHashCode(this)} '
+      'oldTab=${oldWidget.initialTabIndex} newTab=${widget.initialTabIndex} '
+      'oldListing=${oldWidget.initialListingId} newListing=${widget.initialListingId}',
+    );
+  }
+
+  void _handleTabChanged() {
+    _debugMyListingsLog(
+      'tabChanged screen=${identityHashCode(this)} index=${_tab.index} changing=${_tab.indexIsChanging}',
+    );
+  }
+
+  void _setCreateButtonVisible(bool visible) {
+    if (visible != _showCreateButton) {
+      setState(() => _showCreateButton = visible);
+    }
+  }
+
+  bool _handleCreateButtonScroll(ScrollNotification notification) {
+    final metrics = notification.metrics;
+    if (metrics.maxScrollExtent <= _scrollDirectionThreshold) {
+      _setCreateButtonVisible(true);
+      _scrollDirectionDistance = 0;
+      return false;
+    }
+    if (metrics.pixels <= metrics.minScrollExtent + _scrollDirectionThreshold) {
+      _setCreateButtonVisible(true);
+      _scrollDirectionDistance = 0;
+      return false;
+    }
+    if (notification is ScrollUpdateNotification) {
+      final delta = notification.scrollDelta ?? 0;
+      if (delta == 0) return false;
+      if (_scrollDirectionDistance.sign != delta.sign) {
+        _scrollDirectionDistance = 0;
+      }
+      _scrollDirectionDistance += delta;
+      if (_scrollDirectionDistance.abs() < _scrollDirectionThreshold) {
+        return false;
+      }
+      _setCreateButtonVisible(_scrollDirectionDistance < 0);
+      _scrollDirectionDistance = 0;
+    }
+    return false;
   }
 
   @override
@@ -114,33 +190,44 @@ class _MyListingsScreenState extends State<MyListingsScreen>
           const AddListingIconButton(),
         ],
       ),
-      body: TabBarView(
-        controller: _tab,
-        children: _tabs
-            .asMap()
-            .entries
-            .map(
-              (entry) => ApiConfig.useTimewebBackend
-                  ? _TimewebMyListingsTab(
-                      userId: uid,
-                      statuses: entry.value.statuses,
-                      emptyText: entry.value.emptyText,
-                      initialListingId: widget.initialListingId.isNotEmpty &&
-                              widget.initialTabIndex == entry.key
-                          ? widget.initialListingId
-                          : '',
-                      autoOpenInitialListing: widget.autoOpenInitialListing &&
-                          widget.initialListingId.isNotEmpty &&
-                          widget.initialTabIndex == entry.key,
-                    )
-                  : _ListingsTab(
-                      stream: svc.streamMyListingsByStatuses(
-                        uid,
-                        statuses: entry.value.statuses,
-                      ),
-                    ),
-            )
-            .toList(),
+      body: Stack(
+        children: [
+          TabBarView(
+            controller: _tab,
+            children: _tabs
+                .asMap()
+                .entries
+                .map(
+                  (entry) => ApiConfig.useTimewebBackend
+                      ? _TimewebMyListingsTab(
+                          userId: uid,
+                          statuses: entry.value.statuses,
+                          emptyText: entry.value.emptyText,
+                          bottomPadding: _bottomCreateButtonReserve,
+                          onScrollNotification: _handleCreateButtonScroll,
+                          initialListingId:
+                              widget.initialListingId.isNotEmpty &&
+                                      widget.initialTabIndex == entry.key
+                                  ? widget.initialListingId
+                                  : '',
+                          autoOpenInitialListing:
+                              widget.autoOpenInitialListing &&
+                                  widget.initialListingId.isNotEmpty &&
+                                  widget.initialTabIndex == entry.key,
+                        )
+                      : _ListingsTab(
+                          stream: svc.streamMyListingsByStatuses(
+                            uid,
+                            statuses: entry.value.statuses,
+                          ),
+                          bottomPadding: _bottomCreateButtonReserve,
+                          onScrollNotification: _handleCreateButtonScroll,
+                        ),
+                )
+                .toList(),
+          ),
+          _CreateListingBottomButton(visible: _showCreateButton),
+        ],
       ),
     );
   }
@@ -163,6 +250,8 @@ class _TimewebMyListingsTab extends StatefulWidget {
     required this.userId,
     required this.statuses,
     required this.emptyText,
+    required this.bottomPadding,
+    required this.onScrollNotification,
     this.initialListingId = '',
     this.autoOpenInitialListing = false,
   });
@@ -170,6 +259,8 @@ class _TimewebMyListingsTab extends StatefulWidget {
   final String userId;
   final Set<String> statuses;
   final String emptyText;
+  final double bottomPadding;
+  final bool Function(ScrollNotification notification) onScrollNotification;
   final String initialListingId;
   final bool autoOpenInitialListing;
 
@@ -206,21 +297,34 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _debugMyListingsLog('auth ready user=${widget.userId}');
+    _debugMyListingsLog(
+      'init user=${widget.userId} status=$_statusLabelForTrace '
+      'state=${identityHashCode(this)} widget=${identityHashCode(widget)}',
+    );
     final cached = context.read<ListingsService>().peekMyListingsByStatuses(
           statuses: widget.statuses,
         );
     if (cached.isNotEmpty) {
-      _items = cached;
+      _replaceLocalItems(
+        cached,
+        reason: 'init cached',
+        source: 'peekMyListingsByStatuses',
+      );
       _loading = false;
     }
     _future = _load();
     _refreshSub = context.read<ListingsService>().refreshes.listen((_) {
       if (!mounted) return;
+      final listings = context.read<ListingsService>();
+      final nextItems = listings.peekMyListingsByStatuses(
+        statuses: widget.statuses,
+      );
       setState(() {
-        _items = context.read<ListingsService>().peekMyListingsByStatuses(
-              statuses: widget.statuses,
-            );
+        _replaceLocalItems(
+          nextItems,
+          reason: 'service notify',
+          source: 'refresh listener',
+        );
         _loadedOnce = true;
         _loading = false;
       });
@@ -231,9 +335,23 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
 
   @override
   void dispose() {
+    _debugMyListingsLog(
+      'dispose user=${widget.userId} status=$_statusLabelForTrace '
+      'state=${identityHashCode(this)} widget=${identityHashCode(widget)}',
+    );
     WidgetsBinding.instance.removeObserver(this);
     _refreshSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TimewebMyListingsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _debugMyListingsLog(
+      'didUpdateWidget user=${widget.userId} oldUser=${oldWidget.userId} '
+      'status=$_statusLabelForTrace oldStatus=${oldWidget.statuses.join(",")} '
+      'state=${identityHashCode(this)} widget=${identityHashCode(widget)}',
+    );
   }
 
   @override
@@ -265,7 +383,11 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
       final loadError = listings.lastMyListingsErrorForUser(widget.userId);
       if (mounted) {
         setState(() {
-          _items = items;
+          _replaceLocalItems(
+            items,
+            reason: reset ? 'load reset' : 'load append',
+            source: '_load',
+          );
           _nextCursor = page.nextCursor;
           _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
           _errorText = !hadItems && loadError != null
@@ -327,7 +449,11 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
           .lastMyListingsErrorForUser(widget.userId);
       final hasItems = items.isNotEmpty;
       setState(() {
-        _items = items;
+        _replaceLocalItems(
+          items,
+          reason: 'refresh await',
+          source: '_refresh',
+        );
         _errorText = !hasItems && loadError != null
             ? 'Не удалось загрузить объявления. Попробуйте снова.'
             : null;
@@ -377,6 +503,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
   }
 
   bool _handleScroll(ScrollNotification notification) {
+    widget.onScrollNotification(notification);
     if (notification is! ScrollEndNotification) return false;
     final pixels = notification.metrics.pixels;
     if (notification.metrics.extentAfter < 480 &&
@@ -395,6 +522,45 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
       if (seen.add(item.id)) merged.add(item);
     }
     return merged;
+  }
+
+  String get _statusLabelForTrace {
+    final values = widget.statuses.toList(growable: false)..sort();
+    return values.join(',');
+  }
+
+  void _replaceLocalItems(
+    List<Listing> next, {
+    required String reason,
+    required String source,
+  }) {
+    final oldItems = _items ?? const <Listing>[];
+    final oldCount = oldItems.length;
+    final newCount = next.length;
+    final oldIds = oldItems.map((item) => item.id).take(30).join(',');
+    final cacheRevision =
+        context.read<ListingsService>().debugMyListingsCacheRevision;
+    _debugMyListingsLog(
+      'ITEMS old=$oldCount new=$newCount status=$_statusLabelForTrace '
+      'reason=$reason source=$source',
+    );
+    if (oldCount > 0 && newCount == 0) {
+      debugPrint(
+        '[MYLIST] BECAME_EMPTY user=${widget.userId} status=$_statusLabelForTrace '
+        'oldCount=$oldCount newCount=$newCount oldIds=$oldIds '
+        'reason=$reason source=$source cacheRev=$cacheRevision '
+        'widget/state identity=${identityHashCode(widget)}/${identityHashCode(this)}',
+      );
+      _debugMyListingsStack('screen._replaceLocalItems', maxFrames: 20);
+    } else {
+      _debugMyListingsLog(
+        'local items replace user=${widget.userId} status=$_statusLabelForTrace '
+        'oldCount=$oldCount newCount=$newCount reason=$reason source=$source '
+        'widget/state identity=${identityHashCode(widget)}/${identityHashCode(this)} '
+        'cache revision=$cacheRevision',
+      );
+    }
+    _items = List<Listing>.from(next);
   }
 
   void _maybeAutoOpenListing(List<Listing> items) {
@@ -463,7 +629,12 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
             onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.fromLTRB(
+                12,
+                12,
+                12,
+                12 + widget.bottomPadding,
+              ),
               children: [
                 ...items.map((item) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
@@ -493,6 +664,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
               children: [
                 const SizedBox(height: 160),
                 Center(child: Text(widget.emptyText)),
+                SizedBox(height: widget.bottomPadding),
               ],
             ),
           );
@@ -503,7 +675,12 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
             child: ListView.separated(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.fromLTRB(
+                12,
+                12,
+                12,
+                12 + widget.bottomPadding,
+              ),
               itemCount: items.length + (_isLoadingMore ? 1 : 0),
               separatorBuilder: (_, __) => const SizedBox(height: 10),
               itemBuilder: (_, i) {
@@ -542,9 +719,68 @@ class _LoadMoreFooter extends StatelessWidget {
   }
 }
 
+class _CreateListingBottomButton extends StatelessWidget {
+  const _CreateListingBottomButton({required this.visible});
+
+  final bool visible;
+
+  @override
+  Widget build(BuildContext context) {
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final theme = Theme.of(context);
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 12 + safeBottom,
+      child: IgnorePointer(
+        ignoring: !visible,
+        child: AnimatedSlide(
+          offset: visible ? Offset.zero : const Offset(0, 1.35),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOutCubic,
+          child: AnimatedOpacity(
+            key: const ValueKey('my_listings_create_button_opacity'),
+            opacity: visible ? 1 : 0,
+            duration: const Duration(milliseconds: 280),
+            curve: Curves.easeInOutCubic,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 280),
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 18),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    textStyle: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  onPressed: () =>
+                      AddListingIconButton.openCreateListingFlow(context),
+                  child: const Text('Разместить объявление'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ListingsTab extends StatelessWidget {
   final Stream<List<Listing>> stream;
-  const _ListingsTab({required this.stream});
+  final double bottomPadding;
+  final bool Function(ScrollNotification notification) onScrollNotification;
+  const _ListingsTab({
+    required this.stream,
+    required this.bottomPadding,
+    required this.onScrollNotification,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -568,11 +804,14 @@ class _ListingsTab extends StatelessWidget {
         if (items.isEmpty) {
           return const Center(child: Text('Пока нет объявлений'));
         }
-        return ListView.separated(
-          padding: const EdgeInsets.all(12),
-          itemCount: items.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 10),
-          itemBuilder: (_, i) => _MyListingTile(listing: items[i]),
+        return NotificationListener<ScrollNotification>(
+          onNotification: onScrollNotification,
+          child: ListView.separated(
+            padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPadding),
+            itemCount: items.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (_, i) => _MyListingTile(listing: items[i]),
+          ),
         );
       },
     );
@@ -623,17 +862,32 @@ class _MyListingTile extends StatelessWidget {
   });
 
   bool get _canSellFaster =>
-      listing.status == 'approved' && !listing.isArchivedStatus;
+      listing.normalizedStatus == 'approved' && !listing.isArchivedStatus;
 
   @override
   Widget build(BuildContext context) {
     final svc = context.read<ListingsService>();
+    final currentUserId = context.read<AuthService>().currentUser?.uid ?? '';
     final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
-    final isArchived = listing.isArchivedStatus;
-    final canEdit = listing.canOwnerEdit &&
-        listing.status != 'deleted' &&
-        listing.status != 'sold';
+    final canResubmit = listing.canOwnerResubmit;
+    final resubmitLabel = listing.normalizedStatus == 'rejected'
+        ? 'Отправить на модерацию'
+        : 'Опубликовать снова';
+    final canEdit = listing.canOwnerEdit;
+    final normalizedStatus = listing.normalizedStatus;
+    final canArchive = normalizedStatus == 'approved';
+    final showSecondaryAction = canResubmit || canArchive;
+    final secondaryLabel = canResubmit ? resubmitLabel : 'Снять с публикации';
     final archiveNote = listing.archiveNote.trim();
+    final isOwner = listing.ownerId.trim() == currentUserId.trim();
+    _debugMyListingsLog(
+      'widget=_MyListingTile listingId=${listing.id} '
+      'rawStatus=${listing.status} normalizedStatus=$normalizedStatus '
+      'moderatedBy=${listing.moderatedBy} ownerId=${listing.ownerId} '
+      'currentUserId=$currentUserId isOwner=$isOwner '
+      'canOwnerEdit=${listing.canOwnerEdit} '
+      'canOwnerResubmit=${listing.canOwnerResubmit}',
+    );
 
     return InkWell(
       onTap: () => Navigator.of(context).push(
@@ -763,7 +1017,7 @@ class _MyListingTile extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Статус: ${_statusLabel(listing.status)}',
+                        'Статус: ${_statusLabel(normalizedStatus)}',
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.outline,
                         ),
@@ -802,82 +1056,100 @@ class _MyListingTile extends StatelessWidget {
                 ),
               ),
             ],
-            const SizedBox(height: 8),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                // Each action receives half of the available row width.  At
-                // compact widths, reducing only the label size keeps both
-                // controls on one line without changing their height.
-                final isCompact = (constraints.maxWidth - 8) / 2 < 168;
-                final editFontSize = isCompact ? 12.0 : 14.0;
-                final archiveFontSize = isCompact ? 11.0 : 12.0;
+            if (canEdit || showSecondaryAction) ...[
+              const SizedBox(height: 8),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final secondarySpacing = showSecondaryAction ? 8.0 : 0.0;
+                  final actionCount = showSecondaryAction ? 2 : 1;
+                  final actionWidth =
+                      (constraints.maxWidth - secondarySpacing) / actionCount;
+                  final isCompact = actionWidth < 168;
+                  final editFontSize = isCompact ? 12.0 : 14.0;
+                  final archiveFontSize = isCompact ? 11.0 : 12.0;
 
-                return Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: canEdit
-                            ? () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => EditListingScreen(
-                                      listingId: listing.id,
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: canEdit
+                              ? () {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => EditListingScreen(
+                                        listingId: listing.id,
+                                      ),
                                     ),
+                                  );
+                                }
+                              : null,
+                          style: isCompact
+                              ? OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
                                   ),
-                                );
-                              }
-                            : null,
-                        style: isCompact
-                            ? OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
+                                )
+                              : null,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.edit),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  'Редактировать',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: editFontSize),
                                 ),
-                              )
-                            : null,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.edit),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                'Редактировать',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: editFontSize),
                               ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      if (showSecondaryAction) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: canResubmit
+                                ? () async {
+                                    await svc.resubmitListing(
+                                      listingId: listing.id,
+                                    );
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Объявление отправлено на модерацию',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                : () async {
+                                    await runListingArchiveFlow(
+                                      context,
+                                      listingId: listing.id,
+                                      listingsService: svc,
+                                    );
+                                  },
+                            style: OutlinedButton.styleFrom(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 6),
                             ),
-                          ],
+                            child: Text(
+                              secondaryLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: archiveFontSize),
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: isArchived
-                            ? null
-                            : () async {
-                                await runListingArchiveFlow(
-                                  context,
-                                  listingId: listing.id,
-                                  listingsService: svc,
-                                );
-                              },
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                        ),
-                        child: Text(
-                          'Снять с публикации',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: archiveFontSize),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -891,11 +1163,11 @@ class _MyListingTile extends StatelessWidget {
       case 'pending':
         return 'На модерации';
       case 'rejected':
-        return 'Отклонено';
+        return 'Отклонённые';
       case 'sold':
-        return 'Продано';
+        return 'Проданные';
       case 'deleted':
-        return 'Удалено админом';
+        return 'Удалённые';
       case 'archived':
         return 'В архиве';
       default:

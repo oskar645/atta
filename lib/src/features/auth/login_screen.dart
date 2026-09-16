@@ -14,6 +14,7 @@ import 'package:atta/src/utils/ru_phone.dart';
 
 import 'privacy_screen.dart';
 import 'terms_screen.dart';
+import 'legal_document_screen.dart';
 
 enum _AuthMethod { phone, email }
 
@@ -25,6 +26,14 @@ const String _emailAuthDisabledMessage =
 
 void _selectHomeAfterAuthentication(BuildContext context) {
   context.read<MainShellController>().selectTab(0);
+}
+
+void _closeWebAuthPromptStack(BuildContext context) {
+  final navigator = Navigator.of(context);
+  navigator.popUntil(
+    (route) => route.settings.name == 'web-auth-prompt' || route.isFirst,
+  );
+  navigator.maybePop(true);
 }
 
 String _maskPhone(String input) {
@@ -112,6 +121,7 @@ class _PhoneRegistrationDraft {
   final String password;
   final String phone;
   final bool acceptedOffer;
+  final bool acceptedPersonalData;
   final bool phoneVerified;
   final String verificationCheckId;
 
@@ -120,6 +130,7 @@ class _PhoneRegistrationDraft {
     required this.password,
     required this.phone,
     required this.acceptedOffer,
+    required this.acceptedPersonalData,
     this.phoneVerified = false,
     this.verificationCheckId = '',
   });
@@ -129,6 +140,7 @@ class _PhoneRegistrationDraft {
     String? password,
     String? phone,
     bool? acceptedOffer,
+    bool? acceptedPersonalData,
     bool? phoneVerified,
     String? verificationCheckId,
   }) {
@@ -137,6 +149,7 @@ class _PhoneRegistrationDraft {
       password: password ?? this.password,
       phone: phone ?? this.phone,
       acceptedOffer: acceptedOffer ?? this.acceptedOffer,
+      acceptedPersonalData: acceptedPersonalData ?? this.acceptedPersonalData,
       phoneVerified: phoneVerified ?? this.phoneVerified,
       verificationCheckId: verificationCheckId ?? this.verificationCheckId,
     );
@@ -147,9 +160,11 @@ class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
     this.initialIsLogin = true,
+    this.returnToPreviousAfterAuth = false,
   });
 
   final bool initialIsLogin;
+  final bool returnToPreviousAfterAuth;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -168,6 +183,7 @@ class _LoginScreenState extends State<LoginScreen> {
   late bool _isLogin;
   bool _loading = false;
   bool _hasAcceptedLegal = false;
+  bool _hasAcceptedPersonalData = false;
   _AuthMethod _authMethod = _AuthMethod.phone;
 
   AuthService get _auth => context.read<AuthService>();
@@ -179,6 +195,8 @@ class _LoginScreenState extends State<LoginScreen> {
       _nameCtrl.text.trim().isNotEmpty &&
       _isPhonePasswordLongEnough(_passCtrl.text) &&
       _hasAcceptedLegal;
+  bool get _canContinuePhoneRegistration =>
+      _canContinuePhoneRegistrationFromTab && _hasAcceptedPersonalData;
   bool get _canContinuePhoneLogin =>
       !_loading && _isValidRuPhone(_loginCtrl.text);
 
@@ -204,6 +222,15 @@ class _LoginScreenState extends State<LoginScreen> {
   void _snack(String text) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  void _finishAuthNavigation() {
+    if (widget.returnToPreviousAfterAuth) {
+      _closeWebAuthPromptStack(context);
+      return;
+    }
+    _selectHomeAfterAuthentication(context);
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   String _normalizeRuPhone(String input) => normalizeRuPhoneForApi(input);
@@ -330,6 +357,7 @@ class _LoginScreenState extends State<LoginScreen> {
           builder: (_) => _PhonePasswordLoginScreen(
             phone: phone,
             authService: _auth,
+            returnToPreviousAfterAuth: widget.returnToPreviousAfterAuth,
           ),
         ),
       );
@@ -341,7 +369,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _openPhoneRegistrationFlow() async {
-    if (!_canContinuePhoneRegistrationFromTab) return;
+    if (!_canContinuePhoneRegistration) return;
     debugPrint(
       'Phone registration start: nameLen=${_nameCtrl.text.trim().length}, passLen=${_passCtrl.text.trim().length}, accepted=$_hasAcceptedLegal',
     );
@@ -354,8 +382,10 @@ class _LoginScreenState extends State<LoginScreen> {
             password: _passCtrl.text.trim(),
             phone: '',
             acceptedOffer: _hasAcceptedLegal,
+            acceptedPersonalData: _hasAcceptedPersonalData,
           ),
           authService: _auth,
+          returnToPreviousAfterAuth: widget.returnToPreviousAfterAuth,
         ),
       ),
     );
@@ -384,8 +414,11 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
     if (!_hasAcceptedLegal) {
-      _snack(
-          'Примите Пользовательское соглашение и Политику конфиденциальности');
+      _snack('Примите Пользовательское соглашение и ознакомьтесь с Политикой');
+      return;
+    }
+    if (!_hasAcceptedPersonalData) {
+      _snack('Дайте согласие на обработку персональных данных');
       return;
     }
 
@@ -396,10 +429,12 @@ class _LoginScreenState extends State<LoginScreen> {
         password: pass,
         displayName: name,
         phone: phone,
+        acceptedLegal: _hasAcceptedLegal,
+        acceptedPersonalData: _hasAcceptedPersonalData,
+        acceptedMarketing: false,
       );
       if (!mounted) return;
-      _selectHomeAfterAuthentication(context);
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      _finishAuthNavigation();
     } catch (e) {
       _snack(_niceAuthError(e, isPhoneContext: false));
     } finally {
@@ -413,6 +448,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLogin = !_isLogin;
       _loading = false;
       _hasAcceptedLegal = false;
+      _hasAcceptedPersonalData = false;
       _authMethod = _AuthMethod.phone;
       _passCtrl.clear();
       if (_isLogin) {
@@ -434,6 +470,17 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const PrivacyScreen()),
+    );
+  }
+
+  void _openPersonalDataConsent() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const LegalDocumentScreen(
+          kind: LegalDocumentKind.personalDataConsent,
+        ),
+      ),
     );
   }
 
@@ -533,58 +580,118 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLegalBlock(ThemeData theme) {
+    return _buildConsentBlock(
+      theme,
+      key: const ValueKey('registration-legal-consent-block'),
+      value: _hasAcceptedLegal,
+      onChanged: (value) {
+        setState(() {
+          _hasAcceptedLegal = value ?? false;
+        });
+      },
+      children: [
+        const TextSpan(text: 'Я принимаю '),
+        TextSpan(
+          text: 'Пользовательское соглашение',
+          style: _legalLinkStyle(theme),
+          recognizer: TapGestureRecognizer()..onTap = _openTerms,
+        ),
+        const TextSpan(text: ' и ознакомился(ась) с '),
+        TextSpan(
+          text: 'Политикой конфиденциальности',
+          style: _legalLinkStyle(theme),
+          recognizer: TapGestureRecognizer()..onTap = _openPrivacy,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPersonalDataConsentBlock(ThemeData theme) {
+    return _buildConsentBlock(
+      theme,
+      key: const ValueKey('registration-personal-data-consent-block'),
+      value: _hasAcceptedPersonalData,
+      onChanged: (value) {
+        setState(() {
+          _hasAcceptedPersonalData = value ?? false;
+        });
+      },
+      children: [
+        const TextSpan(text: 'Я даю '),
+        TextSpan(
+          text: 'согласие на обработку персональных данных',
+          style: _legalLinkStyle(theme),
+          recognizer: TapGestureRecognizer()..onTap = _openPersonalDataConsent,
+        ),
+      ],
+    );
+  }
+
+  TextStyle _legalLinkStyle(ThemeData theme) => TextStyle(
+        color: theme.colorScheme.primary,
+        fontWeight: FontWeight.w700,
+        fontSize: _legalLinkFontSize(context),
+      );
+
+  double _legalBaseFontSize(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (kIsWeb && width >= 720) return 11.5;
+    if (width < 340) return 11;
+    return 11.2;
+  }
+
+  double _legalLinkFontSize(BuildContext context) =>
+      _legalBaseFontSize(context) + 0.6;
+
+  Widget _buildConsentBlock(
+    ThemeData theme, {
+    Key? key,
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+    required List<InlineSpan> children,
+  }) {
+    final baseFontSize = _legalBaseFontSize(context);
     return Container(
+      key: key,
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Checkbox(
-              value: _hasAcceptedLegal,
-              onChanged: _loading
-                  ? null
-                  : (value) {
-                      setState(() {
-                        _hasAcceptedLegal = value ?? false;
-                      });
-                    },
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: Checkbox(
+                value: value,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                onChanged: _loading ? null : onChanged,
+              ),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 5),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: RichText(
-                  text: TextSpan(
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      height: 1.5,
+                padding: const EdgeInsets.only(top: 5),
+                child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    textScaler: MediaQuery.textScalerOf(context)
+                        .clamp(maxScaleFactor: 1.12),
+                  ),
+                  child: RichText(
+                    overflow: TextOverflow.visible,
+                    text: TextSpan(
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface,
+                        fontSize: baseFontSize,
+                        height: 1.24,
+                      ),
+                      children: children,
                     ),
-                    children: [
-                      const TextSpan(text: 'Я принимаю '),
-                      TextSpan(
-                        text: 'Пользовательское соглашение',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        recognizer: TapGestureRecognizer()..onTap = _openTerms,
-                      ),
-                      const TextSpan(text: ' и '),
-                      TextSpan(
-                        text: 'Политику конфиденциальности',
-                        style: TextStyle(
-                          color: theme.colorScheme.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        recognizer: TapGestureRecognizer()
-                          ..onTap = _openPrivacy,
-                      ),
-                    ],
                   ),
                 ),
               ),
@@ -715,9 +822,11 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 16),
             _buildLegalBlock(theme),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            _buildPersonalDataConsentBlock(theme),
+            const SizedBox(height: 14),
             FilledButton(
-              onPressed: _canContinuePhoneRegistrationFromTab
+              onPressed: _canContinuePhoneRegistration
                   ? _openPhoneRegistrationFlow
                   : null,
               child: const Text('Продолжить'),
@@ -757,7 +866,9 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 16),
             _buildLegalBlock(theme),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            _buildPersonalDataConsentBlock(theme),
+            const SizedBox(height: 14),
             FilledButton(
               onPressed: _loading ? null : _submitEmailRegistration,
               child: Text(_loading ? 'Подождите...' : 'Зарегистрироваться'),
@@ -841,6 +952,7 @@ class _PhoneRegistrationCredentialsScreenState
             password: _passCtrl.text.trim(),
             phone: '',
             acceptedOffer: _acceptedOffer,
+            acceptedPersonalData: _acceptedOffer,
           ),
           authService: widget.authService,
         ),
@@ -945,10 +1057,12 @@ class _PhoneRegistrationCredentialsScreenState
 class _PhoneRegistrationPhoneScreen extends StatefulWidget {
   final _PhoneRegistrationDraft draft;
   final AuthService authService;
+  final bool returnToPreviousAfterAuth;
 
   const _PhoneRegistrationPhoneScreen({
     required this.draft,
     required this.authService,
+    this.returnToPreviousAfterAuth = false,
   });
 
   @override
@@ -1002,6 +1116,7 @@ class _PhoneRegistrationPhoneScreenState
           builder: (_) => _PhoneRegistrationConfirmScreen(
             draft: widget.draft.copyWith(phone: phone),
             authService: widget.authService,
+            returnToPreviousAfterAuth: widget.returnToPreviousAfterAuth,
           ),
         ),
       );
@@ -1054,10 +1169,12 @@ class _PhoneRegistrationPhoneScreenState
 class _PhoneRegistrationConfirmScreen extends StatefulWidget {
   final _PhoneRegistrationDraft draft;
   final AuthService authService;
+  final bool returnToPreviousAfterAuth;
 
   const _PhoneRegistrationConfirmScreen({
     required this.draft,
     required this.authService,
+    this.returnToPreviousAfterAuth = false,
   });
 
   @override
@@ -1326,13 +1443,19 @@ class _PhoneRegistrationConfirmScreenState
             password: widget.draft.password,
             displayName: widget.draft.displayName,
             acceptedLegal: widget.draft.acceptedOffer,
+            acceptedPersonalData: widget.draft.acceptedPersonalData,
+            acceptedMarketing: false,
             verificationCheckId: verificationCheckId,
           )
           .timeout(const Duration(seconds: 25));
 
       if (!mounted) return;
-      _selectHomeAfterAuthentication(context);
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (widget.returnToPreviousAfterAuth) {
+        _closeWebAuthPromptStack(context);
+      } else {
+        _selectHomeAfterAuthentication(context);
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } on TimeoutException {
       if (!mounted) return;
       _snack('Сервер отвечает слишком долго. Попробуйте еще раз.');
@@ -2128,10 +2251,12 @@ class _PhonePasswordLoginScreen extends StatefulWidget {
   const _PhonePasswordLoginScreen({
     required this.phone,
     required this.authService,
+    this.returnToPreviousAfterAuth = false,
   });
 
   final String phone;
   final AuthService authService;
+  final bool returnToPreviousAfterAuth;
 
   @override
   State<_PhonePasswordLoginScreen> createState() =>
@@ -2140,21 +2265,11 @@ class _PhonePasswordLoginScreen extends StatefulWidget {
 
 class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
   final _passwordCtrl = TextEditingController();
-  StreamSubscription<AuthSessionEvent>? _authSub;
   bool _loading = false;
   bool _didCloseAfterAuth = false;
 
   @override
-  void initState() {
-    super.initState();
-    _authSub = widget.authService.onAuthStateChange.listen((_) {
-      _closeAfterSuccessfulAuth();
-    });
-  }
-
-  @override
   void dispose() {
-    _authSub?.cancel();
     _passwordCtrl.dispose();
     super.dispose();
   }
@@ -2177,8 +2292,12 @@ class _PhonePasswordLoginScreenState extends State<_PhonePasswordLoginScreen> {
       return;
     }
     _didCloseAfterAuth = true;
-    _selectHomeAfterAuthentication(context);
-    Navigator.of(context).maybePop();
+    if (!widget.returnToPreviousAfterAuth) {
+      _selectHomeAfterAuthentication(context);
+      Navigator.of(context).maybePop(true);
+      return;
+    }
+    _closeWebAuthPromptStack(context);
   }
 
   Future<void> _submit() async {

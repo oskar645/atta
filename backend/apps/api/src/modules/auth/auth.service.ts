@@ -1,3 +1,4 @@
+import { AccountDeletionService } from './account-deletion.service';
 import {
   BadRequestException,
   ConflictException,
@@ -8,6 +9,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import {
   AdminUser,
+  DevicePlatform,
   ListingStatus,
   PhoneVerificationPurpose,
   PhoneVerificationStatus,
@@ -56,6 +58,8 @@ type UserWithAdminProfile = {
   adminProfile: AdminUser | null;
 };
 
+const LEGAL_DOCUMENT_VERSION = '2026-09-12';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -64,6 +68,7 @@ export class AuthService {
     private readonly storageService: StorageService,
     private readonly walletService: WalletService,
     private readonly userBlocksService: UserBlocksService,
+    private readonly accountDeletion: AccountDeletionService,
   ) {}
 
   async signup(payload: SignupDto) {
@@ -89,26 +94,32 @@ export class AuthService {
     }
 
     const displayName = (payload.display_name ?? payload.displayName ?? '').trim();
+    this.assertRequiredSignupConsents(payload);
     const passwordHash = await hash(payload.password, 10);
-    const user = await this.prisma.user.create({
-      data: {
-        id: randomUUID(),
-        email,
-        phone: payload.phone?.trim() || null,
-        displayName,
-        name: displayName,
-        passwordHash,
-      },
-      include: {
-        adminProfile: true,
-      },
+    const { user, session } = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          id: randomUUID(),
+          email,
+          phone: payload.phone?.trim() || null,
+          displayName,
+          name: displayName,
+          passwordHash,
+        },
+        include: {
+          adminProfile: true,
+        },
+      });
+      const userWithAdmin = await this.ensureAdminBootstrapForUser(created, tx);
+      await this.recordSignupConsents(userWithAdmin.id, payload, tx);
+      return {
+        user: userWithAdmin,
+        session: await this.createSession(userWithAdmin, tx),
+      };
     });
-
-    const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
-    const session = await this.createSession(userWithAdmin);
     await this.ensureWalletBootstrapSafely(user.id);
 
-    return this.buildAuthResponse(userWithAdmin, session.auth);
+    return this.buildAuthResponse(user, session.auth);
   }
 
   async login(payload: LoginDto) {
@@ -179,6 +190,7 @@ export class AuthService {
       payload.referral_id,
     );
     const displayName = (payload.displayName ?? payload.display_name ?? '').trim();
+    this.assertRequiredSignupConsents(payload);
 
     if (!displayName) {
       throw new BadRequestException('Display name is required');
@@ -222,6 +234,7 @@ export class AuthService {
 
       const createdUserWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
       const createdSession = await this.createSession(createdUserWithAdmin, tx);
+      await this.recordSignupConsents(createdUserWithAdmin.id, payload, tx);
       await tx.phoneVerification.update({
         where: {
           id: verification.id,
@@ -247,6 +260,144 @@ export class AuthService {
     });
 
     return this.buildAuthResponse(userWithAdmin, session.auth);
+  }
+
+  async getMarketingConsent(authUser: AuthenticatedUser) {
+    const consent = await (this.prisma as any).userConsent.findFirst({
+      where: {
+        userId: authUser.userId,
+        consentType: 'MARKETING_MESSAGES',
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return {
+      accepted: Boolean(consent?.acceptedAt && !consent?.withdrawnAt),
+      documentVersion: consent?.documentVersion ?? LEGAL_DOCUMENT_VERSION,
+      acceptedAt: consent?.acceptedAt ?? null,
+      withdrawnAt: consent?.withdrawnAt ?? null,
+    };
+  }
+
+  async updateMarketingConsent(
+    authUser: AuthenticatedUser,
+    payload: { accepted?: boolean; platform?: string },
+    request?: any,
+  ) {
+    const now = new Date();
+    const accepted = payload.accepted === true;
+    const platform = this.parseConsentPlatform(payload.platform);
+    const technicalInfo = {
+      source: 'settings',
+      ip: this.pickRequestIp(request),
+      userAgent: request?.headers?.['user-agent']?.toString() ?? null,
+    };
+
+    const consent = await (this.prisma as any).userConsent.create({
+      data: {
+        userId: authUser.userId,
+        consentType: 'MARKETING_MESSAGES',
+        documentVersion: LEGAL_DOCUMENT_VERSION,
+        acceptedAt: accepted ? now : null,
+        withdrawnAt: accepted ? null : now,
+        platform,
+        technicalInfo,
+      },
+    });
+
+    return {
+      accepted,
+      documentVersion: consent.documentVersion,
+      acceptedAt: consent.acceptedAt,
+      withdrawnAt: consent.withdrawnAt,
+    };
+  }
+
+  private assertRequiredSignupConsents(payload: {
+    acceptedLegal?: boolean;
+    acceptedPersonalData?: boolean;
+  }) {
+    if (payload.acceptedLegal !== true) {
+      throw new BadRequestException('Terms acceptance is required');
+    }
+    if (payload.acceptedPersonalData !== true) {
+      throw new BadRequestException('Personal data consent is required');
+    }
+  }
+
+  private async recordSignupConsents(
+    userId: string,
+    payload: {
+      acceptedLegal?: boolean;
+      acceptedPersonalData?: boolean;
+      acceptedMarketing?: boolean;
+      platform?: string;
+    },
+    tx: Prisma.TransactionClient,
+  ) {
+    const acceptedAt = new Date();
+    const platform = this.parseConsentPlatform(payload.platform);
+    const technicalInfo = {
+      source: 'signup',
+      marketingDefaultFalse: payload.acceptedMarketing !== true,
+    };
+
+    await (tx as any).userConsent.createMany({
+      data: [
+        {
+          userId,
+          consentType: 'TERMS_ACCEPTANCE',
+          documentVersion: LEGAL_DOCUMENT_VERSION,
+          acceptedAt,
+          platform,
+          technicalInfo,
+        },
+        {
+          userId,
+          consentType: 'PERSONAL_DATA_PROCESSING',
+          documentVersion: LEGAL_DOCUMENT_VERSION,
+          acceptedAt,
+          platform,
+          technicalInfo,
+        },
+        ...(payload.acceptedMarketing === true
+          ? [
+              {
+                userId,
+                consentType: 'MARKETING_MESSAGES',
+                documentVersion: LEGAL_DOCUMENT_VERSION,
+                acceptedAt,
+                platform,
+                technicalInfo,
+              },
+            ]
+          : []),
+      ],
+    });
+  }
+
+  private parseConsentPlatform(value?: string): DevicePlatform | undefined {
+    switch ((value ?? '').trim().toUpperCase()) {
+      case 'IOS':
+        return DevicePlatform.IOS;
+      case 'ANDROID':
+        return DevicePlatform.ANDROID;
+      case 'WEB':
+        return DevicePlatform.WEB;
+      default:
+        return undefined;
+    }
+  }
+
+  private pickRequestIp(request?: any) {
+    const forwarded = request?.headers?.['x-forwarded-for']?.toString() ?? '';
+    return (
+      request?.ip?.toString().trim() ||
+      forwarded.split(',')[0]?.trim() ||
+      null
+    );
   }
 
   async loginPhone(payload: LoginPhoneDto) {
@@ -471,6 +622,10 @@ export class AuthService {
   }
 
   async logout(authUser: AuthenticatedUser, payload?: LogoutDto) {
+    await this.prisma.userDevice.updateMany({
+      where: { userId: authUser.userId, sessionId: authUser.sessionId },
+      data: { isActive: false },
+    });
     if (payload?.refreshToken) {
       await this.revokeSessionByRefreshToken(payload.refreshToken, authUser.userId);
     } else {
@@ -527,178 +682,7 @@ export class AuthService {
   }
 
   async deleteAccount(authUser: AuthenticatedUser) {
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id: authUser.userId,
-      },
-      include: {
-        adminProfile: true,
-      },
-    });
-
-    if (!user || user.deletedAt || user.status === UserStatus.DELETED) {
-      throw new NotFoundException('User not found');
-    }
-
-    if (user.adminProfile?.isAdmin === true) {
-      throw new BadRequestException(
-        'Удаление admin-аккаунта через этот endpoint запрещено',
-      );
-    }
-
-    const now = new Date();
-    const userId = authUser.userId;
-    const deletedEmail = `deleted+${userId}@atta.local`;
-    const listingIds = (
-      await this.prisma.listing.findMany({
-        where: {
-          ownerId: userId,
-        },
-        select: {
-          id: true,
-        },
-      })
-    ).map((item) => item.id);
-    const chatIds = (
-      await this.prisma.chat.findMany({
-        where: {
-          OR: [{ buyerId: userId }, { sellerId: userId }],
-        },
-        select: {
-          id: true,
-        },
-      })
-    ).map((item) => item.id);
-
-    await this.storageService.deleteAvatarUrl(user.avatarUrl);
-    await this.storageService.deleteListingPhotosForListings(listingIds);
-    await this.storageService.deleteChatImagesForChats(chatIds);
-
-    await this.prisma.$transaction(async (tx) => {
-      if (chatIds.length > 0) {
-        await tx.chatMessage.updateMany({
-          where: {
-            chatId: {
-              in: chatIds,
-            },
-            deletedAt: null,
-          },
-          data: {
-            deletedAt: now,
-          },
-        });
-        await tx.chat.updateMany({
-          where: {
-            id: {
-              in: chatIds,
-            },
-          },
-          data: {
-            deletedByBuyerAt: now,
-            deletedBySellerAt: now,
-            unreadForBuyer: 0,
-            unreadForSeller: 0,
-            lastMessage: '',
-          },
-        });
-      }
-
-      await tx.favorite.deleteMany({ where: { userId } });
-      await tx.savedSearch.deleteMany({ where: { userId } });
-      await tx.viewedListing.deleteMany({ where: { userId } });
-      await tx.userFollow.deleteMany({
-        where: {
-          OR: [{ followerId: userId }, { sellerId: userId }],
-        },
-      });
-      await tx.review.updateMany({
-        where: {
-          reviewerId: userId,
-          deletedAt: null,
-        },
-        data: {
-          deletedAt: now,
-          updatedAt: now,
-        },
-      });
-      await tx.userNotification.deleteMany({
-        where: {
-          userId,
-        },
-      });
-      await tx.supportMessage.updateMany({
-        where: {
-          senderUserId: userId,
-        },
-        data: {
-          senderUserId: null,
-        },
-      });
-      await tx.supportTicket.updateMany({
-        where: {
-          userId,
-        },
-        data: {
-          name: 'Удалённый пользователь',
-        },
-      });
-      await tx.listing.updateMany({
-        where: {
-          ownerId: userId,
-          deletedAt: null,
-        },
-        data: {
-          status: ListingStatus.DELETED,
-          deletedAt: now,
-          publishedAt: null,
-          rejectionReason: 'Deleted with owner account',
-        },
-      });
-      await tx.userSession.updateMany({
-        where: {
-          userId,
-          revokedAt: null,
-        },
-        data: {
-          revokedAt: now,
-        },
-      });
-      await tx.user.update({
-        where: {
-          id: userId,
-        },
-        data: {
-          status: UserStatus.DELETED,
-          deletedAt: now,
-          blockedAt: now,
-          blockReason: 'Account deleted by user',
-          phoneVerified: false,
-          phone: null,
-          email: deletedEmail,
-          displayName: 'Удалённый пользователь',
-          name: 'Удалённый пользователь',
-          avatarUrl: null,
-          photoUrl: null,
-        },
-      });
-      if (listingIds.length > 0) {
-        await tx.report.updateMany({
-          where: {
-            listingId: {
-              in: listingIds,
-            },
-          },
-          data: {
-            listingOwnerId: null,
-          },
-        });
-      }
-    });
-
-    return {
-      deleted: true,
-      user_id: userId,
-    };
+    return this.accountDeletion.deleteUser(authUser.userId);
   }
 
   async createSessionForUser(user: UserWithAdminProfile) {

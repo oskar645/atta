@@ -175,7 +175,7 @@ export class NotificationsService {
         orderBy: {
           createdAt: 'desc',
         },
-        take: 200,
+
       }),
       this.prisma.user.findUnique({
         where: {
@@ -251,6 +251,7 @@ export class NotificationsService {
         payload: payload as Prisma.InputJsonValue,
       },
     });
+    this.chatsGateway.emitNotificationNew(this.serialize(item));
     await this.sendPushToAllUsers(this.serialize(item));
 
     return {
@@ -276,19 +277,43 @@ export class NotificationsService {
         payload: (params.payload ?? {}) as Prisma.InputJsonValue,
       },
     });
-    const serialized = this.serialize(item);
-    this.chatsGateway.emitNotificationNew(
-      serialized,
-      params.userId.trim(),
-    );
-    try {
-      await this.sendPushToUser(params.userId, serialized);
-    } catch (error) {
-      this.logger.warn(
-        `Personal notification push failed userId=${params.userId.trim()} notificationId=${item.id} error=${error instanceof Error ? error.name : 'unknown'}`,
-      );
-    }
+    await this.publishNotification(item);
     return item;
+  }
+
+  async publishNotification(item: Parameters<NotificationsService['serializeNotification']>[0]) {
+    const serialized = this.serialize(item);
+    this.chatsGateway.emitNotificationNew(serialized, item.userId ?? undefined);
+    try {
+      if (item.userId) await this.sendPushToUser(item.userId, serialized);
+    } catch (error) {
+      this.logger.warn(`Notification push failed notificationId=${item.id}`);
+    }
+  }
+
+  async unreadNotificationCount(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId }, select: { lastNotificationsSeenAt: true },
+    });
+    return this.prisma.userNotification.count({
+      where: {
+        type: { notIn: excludedInAppNotificationTypes },
+        OR: [
+          { userId, scope: NotificationScope.PERSONAL, isRead: false },
+          { scope: NotificationScope.GLOBAL,
+            ...(user?.lastNotificationsSeenAt ? { createdAt: { gt: user.lastNotificationsSeenAt } } : {}) },
+        ],
+      },
+    });
+  }
+
+  async canonicalBadgeCount(userId: string) {
+    const [buyer, seller, notifications] = await Promise.all([
+      this.prisma.chat.aggregate({ where: { buyerId: userId, deletedByBuyerAt: null }, _sum: { unreadForBuyer: true } }),
+      this.prisma.chat.aggregate({ where: { sellerId: userId, deletedBySellerAt: null }, _sum: { unreadForSeller: true } }),
+      this.unreadNotificationCount(userId),
+    ]);
+    return Math.max(0, (buyer._sum.unreadForBuyer ?? 0) + (seller._sum.unreadForSeller ?? 0) + notifications);
   }
 
   async registerDevice(
@@ -306,12 +331,28 @@ export class NotificationsService {
     if (!token) {
       throw new BadRequestException('Device token is required');
     }
-    const item = await this.prisma.userDevice.upsert({
+    const item = await this.prisma.$transaction(async tx => {
+      // A delayed registration from a logged-out session must not steal the
+      // device back after a newer login. Serialize registration for this token.
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${token}))::text`;
+      const session = await tx.userSession.findFirst({
+        where: { id: authUser.sessionId, userId: authUser.userId,
+          revokedAt: null, expiresAt: { gt: new Date() } },
+      });
+      if (!session) throw new ForbiddenException('Push session is not active');
+      const previous = await tx.userDevice.findUnique({
+        where: { deviceToken: token }, include: { session: true },
+      });
+      if (previous?.session && previous.session.createdAt > session.createdAt) {
+        throw new ForbiddenException('Push token belongs to a newer session');
+      }
+      return tx.userDevice.upsert({
       where: {
         deviceToken: token,
       },
       update: {
         userId: authUser.userId,
+        sessionId: authUser.sessionId,
         platform: this.toPlatform(body.platform),
         deviceUid: body.deviceUid?.trim() || null,
         appVersion: body.appVersion?.trim() || null,
@@ -322,6 +363,7 @@ export class NotificationsService {
       },
       create: {
         userId: authUser.userId,
+        sessionId: authUser.sessionId,
         platform: this.toPlatform(body.platform),
         deviceToken: token,
         deviceUid: body.deviceUid?.trim() || null,
@@ -329,6 +371,7 @@ export class NotificationsService {
         buildNumber: body.buildNumber?.trim() || null,
         locale: body.locale?.trim() || null,
       },
+    });
     });
 
     return {
@@ -540,6 +583,7 @@ export class NotificationsService {
       where: {
         isActive: true,
         platform: DevicePlatform.IOS,
+        session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
         userId: true,
@@ -561,6 +605,7 @@ export class NotificationsService {
         userId: normalizedUserId,
         isActive: true,
         platform: DevicePlatform.IOS,
+        session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
         userId: true,
@@ -582,18 +627,23 @@ export class NotificationsService {
         `${(notification['payload'] as Record<string, unknown> | undefined)?.['actionType'] ?? ''}`.trim() ||
         `${notification['type'] ?? ''}`.trim(),
     };
-    const badge = this.notificationBadge(notification);
+    const badges = new Map<string, Promise<number>>();
     let unexpectedPushFailureLogged = false;
     await Promise.all(
       devices.map(async (device) => {
         let result: { sent: boolean; status: number; reason?: string };
         try {
+          let badge = badges.get(device.userId);
+          if (!badge) {
+            badge = this.canonicalBadgeCount(device.userId);
+            badges.set(device.userId, badge);
+          }
           result = await this.apnsService.send({
             token: device.deviceToken,
             title,
             body,
-            payload,
-            ...(badge == null ? {} : { badge }),
+            payload: { ...payload, recipientId: device.userId },
+            badge: await badge,
           });
         } catch (error) {
           if (!unexpectedPushFailureLogged) {
@@ -614,6 +664,7 @@ export class NotificationsService {
           await this.prisma.userDevice.updateMany({
             where: {
               deviceToken: device.deviceToken,
+              userId: device.userId,
             },
             data: {
               isActive: false,
@@ -624,14 +675,4 @@ export class NotificationsService {
     );
   }
 
-  private notificationBadge(notification: Record<string, unknown>) {
-    const raw =
-      notification['unreadTotal'] ??
-      notification['unread_total'] ??
-      (notification['payload'] as Record<string, unknown> | undefined)?.['unreadTotal'] ??
-      (notification['payload'] as Record<string, unknown> | undefined)?.['unread_total'];
-    const value = Number(raw);
-    if (!Number.isFinite(value)) return undefined;
-    return Math.max(0, Math.trunc(value));
-  }
 }

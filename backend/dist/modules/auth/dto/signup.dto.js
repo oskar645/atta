@@ -41,4 +41,24 @@ __decorate([
     }),
     __metadata("design:type", String)
 ], SignupDto.prototype, "password", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SignupDto.prototype, "acceptedLegal", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SignupDto.prototype, "acceptedPersonalData", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], SignupDto.prototype, "acceptedMarketing", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], SignupDto.prototype, "platform", void 0);
 //# sourceMappingURL=signup.dto.js.map

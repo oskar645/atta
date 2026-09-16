@@ -26,6 +26,8 @@ class PresenceService {
   final Map<String, Future<void>> _presenceFetchInFlight = {};
   Future<void>? _presenceRecoveryInFlight;
   String? _activeUserId;
+  int _sessionVersion = 0;
+  bool _sessionEnded = false;
 
   static const Duration _fallbackPresenceTtl = Duration(minutes: 1);
 
@@ -119,7 +121,9 @@ class PresenceService {
   }) async {
     final id = uid.trim();
     if (id.isEmpty) return;
+    if (!isOnline && _activeUserId != id) return;
     if (isOnline) {
+      _sessionEnded = false;
       _activeUserId = id;
     }
     _debugSource('Presence source: Timeweb');
@@ -142,6 +146,9 @@ class PresenceService {
   }
 
   Future<void> heartbeat(String uid) async {
+    if (_sessionEnded || (_activeUserId != null && _activeUserId != uid)) {
+      return;
+    }
     _debugSource('Presence source: Timeweb');
     _ensureSocketSubscription();
     if (_socketService?.canSendPresenceHeartbeat != true) {
@@ -177,9 +184,11 @@ class PresenceService {
     _debugLog(
       'Presence reconnect requested reason=$reason user=$id socketConnected=${_socketService?.isConnected == true}',
     );
+    final version = _sessionVersion;
     if (recoverSocket) {
       await _socketService?.recoverAfterResume(reason: reason);
     }
+    if (version != _sessionVersion || _activeUserId != id) return;
     await _refreshAfterSocketConnected(id, reason: reason);
   }
 
@@ -192,10 +201,13 @@ class PresenceService {
     final existing = _presenceRecoveryInFlight;
     if (existing != null) return existing;
 
+    final version = _sessionVersion;
     final future = () async {
       _debugLog('Presence refresh after reconnect reason=$reason user=$id');
       await setOnline(uid: id, isOnline: true);
+      if (version != _sessionVersion || _activeUserId != id) return;
       await heartbeat(id);
+      if (version != _sessionVersion) return;
       await _refreshTrackedPresence();
     }();
     _presenceRecoveryInFlight = future;
@@ -209,13 +221,11 @@ class PresenceService {
   }
 
   Future<void> resetSession() async {
+    ++_sessionVersion;
+    _sessionEnded = true;
     final presenceSub = _presenceSub;
-    if (presenceSub != null) {
-      _debugLog('Presence listener removed event=presence.changed count=0');
-      await presenceSub.cancel();
-      _presenceSub = null;
-    }
-    await _connectionSub?.cancel();
+    final connectionSub = _connectionSub;
+    _presenceSub = null;
     _connectionSub = null;
     _activeUserId = null;
     _presenceRecoveryInFlight = null;
@@ -229,7 +239,10 @@ class PresenceService {
         controller.add(PresenceSnapshot(userId: '', isOnline: false));
       }
     }
-    await _socketService?.resetSession();
+    final reset = _socketService?.resetSession();
+    await presenceSub?.cancel();
+    await connectionSub?.cancel();
+    await reset;
   }
 
   Future<void> _loadTimewebPresence(String uid) async {
@@ -271,11 +284,13 @@ class PresenceService {
   }
 
   Future<void> _loadTimewebPresenceInternal(String uid) async {
+    final version = _sessionVersion;
     _ensureSocketSubscription();
     try {
       _debugSource('Presence source: Timeweb');
       final response =
           await _apiClient.get('/presence/$uid', authorized: true) as Map;
+      if (version != _sessionVersion) return;
       final snapshot = PresenceSnapshot.fromMap(
         Map<String, dynamic>.from(response),
       );

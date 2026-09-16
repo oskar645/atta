@@ -888,11 +888,11 @@ class _ListingCard extends StatelessWidget {
   String _statusLabel(String status) {
     switch (status) {
       case 'sold':
-        return 'Продано';
+        return 'Проданные';
       case 'archived':
-        return 'Снято с продажи';
+        return 'В архиве';
       default:
-        return 'Снято';
+        return 'В архиве';
     }
   }
 

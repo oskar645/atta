@@ -65,6 +65,7 @@ class NotificationsService {
   void activateSession(String userId) {
     final normalized = userId.trim().isEmpty ? null : userId.trim();
     if (_activeUserId != normalized) {
+      _sessionVersion++;
       _clearCachedStreams();
     }
     _activeUserId = normalized;
@@ -84,8 +85,10 @@ class NotificationsService {
   Future<void> preload(String userId) {
     final normalized = userId.trim();
     if (normalized.isEmpty) return Future.value();
+    final version = _sessionVersion;
     return _refreshUserNotifications(normalized, force: false).catchError(
       (error) {
+        if (version != _sessionVersion) return;
         if (_isUnauthorized(error)) {
           _debugSource(
             'Notifications source: Timeweb unauthorized, resetting state',
@@ -101,7 +104,9 @@ class NotificationsService {
   Future<void> refreshActiveSession({bool force = false}) async {
     final userId = _activeUserId;
     if (userId == null || userId.isEmpty) return;
+    final version = _sessionVersion;
     await _refreshUserNotifications(userId, force: force).catchError((error) {
+      if (version != _sessionVersion) return;
       if (_isUnauthorized(error)) {
         _debugSource(
           'Notifications source: Timeweb unauthorized, resetting state',
@@ -146,7 +151,7 @@ class NotificationsService {
     required Map<String, dynamic> notification,
   }) {
     final normalizedUserId = userId.trim();
-    if (normalizedUserId.isEmpty) return;
+    if (normalizedUserId.isEmpty || normalizedUserId != _activeUserId) return;
 
     final normalized = _normalizeNotification(
       normalizedUserId,
@@ -323,7 +328,9 @@ class NotificationsService {
   bool isSavedSearchNotification(Map<String, dynamic> row) {
     final scope = (row['scope'] ?? '').toString();
     final title = (row['title'] ?? '').toString().trim();
-    return scope == 'personal' && title == savedSearchNotificationTitle;
+    return scope == 'personal' &&
+        (row['type'] == 'saved_search' ||
+            title == savedSearchNotificationTitle);
   }
 
   Stream<int> streamUnreadSavedSearchCount(String userId) {
@@ -338,8 +345,12 @@ class NotificationsService {
         .asBroadcastStream();
   }
 
+  int peekUnreadBadgeCount(String userId) => _activeUserId == userId
+      ? _computeUnreadBadgeCount(_mergedRowsForUser(userId), userId)
+      : 0;
+
   Stream<int> streamUnreadBadgeCount(String userId) {
-    _debugSource('Notifications source: Timeweb');
+    if (_activeUserId != userId) return Stream<int>.value(0);
     return _timewebCountStreams.putIfAbsent(
       'badge:$userId',
       () => _createTimewebNotificationsStream(
@@ -352,11 +363,18 @@ class NotificationsService {
   }
 
   Future<void> markAllSeen(String userId) async {
+    final version = _sessionVersion;
     final response = await _api.markAllSeen();
+    if (version != _sessionVersion || userId != _activeUserId) return;
     _syncGlobalSeenAt(
       userId,
       response['global_seen_at'] ?? response['globalSeenAt'],
     );
+    for (final row in _mergedRowsForUser(userId)) {
+      if (row['scope'] == 'personal') {
+        _markNotificationReadInCaches((row['id'] ?? '').toString());
+      }
+    }
     final cachedRows = _serverRowsByUser[userId];
     if (cachedRows != null) {
       for (final row in cachedRows) {
@@ -371,7 +389,9 @@ class NotificationsService {
 
   Future<void> markPersonalReadById(String notificationId) async {
     _debugSource('Notifications source: Timeweb');
+    final version = _sessionVersion;
     await _api.markRead(notificationId);
+    if (version != _sessionVersion) return;
     final touchedUserId = _markNotificationReadInCaches(notificationId);
     if (touchedUserId.isNotEmpty) {
       _refreshSignals.add(touchedUserId);
@@ -380,7 +400,9 @@ class NotificationsService {
 
   Future<void> markAllPersonalRead(String userId) async {
     _debugSource('Notifications source: Timeweb');
+    final version = _sessionVersion;
     await _api.markAllRead();
+    if (version != _sessionVersion) return;
     final mergedRows = _mergedRowsForUser(userId);
     for (final row in mergedRows.where((item) {
       return (item['scope'] ?? '').toString() == 'personal' &&
@@ -405,12 +427,16 @@ class NotificationsService {
 
   Future<void> markSavedSearchNotificationsRead(String userId) async {
     _debugSource('Notifications source: Timeweb');
+    final version = _sessionVersion;
     final rows = await streamPersonal(userId).first;
+    if (version != _sessionVersion) return;
     for (final row in rows.where(
         (item) => item['is_read'] != true && isSavedSearchNotification(item))) {
       final id = (row['id'] ?? '').toString();
       if (id.isEmpty) continue;
+      if (version != _sessionVersion) return;
       await _api.markRead(id);
+      if (version != _sessionVersion) return;
       _markNotificationReadInCaches(id);
     }
     _refreshSignals.add(userId);
@@ -418,7 +444,9 @@ class NotificationsService {
 
   Future<void> deleteById(String notificationId) async {
     _debugSource('Notifications source: Timeweb');
+    final version = _sessionVersion;
     await _api.deleteById(notificationId);
+    if (version != _sessionVersion) return;
     final touchedUserId = _removeNotificationFromCaches(notificationId);
     if (touchedUserId.isNotEmpty) {
       _refreshSignals.add(touchedUserId);
@@ -521,6 +549,11 @@ class NotificationsService {
         }
         try {
           await _refreshUserNotifications(_activeUserId!, force: false);
+          if (closed ||
+              sessionVersion != _sessionVersion ||
+              _activeUserId == null) {
+            return;
+          }
           final rows = _sortNewestFirst(
             filter(_mergedRowsForUser(_activeUserId!)),
           );
@@ -532,7 +565,7 @@ class NotificationsService {
             if (!closed && sessionVersion == _sessionVersion) {
               controller.add(const <Map<String, dynamic>>[]);
             }
-            resetSession();
+            if (sessionVersion == _sessionVersion) resetSession();
             closed = true;
             return;
           }
@@ -602,8 +635,10 @@ class NotificationsService {
     if (existing != null) return existing;
     _lastRefreshAttemptAt[userId] = now;
 
+    final version = _sessionVersion;
     final future = () async {
       final response = await _api.list().timeout(_requestTimeout);
+      if (version != _sessionVersion || _activeUserId != userId) return;
       _syncGlobalSeenAt(
         userId,
         response['global_seen_at'] ?? response['globalSeenAt'],
@@ -611,7 +646,11 @@ class NotificationsService {
       _serverRowsByUser[userId] = _extractItems(response)
           .where((row) => !_isExcludedNotification(row))
           .map(Map<String, dynamic>.from)
-          .toList(growable: false);
+          .toList();
+      final realtime = _realtimeRowsByUser[userId];
+      for (final row in _serverRowsByUser[userId]!) {
+        realtime?.remove((row['id'] ?? '').toString());
+      }
       _lastSuccessfulRefreshAt[userId] = DateTime.now();
     }();
     _refreshByUserInFlight[userId] = future;

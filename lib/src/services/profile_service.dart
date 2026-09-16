@@ -196,6 +196,7 @@ class ProfileService {
     String uid,
     Map<String, dynamic> cached,
   ) async {
+    final generation = _tokenStorage.sessionGeneration;
     _debugSource('Profile source: Timeweb');
     try {
       final currentUser = await _tokenStorage.readCurrentUser();
@@ -207,7 +208,7 @@ class ProfileService {
         _normalizeBackendProfile(response),
       );
       if (currentUser?.uid == uid) {
-        await _syncCurrentUserFromProfile(normalized, currentUser);
+        await _syncCurrentUserFromProfile(normalized, currentUser, generation);
       }
       if (normalized.isNotEmpty) _cacheProfile(uid, normalized);
       _debugSource(
@@ -226,6 +227,7 @@ class ProfileService {
 
   Future<Map<String, dynamic>> updateProfile(
       String uid, Map<String, dynamic> data) async {
+    final generation = _tokenStorage.sessionGeneration;
     _debugSource('Profile source: Timeweb');
     final payload = <String, dynamic>{
       if (data['display_name'] != null) 'display_name': data['display_name'],
@@ -242,7 +244,7 @@ class ProfileService {
     if (updated.isNotEmpty) {
       _cacheProfile(uid, _mergeRows(getCachedProfile(uid), updated));
       await _syncCurrentUserFromProfile(
-          updated, await _tokenStorage.readCurrentUser());
+          updated, await _tokenStorage.readCurrentUser(), generation);
     }
     return updated;
   }
@@ -322,6 +324,7 @@ class ProfileService {
     String fileName = 'avatar.jpg',
     String contentType = 'image/jpeg',
   }) async {
+    final generation = _tokenStorage.sessionGeneration;
     _debugSource('Profile source: Timeweb');
     final previousAvatar = pickAvatarFromRow(
       _mergeRows(
@@ -362,7 +365,7 @@ class ProfileService {
     if (merged.isNotEmpty) {
       _cacheProfile(uid, merged);
       await _syncCurrentUserFromProfile(
-          merged, await _tokenStorage.readCurrentUser());
+          merged, await _tokenStorage.readCurrentUser(), generation);
     }
     final avatarUrl = pickAvatarFromRow(merged);
     await _evictAvatarCache(previousAvatar);
@@ -586,6 +589,7 @@ class ProfileService {
   Future<void> _syncCurrentUserFromProfile(
     Map<String, dynamic> row,
     dynamic currentUser,
+    int generation,
   ) async {
     if (currentUser == null || row.isEmpty || currentUser.uid != row['id']) {
       return;
@@ -634,10 +638,12 @@ class ProfileService {
       blockStatus: currentUser.blockStatus,
     );
 
-    await _tokenStorage.saveSession(
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      currentUser: nextUser,
-    );
+    await _tokenStorage.mutateSession(
+        generation,
+        () => _tokenStorage.saveSession(
+              accessToken: accessToken,
+              refreshToken: refreshToken,
+              currentUser: nextUser,
+            ));
   }
 }

@@ -1,0 +1,1 @@
+ALTER TYPE "PhoneVerificationPurpose" ADD VALUE IF NOT EXISTS 'CHANGE_PHONE';

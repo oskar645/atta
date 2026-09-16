@@ -1,3 +1,4 @@
+import type { AccountDeletionService } from '../auth/account-deletion.service';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -30,7 +31,7 @@ class FakeSocket {
 
 function createGateway({
   token = 'access-token',
-  jwtPayload = { sub: 'user-1', sessionId: 'session-1' },
+  jwtPayload = { sub: 'user-1', sessionId: 'session-1', type: 'access' },
   session = {
     userId: 'user-1',
     expiresAt: new Date(Date.now() + 60_000),
@@ -69,6 +70,7 @@ function createGateway({
         },
       },
     } as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -179,6 +181,7 @@ test('emitOutgoingMessage keeps personalized chat payload out of shared room eve
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -234,6 +237,7 @@ test('emitOutgoingMessage sends personalized unread counts per user', () => {
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -295,6 +299,7 @@ test('emitOutgoingMessage forwards absolute unread total to recipient', () => {
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -354,6 +359,7 @@ test('emitNotificationNew sends global notification to all sockets', () => {
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -406,6 +412,7 @@ test('emitPresenceChanged skips unchanged heartbeat updates', () => {
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -442,6 +449,7 @@ test('emitPresenceChanged can force unchanged presence broadcasts', () => {
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {
@@ -498,6 +506,7 @@ test('emitPresenceChanged sends one presence.changed broadcast per change', () =
     {} as never,
     {} as never,
     {} as never,
+    { onDeleted: () => () => false } satisfies Pick<AccountDeletionService, 'onDeleted'> as unknown as AccountDeletionService,
   );
 
   gateway.server = {

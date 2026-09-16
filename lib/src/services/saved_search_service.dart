@@ -1,11 +1,9 @@
 import 'dart:async';
 
-import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/saved_searches_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/listings_service.dart';
-import 'package:atta/src/services/notifications_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
@@ -200,15 +198,25 @@ class SavedSearch {
 }
 
 class SavedSearchService {
+  SavedSearchService({SavedSearchesApi? api})
+      : _api = api ?? SavedSearchesApi(_apiClient);
+
   static const String missingTableMessage =
       'Сохранённые поиски временно недоступны. Попробуйте позже.';
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
-  final ListingsService _listings = ListingsService();
-  final NotificationsService _notifications = NotificationsService();
   final Uuid _uuid = const Uuid();
-  final SavedSearchesApi _api = SavedSearchesApi(_apiClient);
+  final SavedSearchesApi _api;
+  int _sessionGeneration = 0;
+
+  void resetSession() {
+    _sessionGeneration++;
+    _cache.clear();
+    _cacheAt.clear();
+    _inFlight.clear();
+  }
+
   final Map<String, List<SavedSearch>> _cache = <String, List<SavedSearch>>{};
   final Map<String, DateTime> _cacheAt = <String, DateTime>{};
   final Map<String, Future<List<SavedSearch>>> _inFlight =
@@ -265,8 +273,10 @@ class SavedSearchService {
     if (id.isEmpty) return const <SavedSearch>[];
     final existing = _inFlight[id];
     if (existing != null) return existing;
+    final generation = _sessionGeneration;
     final future = () async {
       final response = await _api.list();
+      if (generation != _sessionGeneration) return <SavedSearch>[];
       final items = _extractItems(response)
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       _cache[id] = List<SavedSearch>.from(items);
@@ -522,36 +532,6 @@ class SavedSearchService {
     await _api.update(savedSearchId, {
       'alerts_enabled': enabled,
     });
-  }
-
-  Future<void> notifyMatchesForApprovedListing(
-    Map<String, dynamic> rawListing,
-  ) async {
-    _debugSource('SavedSearches source: Timeweb');
-    final listingRow = Map<String, dynamic>.from(rawListing);
-    listingRow['status'] = 'approved';
-    final listing = Listing.fromMap(listingRow);
-    final response = await _api.list();
-    final searches = _extractItems(response)
-        .where((search) => search.alertsEnabled)
-        .where((search) => search.userId != listing.ownerId)
-        .toList();
-
-    final notifiedUsers = <String>{};
-    for (final savedSearch in searches) {
-      if (notifiedUsers.contains(savedSearch.userId)) continue;
-      if (!_listings.matchesFeedFilters(listing, savedSearch.toFilters())) {
-        continue;
-      }
-
-      await _notifications.sendPersonal(
-        userId: savedSearch.userId,
-        title: NotificationsService.savedSearchNotificationTitle,
-        body:
-            '${savedSearch.title}: ${listing.title}. ${listing.price} ₽, ${listing.cityShort}.',
-      );
-      notifiedUsers.add(savedSearch.userId);
-    }
   }
 }
 

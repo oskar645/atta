@@ -11,6 +11,7 @@ import {
   Req,
   Res,
   Logger,
+  NotFoundException,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -148,30 +149,6 @@ export class MediaController {
     });
   }
 
-  @Get('chats/:mediaId')
-  async getChatImage(
-    @Param('mediaId') mediaId: string,
-    @Query('token') token: string | undefined,
-    @Req() request: any,
-    @Res() response: any,
-  ) {
-    const authUser = await this.authenticateRequest(request, token);
-    const access = await this.chatsService.getChatImageAccess(authUser, mediaId);
-    const bytes = await this.storageService.readChatFile(
-      access.key,
-      access.bucket,
-    );
-    this.debugProxyHit(
-      'chats',
-      access.key,
-      access.bucket ?? 's3',
-      200,
-    );
-    response.setHeader('Content-Type', access.mimeType);
-    response.setHeader('Cache-Control', 'private, max-age=300');
-    response.send(bytes);
-  }
-
   @Get('chats/file')
   async getChatImageByKey(
     @Query('key') key: string,
@@ -196,6 +173,30 @@ export class MediaController {
     response.send(bytes);
   }
 
+  @Get('chats/:mediaId')
+  async getChatImage(
+    @Param('mediaId') mediaId: string,
+    @Query('token') token: string | undefined,
+    @Req() request: any,
+    @Res() response: any,
+  ) {
+    const authUser = await this.authenticateRequest(request, token);
+    const access = await this.chatsService.getChatImageAccess(authUser, mediaId);
+    const bytes = await this.storageService.readChatFile(
+      access.key,
+      access.bucket,
+    );
+    this.debugProxyHit(
+      'chats',
+      access.key,
+      access.bucket ?? 's3',
+      200,
+    );
+    response.setHeader('Content-Type', access.mimeType);
+    response.setHeader('Cache-Control', 'private, max-age=300');
+    response.send(bytes);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('support/file')
   async getSupportFileByKey(
@@ -203,10 +204,7 @@ export class MediaController {
     @Query('key') key: string,
     @Res() response: any,
   ) {
-    const normalizedKey = key?.trim() ?? '';
-    if (!normalizedKey) {
-      throw new BadRequestException('Файл не найден');
-    }
+    const normalizedKey = this.requireScopedKey(key, ['support', 'support-images']);
     if (authUser.role !== 'admin') {
       const message = await this.prisma.supportMessage.findFirst({
         where: {
@@ -249,8 +247,26 @@ export class MediaController {
       'misc',
       'videos',
     ]);
-    if (!allowed.has(category) || !key?.trim()) {
+    if (!allowed.has(category) || typeof key !== 'string' || !key.trim()) {
       throw new BadRequestException('Файл не найден');
+    }
+    const prefixes: Record<string, string[]> = {
+      avatars: ['avatars'],
+      listings: ['listings', 'listing-photos'],
+      'feed-ads': ['feed-ads', 'misc'],
+      misc: ['misc'],
+      videos: ['videos'],
+    };
+    key = this.requireScopedKey(key, prefixes[category]);
+    // Scoped avatars must stop being public immediately, even while S3 cleanup retries.
+    const avatarOwnerId = category === 'avatars' ? key.split('/')[1] : '';
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(avatarOwnerId)) {
+      const owner = await this.prisma.user.findUnique({
+        where: { id: avatarOwnerId }, select: { status: true, deletedAt: true },
+      });
+      if (!owner || owner.deletedAt || owner.status === 'DELETED') {
+        throw new NotFoundException('Файл не найден');
+      }
     }
     const bytes = await this.storageService.readStoredFile(
       category as any,
@@ -321,6 +337,21 @@ export class MediaController {
       throw new ForbiddenException('Generic media delete is admin-only for now');
     }
     return this.storageService.deleteMediaByEntityId(id);
+  }
+
+  // Validate the exact key before S3's decoding/bucket selection. Never accept
+  // encoded separators, bucket wrappers, dot segments or another namespace.
+  private requireScopedKey(key: string, prefixes: string[]) {
+    if (typeof key !== 'string' || key !== key.trim() ||
+        /[%\\\x00-\x1f\x7f?#]/.test(key)) {
+      throw new BadRequestException('Файл не найден');
+    }
+    const parts = key.split('/');
+    if (!prefixes.includes(parts[0]) || parts.length < 2 ||
+        parts.some(part => !part || part === '.' || part === '..')) {
+      throw new BadRequestException('Файл не найден');
+    }
+    return key;
   }
 
   private requireImage(

@@ -160,7 +160,7 @@ export class ApnsService {
     const signature = crypto
       .createSign('SHA256')
       .update(signingInput)
-      .sign(this.privateKey());
+      .sign({ key: this.privateKey(), dsaEncoding: 'ieee-p1363' });
     const jwt = `${signingInput}.${this.base64Url(signature)}`;
     this.cachedJwt = {
       token: jwt,

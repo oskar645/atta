@@ -204,7 +204,10 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
     setState(() => _busy = true);
     try {
       final listingId = _id(item);
-      await adminService.deleteListing(listingId, reason: 'Deleted by admin');
+      await adminService.deleteListing(
+        listingId,
+        reason: 'Удалено администратором',
+      );
       _removeItemLocally(listingId);
       if (!mounted) return;
       showAppSnack(context, 'Объявление скрыто');
@@ -239,27 +242,27 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
                     current: _status,
                     onSelected: _setStatus),
                 _StatusChip(
-                    label: 'Pending',
+                    label: 'На модерации',
                     value: 'pending',
                     current: _status,
                     onSelected: _setStatus),
                 _StatusChip(
-                    label: 'Rejected',
+                    label: 'Отклонённые',
                     value: 'rejected',
                     current: _status,
                     onSelected: _setStatus),
                 _StatusChip(
-                    label: 'Sold',
+                    label: 'Проданные',
                     value: 'sold',
                     current: _status,
                     onSelected: _setStatus),
                 _StatusChip(
-                    label: 'Archived',
+                    label: 'В архиве',
                     value: 'archived',
                     current: _status,
                     onSelected: _setStatus),
                 _StatusChip(
-                    label: 'Deleted',
+                    label: 'Удалённые',
                     value: 'deleted',
                     current: _status,
                     onSelected: _setStatus),

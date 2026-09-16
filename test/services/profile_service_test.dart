@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -234,6 +235,29 @@ void main() {
     expect(savedUser?.phone, '+79281234567');
     expect(savedUser?.phoneVerified, isTrue);
   });
+  test('late ProfileService me A cannot persist A with tokens B', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+        accessToken: 'a',
+        refreshToken: 'a',
+        currentUser: const AuthUser(uid: 'a'));
+    final users = _DelayedProfileUsersApi();
+    final service = ProfileService(tokenStorage: storage, usersApi: users);
+    final profile = service.getProfile('a');
+    await users.started.future;
+    storage.beginSessionChange();
+    await storage.saveSession(
+        accessToken: 'b',
+        refreshToken: 'b',
+        currentUser: const AuthUser(uid: 'b'));
+    users.pending.complete({
+      'user': {'id': 'a', 'display_name': 'old'}
+    });
+    await profile;
+    expect((await storage.readCurrentUser())?.uid, 'b');
+    expect(await storage.readAccessToken(), 'b');
+    expect(await storage.readRefreshToken(), 'b');
+  });
 }
 
 class _FakeMediaApi extends MediaApi {
@@ -348,3 +372,13 @@ class _FakeImagePreparationService extends ImagePreparationService {
 }
 
 final Uint8List _tinyPngBytes = base64Decode('AQID');
+
+class _DelayedProfileUsersApi extends _FakeUsersApi {
+  final started = Completer<void>();
+  final pending = Completer<Map<String, dynamic>>();
+  @override
+  Future<Map<String, dynamic>> me() {
+    started.complete();
+    return pending.future;
+  }
+}

@@ -11,6 +11,7 @@ import 'package:atta/src/services/api/listings_api.dart';
 import 'package:atta/src/services/api/media_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/image_preparation_service.dart';
+import 'package:atta/src/services/web_viewer_device_id.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart'
     show debugPrint, kDebugMode, ValueNotifier, ValueListenable;
@@ -193,6 +194,7 @@ class ListingsService {
       <String, Future<List<Listing>>>{};
   List<Listing>? _myListingsCache;
   DateTime? _myListingsCachedAt;
+  final Set<String> _myListingsConfirmedStatuses = <String>{};
   Future<List<Listing>>? _myListingsInFlight;
   String? _myListingsCacheUserId;
   String? _myListingsInFlightUserId;
@@ -205,6 +207,9 @@ class ListingsService {
       <String, Future<List<Listing>>>{};
   final Map<String, Future<ListingsFeedPage>> _feedPageInFlight =
       <String, Future<ListingsFeedPage>>{};
+  final Map<String, Future<MyListingsPage>> _myListingsPageInFlight =
+      <String, Future<MyListingsPage>>{};
+  int _myListingsCacheRevision = 0;
 
   static const Duration _cacheTtl = Duration(seconds: 20);
 
@@ -562,7 +567,9 @@ class ListingsService {
       statuses: statuses,
       forceRefresh: forceRefresh,
     );
-    return items.where((item) => statuses.contains(item.status)).toList();
+    return items
+        .where((item) => statuses.contains(item.normalizedStatus))
+        .toList();
   }
 
   Future<MyListingsPage> getMyListingsPageByStatuses(
@@ -592,7 +599,58 @@ class ListingsService {
     if (statusList.isEmpty) {
       return const MyListingsPage(items: <Listing>[], hasMore: false);
     }
+    if ((cursor ?? '').trim().isEmpty && !forceRefresh) {
+      final cached = _myListingsCache;
+      if (cached != null &&
+          _myListingsCacheUserId == normalizedUid &&
+          _myListingsCachedAt != null &&
+          DateTime.now().difference(_myListingsCachedAt!) < _cacheTtl &&
+          statusList.every(_myListingsConfirmedStatuses.contains)) {
+        return MyListingsPage(
+          items: cached
+              .where((item) => statuses.contains(item.normalizedStatus))
+              .toList(growable: false),
+          hasMore: false,
+        );
+      }
+    }
+    final requestKey = [
+      'my',
+      normalizedUid,
+      statusList.join(','),
+      limit,
+      (cursor ?? '').trim(),
+      if (forceRefresh) 'refresh',
+    ].join('|');
+    final existing = _myListingsPageInFlight[requestKey];
+    if (existing != null) {
+      return existing;
+    }
 
+    final future = _fetchMyListingsPageByStatusesFromApi(
+      normalizedUid,
+      statuses: statuses,
+      statusList: statusList,
+      limit: limit,
+      cursor: cursor,
+    );
+    _myListingsPageInFlight[requestKey] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_myListingsPageInFlight[requestKey], future)) {
+        _myListingsPageInFlight.remove(requestKey);
+      }
+    }
+  }
+
+  Future<MyListingsPage> _fetchMyListingsPageByStatusesFromApi(
+    String normalizedUid, {
+    required Set<String> statuses,
+    required List<String> statusList,
+    required int limit,
+    String? cursor,
+  }) async {
     var cursorState = _decodeMyListingsCursor(cursor);
     var statusIndex = cursorState.statusIndex.clamp(0, statusList.length - 1);
     String? statusCursor = cursorState.cursor;
@@ -611,7 +669,7 @@ class ListingsService {
         _extractItems(response),
         currentUserId: normalizedUid,
       )) {
-        if (statuses.contains(item.status) && seen.add(item.id)) {
+        if (statuses.contains(item.normalizedStatus) && seen.add(item.id)) {
           collected.add(item);
         }
       }
@@ -651,7 +709,9 @@ class ListingsService {
     required Set<String> statuses,
   }) {
     final items = List<Listing>.from(_myListingsCache ?? const <Listing>[]);
-    return items.where((item) => statuses.contains(item.status)).toList();
+    return items
+        .where((item) => statuses.contains(item.normalizedStatus))
+        .toList();
   }
 
   Object? lastMyListingsErrorForUser(String uid) {
@@ -831,14 +891,30 @@ class ListingsService {
     return updated;
   }
 
+  Future<Listing?> resubmitListing({required String listingId}) async {
+    _debugSource('Listings source: Timeweb');
+    final response = await _api.resubmit(listingId);
+    final updated = _extractListingFromResponse(response);
+    if (updated != null) {
+      _upsertListingInCaches(updated);
+      _emitRefresh(clearCaches: false);
+    } else {
+      _emitRefresh();
+    }
+    unawaited(_refreshListingFromBackend(listingId));
+    return updated;
+  }
+
   Future<void> incrementView(String listingId) async {
     _debugSource('Listings source: Timeweb');
     final currentUser = await _tokenStorage.readCurrentUser();
+    final viewerDeviceId = await getWebViewerDeviceId();
     await _api.incrementView(
       listingId,
       viewerUserId: currentUser?.uid,
+      viewerDeviceId: viewerDeviceId,
     );
-    _emitRefresh();
+    _emitRefresh(clearCaches: false, source: 'incrementView');
   }
 
   Future<Listing?> getListingById(String id) async {
@@ -1589,6 +1665,13 @@ class ListingsService {
           _myListingsCache = List<Listing>.from(items);
           _myListingsCachedAt = DateTime.now();
           _myListingsCacheUserId = uid;
+          if (statuses != null && statuses.isNotEmpty) {
+            _myListingsConfirmedStatuses
+              ..clear()
+              ..addAll(statuses.map((status) => status.trim().toLowerCase()));
+          } else {
+            _myListingsConfirmedStatuses.clear();
+          }
         }
         _lastMyListingsError = null;
         _lastMyListingsErrorUserId = uid;
@@ -1686,34 +1769,58 @@ class ListingsService {
     return (cursor ?? '').isEmpty ? null : cursor;
   }
 
-  void _emitRefresh({bool clearCaches = true}) {
+  void _emitRefresh({bool clearCaches = true, String source = 'unknown'}) {
     if (clearCaches) {
-      _clearCachedCollections();
+      _clearCachedCollections(source: source);
     }
     if (!_refreshController.isClosed) {
+      _debugMyListingsTrace(
+        'service notify source=$source clearCaches=$clearCaches '
+        'cacheRevision=$_myListingsCacheRevision cacheCount=${_myListingsCache?.length ?? 0}',
+      );
       _refreshController.add(null);
     }
   }
 
-  void _clearCachedCollections() {
+  void _clearCachedCollections({String source = 'unknown'}) {
+    _debugMyListingsCacheChange(
+      reason: 'cacheClear',
+      source: source,
+      oldItems: _myListingsCache,
+      newItems: null,
+      nextRevision: _myListingsCacheRevision + 1,
+      includeStack: true,
+    );
     _timewebCache.clear();
     _timewebCachedAt.clear();
     _timewebInFlight.clear();
     _feedPageInFlight.clear();
-    _clearMyListingsCache();
+    _myListingsPageInFlight.clear();
+    _clearMyListingsCache(source: source);
     _ownerListingsCache.clear();
     _ownerListingsCachedAt.clear();
     _ownerListingsInFlight.clear();
   }
 
-  void _clearMyListingsCache() {
+  void _clearMyListingsCache({String source = 'unknown'}) {
+    _debugMyListingsCacheChange(
+      reason: 'cacheClear',
+      source: source,
+      oldItems: _myListingsCache,
+      newItems: null,
+      nextRevision: _myListingsCacheRevision + 1,
+      includeStack: true,
+    );
     _myListingsCache = null;
     _myListingsCachedAt = null;
     _myListingsCacheUserId = null;
+    _myListingsConfirmedStatuses.clear();
     _myListingsInFlight = null;
     _myListingsInFlightUserId = null;
+    _myListingsPageInFlight.clear();
     _lastMyListingsError = null;
     _lastMyListingsErrorUserId = null;
+    _myListingsCacheRevision += 1;
   }
 
   void _cacheListings(List<Listing> items) {
@@ -1739,12 +1846,12 @@ class ListingsService {
     final next = <Listing>[];
     final seen = <String>{};
     for (final item in existing) {
-      if (reset && statuses.contains(item.status)) continue;
+      if (reset && statuses.contains(item.normalizedStatus)) continue;
       if (seen.add(item.id)) next.add(item);
     }
     for (final item in items) {
       if (item.ownerId.trim() != normalizedUid) continue;
-      if (!statuses.contains(item.status)) continue;
+      if (!statuses.contains(item.normalizedStatus)) continue;
       final currentIndex = next.indexWhere((cached) => cached.id == item.id);
       if (currentIndex >= 0) {
         next[currentIndex] = item;
@@ -1752,9 +1859,24 @@ class ListingsService {
         next.add(item);
       }
     }
-    _myListingsCache = _dedupeAndSortListings(next);
+    final previous = _myListingsCache;
+    final replacement = _dedupeAndSortListings(next);
+    _debugMyListingsCacheChange(
+      reason: 'cacheReplace',
+      source: '_syncMyListingsPageCache',
+      oldItems: previous,
+      newItems: replacement,
+      nextRevision: _myListingsCacheRevision + 1,
+      includeStack:
+          previous != null && previous.isNotEmpty && replacement.isEmpty,
+    );
+    _myListingsCache = replacement;
     _myListingsCachedAt = DateTime.now();
     _myListingsCacheUserId = normalizedUid;
+    _myListingsConfirmedStatuses.addAll(
+      statuses.map((status) => status.trim().toLowerCase()),
+    );
+    _myListingsCacheRevision += 1;
   }
 
   Listing? _extractListingFromResponse(Map<String, dynamic> response) {
@@ -1796,12 +1918,24 @@ class ListingsService {
       final currentUserId = _myListingsCacheUserId?.trim() ?? '';
       final includeInMyListings =
           currentUserId.isNotEmpty && listing.ownerId.trim() == currentUserId;
-      _myListingsCache = _replaceListingInFeed(
+      final previous = _myListingsCache;
+      final replacement = _replaceListingInFeed(
         _myListingsCache!,
         listing,
         includeListing: includeInMyListings,
       );
+      _debugMyListingsCacheChange(
+        reason: 'cacheReplace',
+        source: '_replaceListingInCollectionCaches listing=${listing.id}',
+        oldItems: previous,
+        newItems: replacement,
+        nextRevision: _myListingsCacheRevision + 1,
+        includeStack:
+            previous != null && previous.isNotEmpty && replacement.isEmpty,
+      );
+      _myListingsCache = replacement;
       _myListingsCachedAt = DateTime.now();
+      _myListingsCacheRevision += 1;
     }
 
     final ownerCache = _ownerListingsCache[listing.ownerId];
@@ -1965,9 +2099,70 @@ class ListingsService {
   }
 
   void resetSession() {
+    _debugMyListingsTrace(
+      'authChanged/resetSession cacheRevision=$_myListingsCacheRevision '
+      'cacheCount=${_myListingsCache?.length ?? 0}',
+      includeStack: true,
+    );
     _listingById.clear();
     _feedPageInFlight.clear();
-    _clearCachedCollections();
+    _clearCachedCollections(source: 'resetSession');
+  }
+
+  int get debugMyListingsCacheRevision => _myListingsCacheRevision;
+
+  void _debugMyListingsStack(String source, {int maxFrames = 20}) {
+    assert(() {
+      final frames = StackTrace.current.toString().trimRight().split('\n');
+      debugPrint(
+        '[MYLIST] STACK source=$source maxFrames=$maxFrames\n'
+        '${frames.take(maxFrames).join('\n')}',
+      );
+      return true;
+    }());
+  }
+
+  void _debugMyListingsCacheChange({
+    required String reason,
+    required String source,
+    required List<Listing>? oldItems,
+    required List<Listing>? newItems,
+    required int nextRevision,
+    bool includeStack = false,
+  }) {
+    assert(() {
+      final oldCount = oldItems?.length ?? 0;
+      final newCount = newItems?.length ?? 0;
+      final oldIds = (oldItems ?? const <Listing>[])
+          .map((item) => item.id)
+          .take(30)
+          .join(',');
+      final becameEmpty = oldCount > 0 && newCount == 0;
+      final prefix = becameEmpty ? '[MYLIST] BECAME_EMPTY' : '[MYLIST]';
+      debugPrint(
+        '$prefix user=${_myListingsCacheUserId ?? ''} status=cache '
+        'oldCount=$oldCount newCount=$newCount oldIds=$oldIds '
+        'reason=$reason source=$source cacheRev=$nextRevision '
+        'widget/state identity=service:${identityHashCode(this)}',
+      );
+      if (includeStack || becameEmpty) {
+        _debugMyListingsStack(
+          '_debugMyListingsCacheChange reason=$reason source=$source',
+          maxFrames: 20,
+        );
+      }
+      return true;
+    }());
+  }
+
+  void _debugMyListingsTrace(String message, {bool includeStack = false}) {
+    assert(() {
+      debugPrint('[MYLIST] $message service=${identityHashCode(this)}');
+      if (includeStack) {
+        _debugMyListingsStack('_debugMyListingsTrace');
+      }
+      return true;
+    }());
   }
 
   void _debugPrivateTab(String message) {

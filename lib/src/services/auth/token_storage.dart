@@ -19,6 +19,21 @@ class TokenStorage {
   final FlutterSecureStorage _secureStorage;
   Future<void>? _migrationInFlight;
 
+  // Shared by every storage instance, including ProfileService and ApiClient.
+  static int _generation = 0;
+  static Future<void> _writes = Future<void>.value();
+  int get sessionGeneration => _generation;
+  int beginSessionChange() => ++_generation;
+
+  Future<void> mutateSession(int generation, Future<void> Function() write) {
+    final next = _writes.then((_) async {
+      if (generation != _generation) return;
+      await write();
+    });
+    _writes = next.catchError((Object _) {});
+    return next;
+  }
+
   Future<void> saveSession({
     required String accessToken,
     required String refreshToken,
@@ -97,7 +112,7 @@ class TokenStorage {
     if (existing != null) {
       return existing;
     }
-    final future = _migrateLegacyTokens();
+    final future = mutateSession(sessionGeneration, _migrateLegacyTokens);
     _migrationInFlight = future;
     return future.whenComplete(() {
       if (identical(_migrationInFlight, future)) {

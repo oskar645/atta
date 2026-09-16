@@ -88,15 +88,6 @@ let MediaController = MediaController_1 = class MediaController {
             return result;
         });
     }
-    async getChatImage(mediaId, token, request, response) {
-        const authUser = await this.authenticateRequest(request, token);
-        const access = await this.chatsService.getChatImageAccess(authUser, mediaId);
-        const bytes = await this.storageService.readChatFile(access.key, access.bucket);
-        this.debugProxyHit('chats', access.key, access.bucket ?? 's3', 200);
-        response.setHeader('Content-Type', access.mimeType);
-        response.setHeader('Cache-Control', 'private, max-age=300');
-        response.send(bytes);
-    }
     async getChatImageByKey(key, token, request, response) {
         const authUser = await this.authenticateRequest(request, token);
         const access = await this.chatsService.getChatImageAccessByKey(authUser, key);
@@ -106,11 +97,17 @@ let MediaController = MediaController_1 = class MediaController {
         response.setHeader('Cache-Control', 'private, max-age=300');
         response.send(bytes);
     }
+    async getChatImage(mediaId, token, request, response) {
+        const authUser = await this.authenticateRequest(request, token);
+        const access = await this.chatsService.getChatImageAccess(authUser, mediaId);
+        const bytes = await this.storageService.readChatFile(access.key, access.bucket);
+        this.debugProxyHit('chats', access.key, access.bucket ?? 's3', 200);
+        response.setHeader('Content-Type', access.mimeType);
+        response.setHeader('Cache-Control', 'private, max-age=300');
+        response.send(bytes);
+    }
     async getSupportFileByKey(authUser, key, response) {
-        const normalizedKey = key?.trim() ?? '';
-        if (!normalizedKey) {
-            throw new common_1.BadRequestException('Файл не найден');
-        }
+        const normalizedKey = this.requireScopedKey(key, ['support', 'support-images']);
         if (authUser.role !== 'admin') {
             const message = await this.prisma.supportMessage.findFirst({
                 where: {
@@ -143,8 +140,26 @@ let MediaController = MediaController_1 = class MediaController {
             'misc',
             'videos',
         ]);
-        if (!allowed.has(category) || !key?.trim()) {
+        if (!allowed.has(category) || typeof key !== 'string' || !key.trim()) {
             throw new common_1.BadRequestException('Файл не найден');
+        }
+        const prefixes = {
+            avatars: ['avatars'],
+            listings: ['listings', 'listing-photos'],
+            'feed-ads': ['feed-ads', 'misc'],
+            misc: ['misc'],
+            videos: ['videos'],
+        };
+        key = this.requireScopedKey(key, prefixes[category]);
+        // Scoped avatars must stop being public immediately, even while S3 cleanup retries.
+        const avatarOwnerId = category === 'avatars' ? key.split('/')[1] : '';
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(avatarOwnerId)) {
+            const owner = await this.prisma.user.findUnique({
+                where: { id: avatarOwnerId }, select: { status: true, deletedAt: true },
+            });
+            if (!owner || owner.deletedAt || owner.status === 'DELETED') {
+                throw new common_1.NotFoundException('Файл не найден');
+            }
         }
         const bytes = await this.storageService.readStoredFile(category, key, 's3');
         this.debugProxyHit(category, key, 's3', 200);
@@ -186,6 +201,20 @@ let MediaController = MediaController_1 = class MediaController {
             throw new common_1.ForbiddenException('Generic media delete is admin-only for now');
         }
         return this.storageService.deleteMediaByEntityId(id);
+    }
+    // Validate the exact key before S3's decoding/bucket selection. Never accept
+    // encoded separators, bucket wrappers, dot segments or another namespace.
+    requireScopedKey(key, prefixes) {
+        if (typeof key !== 'string' || key !== key.trim() ||
+            /[%\\\x00-\x1f\x7f?#]/.test(key)) {
+            throw new common_1.BadRequestException('Файл не найден');
+        }
+        const parts = key.split('/');
+        if (!prefixes.includes(parts[0]) || parts.length < 2 ||
+            parts.some(part => !part || part === '.' || part === '..')) {
+            throw new common_1.BadRequestException('Файл не найден');
+        }
+        return key;
     }
     requireImage(file, maxSizeBytes) {
         if (!file || !file.buffer || file.size === 0) {
@@ -365,16 +394,6 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], MediaController.prototype, "uploadChatImage", null);
 __decorate([
-    (0, common_1.Get)('chats/:mediaId'),
-    __param(0, (0, common_1.Param)('mediaId')),
-    __param(1, (0, common_1.Query)('token')),
-    __param(2, (0, common_1.Req)()),
-    __param(3, (0, common_1.Res)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, Object, Object]),
-    __metadata("design:returntype", Promise)
-], MediaController.prototype, "getChatImage", null);
-__decorate([
     (0, common_1.Get)('chats/file'),
     __param(0, (0, common_1.Query)('key')),
     __param(1, (0, common_1.Query)('token')),
@@ -384,6 +403,16 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, Object, Object]),
     __metadata("design:returntype", Promise)
 ], MediaController.prototype, "getChatImageByKey", null);
+__decorate([
+    (0, common_1.Get)('chats/:mediaId'),
+    __param(0, (0, common_1.Param)('mediaId')),
+    __param(1, (0, common_1.Query)('token')),
+    __param(2, (0, common_1.Req)()),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], MediaController.prototype, "getChatImage", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Get)('support/file'),

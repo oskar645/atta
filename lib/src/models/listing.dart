@@ -3,6 +3,11 @@ import 'active_promotion.dart';
 import 'car_specs.dart';
 import '../utils/media_url.dart';
 
+const _ownerArchiveReasons = {
+  'Объявление снято с публикации.',
+  'Снято владельцем с публикации.',
+};
+
 /// Структурированная локация (как Avito), но совместима со старым city String.
 class ListingLocation {
   /// Регион/субъект РФ (Чеченская Республика)
@@ -201,6 +206,7 @@ class Listing {
   final int favoriteCount;
   final String status;
   final String rejectionReason;
+  final String? moderatedBy;
   final ActivePromotion? activeShowcase;
   final ActivePromotion? activeBump;
   final ActivePromotion? activeVip;
@@ -241,6 +247,7 @@ class Listing {
     required this.favoriteCount,
     required this.status,
     required this.rejectionReason,
+    this.moderatedBy,
     required this.activeShowcase,
     required this.activeBump,
     required this.activeVip,
@@ -252,25 +259,43 @@ class Listing {
     required this.updatedAt,
   });
 
+  String get normalizedStatus => status.trim().toLowerCase();
+
   bool get isArchivedStatus =>
-      status == 'sold' ||
-      status == 'deleted' ||
-      status == 'archived' ||
-      status == 'rejected';
+      normalizedStatus == 'sold' ||
+      normalizedStatus == 'deleted' ||
+      normalizedStatus == 'archived' ||
+      normalizedStatus == 'rejected';
 
   bool get isPermanentlyUnavailableForBuyer =>
-      status == 'sold' || status == 'deleted' || status == 'archived';
+      normalizedStatus == 'sold' ||
+      normalizedStatus == 'deleted' ||
+      normalizedStatus == 'archived';
 
-  bool get canOwnerEdit => status == 'approved' || status == 'rejected';
+  bool get canOwnerEdit =>
+      normalizedStatus == 'approved' ||
+      normalizedStatus == 'rejected' ||
+      canOwnerResubmit;
+
+  bool get isAdminArchived =>
+      normalizedStatus == 'archived' &&
+      (moderatedBy?.trim().isNotEmpty ?? false) &&
+      !_ownerArchiveReasons.contains(rejectionReason.trim());
+
+  bool get canOwnerResubmit =>
+      normalizedStatus == 'rejected' ||
+      (normalizedStatus == 'archived' &&
+          (!(moderatedBy?.trim().isNotEmpty ?? false) ||
+              _ownerArchiveReasons.contains(rejectionReason.trim())));
 
   String get archiveNote {
     final note = rejectionReason.trim();
-    if (note.isNotEmpty) return note;
-    switch (status) {
+    if (note.isNotEmpty) return _localizedModerationReason(note);
+    switch (normalizedStatus) {
       case 'sold':
         return 'Объявление отмечено как проданное.';
       case 'deleted':
-        return 'Объявление удалено администратором.';
+        return 'Объявление удалено.';
       case 'archived':
         return 'Объявление снято с публикации.';
       case 'rejected':
@@ -441,6 +466,21 @@ class Listing {
     return null;
   }
 
+  static String _localizedModerationReason(String value) {
+    switch (value.trim()) {
+      case 'Rejected by moderator':
+        return 'Отклонено модератором';
+      case 'Deleted by moderator':
+        return 'Удалено модератором';
+      case 'Deleted by admin':
+        return 'Удалено администратором';
+      case 'Deleted with owner account':
+        return 'Удалено вместе с аккаунтом владельца';
+      default:
+        return value;
+    }
+  }
+
   /// Maps backend payload to Listing.
   factory Listing.fromMap(Map<String, dynamic> row) {
     final delivery = _parseJson(row['delivery']);
@@ -504,6 +544,9 @@ class Listing {
               : 0,
       status: (row['status'] ?? 'approved').toString(),
       rejectionReason: (row['rejection_reason'] ?? '').toString(),
+      moderatedBy: _nullableTrimmedString(
+        row['moderated_by'] ?? row['moderatedBy'],
+      ),
       activeShowcase: _parsePromotion(promotions['activeShowcase']),
       activeBump: _parsePromotion(promotions['activeBump']),
       activeVip: _parsePromotion(promotions['activeVip']),
@@ -569,6 +612,7 @@ class Listing {
       'favorites_count': favoriteCount,
       'status': status,
       'rejection_reason': rejectionReason,
+      'moderated_by': moderatedBy,
       'promotions': {
         'activeShowcase': activeShowcase?.toMap(),
         'activeBump': activeBump?.toMap(),
@@ -582,6 +626,11 @@ class Listing {
       'updated_at': updatedAt?.toIso8601String(),
     };
   }
+}
+
+String? _nullableTrimmedString(dynamic value) {
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
 }
 
 class ListingPhotoItem {

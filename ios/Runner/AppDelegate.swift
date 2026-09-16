@@ -79,6 +79,17 @@ import UserNotifications
 
   private func handlePushMethod(call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
+    case "unregister":
+      UIApplication.shared.unregisterForRemoteNotifications()
+      UIApplication.shared.applicationIconBadgeNumber = 0
+      UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+      UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+      currentDeviceToken = nil
+      initialNotification = nil
+      tokenResult?(nil)
+      tokenResult = nil
+      tapStreamHandler.clear()
+      result(nil)
     case "requestToken":
       requestToken(result: result)
     case "getInitialNotification":
@@ -141,6 +152,10 @@ private final class PushTapStreamHandler: NSObject, FlutterStreamHandler {
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
     sink = nil
     return nil
+  }
+
+  func clear() {
+    bufferedPayload = nil
   }
 
   func send(_ payload: [String: Any]) {

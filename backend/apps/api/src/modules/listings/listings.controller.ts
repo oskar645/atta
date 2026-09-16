@@ -19,6 +19,7 @@ import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
+import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
 import { ListingsService } from './listings.service';
 
 @Controller('listings')
@@ -137,13 +138,23 @@ export class ListingsController {
     return this.listingsService.archive(id, authUser, dto);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post(':id/resubmit')
+  resubmit(
+    @Param('id') id: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.listingsService.resubmit(id, authUser);
+  }
+
   @Post(':id/views')
   @UseGuards(OptionalJwtAuthGuard)
   incrementView(
     @Param('id') id: string,
     @CurrentUser() authUser?: AuthenticatedUser,
+    @Body() dto?: IncrementListingViewDto,
   ) {
-    return this.listingsService.incrementView(id, authUser);
+    return this.listingsService.incrementView(id, authUser, dto);
   }
 
   @Post(':id/view')
@@ -151,8 +162,9 @@ export class ListingsController {
   incrementViewAlias(
     @Param('id') id: string,
     @CurrentUser() authUser?: AuthenticatedUser,
+    @Body() dto?: IncrementListingViewDto,
   ) {
-    return this.listingsService.incrementView(id, authUser);
+    return this.listingsService.incrementView(id, authUser, dto);
   }
 
   @UseGuards(JwtAuthGuard)

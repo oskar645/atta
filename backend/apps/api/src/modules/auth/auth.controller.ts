@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -116,6 +117,22 @@ export class AuthController {
   @Get('me')
   getMe(@CurrentUser() authUser: AuthenticatedUser) {
     return this.authService.getMe(authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('consents/marketing')
+  getMarketingConsent(@CurrentUser() authUser: AuthenticatedUser) {
+    return this.authService.getMarketingConsent(authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('consents/marketing')
+  updateMarketingConsent(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Req() request: any,
+    @Body() dto: { accepted?: boolean; platform?: string },
+  ) {
+    return this.authService.updateMarketingConsent(authUser, dto, request);
   }
 
   @UseGuards(JwtAuthGuard)

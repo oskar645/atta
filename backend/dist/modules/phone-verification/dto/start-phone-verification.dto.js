@@ -19,7 +19,7 @@ __decorate([
     __metadata("design:type", String)
 ], StartPhoneVerificationDto.prototype, "phone", void 0);
 __decorate([
-    (0, class_validator_1.IsIn)(['signup', 'login', 'reset_password']),
+    (0, class_validator_1.IsIn)(['signup', 'login', 'reset_password', 'change_phone']),
     __metadata("design:type", String)
 ], StartPhoneVerificationDto.prototype, "purpose", void 0);
 //# sourceMappingURL=start-phone-verification.dto.js.map

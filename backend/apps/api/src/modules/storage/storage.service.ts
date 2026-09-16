@@ -173,6 +173,44 @@ export class StorageService {
       .deleteFile(category, normalizedKey);
   }
 
+  // Account deletion accepts only configured storage URLs, never arbitrary external URLs.
+  async deleteAccountAvatar(userId: string, rawUrl: string) {
+    const location = this.accountAvatarLocation(userId, rawUrl);
+    if (!location) return; // Unowned/legacy external assets need an ownership decision.
+    const others = await this.prisma.user.findMany({
+      where: { id: { not: userId }, OR: [
+        { avatarUrl: { contains: basename(location.key) } }, { photoUrl: { contains: basename(location.key) } },
+      ] }, select: { avatarUrl: true, photoUrl: true },
+    });
+    if (others.length > 0) return; // Do not destroy another user's referenced image.
+    if (this.getProvider() !== location.provider) {
+      throw new ServiceUnavailableException('Avatar storage provider is not active');
+    }
+    await this.deleteStoredFile('avatars', location.key, location.provider);
+  }
+
+  private accountAvatarLocation(userId: string, rawUrl: string): { key: string; provider: 'local' | 's3' } | null {
+    try {
+      const value = rawUrl.trim();
+      const url = new URL(value, 'https://atta.invalid');
+      let key: string | null = null;
+      const s3Base = env.S3_PUBLIC_BASE_URL.replace(/\/+$/, '');
+      if (s3Base && value.startsWith(`${s3Base}/`)) {
+        key = decodeURIComponent(value.slice(s3Base.length + 1).split('?')[0]);
+      } else if (value.startsWith('/media/object?') && url.searchParams.get('category') === 'avatars') {
+        key = url.searchParams.get('key');
+      } else {
+        const localBase = env.MEDIA_PUBLIC_BASE_URL.replace(/\/+$/, '');
+        if (!value.startsWith(`${localBase}/avatars/`) && !value.startsWith('/uploads/avatars/')) return null;
+        const file = decodeURIComponent(url.pathname.split('/').pop() ?? '');
+        if (!/^[a-zA-Z0-9_-]+\.(?:png|jpe?g|webp|heic|heif)$/i.test(file)) return null;
+        return { key: file, provider: 'local' };
+      }
+      if (!key?.startsWith(`avatars/${userId}/`) || key.includes('..') || key.includes('\\')) return null;
+      return { key, provider: 's3' };
+    } catch { return null; }
+  }
+
   async deleteAvatarUrl(avatarUrl?: string | null) {
     const location = this.extractStoredLocation('avatars', avatarUrl);
     if (!location) {

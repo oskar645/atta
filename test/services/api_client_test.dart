@@ -283,6 +283,80 @@ void main() {
       ),
     );
   });
+  for (final realtime in [false, true]) {
+    test(
+        'stale refresh failure cannot expire B (${realtime ? "realtime" : "HTTP"})',
+        () async {
+      final storage = TokenStorage();
+      await storage.saveSession(
+          accessToken: 'expired-token',
+          refreshToken: 'a',
+          currentUser: const AuthUser(uid: 'a'));
+      final pending = Completer<bool>();
+      final started = Completer<void>();
+      var expired = 0;
+      ApiClient.configureAuthHandlers(
+        sessionGeneration: () => storage.sessionGeneration,
+        onRefreshSession: () {
+          started.complete();
+          return pending.future;
+        },
+        onSessionExpired: () async {
+          expired++;
+          await storage.clear();
+        },
+      );
+      final client =
+          ApiClient(tokenStorage: storage, httpClient: _FakeHttpClient());
+      final operation = realtime
+          ? ApiClient.refreshAuthorizedSessionForRealtime()
+          : client.get('/secure', authorized: true);
+      final expectation = expectLater(
+          operation,
+          throwsA(isA<ApiException>()
+              .having((e) => e.code, 'code', 'stale_auth_generation')));
+      await started.future;
+      storage.beginSessionChange();
+      await storage.saveSession(
+          accessToken: 'fresh-token',
+          refreshToken: 'b',
+          currentUser: const AuthUser(uid: 'b'));
+      pending.complete(false);
+      await expectation;
+      expect(expired, 0);
+      expect((await storage.readCurrentUser())?.uid, 'b');
+    });
+  }
+
+  test('late HTTP 401 from A does not start refresh for B', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+        accessToken: 'a',
+        refreshToken: 'a',
+        currentUser: const AuthUser(uid: 'a'));
+    final httpClient = _DelayedHttpClient();
+    var refreshes = 0;
+    ApiClient.configureAuthHandlers(
+        sessionGeneration: () => storage.sessionGeneration,
+        onRefreshSession: () async {
+          refreshes++;
+          return false;
+        });
+    final client = ApiClient(tokenStorage: storage, httpClient: httpClient);
+    final expectation = expectLater(
+        client.get('/secure', authorized: true), throwsA(isA<ApiException>()));
+    await httpClient.started.future;
+    storage.beginSessionChange();
+    await storage.saveSession(
+        accessToken: 'b',
+        refreshToken: 'b',
+        currentUser: const AuthUser(uid: 'b'));
+    httpClient.pending
+        .complete(http.StreamedResponse(Stream.value(utf8.encode('{}')), 401));
+    await expectation;
+    expect(refreshes, 0);
+    expect(await storage.readAccessToken(), 'b');
+  });
 }
 
 class _FakeHttpClient extends http.BaseClient {
@@ -312,5 +386,15 @@ class _TimeoutHttpClient extends http.BaseClient {
     return Future<http.StreamedResponse>.error(
       TimeoutException('request timed out'),
     );
+  }
+}
+
+class _DelayedHttpClient extends http.BaseClient {
+  final started = Completer<void>();
+  final pending = Completer<http.StreamedResponse>();
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    started.complete();
+    return pending.future;
   }
 }

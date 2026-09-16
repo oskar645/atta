@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -127,6 +128,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   int _activeMainFeedVipRotationOffset = 0;
   int _bumpRotation = -1;
   late final ListingsService _bumpListings;
+
+  void _promptLogin() {
+    unawaited(promptGuestAuth(context));
+  }
 
   void _onBumpPurchased() {
     unawaited(_reloadFeed(reset: true, preserveVipRotation: true));
@@ -662,7 +667,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     final history = context.watch<ListingHistoryService>();
     final reviews = context.read<ReviewsService>();
     final notifications = context.read<NotificationsService>();
-    final user = context.read<AuthService>().currentUser!;
+    final user = context.read<AuthService>().currentUser;
 
     // Search hint in Avito-like format: "Поиск в <локация>".
     final hint =
@@ -674,12 +679,18 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         title: const _HomeBrandTitle(),
         actions: [
           StreamBuilder<int>(
-            stream: notifications.streamUnreadBadgeCount(user.uid),
+            stream: user == null
+                ? const Stream<int>.empty()
+                : notifications.streamUnreadBadgeCount(user.uid),
             builder: (context, snap) {
               final unread = snap.data ?? 0;
               final icon = IconButton(
                 tooltip: 'Уведомления',
                 onPressed: () async {
+                  if (user == null) {
+                    _promptLogin();
+                    return;
+                  }
                   await Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => const NotificationsScreen(),
@@ -822,7 +833,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         history: history,
                         reviews: reviews,
                         favs: favs,
-                        userId: user.uid,
+                        userId: user?.uid ?? '',
                         isLoadingMore: _isLoadingMore,
                         hasMore: _hasMore,
                         onLoadMore: _loadMoreFeed,
@@ -1132,7 +1143,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
     final feedAds = context.read<FeedAdsService>();
     final history = context.watch<ListingHistoryService>();
     final reviews = context.read<ReviewsService>();
-    final user = context.read<AuthService>().currentUser!;
+    final user = context.read<AuthService>().currentUser;
     final hint =
         _location.trim().isEmpty ? 'Поиск по названию' : 'Поиск в $_location';
 
@@ -1235,7 +1246,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
                         history: history,
                         reviews: reviews,
                         favs: favs,
-                        userId: user.uid,
+                        userId: user?.uid ?? '',
                         isLoadingMore: _isLoadingMore,
                         hasMore: _hasMore,
                         onLoadMore: _loadMore,
@@ -2710,7 +2721,7 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
     final history = context.watch<ListingHistoryService>();
     final reviews = context.read<ReviewsService>();
     final savedSearches = context.read<SavedSearchService>();
-    final user = context.read<AuthService>().currentUser!;
+    final user = context.read<AuthService>().currentUser;
     final queryKey = savedSearches.buildQueryKey(
       search: search,
       filters: _feedFilters,
@@ -2725,7 +2736,9 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
         title: const Text('Результаты поиска'),
         actions: [
           StreamBuilder<List<SavedSearch>>(
-            stream: savedSearches.streamSavedSearches(user.uid),
+            stream: user == null
+                ? const Stream<List<SavedSearch>>.empty()
+                : savedSearches.streamSavedSearches(user.uid),
             builder: (context, snap) {
               final items = snap.data ?? const <SavedSearch>[];
               final isSaved = items.any((item) => item.queryKey == queryKey);
@@ -2736,6 +2749,10 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
                 onPressed: !canSaveSearch
                     ? null
                     : () async {
+                        if (user == null) {
+                          await promptGuestAuth(context);
+                          return;
+                        }
                         if (isSaved) {
                           await savedSearches.deleteSavedSearch(
                             userId: user.uid,
@@ -2854,7 +2871,7 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
                         history: history,
                         reviews: reviews,
                         favs: favs,
-                        userId: user.uid,
+                        userId: user?.uid ?? '',
                         isLoadingMore: _isLoadingMore,
                         hasMore: _hasMore,
                         onLoadMore: _loadMore,

@@ -1,3 +1,4 @@
+import { SavedSearchesModule } from '../saved-searches/saved-searches.module';
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
@@ -11,7 +12,7 @@ import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 
 @Module({
-  imports: [
+  imports: [SavedSearchesModule,
     AppVisitsModule,
     AuthModule,
     NotificationsModule,

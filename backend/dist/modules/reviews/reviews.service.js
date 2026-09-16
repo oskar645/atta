@@ -27,6 +27,14 @@ let ReviewsService = class ReviewsService {
         });
     }
     serializeReview(review) {
+        const deletedAuthor = review.reviewer?.deletedAt || review.reviewer?.status === 'DELETED';
+        const deletedSeller = review.seller?.deletedAt || review.seller?.status === 'DELETED';
+        if (deletedAuthor)
+            review = { ...review, reviewerName: 'Удалённый пользователь',
+                reviewer: review.reviewer ? { ...review.reviewer, avatarUrl: null, photoUrl: null } : undefined };
+        if (deletedSeller && review.seller)
+            review = { ...review, seller: { ...review.seller,
+                    displayName: 'Удалённый пользователь', name: 'Удалённый пользователь', avatarUrl: null, photoUrl: null } };
         const authorName = review.reviewerName?.trim() ||
             review.reviewer?.displayName?.trim() ||
             review.reviewer?.name?.trim() ||

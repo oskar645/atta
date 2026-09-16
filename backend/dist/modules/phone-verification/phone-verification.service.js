@@ -393,6 +393,8 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 return client_1.PhoneVerificationPurpose.LOGIN;
             case 'reset_password':
                 return client_1.PhoneVerificationPurpose.RESET_PASSWORD;
+            case 'change_phone':
+                return client_1.PhoneVerificationPurpose.CHANGE_PHONE;
         }
     }
     async callSmsRu(path, query) {

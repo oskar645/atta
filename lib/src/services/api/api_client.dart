@@ -29,14 +29,27 @@ class ApiClient {
   static ApiAuthorizedSessionWaiter? _authorizedSessionWaiter;
   static ApiAccountBlockedHandler? _accountBlockedHandler;
   static Future<bool>? _refreshInFlight;
+  static int Function()? _sessionGeneration;
+  static int? _refreshGeneration;
+  static int get _generation => _sessionGeneration?.call() ?? 0;
+  static void _checkGeneration(int generation) {
+    if (generation != _generation) {
+      throw const ApiException('Устаревшая auth операция проигнорирована.',
+          code: 'stale_auth_generation');
+    }
+  }
+
   int _requestSequence = 0;
 
   static void configureAuthHandlers({
+    int Function()? sessionGeneration,
     ApiRefreshHandler? onRefreshSession,
     ApiSessionExpiredHandler? onSessionExpired,
     ApiAuthorizedSessionWaiter? onAwaitAuthorizedSession,
     ApiAccountBlockedHandler? onAccountBlocked,
   }) {
+    _sessionGeneration = sessionGeneration;
+    _refreshInFlight = null;
     _refreshHandler = onRefreshSession;
     _sessionExpiredHandler = onSessionExpired;
     _authorizedSessionWaiter = onAwaitAuthorizedSession;
@@ -53,7 +66,7 @@ class ApiClient {
 
   static Future<void> awaitActiveRefreshForRealtime() async {
     final refreshFuture = _refreshInFlight;
-    if (refreshFuture == null) {
+    if (refreshFuture == null || _refreshGeneration != _generation) {
       return;
     }
     await refreshFuture;
@@ -62,9 +75,13 @@ class ApiClient {
   static Future<bool> ensureFreshAuthorizedSessionForRealtime(
     TokenStorage tokenStorage,
   ) async {
+    final generation = _generation;
     await awaitAuthorizedSessionReadyForRealtime();
+    _checkGeneration(generation);
     await awaitActiveRefreshForRealtime();
+    _checkGeneration(generation);
     final token = await tokenStorage.readAccessToken();
+    _checkGeneration(generation);
     if (token == null || token.trim().isEmpty) {
       return false;
     }
@@ -75,7 +92,9 @@ class ApiClient {
   }
 
   static Future<bool> refreshAuthorizedSessionForRealtime() async {
+    final generation = _generation;
     final refreshed = await _tryRefreshSessionForRealtime();
+    _checkGeneration(generation);
     if (refreshed) {
       return true;
     }
@@ -162,6 +181,7 @@ class ApiClient {
     bool authorized = false,
     bool allowAuthRetry = true,
   }) async {
+    final generation = _generation;
     if (authorized) {
       await _awaitAuthorizedSessionReady();
     }
@@ -197,6 +217,7 @@ class ApiClient {
     }
     request.headers['Accept'] = 'application/json';
 
+    if (authorized) _checkGeneration(generation);
     _logRequest(
       'POST',
       uri,
@@ -208,6 +229,7 @@ class ApiClient {
       final streamed =
           await _httpClient.send(request).timeout(ApiConfig.requestTimeout);
       final response = await http.Response.fromStream(streamed);
+      if (authorized) _checkGeneration(generation);
       _logResponse(
         'POST',
         uri,
@@ -219,6 +241,7 @@ class ApiClient {
           allowAuthRetry &&
           !_shouldSkipAuthRefresh(path)) {
         final refreshed = await _tryRefreshSession();
+        _checkGeneration(generation);
         if (refreshed) {
           return postMultipart(
             path,
@@ -253,18 +276,19 @@ class ApiClient {
     int networkRetryAttempt = 0,
     String? requestId,
   }) async {
+    final generation = _generation;
     final id = requestId ?? 'private-${++_requestSequence}';
     final isPrivate = authorized || sendAuthIfAvailable;
     if (isPrivate) {
       _logPrivate('PrivateRequest start endpoint=$path requestId=$id');
     }
     try {
-      if (authorized || sendAuthIfAvailable) {
+      if (authorized) {
         _logPrivate('AuthGate wait requestId=$id');
         await _awaitAuthorizedSessionReady();
         _logPrivate('AuthGate passed requestId=$id');
       }
-      if (authorized || sendAuthIfAvailable) {
+      if (authorized) {
         await _awaitActiveRefreshIfAny();
       }
       if (authorized) {
@@ -291,6 +315,7 @@ class ApiClient {
         }
       }
 
+      if (isPrivate) _checkGeneration(generation);
       _logRequest(method, uri, authorized: authorized, requestId: id);
       if (isPrivate) {
         _logPrivate('HTTP send requestId=$id endpoint=$path');
@@ -303,6 +328,7 @@ class ApiClient {
         body,
       ).timeout(ApiConfig.requestTimeout);
 
+      if (isPrivate) _checkGeneration(generation);
       _logResponse(method, uri, response.statusCode, requestId: id);
       if (isPrivate) {
         _logPrivate(
@@ -313,6 +339,7 @@ class ApiClient {
           allowAuthRetry &&
           !_shouldSkipAuthRefresh(path)) {
         final refreshed = await _tryRefreshSession();
+        _checkGeneration(generation);
         if (refreshed) {
           return _send(
             method,
@@ -345,6 +372,7 @@ class ApiClient {
       if (_shouldRetryNetwork(method) &&
           networkRetryAttempt < _networkRetryDelays.length) {
         await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
+        if (isPrivate) _checkGeneration(generation);
         return _send(
           method,
           path,
@@ -363,6 +391,7 @@ class ApiClient {
       if (_shouldRetryNetwork(method) &&
           networkRetryAttempt < _networkRetryDelays.length) {
         await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
+        if (isPrivate) _checkGeneration(generation);
         return _send(
           method,
           path,
@@ -381,6 +410,7 @@ class ApiClient {
       if (_shouldRetryNetwork(method) &&
           networkRetryAttempt < _networkRetryDelays.length) {
         await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
+        if (isPrivate) _checkGeneration(generation);
         return _send(
           method,
           path,
@@ -515,15 +545,18 @@ class ApiClient {
   }
 
   Future<bool> _tryRefreshSession() async {
+    final generation = _generation;
     final refreshed = await _tryRefreshSessionForRealtime();
+    _checkGeneration(generation);
     return _resolveRefreshOutcome(refreshed);
   }
 
   static Future<bool> _tryRefreshSessionForRealtime() async {
     final existing = _refreshInFlight;
-    if (existing != null) {
+    if (existing != null && _refreshGeneration == _generation) {
       return existing;
     }
+    _refreshGeneration = _generation;
     final future = _performRefreshSessionForRealtime();
     _refreshInFlight = future;
     try {

@@ -183,8 +183,11 @@ class NotificationNavigationService {
         return;
       }
 
+      final owner = (normalized['user_id'] ?? normalized['userId'])?.toString();
+      final uid = auth.currentUser?.uid;
+      if (owner != null && owner.isNotEmpty && owner != uid) return;
       await _markNotificationViewed(context, normalized);
-      if (!context.mounted) return;
+      if (!context.mounted || auth.currentUser?.uid != uid) return;
       await _openAction(context, normalized);
     } finally {
       _tapInFlight = false;
@@ -258,6 +261,14 @@ class NotificationNavigationService {
       return;
     }
     switch (actionType) {
+      case 'saved_search':
+        final listingId = (payload['listingId'] ?? '').toString().trim();
+        if (listingId.isNotEmpty) {
+          await Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => ListingDetailScreen(listingId: listingId),
+          ));
+        }
+        return;
       case 'review_new':
         await _openReview(context, payload);
         return;
@@ -296,7 +307,8 @@ class NotificationNavigationService {
   static bool shouldNavigateForNotification(Map<String, dynamic> notification) {
     final actionType = actionTypeForNotification(notification);
     return !_shouldOnlyMarkAsViewed(notification, actionType: actionType) &&
-        (actionType == 'review_new' ||
+        (actionType == 'saved_search' ||
+            actionType == 'review_new' ||
             actionType == 'listing_approved' ||
             actionType == 'moderation_approved' ||
             actionType == 'listing_rejected' ||
@@ -319,6 +331,7 @@ class NotificationNavigationService {
       return true;
     }
     if (_supportActionTypes.contains(actionType) ||
+        actionType == 'saved_search' ||
         actionType == 'review_new' ||
         actionType == 'listing_approved' ||
         actionType == 'moderation_approved' ||

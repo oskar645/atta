@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'blocked_account_screen.dart';
-import 'login_screen.dart';
 import '../home/main_shell.dart';
 
 class AuthGate extends StatefulWidget {
@@ -131,9 +130,10 @@ class _AuthGateState extends State<AuthGate> {
     }
 
     final unauthenticatedBuilder = widget.unauthenticatedBuilder;
-    return unauthenticatedBuilder != null
-        ? unauthenticatedBuilder(context)
-        : const LoginScreen(initialIsLogin: false);
+    if (unauthenticatedBuilder != null) {
+      return unauthenticatedBuilder(context);
+    }
+    return const MainShell(guestMode: true);
   }
 }
 

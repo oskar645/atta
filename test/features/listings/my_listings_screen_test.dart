@@ -57,6 +57,77 @@ void main() {
     expect(find.text('Нет активных объявлений'), findsNothing);
   });
 
+  testWidgets('create listing button is available on every tab',
+      (tester) async {
+    final listingsService = _ListingsWithItemService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Разместить объявление'), findsOneWidget);
+
+    await tester.tap(find.text('На модерации'));
+    await tester.pumpAndSettle();
+    expect(find.text('Разместить объявление'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('Удалённые'));
+    await tester.tap(find.text('Удалённые'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.text('Разместить объявление'), findsOneWidget);
+  });
+
+  testWidgets('create listing button hides down and shows on upward scroll',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 520));
+    final listingsService = _LongListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Разместить объявление'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -260));
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.byKey(const ValueKey('my_listings_create_button_opacity')),
+          )
+          .opacity,
+      0,
+    );
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, 120));
+    await tester.pump(const Duration(milliseconds: 260));
+    expect(
+      tester
+          .widget<AnimatedOpacity>(
+            find.byKey(const ValueKey('my_listings_create_button_opacity')),
+          )
+          .opacity,
+      1,
+    );
+  });
+
   testWidgets('my listings load error clears skeleton and shows retry',
       (tester) async {
     final listingsService = _FailingListingsService();
@@ -252,12 +323,17 @@ void main() {
     await tester.pump();
     expect(find.byType(SkeletonMyListingTile), findsWidgets);
 
-    await tester.tap(find.text('Архивные'));
+    await tester.tap(find.text('В архиве'));
+    await tester.pump();
+    expect(find.byType(SkeletonMyListingTile), findsWidgets);
+
+    await tester.ensureVisible(find.text('Отклонённые'));
+    await tester.tap(find.text('Отклонённые'));
     await tester.pump();
     expect(find.byType(SkeletonMyListingTile), findsWidgets);
 
     await tester.ensureVisible(find.text('Удалённые'));
-    await tester.tap(find.text('Удалённые'));
+    await tester.tap(find.text('Удалённые'), warnIfMissed: false);
     await tester.pump();
     expect(find.byType(SkeletonMyListingTile), findsWidgets);
 
@@ -364,6 +440,123 @@ void main() {
         expect(archiveLabel.style?.fontSize, 12);
       }
     }
+  });
+
+  testWidgets('self-archived listing can be edited and published again',
+      (tester) async {
+    final listingsService = _ListingsWithStatusItemService(
+      listing: _listing(
+        id: 'archived-1',
+        title: 'Архивное объявление',
+        status: 'archived',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('В архиве'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Архивное объявление'), findsOneWidget);
+    expect(find.text('Редактировать'), findsOneWidget);
+    expect(find.text('Опубликовать снова'), findsOneWidget);
+    expect(find.text('Снять с публикации'), findsNothing);
+
+    final editButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Редактировать'),
+    );
+    final resubmitButton = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Опубликовать снова'),
+    );
+    expect(editButton.onPressed, isNotNull);
+    expect(resubmitButton.onPressed, isNotNull);
+
+    await tester.tap(find.text('Опубликовать снова'));
+    await tester.pumpAndSettle();
+
+    expect(listingsService.resubmitRequests, 1);
+    expect(find.text('Объявление отправлено на модерацию'), findsOneWidget);
+    expect(find.text('Архивное объявление'), findsNothing);
+
+    await tester.tap(find.text('На модерации'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Архивное объявление'), findsOneWidget);
+    expect(find.text('Статус: На модерации'), findsOneWidget);
+  });
+
+  testWidgets(
+      'self-archived listing with unnormalized status still shows owner actions',
+      (tester) async {
+    final listingsService = _ListingsWithStatusItemService(
+      listing: _listing(
+        id: 'archived-unnormalized',
+        title: 'Архив со статусом из API',
+        status: ' archived ',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('В архиве'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Архив со статусом из API'), findsOneWidget);
+    expect(find.text('Статус: В архиве'), findsOneWidget);
+    expect(find.text('Редактировать'), findsOneWidget);
+    expect(find.text('Опубликовать снова'), findsOneWidget);
+  });
+
+  testWidgets(
+      'admin archived listing does not show publish again in archive tab',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(
+            value: _ListingsWithStatusItemService(
+              listing: _listing(
+                id: 'admin-archived-1',
+                title: 'Архив модератора',
+                status: 'archived',
+                moderatedBy: 'admin-1',
+              ),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('В архиве'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Архив модератора'), findsOneWidget);
+    expect(find.text('Опубликовать снова'), findsNothing);
+    expect(find.text('Снять с публикации'), findsNothing);
   });
 
   testWidgets('active listing shows favorite count near views', (tester) async {
@@ -677,6 +870,70 @@ class _ListingsWithItemService extends ListingsService {
         'created_at': '2026-06-20T10:00:00.000Z',
       }),
     ];
+  }
+}
+
+class _LongListingsService extends ListingsService {
+  @override
+  Future<List<Listing>> getMyListingsByStatuses(
+    String uid, {
+    required Set<String> statuses,
+    bool forceRefresh = false,
+  }) async {
+    if (!statuses.contains('approved')) {
+      return const <Listing>[];
+    }
+    return List<Listing>.generate(
+      18,
+      (index) => _listing(
+        id: 'long-$index',
+        title: 'long-$index',
+        status: 'approved',
+      ),
+    );
+  }
+}
+
+class _ListingsWithStatusItemService extends ListingsService {
+  _ListingsWithStatusItemService({required this.listing});
+
+  Listing listing;
+  int resubmitRequests = 0;
+  final StreamController<void> _refreshes = StreamController<void>.broadcast();
+
+  @override
+  Stream<void> get refreshes => _refreshes.stream;
+
+  @override
+  List<Listing> peekMyListingsByStatuses({
+    required Set<String> statuses,
+  }) {
+    return statuses.contains(listing.normalizedStatus)
+        ? <Listing>[listing]
+        : <Listing>[];
+  }
+
+  @override
+  Future<List<Listing>> getMyListingsByStatuses(
+    String uid, {
+    required Set<String> statuses,
+    bool forceRefresh = false,
+  }) async {
+    return statuses.contains(listing.normalizedStatus)
+        ? <Listing>[listing]
+        : <Listing>[];
+  }
+
+  @override
+  Future<Listing?> resubmitListing({required String listingId}) async {
+    resubmitRequests += 1;
+    listing = Listing.fromMap(<String, dynamic>{
+      ...listing.toMap(),
+      'status': 'pending',
+      'moderated_by': null,
+    });
+    _refreshes.add(null);
+    return listing;
   }
 }
 
@@ -1162,6 +1419,7 @@ Listing _listing({
   required String title,
   required String status,
   String ownerId = 'user-1',
+  String? moderatedBy,
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': id,
@@ -1181,6 +1439,7 @@ Listing _listing({
     'view_count': 0,
     'status': status,
     'rejection_reason': '',
+    'moderated_by': moderatedBy,
     'can_promote': false,
     'created_at': '2026-06-20T10:00:00.000Z',
   });

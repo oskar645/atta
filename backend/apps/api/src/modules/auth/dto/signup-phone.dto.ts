@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class SignupPhoneDto {
   @IsString()
@@ -41,4 +41,20 @@ export class SignupPhoneDto {
   @IsOptional()
   @IsString()
   referral_id?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptedLegal?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptedPersonalData?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptedMarketing?: boolean;
+
+  @IsOptional()
+  @IsString()
+  platform?: string;
 }

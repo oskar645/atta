@@ -1,3 +1,4 @@
+import { SavedSearchesModule } from '../saved-searches/saved-searches.module';
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
@@ -8,7 +9,7 @@ import { ListingsController } from './listings.controller';
 import { ListingsService } from './listings.service';
 
 @Module({
-  imports: [AuthModule, StorageModule, PromotionsModule, UserBlocksModule],
+  imports: [SavedSearchesModule,AuthModule, StorageModule, PromotionsModule, UserBlocksModule],
   controllers: [ListingsController],
   providers: [ListingsService],
   exports: [ListingsService],

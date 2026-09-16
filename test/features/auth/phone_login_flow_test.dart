@@ -291,9 +291,13 @@ void main() {
         find.widgetWithText(TextField, 'Пароль'),
         'secret123',
       );
-      await tester.tap(find.byType(Checkbox));
+      await tester.tap(find.byType(Checkbox).at(0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Checkbox).at(1));
       await tester.pumpAndSettle();
       await tester.pump();
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Продолжить'));
       await tester.pumpAndSettle();
 
@@ -336,6 +340,64 @@ void main() {
       expect(field.keyboardType, TextInputType.text);
       expect(field.focusNode?.hasFocus, isTrue);
       expect(find.byKey(const ValueKey('login-phone-field')), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'registration legal block stays compact across target viewports',
+    (tester) async {
+      final viewports = <String, Size>{
+        'small iPhone': const Size(320, 568),
+        'large iPhone': const Size(430, 932),
+        'Samsung Android': const Size(360, 800),
+        'narrow web': const Size(390, 844),
+        'large web': const Size(1024, 768),
+      };
+
+      for (final entry in viewports.entries) {
+        await tester.binding.setSurfaceSize(entry.value);
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(_buildLoginTestApp(_FakeAuthService()));
+        await tester.tap(find.text('Нет аккаунта? Создать аккаунт'));
+        await tester.pumpAndSettle();
+
+        final legalRichText = find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is RichText &&
+                  widget.text.toPlainText().contains(
+                        'Пользовательское соглашение',
+                      ),
+              description: '${entry.key} legal consent RichText',
+            )
+            .first;
+        final richText = tester.widget<RichText>(legalRichText);
+        final rootSpan = richText.text as TextSpan;
+        final baseStyle = rootSpan.style!;
+        final linkSpan = rootSpan.children!.whereType<TextSpan>().firstWhere(
+              (span) => span.text == 'Пользовательское соглашение',
+            );
+
+        expect(
+          baseStyle.fontSize,
+          inInclusiveRange(11, 11.5),
+          reason: entry.key,
+        );
+        expect(
+          linkSpan.style!.fontSize,
+          inInclusiveRange(11.6, 12.1),
+          reason: entry.key,
+        );
+        expect(linkSpan.style!.fontWeight, FontWeight.w700);
+
+        final blockSize = tester.getSize(
+          find.byKey(const ValueKey('registration-legal-consent-block')),
+        );
+        expect(blockSize.height, lessThanOrEqualTo(112), reason: entry.key);
+        expect(tester.takeException(), isNull, reason: entry.key);
+      }
     },
   );
 }

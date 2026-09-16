@@ -169,6 +169,130 @@ void main() {
     expect(find.text('Продать быстрее'), findsOneWidget);
   });
 
+  testWidgets(
+    'self-archived owner can edit and publish again from detail',
+    (tester) async {
+      final listingsService = _FakeListingsService(
+        listing: _listingFixture(ownerId: 'user-1', status: 'archived'),
+      );
+
+      await tester.pumpWidget(_buildTestApp(listingsService: listingsService));
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Управление объявлением'),
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Редактировать'), findsOneWidget);
+      expect(find.text('Опубликовать снова'), findsOneWidget);
+
+      await tester.tap(find.text('Опубликовать снова'));
+      await tester.pumpAndSettle();
+
+      expect(listingsService.resubmitRequests, 1);
+      expect(find.textContaining('На модерации'), findsWidgets);
+
+      await _openDetailMenu(tester);
+      expect(find.text('Опубликовать снова'), findsNothing);
+      expect(find.text('Отправить на модерацию'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'rejected owner can edit and send to moderation from detail',
+    (tester) async {
+      await tester.pumpWidget(
+        _buildTestApp(
+          listingsService: _FakeListingsService(
+            listing: _listingFixture(ownerId: 'user-1', status: 'rejected'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _openDetailMenu(tester);
+
+      expect(find.text('Редактировать'), findsOneWidget);
+      expect(find.text('Отправить на модерацию'), findsOneWidget);
+      expect(find.text('Опубликовать снова'), findsNothing);
+    },
+  );
+
+  testWidgets('sold owner has no publish again action in detail',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(ownerId: 'user-1', status: 'sold'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openDetailMenu(tester);
+
+    expect(find.text('Опубликовать снова'), findsNothing);
+    expect(find.text('Отправить на модерацию'), findsNothing);
+  });
+
+  testWidgets('deleted owner has no publish again action in detail',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(ownerId: 'user-1', status: 'deleted'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openDetailMenu(tester);
+
+    expect(find.text('Опубликовать снова'), findsNothing);
+    expect(find.text('Отправить на модерацию'), findsNothing);
+  });
+
+  testWidgets('admin-archived owner has no publish again action in detail',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            ownerId: 'user-1',
+            status: 'archived',
+            moderatedBy: 'admin-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openDetailMenu(tester);
+
+    expect(find.text('Опубликовать снова'), findsNothing);
+    expect(find.text('Отправить на модерацию'), findsNothing);
+  });
+
+  testWidgets('non-owner sees no owner actions in detail', (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(status: 'approved'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _openDetailMenu(tester);
+
+    expect(find.text('Редактировать'), findsNothing);
+    expect(find.text('Опубликовать снова'), findsNothing);
+    expect(find.text('Отправить на модерацию'), findsNothing);
+  });
+
   testWidgets('listing detail shows formatted russian phone', (tester) async {
     await tester.pumpWidget(_buildTestApp());
 
@@ -430,6 +554,11 @@ Finder _detailBodyListView() {
   );
 }
 
+Future<void> _openDetailMenu(WidgetTester tester) async {
+  await tester.tap(find.byType(PopupMenuButton<String>));
+  await tester.pumpAndSettle();
+}
+
 Widget _buildTestApp({
   ListingsService? listingsService,
   ReviewsService? reviewsService,
@@ -474,6 +603,8 @@ Listing _listingFixture({
   String? description,
   bool canPromote = true,
   String ownerId = 'seller-1',
+  String status = 'approved',
+  String? moderatedBy,
   String category = 'Авто',
   String subcategory = 'Седан',
   String? clothesSize,
@@ -497,8 +628,9 @@ Listing _listingFixture({
     'delivery': <String, dynamic>{'pickup': true},
     'photo_urls': const <String>[],
     'view_count': 3,
-    'status': 'approved',
+    'status': status,
     'rejection_reason': '',
+    'moderated_by': moderatedBy,
     'can_promote': canPromote,
     'created_at': '2026-06-20T10:00:00.000Z',
     'published_at': '2026-06-20T10:00:00.000Z',
@@ -536,14 +668,27 @@ class _FakeListingsService extends ListingsService {
     this.similarError,
   }) : _listing = listing ?? _listingFixture();
 
-  final Listing _listing;
+  Listing _listing;
   final Object? similarError;
   int getListingRequests = 0;
   int similarRequests = 0;
+  int resubmitRequests = 0;
 
   @override
   Future<Listing?> getListingById(String id) async {
     getListingRequests += 1;
+    return _listing;
+  }
+
+  @override
+  Future<Listing?> resubmitListing({required String listingId}) async {
+    resubmitRequests += 1;
+    _listing = Listing.fromMap(<String, dynamic>{
+      ..._listing.toMap(),
+      'status': 'pending',
+      'rejection_reason': '',
+      'moderated_by': null,
+    });
     return _listing;
   }
 

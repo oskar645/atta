@@ -9,6 +9,7 @@ import 'package:atta/src/services/restore_credentials_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
 import 'dart:convert';
 
 void main() {
@@ -56,6 +57,101 @@ void main() {
 
     expect(service.currentUser, isNull);
     expect(authApi.logoutCalled, isTrue);
+  });
+
+  for (final nativeFails in [false, true]) {
+    test(
+        'delete clears current device tokens/user/restore and enters guest (native failure=$nativeFails)',
+        () async {
+      final api = _FakeAuthApi();
+      final storage = TokenStorage();
+      final native = _FakeRestoreCredentialsService(clearThrows: nativeFails);
+      final service = BackendAuthService(
+          authApi: api,
+          usersApi: _FakeUsersApi(),
+          tokenStorage: storage,
+          restoreCredentialsService: native);
+      await service.signIn(email: 'a', password: 'secret');
+      await storage.markRestoreCredentialSynced('restore-a');
+      final events = <AuthSessionEventType>[];
+      final sub =
+          service.onAuthStateChange.listen((event) => events.add(event.type));
+      await service.deleteAccount();
+      await Future<void>.delayed(Duration.zero);
+      expect(service.currentUser, isNull);
+      expect(await storage.readCurrentUser(), isNull);
+      expect(await storage.readAccessToken(), isNull);
+      expect(await storage.readRefreshToken(), isNull);
+      expect(await storage.hasSyncedRestoreCredential(), false);
+      expect(await storage.readRestoreCredentialId(), isNull);
+      expect(events, contains(AuthSessionEventType.signedOut));
+      expect(native.clearCalls, 1);
+      expect(api.logoutCalled, false);
+      expect(api.restoreRevokeCredentialIds, isEmpty);
+      await sub.cancel();
+    });
+  }
+
+  for (final error in [
+    const ApiException('server failed', statusCode: 500),
+    null
+  ]) {
+    test('failed or negative delete leaves auth and restore intact ($error)',
+        () async {
+      final api = _FakeAuthApi()
+        ..deleteError = error
+        ..deleteResponse = {'deleted': false};
+      final storage = TokenStorage();
+      final native = _FakeRestoreCredentialsService();
+      final service = BackendAuthService(
+          authApi: api,
+          usersApi: _FakeUsersApi(),
+          tokenStorage: storage,
+          restoreCredentialsService: native);
+      await service.signIn(email: 'a', password: 'secret');
+      await storage.markRestoreCredentialSynced('restore-a');
+      await expectLater(service.deleteAccount(), throwsA(isA<ApiException>()));
+      expect(service.currentUser?.uid, 'user-1');
+      expect(await storage.readAccessToken(), 'access-token');
+      expect(await storage.readRestoreCredentialId(), 'restore-a');
+      expect(native.clearCalls, 0);
+      expect(api.restoreRevokeCredentialIds, isEmpty);
+    });
+  }
+
+  test('refresh started before delete cannot restore deleted session',
+      () async {
+    final api = _FakeAuthApi();
+    final storage = TokenStorage();
+    final service = BackendAuthService(
+        authApi: api, usersApi: _FakeUsersApi(), tokenStorage: storage);
+    await service.signIn(email: 'a', password: 'secret');
+    final pending = Completer<Map<String, dynamic>>();
+    api.refreshCompleters.add(pending);
+    final refresh = service.refreshSession();
+    await Future<void>.delayed(Duration.zero);
+    await service.deleteAccount();
+    pending.complete(_authPayload('user-1', 'old'));
+    expect(await refresh, false);
+    expect(service.currentUser, isNull);
+    expect(await storage.readAccessToken(), isNull);
+  });
+
+  test('late delete response A cannot clear newly signed-in B', () async {
+    final api = _FakeAuthApi();
+    final storage = TokenStorage();
+    final service = BackendAuthService(
+        authApi: api, usersApi: _FakeUsersApi(), tokenStorage: storage);
+    await service.signIn(email: 'a', password: 'secret');
+    final pending = Completer<Map<String, dynamic>>();
+    api.deleteCompleter = pending;
+    final deletion = service.deleteAccount();
+    api.loginResponses.add(_authPayload('user-b', 'B'));
+    await service.signIn(email: 'b', password: 'secret');
+    pending.complete({'deleted': true});
+    await deletion;
+    expect(service.currentUser?.uid, 'user-b');
+    expect(await storage.readAccessToken(), 'access-token-user-b');
   });
 
   test('startPhoneVerification reads compatible call fields', () async {
@@ -702,6 +798,250 @@ void main() {
     expect(await tokenStorage.readRestoreCredentialId(), isNull);
     expect(service.currentUser, isNull);
   });
+
+  test('stale me from account A cannot overwrite account B after logout login',
+      () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token-a',
+      refreshToken: 'refresh-token-a',
+      currentUser: const AuthUser(uid: 'user-a', displayName: 'Ansar'),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+    );
+    await service.ensureInitialized();
+
+    final staleMe = Completer<Map<String, dynamic>>();
+    authApi.meCompleters.add(staleMe);
+    final oldMeFuture = service.me().catchError((_) => service.currentUser!);
+    await Future<void>.delayed(Duration.zero);
+
+    authApi.loginResponses.add(_authPayload('user-b', 'Oscar'));
+    await service.signOut();
+    await service.signIn(email: 'oscar@example.com', password: 'secret');
+
+    staleMe.complete(_mePayload('user-a', 'Ansar'));
+    await oldMeFuture;
+
+    expect(service.currentUser?.uid, 'user-b');
+    expect(service.currentUser?.displayName, 'Oscar');
+    expect((await tokenStorage.readCurrentUser())?.uid, 'user-b');
+  });
+
+  test('account B remains current after logout login and me B', () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token-a',
+      refreshToken: 'refresh-token-a',
+      currentUser: const AuthUser(uid: 'user-a', displayName: 'Ansar'),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+    );
+    await service.ensureInitialized();
+
+    authApi.loginResponses.add(_authPayload('user-b', 'Oscar'));
+    authApi.meResponse = _mePayload('user-b', 'Oscar');
+
+    await service.signOut();
+    await service.signIn(email: 'oscar@example.com', password: 'secret');
+
+    expect(service.currentUser?.uid, 'user-b');
+    expect((await tokenStorage.readCurrentUser())?.uid, 'user-b');
+  });
+
+  test('stale auth callback after logout cannot restore old user', () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token-a',
+      refreshToken: 'refresh-token-a',
+      currentUser: const AuthUser(uid: 'user-a', displayName: 'Ansar'),
+    );
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+    );
+    await service.ensureInitialized();
+
+    final staleMe = Completer<Map<String, dynamic>>();
+    authApi.meCompleters.add(staleMe);
+    final oldMeFuture =
+        service.me().catchError((_) => const AuthUser(uid: 'ignored'));
+    await Future<void>.delayed(Duration.zero);
+
+    await service.signOut();
+    staleMe.complete(_mePayload('user-a', 'Ansar'));
+    await oldMeFuture;
+
+    expect(service.currentUser, isNull);
+    expect(await tokenStorage.readCurrentUser(), isNull);
+  });
+
+  test('stale Android restore credential callback cannot overwrite login B',
+      () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    final staleCreate = Completer<RestoreCredentialResult>();
+    final restoreCredentials = _FakeRestoreCredentialsService()
+      ..createCompleters.add(staleCreate);
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+      restoreCredentialsService: restoreCredentials,
+    );
+
+    authApi.loginResponses.add(_authPayload('user-a', 'Ansar'));
+    await service.signIn(email: 'ansar@example.com', password: 'secret');
+    await Future<void>.delayed(Duration.zero);
+
+    authApi.loginResponses.add(_authPayload('user-b', 'Oscar'));
+    await service.signOut();
+    await service.signIn(email: 'oscar@example.com', password: 'secret');
+
+    staleCreate.complete(const RestoreCredentialResult(
+      status: RestoreCredentialStatus.success,
+      responseJson: <String, dynamic>{'id': 'old-restore-credential'},
+    ));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.currentUser?.uid, 'user-b');
+    expect((await tokenStorage.readCurrentUser())?.uid, 'user-b');
+  });
+
+  test('last successful login wins when two accounts login quickly', () async {
+    final authApi = _FakeAuthApi();
+    final tokenStorage = TokenStorage();
+    final firstLogin = Completer<Map<String, dynamic>>();
+    final secondLogin = Completer<Map<String, dynamic>>();
+    authApi.loginCompleters.addAll([firstLogin, secondLogin]);
+    authApi.meResponse = _mePayload('user-b', 'Oscar');
+    final service = BackendAuthService(
+      authApi: authApi,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: tokenStorage,
+    );
+
+    final firstFuture = service
+        .signIn(email: 'ansar@example.com', password: 'secret')
+        .catchError((_) => service.currentUser!);
+    await Future<void>.delayed(Duration.zero);
+    final secondFuture = service.signIn(
+      email: 'oscar@example.com',
+      password: 'secret',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    secondLogin.complete(_authPayload('user-b', 'Oscar'));
+    await secondFuture;
+    firstLogin.complete(_authPayload('user-a', 'Ansar'));
+    await firstFuture;
+
+    expect(service.currentUser?.uid, 'user-b');
+    expect(service.currentUser?.displayName, 'Oscar');
+    expect((await tokenStorage.readCurrentUser())?.uid, 'user-b');
+  });
+  for (final success in [true, false]) {
+    test('stale refresh ${success ? "success" : "failure"} A cannot mutate B',
+        () async {
+      final api = _FakeAuthApi();
+      final storage = TokenStorage();
+      final service = BackendAuthService(
+          authApi: api, usersApi: _FakeUsersApi(), tokenStorage: storage);
+      api.loginResponses.add(_authPayload('user-a', 'A'));
+      await service.signIn(email: 'a', password: 'secret');
+      final pending = Completer<Map<String, dynamic>>();
+      api.refreshCompleters.add(pending);
+      final refresh = service.refreshSession();
+      await Future<void>.delayed(Duration.zero);
+      await service.signOut();
+      api.loginResponses.add(_authPayload('user-b', 'B'));
+      await service.signIn(email: 'b', password: 'secret');
+      if (success) {
+        pending.complete(_authPayload('user-a', 'A'));
+      } else {
+        pending.completeError(const ApiException('expired', statusCode: 401));
+      }
+      expect(await refresh, false);
+      expect(service.currentUser?.uid, 'user-b');
+      expect((await storage.readCurrentUser())?.uid, 'user-b');
+      expect(await storage.readAccessToken(), 'access-token-user-b');
+      expect(await storage.readRefreshToken(), 'refresh-token-user-b');
+    });
+  }
+
+  test('stale profile update A cannot replace or persist over B', () async {
+    final api = _FakeAuthApi();
+    final users = _DelayedUsersApi();
+    final storage = TokenStorage();
+    final service = BackendAuthService(
+        authApi: api, usersApi: users, tokenStorage: storage);
+    api.loginResponses.add(_authPayload('user-a', 'A'));
+    await service.signIn(email: 'a', password: 'secret');
+    final update = service.updateProfile(displayName: 'old');
+    await service.signOut();
+    api.loginResponses.add(_authPayload('user-b', 'B'));
+    await service.signIn(email: 'b', password: 'secret');
+    users.pending.complete(_mePayload('user-a', 'old'));
+    await update;
+    expect(service.currentUser?.uid, 'user-b');
+    expect((await storage.readCurrentUser())?.uid, 'user-b');
+    expect(await storage.readAccessToken(), 'access-token-user-b');
+  });
+
+  test(
+      'Android startup get callback from old generation cannot restore A over B',
+      () async {
+    final api = _FakeAuthApi();
+    final native = _DelayedRestoreGet();
+    final storage = TokenStorage();
+    final service = BackendAuthService(
+        authApi: api,
+        usersApi: _FakeUsersApi(),
+        tokenStorage: storage,
+        restoreCredentialsService: native);
+    final startup = service.ensureInitialized();
+    await native.started.future;
+    api.loginResponses.add(_authPayload('user-b', 'B'));
+    await service.signIn(email: 'b', password: 'secret');
+    native.pending.complete(const RestoreCredentialResult(
+        status: RestoreCredentialStatus.success, responseJson: {'id': 'old'}));
+    await startup;
+    expect(api.restoreAuthenticateCalls, 0);
+    expect(service.currentUser?.uid, 'user-b');
+    expect((await storage.readCurrentUser())?.uid, 'user-b');
+  });
+}
+
+Map<String, dynamic> _authPayload(String uid, String displayName) {
+  return <String, dynamic>{
+    'auth': <String, dynamic>{
+      'access_token': 'access-token-$uid',
+      'refresh_token': 'refresh-token-$uid',
+    },
+    'user': <String, dynamic>{
+      'id': uid,
+      'display_name': displayName,
+    },
+  };
+}
+
+Map<String, dynamic> _mePayload(String uid, String displayName) {
+  return <String, dynamic>{
+    'user': <String, dynamic>{
+      'id': uid,
+      'display_name': displayName,
+    },
+  };
 }
 
 class _FakeAuthApi extends AuthApi {
@@ -711,6 +1051,17 @@ class _FakeAuthApi extends AuthApi {
             tokenStorage: TokenStorage(),
           ),
         );
+
+  Object? deleteError;
+  Map<String, dynamic> deleteResponse = {'deleted': true};
+  Completer<Map<String, dynamic>>? deleteCompleter;
+
+  @override
+  Future<Map<String, dynamic>> deleteAccount() async {
+    if (deleteError != null) throw deleteError!;
+    if (deleteCompleter != null) return deleteCompleter!.future;
+    return deleteResponse;
+  }
 
   bool logoutCalled = false;
   String? lastLoginPhoneVerificationCheckId;
@@ -723,6 +1074,12 @@ class _FakeAuthApi extends AuthApi {
   int failMeCalls = 0;
   Duration meDelay = Duration.zero;
   Duration refreshDelay = Duration.zero;
+  final List<Map<String, dynamic>> loginResponses = <Map<String, dynamic>>[];
+  final List<Completer<Map<String, dynamic>>> refreshCompleters = [];
+  final List<Completer<Map<String, dynamic>>> loginCompleters =
+      <Completer<Map<String, dynamic>>>[];
+  final List<Completer<Map<String, dynamic>>> meCompleters =
+      <Completer<Map<String, dynamic>>>[];
   int restoreRegistrationOptionsCalls = 0;
   int restoreRegisterCalls = 0;
   int restoreAuthenticationOptionsCalls = 0;
@@ -734,6 +1091,12 @@ class _FakeAuthApi extends AuthApi {
     required String email,
     required String password,
   }) async {
+    if (loginCompleters.isNotEmpty) {
+      return loginCompleters.removeAt(0).future;
+    }
+    if (loginResponses.isNotEmpty) {
+      return loginResponses.removeAt(0);
+    }
     return <String, dynamic>{
       'auth': <String, dynamic>{
         'access_token': 'access-token',
@@ -752,6 +1115,9 @@ class _FakeAuthApi extends AuthApi {
   @override
   Future<Map<String, dynamic>> me() async {
     meCalls += 1;
+    if (meCompleters.isNotEmpty) {
+      return meCompleters.removeAt(0).future;
+    }
     if (meDelay > Duration.zero) {
       await Future<void>.delayed(meDelay);
     }
@@ -787,6 +1153,9 @@ class _FakeAuthApi extends AuthApi {
     required String refreshToken,
   }) async {
     refreshCalls += 1;
+    if (refreshCompleters.isNotEmpty) {
+      return refreshCompleters.removeAt(0).future;
+    }
     if (refreshDelay > Duration.zero) {
       await Future<void>.delayed(refreshDelay);
     }
@@ -848,6 +1217,9 @@ class _FakeAuthApi extends AuthApi {
     required String verificationCheckId,
     String referralCode = '',
     String referralId = '',
+    bool acceptedLegal = false,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
   }) async {
     lastSignupPhoneReferralCode =
         referralCode.trim().isEmpty ? null : referralCode.trim();
@@ -940,6 +1312,8 @@ class _FakeRestoreCredentialsService extends RestoreCredentialsService {
   int createCalls = 0;
   int getCalls = 0;
   int clearCalls = 0;
+  final List<Completer<RestoreCredentialResult>> createCompleters =
+      <Completer<RestoreCredentialResult>>[];
 
   @override
   bool get isAndroidRuntime => true;
@@ -949,6 +1323,9 @@ class _FakeRestoreCredentialsService extends RestoreCredentialsService {
     Map<String, dynamic> requestJson,
   ) async {
     createCalls += 1;
+    if (createCompleters.isNotEmpty) {
+      return createCompleters.removeAt(0).future;
+    }
     return createResult;
   }
 
@@ -1012,5 +1389,22 @@ class _RelativeAvatarAuthApi extends _FakeAuthApi {
         'updated_at': '2026-06-20T10:00:00.000Z',
       },
     };
+  }
+}
+
+class _DelayedUsersApi extends _FakeUsersApi {
+  final pending = Completer<Map<String, dynamic>>();
+  @override
+  Future<Map<String, dynamic>> updateMe(Map<String, dynamic> body) =>
+      pending.future;
+}
+
+class _DelayedRestoreGet extends _FakeRestoreCredentialsService {
+  final started = Completer<void>();
+  final pending = Completer<RestoreCredentialResult>();
+  @override
+  Future<RestoreCredentialResult> get(Map<String, dynamic> requestJson) {
+    started.complete();
+    return pending.future;
   }
 }

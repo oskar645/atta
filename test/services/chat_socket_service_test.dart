@@ -16,6 +16,47 @@ void main() {
     ApiClient.configureAuthHandlers();
   });
 
+  test('captured private callback and disconnect from A cannot affect B',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service =
+        ChatSocketService(tokenStorage: storage, socketFactory: factory.create);
+    final received = <ChatSocketEvent>[];
+    final sub = service.events.listen(received.add);
+    await service.connect();
+    final old = factory.createdSockets.single;
+    final lateEvent = old._eventHandlers['message.new']!.single;
+    final lateDisconnect = old._disconnectHandlers.single;
+    final lateError = old._errorHandlers.single;
+    await service.resetSession();
+    storage.beginSessionChange();
+    await storage.saveSession(
+        accessToken: 'B-token',
+        refreshToken: 'B-refresh',
+        currentUser: const AuthUser(uid: 'B'));
+    await service.connect();
+    await service.connect();
+    lateEvent(<String, dynamic>{'id': 'A-private'});
+    lateDisconnect('transport close');
+    lateError('unauthorized');
+    final fresh = factory.createdSockets.last;
+    fresh.emitEvent('message.new', <String, dynamic>{'id': 'B-private'});
+    await Future<void>.delayed(Duration.zero);
+    expect(received.map((e) => e.payload['id']), ['B-private']);
+    expect(fresh.listenerCount('message.new'), 1);
+    expect(service.isConnected, true);
+    expect(factory.createdSockets.length, 2);
+    expect(service.hasHeartbeatTimer, true);
+    await service.disconnect();
+    await service.connect();
+    expect(service.isConnected, true);
+    expect(factory.createdSockets.length, 3);
+    await sub.cancel();
+    await service.resetSession();
+  });
+
   test('expected websocket close errors are treated as benign', () {
     expect(
       ChatSocketService.isExpectedSocketCloseError(

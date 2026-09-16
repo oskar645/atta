@@ -14,6 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 var ChatsGateway_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatsGateway = void 0;
+const account_deletion_service_1 = require("../auth/account-deletion.service");
 const websockets_1 = require("@nestjs/websockets");
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
@@ -24,12 +25,29 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const send_chat_message_dto_1 = require("./dto/send-chat-message.dto");
 const chats_service_1 = require("./chats.service");
 let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
-    constructor(presenceService, chatsService, jwtService, prisma) {
+    constructor(presenceService, chatsService, jwtService, prisma, accountDeletion) {
         this.presenceService = presenceService;
         this.chatsService = chatsService;
         this.jwtService = jwtService;
         this.prisma = prisma;
+        this.accountDeletion = accountDeletion;
         this.logger = new common_1.Logger(ChatsGateway_1.name);
+    }
+    onModuleInit() {
+        this.unsubscribeDeletion = this.accountDeletion.onDeleted((userId) => {
+            this.server?.in(`user:${userId}`).disconnectSockets(true);
+            this.server?.emit('presence.changed', { userId, isOnline: false, lastSeen: null });
+        });
+    }
+    onModuleDestroy() { this.unsubscribeDeletion?.(); }
+    async requireActiveSocket(client) {
+        try {
+            return await this.authenticate(client);
+        }
+        catch (error) {
+            client.disconnect(true);
+            throw error;
+        }
     }
     async authenticate(client) {
         const rawAuth = client.handshake.auth?.['token'];
@@ -53,11 +71,14 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         catch {
             throw new websockets_1.WsException('Access token is invalid or expired');
         }
+        if (payload.type !== 'access')
+            throw new websockets_1.WsException('Access token type is invalid');
         const session = await this.prisma.userSession.findFirst({
             where: {
                 id: payload.sessionId,
                 userId: payload.sub,
                 revokedAt: null,
+                user: { deletedAt: null, status: { not: 'DELETED' } },
             },
             select: {
                 userId: true,
@@ -117,6 +138,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         this.emitPresenceChanged(presence, { force: true });
     }
     async handleJoin(payload, client) {
+        await this.requireActiveSocket(client);
         const userId = (client.data.userId ?? '').toString();
         await this.chatsService.getChat({
             userId,
@@ -130,7 +152,8 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             joined: true,
         };
     }
-    handleLeave(payload, client) {
+    async handleLeave(payload, client) {
+        await this.requireActiveSocket(client);
         client.leave(`chat:${payload.chatId}`);
         return {
             event: 'chat.leave',
@@ -139,6 +162,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         };
     }
     async handleSendMessage(payload, client) {
+        await this.requireActiveSocket(client);
         const userId = (client.data.userId ?? '').toString();
         if (!payload.chatId) {
             throw new websockets_1.WsException('chatId is required');
@@ -152,6 +176,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         return result;
     }
     async handleDelivered(payload, client) {
+        await this.requireActiveSocket(client);
         const result = await this.chatsService.markMessageDelivered({
             userId: (client.data.userId ?? '').toString(),
             sessionId: '',
@@ -161,6 +186,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         return result;
     }
     async handleRead(payload, client) {
+        await this.requireActiveSocket(client);
         const result = await this.chatsService.markMessageRead({
             userId: (client.data.userId ?? '').toString(),
             sessionId: '',
@@ -170,11 +196,13 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         return result;
     }
     async handlePing(client) {
+        await this.requireActiveSocket(client);
         const presence = await this.presenceService.touchHeartbeat((client.data.userId ?? '').toString());
         this.emitPresenceChanged(presence);
         return presence;
     }
     async handlePresence(payload, client) {
+        await this.requireActiveSocket(client);
         const next = await this.presenceService.setPresence((client.data.userId ?? '').toString(), payload.isOnline);
         this.emitPresenceChanged(next, { force: true });
         return next;
@@ -333,7 +361,7 @@ __decorate([
     __param(1, (0, websockets_1.ConnectedSocket)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, socket_io_1.Socket]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], ChatsGateway.prototype, "handleLeave", null);
 __decorate([
     (0, websockets_1.SubscribeMessage)('message.send'),
@@ -385,6 +413,7 @@ exports.ChatsGateway = ChatsGateway = ChatsGateway_1 = __decorate([
     __metadata("design:paramtypes", [presence_service_1.PresenceService,
         chats_service_1.ChatsService,
         jwt_1.JwtService,
-        prisma_service_1.PrismaService])
+        prisma_service_1.PrismaService,
+        account_deletion_service_1.AccountDeletionService])
 ], ChatsGateway);
 //# sourceMappingURL=chats.gateway.js.map

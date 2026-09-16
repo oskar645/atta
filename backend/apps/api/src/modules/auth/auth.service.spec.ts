@@ -1,3 +1,4 @@
+import type { AccountDeletionService } from './account-deletion.service';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -45,6 +46,7 @@ function createService(
 ) {
   const prismaWithTransaction: Record<string, unknown> = {
     ...prisma,
+    userConsent: { createMany: async () => ({ count: 2 }) },
     blockedIdentity: {
       updateMany: async () => ({ count: 0 }),
       findFirst: async () => null,
@@ -77,6 +79,11 @@ function createService(
       serializeBlock: () => null,
       ...overrides?.userBlocksService,
     } as never,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 }
 
@@ -424,6 +431,7 @@ test('signupPhone allows expired temporary BlockedIdentity and lifts it idempote
   });
 
   const first = await service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
     phone: '+79281234571',
     password: '12345678',
     displayName: 'Expired Identity',
@@ -431,6 +439,7 @@ test('signupPhone allows expired temporary BlockedIdentity and lifts it idempote
   });
 
   const second = await service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
     phone: '+79281234571',
     password: '12345678',
     displayName: 'Expired Identity',
@@ -688,6 +697,7 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
   );
 
   await service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
     phone: '+79281234567',
     password: '12345678',
     displayName: 'New User',
@@ -751,6 +761,7 @@ test('signupPhone ignores invalid referral code and still completes registration
   );
 
   const response = await service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
     phone: '+79281234568',
     password: '12345678',
     displayName: 'New User 2',
@@ -810,6 +821,7 @@ test('signupPhone ignores referral code when inviter does not exist', async () =
   );
 
   const response = await service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
     phone: '+79281234570',
     password: '12345678',
     displayName: 'New User 4',
@@ -852,6 +864,7 @@ test('signupPhone blocks existing phone before referral bonus', async () => {
 
   await assert.rejects(
     service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
       phone: '+79281234567',
       password: '12345678',
       displayName: 'Existing User',
@@ -911,6 +924,7 @@ test('signupPhone blocks self-referral bonus by matching inviter user id', async
   );
 
   await service.signupPhone({
+    acceptedLegal: true, acceptedPersonalData: true,
     phone: '+79281234569',
     password: '12345678',
     displayName: 'Same User',
@@ -919,4 +933,14 @@ test('signupPhone blocks self-referral bonus by matching inviter user id', async
   });
 
   assert.equal(bonusCallCount, 0);
+});
+
+test('logout deactivates only tokens owned by the authenticated session', async () => {
+  const calls: any[] = [];
+  const service = createService({
+    userDevice: { updateMany: async (args: any) => { calls.push(args); return { count: 1 }; } },
+    userSession: { updateMany: async () => ({ count: 1 }) },
+  });
+  await service.logout({ userId: 'A', sessionId: 'session-A' } as never);
+  assert.deepEqual(calls, [{ where: { userId: 'A', sessionId: 'session-A' }, data: { isActive: false } }]);
 });

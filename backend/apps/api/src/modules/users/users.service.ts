@@ -6,6 +6,12 @@ import {
 } from '@nestjs/common';
 
 import {
+  PhoneVerificationPurpose,
+  PhoneVerificationStatus,
+  UserStatus,
+} from '@prisma/client';
+
+import {
   serializeAdminProfile,
   serializeUser,
 } from '../../common/serializers';
@@ -97,6 +103,48 @@ export class UsersService {
       }
     }
 
+    if (nextPhone != null) {
+      const currentUser = await this.prisma.user.findUnique({
+        where: {
+          id: authUser.userId,
+        },
+        select: {
+          phone: true,
+        },
+      });
+
+      if (!currentUser) {
+        throw new NotFoundException('Current user was not found');
+      }
+
+      if (currentUser.phone !== nextPhone) {
+        const existingUser = await this.prisma.user.findFirst({
+          where: {
+            phone: nextPhone,
+            id: {
+              not: authUser.userId,
+            },
+            deletedAt: null,
+            status: {
+              not: UserStatus.DELETED,
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (existingUser) {
+          throw new BadRequestException('PHONE_ALREADY_REGISTERED');
+        }
+
+        await this.assertConfirmedPhoneChangeVerification(
+          nextPhone,
+          dto.verificationCheckId ?? dto.verification_check_id,
+        );
+      }
+    }
+
     const user = await this.prisma.user.update({
       where: {
         id: authUser.userId,
@@ -107,6 +155,7 @@ export class UsersService {
         avatarUrl: dto.avatar_url?.trim(),
         photoUrl: dto.photo_url?.trim() || dto.avatar_url?.trim(),
         phone: nextPhone,
+        phoneVerified: nextPhone == null ? undefined : true,
       },
       include: {
         adminProfile: true,
@@ -212,5 +261,35 @@ export class UsersService {
       is_admin: user.adminProfile?.isAdmin === true,
       isAdmin: user.adminProfile?.isAdmin === true,
     };
+  }
+
+  private async assertConfirmedPhoneChangeVerification(
+    phone: string,
+    rawCheckId?: string,
+  ) {
+    const checkId = rawCheckId?.trim() ?? '';
+    if (!checkId) {
+      throw new BadRequestException('PHONE_VERIFICATION_REQUIRED');
+    }
+
+    const verification = await this.prisma.phoneVerification.findFirst({
+      where: {
+        phone,
+        purpose: PhoneVerificationPurpose.CHANGE_PHONE,
+        checkId,
+        status: PhoneVerificationStatus.CONFIRMED,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (!verification) {
+      throw new BadRequestException('PHONE_VERIFICATION_REQUIRED');
+    }
+
+    if (verification.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException('PHONE_VERIFICATION_EXPIRED');
+    }
   }
 }

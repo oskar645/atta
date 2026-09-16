@@ -246,3 +246,70 @@ test('support media proxy allows admin without ticket membership lookup', async 
   assert.equal(lookupCalled, false);
   assert.equal(readCalled, true);
 });
+
+for (const [category, key] of [
+  ['avatars', 'avatars/user-1/photo.png'],
+  ['listings', 'listing-photos/legacy.jpg'],
+  ['feed-ads', 'misc/ad-1/image.jpg'],
+  ['misc', 'misc/notification.jpg'],
+]) {
+  test(`public namespace remains accessible: ${category}/${key}`, async () => {
+    const controller = createController() as any;
+    let read = false;
+    controller.storageService = { readStoredFile: async () => { read = true; return Buffer.from([]); } };
+    await controller.getPublicObject(category, key, { setHeader() {}, send() {} });
+    assert.equal(read, true);
+  });
+}
+
+for (const category of ['avatars', 'listings', 'feed-ads', 'misc', 'videos']) {
+  for (const key of [
+    'chats/chat-1/photo.jpg', 'chat-images/photo.jpg',
+    'support/ticket-1/photo.jpg', 'support-images/photo.jpg',
+    'reports/report-1/photo.jpg', 'private/secrets.json', '.env',
+    `${category}/../support/secret.jpg`, `${category}//image.jpg`,
+    `${category}/%2e%2e/support/secret.jpg`, `${category}%2fsupport/secret.jpg`,
+    `${category}/%252e%252e/secret.jpg`, `${category}/image.jpg%00`,
+    `${category}/\\..\\support\\secret.jpg`, `/${category}/image.jpg`,
+    `bucket/${category}/image.jpg`,
+  ]) {
+    test(`public proxy rejects substituted or manipulated key: ${category} ${key}`, async () => {
+      const controller = createController() as any;
+      controller.storageService = { readStoredFile: async () => assert.fail('S3 must not be read') };
+      await assert.rejects(() => controller.getPublicObject(category, key, {}), BadRequestException);
+    });
+  }
+}
+
+test('private chat media without authentication never reads storage', async () => {
+  const controller = createController();
+  await assert.rejects(() => controller.getChatImageByKey('chats/chat-1/photo.jpg', undefined, { headers: {} }, {}),
+    { message: 'Access token is required' });
+});
+
+test('support proxy rejects namespace manipulation even for admin', async () => {
+  const controller = createController();
+  for (const key of ['private/secrets.json', 'support/../private/secret', 'support/%2e%2e/secret', 'support-images/%252fsecret']) {
+    await assert.rejects(() => controller.getSupportFileByKey({ role: 'admin' } as any, key, {}), BadRequestException);
+  }
+});
+
+test('deleted account scoped avatar is inaccessible while S3 cleanup is pending', async () => {
+  const controller = new MediaController({} as never, {
+    user: { findUnique: async () => ({ status: 'DELETED', deletedAt: new Date() }) },
+  } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+  { readStoredFile: async () => { throw new Error('must not read deleted avatar'); } } as never, {} as never);
+  await assert.rejects(controller.getPublicObject('avatars', 'avatars/11111111-1111-4111-8111-111111111111/image.jpg', {}), /Файл не найден/);
+});
+
+test('active account scoped avatar remains public', async () => {
+  let sent = false;
+  const controller = new MediaController({} as never, {
+    user: { findUnique: async () => ({ status: 'ACTIVE', deletedAt: null }) },
+  } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+  { readStoredFile: async () => Buffer.from('avatar') } as never, {} as never);
+  await controller.getPublicObject('avatars', 'avatars/22222222-2222-4222-8222-222222222222/image.jpg', {
+    setHeader: () => {}, send: () => { sent = true; },
+  });
+  assert.equal(sent, true);
+});

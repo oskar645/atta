@@ -17,6 +17,63 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
+  test('badge combines chat and notification unread and read clears both',
+      () async {
+    final chats = _UnreadChats();
+    final notifications = _UnreadNotifications();
+    final updates = <int>[];
+    final badge = AppBadgeService(
+        isSupported: () async => true,
+        updateBadge: (n) async => updates.add(n));
+    await badge.bindForUser(
+        userId: 'A', chatService: chats, notificationsService: notifications);
+    chats.counts.add(2);
+    notifications.counts.add(3);
+    await Future<void>.delayed(Duration.zero);
+    expect(updates.last, 5);
+    chats.counts.add(0);
+    notifications.counts.add(1);
+    await Future<void>.delayed(Duration.zero);
+    expect(updates.last, 1);
+    notifications.counts.add(0);
+    await Future<void>.delayed(Duration.zero);
+    expect(updates.last, 0);
+    await badge.dispose();
+  });
+
+  test('old asynchronous native write cannot overwrite logout or B badge',
+      () async {
+    final chatsA = _UnreadChats(), chatsB = _UnreadChats();
+    final notifications = _UnreadNotifications();
+    final started = Completer<void>(), release = Completer<void>();
+    final updates = <int>[];
+    final badge = AppBadgeService(
+        isSupported: () async => true,
+        updateBadge: (n) async {
+          if (n == 7) {
+            started.complete();
+            await release.future;
+          }
+          updates.add(n);
+        });
+    await badge.bindForUser(
+        userId: 'A', chatService: chatsA, notificationsService: notifications);
+    chatsA.counts.add(7);
+    await started.future;
+    final clearing = badge.clear();
+    await badge.bindForUser(
+        userId: 'B', chatService: chatsB, notificationsService: notifications);
+    chatsA.counts.add(99);
+    chatsB.counts.add(1);
+    release.complete();
+    await clearing;
+    await Future<void>.delayed(Duration.zero);
+    expect(updates.last, 1);
+    expect(updates, isNot(contains(99)));
+    await badge.clear();
+    expect(updates.last, 0);
+  });
+
   test('new messages set absolute unread badge without double increment',
       () async {
     final updates = <int>[];
@@ -197,4 +254,16 @@ class _FakeChatsApi extends ChatsApi {
       'messageIds': const <String>[],
     };
   }
+}
+
+class _UnreadChats extends ChatService {
+  final counts = StreamController<int>.broadcast();
+  @override
+  Stream<int> streamUnreadTotal(String uid) => counts.stream;
+}
+
+class _UnreadNotifications extends NotificationsService {
+  final counts = StreamController<int>.broadcast();
+  @override
+  Stream<int> streamUnreadBadgeCount(String uid) => counts.stream;
 }

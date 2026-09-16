@@ -310,6 +310,8 @@ const Map<String, List<String>> kSubcategories = <String, List<String>>{
     'Радиоуправляемые модели',
     'Рукоделие',
     'Телескопы и оптика',
+    'Учебники',
+    'Товары для студентов',
   ],
   'Животные': [
     'Собаки',
@@ -437,6 +439,8 @@ const Map<String, List<String>> kSubcategories = <String, List<String>>{
     'Переезды',
     'Услуги няни и сиделки',
     'Красота',
+    'Стоматология',
+    'Косметология',
     'Фото и видео',
     'Организация мероприятий',
     'IT и дизайн',
@@ -604,5 +608,6 @@ const Map<String, List<String>> kSubcategories = <String, List<String>>{
     'Потерянные и найденные',
     'Прочее',
     'Аренда вещей',
+    'Сувениры',
   ],
 };

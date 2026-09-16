@@ -23,7 +23,7 @@ import { env } from '../../config/env';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 
-type VerificationPurpose = 'signup' | 'login' | 'reset_password';
+type VerificationPurpose = 'signup' | 'login' | 'reset_password' | 'change_phone';
 
 type SmsRuResponse = Record<string, unknown>;
 type VerificationSource = {
@@ -523,6 +523,8 @@ export class PhoneVerificationService {
         return PhoneVerificationPurpose.LOGIN;
       case 'reset_password':
         return PhoneVerificationPurpose.RESET_PASSWORD;
+      case 'change_phone':
+        return PhoneVerificationPurpose.CHANGE_PHONE;
     }
   }
 

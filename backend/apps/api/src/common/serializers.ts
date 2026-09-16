@@ -253,6 +253,11 @@ export const serializeUser = (
     includePrivate?: boolean;
   },
 ): SerializedUser | Omit<SerializedUser, 'email' | 'phone' | 'blocked_at' | 'block_reason' | 'deleted_at'> => {
+  if (user.deletedAt || user.status === 'DELETED') {
+    user = { ...user, displayName: 'Удалённый пользователь', name: 'Удалённый пользователь',
+      phone: null, email: null, phoneVerified: false, avatarUrl: null, photoUrl: null,
+      lastLoginAt: null, adminProfile: null };
+  }
   const isAdmin = user.adminProfile?.isAdmin === true;
   const role: 'user' | 'admin' = isAdmin ? 'admin' : 'user';
   const referralCode = buildReferralCode(user.id);
@@ -350,6 +355,7 @@ export const serializeListing = (
   },
   options?: {
     favoriteCount?: number | null;
+    includePrivateContact?: boolean;
   },
 ) => {
   const price =
@@ -370,14 +376,14 @@ export const serializeListing = (
     priceReducedAt != null &&
     Date.now() - priceReducedAt.getTime() < 48 * 60 * 60 * 1000;
 
+  const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
+  const normalizedPhone = normalizeRussianPhone(fallbackPhone) || fallbackPhone;
+  const publicPhone = listing.phoneHidden && options?.includePrivateContact !== true
+    ? null
+    : normalizedPhone;
+
   return {
-  ...(() => {
-    const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
-    const normalizedPhone = normalizeRussianPhone(fallbackPhone) || fallbackPhone;
-    return {
-      phone: normalizedPhone,
-    };
-  })(),
+  phone: publicPhone,
   ...(() => {
     const activePromotions = new Map<PromotionType, Promotion>();
     for (const promotion of listing.promotions ?? []) {

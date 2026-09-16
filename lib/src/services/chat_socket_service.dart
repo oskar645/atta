@@ -132,7 +132,11 @@ class _SocketIoChatSocketClient implements ChatSocketClient {
 }
 
 class ChatSocketEvent {
-  ChatSocketEvent(this.name, this.payload);
+  ChatSocketEvent(this.name, this.payload,
+      {this.sessionVersion, this.authGeneration});
+
+  final int? sessionVersion;
+  final int? authGeneration;
 
   final String name;
   final Map<String, dynamic> payload;
@@ -199,6 +203,7 @@ class ChatSocketService {
   int _reconnectScheduleCount = 0;
   int _heartbeatTimerStartCount = 0;
   int _socketInstanceSequence = 0;
+  int _sessionVersion = 0;
   int _connectAttemptSequence = 0;
   Completer<void>? _connectCompleter;
   final List<String> _debugHistory = <String>[];
@@ -243,7 +248,10 @@ class ChatSocketService {
     Duration(seconds: 30),
   ];
 
-  Stream<ChatSocketEvent> get events => _events.stream;
+  Stream<ChatSocketEvent> get events => _events.stream.where((event) =>
+      event.sessionVersion == null ||
+      (event.sessionVersion == _sessionVersion &&
+          event.authGeneration == _tokenStorage.sessionGeneration));
   Stream<PresenceSnapshot> get presenceUpdates => _presence.stream;
   Stream<bool> get connectionChanges => _connected.stream;
   bool get isConnected => _socket?.connected == true;
@@ -381,8 +389,18 @@ class ChatSocketService {
       return;
     }
 
+    final sessionVersion = _sessionVersion;
+    final authGeneration = _tokenStorage.sessionGeneration;
     await ApiClient.ensureFreshAuthorizedSessionForRealtime(_tokenStorage);
+    if (sessionVersion != _sessionVersion ||
+        authGeneration != _tokenStorage.sessionGeneration) {
+      return;
+    }
     final currentUser = await _tokenStorage.readCurrentUser();
+    if (sessionVersion != _sessionVersion ||
+        authGeneration != _tokenStorage.sessionGeneration) {
+      return;
+    }
     final userId = currentUser?.uid.trim() ?? '';
     if (userId.isEmpty) {
       _logConnectSkip(
@@ -487,6 +505,10 @@ class ChatSocketService {
       final authReady = await ApiClient.ensureFreshAuthorizedSessionForRealtime(
         _tokenStorage,
       );
+      if (sessionVersion != _sessionVersion ||
+          authGeneration != _tokenStorage.sessionGeneration) {
+        return;
+      }
       if (!authReady) {
         _logConnectSkip(
           reason: reason,
@@ -497,6 +519,10 @@ class ChatSocketService {
         return;
       }
       final token = await _tokenStorage.readAccessToken();
+      if (sessionVersion != _sessionVersion ||
+          authGeneration != _tokenStorage.sessionGeneration) {
+        return;
+      }
       if (token == null || token.trim().isEmpty) {
         _logConnectSkip(
           reason: reason,
@@ -547,6 +573,7 @@ class ChatSocketService {
         );
       });
       socket.onConnectError((error) {
+        if (!identical(_socket, socket)) return;
         _logFailedConnection(error);
         if (_isAuthRejectionError(error)) {
           _serverDisconnectBlockedUserId = _socketOwnerUserId;
@@ -564,6 +591,7 @@ class ChatSocketService {
         );
       });
       socket.onError((error) {
+        if (!identical(_socket, socket)) return;
         _logFailedConnection(error);
         if (_isAuthRejectionError(error)) {
           _serverDisconnectBlockedUserId = _socketOwnerUserId;
@@ -591,6 +619,11 @@ class ChatSocketService {
           'Socket[$socketInstanceId] listener removed event=$eventName count=0',
         );
         socket.on(eventName, (payload) {
+          if (!identical(_socket, socket) ||
+              sessionVersion != _sessionVersion ||
+              authGeneration != _tokenStorage.sessionGeneration) {
+            return;
+          }
           final map = payload is Map
               ? Map<String, dynamic>.from(payload)
               : <String, dynamic>{};
@@ -599,11 +632,14 @@ class ChatSocketService {
             if (!_shouldEmitPresenceSnapshot(snapshot)) {
               return;
             }
-            _events.add(ChatSocketEvent(eventName, map));
+            _events.add(ChatSocketEvent(eventName, map,
+                sessionVersion: sessionVersion,
+                authGeneration: authGeneration));
             _presence.add(snapshot);
             return;
           }
-          _events.add(ChatSocketEvent(eventName, map));
+          _events.add(ChatSocketEvent(eventName, map,
+              sessionVersion: sessionVersion, authGeneration: authGeneration));
         });
         _socketListenerCounts[eventName] = 1;
         _debugLog(
@@ -632,6 +668,11 @@ class ChatSocketService {
       return connectCompleter.future;
     } finally {
       if (_connectCompleter == connectCompleter &&
+          (sessionVersion != _sessionVersion ||
+              authGeneration != _tokenStorage.sessionGeneration)) {
+        _abortConnectAttempt(reason: 'session-changed');
+      }
+      if (_connectCompleter == connectCompleter &&
           connectCompleter.isCompleted) {
         _connectCompleter = null;
       }
@@ -639,6 +680,7 @@ class ChatSocketService {
   }
 
   Future<void> disconnect() async {
+    _sessionVersion++;
     if (_disconnecting) {
       return;
     }
@@ -1154,8 +1196,6 @@ class ChatSocketService {
     required String debugContext,
     Object? details,
   }) {
-    _stopPing();
-    _cancelStableConnectionTimer();
     if (!identical(_socket, socket)) {
       _debugLog(
         'Socket[$socketInstanceId] stale $debugContext ignored: ${details?.toString() ?? ''}',
@@ -1163,6 +1203,8 @@ class ChatSocketService {
       _abandonSocket(socket, reason: 'stale:$debugContext');
       return;
     }
+    _stopPing();
+    _cancelStableConnectionTimer();
     final ownerUserId = _socketOwnerUserId;
     _socket = null;
     _socketOwnerUserId = null;

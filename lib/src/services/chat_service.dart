@@ -119,7 +119,10 @@ class ChatService {
     unawaited(refreshChats());
   }
 
+  int _sessionVersion = 0;
+
   Future<void> resetSession() async {
+    ++_sessionVersion;
     _activeUserId = null;
     _loadedChats = false;
     _loadedChatIds.clear();
@@ -295,12 +298,14 @@ class ChatService {
   String _cacheKey(String uid) => 'atta.chat.cache.v1.${uid.trim()}';
 
   Future<void> _restoreCachedState(String uid) async {
+    final version = _sessionVersion;
     final normalizedUid = uid.trim();
     if (normalizedUid.isEmpty || !_restoredCacheUserIds.add(normalizedUid)) {
       return;
     }
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (version != _sessionVersion) return;
       final raw = prefs.getString(_cacheKey(normalizedUid));
       if (raw == null || raw.trim().isEmpty) return;
       final decoded = jsonDecode(raw);
@@ -777,12 +782,15 @@ class ChatService {
   }
 
   Future<void> _refreshChatsInternal() async {
+    final version = _sessionVersion;
     final uid = _activeUserId?.trim() ?? '';
     _debugSource('Chats list load start user=$uid');
     try {
       await _restoreCachedState(uid);
       // REST inbox loading must not inherit a pre-send auth/socket timeout.
+      if (version != _sessionVersion) return;
       final response = await _api.listChats(limit: _chatPageSize);
+      if (version != _sessionVersion) return;
       final items = (response['items'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))

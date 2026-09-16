@@ -1,3 +1,5 @@
+import type { AccountDeletionService } from '../auth/account-deletion.service';
+import type { SavedSearchAlertsService } from '../saved-searches/saved-search-alerts.service';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -48,6 +50,12 @@ test('moderation list uses pending filter without deleted or archived items', as
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   await service.listListings('pending');
@@ -143,6 +151,12 @@ test('moderation list excludes incomplete legacy pending records defensively', a
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   const response = await service.getModerationQueue();
@@ -182,6 +196,12 @@ test('users list excludes soft-deleted users', async () => {
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   await service.listUsers();
@@ -237,6 +257,12 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   const result = await service.getDashboardStats();
@@ -314,6 +340,12 @@ test('admin registration stats aggregate users by selected year without personal
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   const currentStats = await service.getUserRegistrationStats({
@@ -368,6 +400,12 @@ test('admin registration stats returns empty months without users', async () => 
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   const stats = await service.getUserRegistrationStats({});
@@ -611,6 +649,12 @@ test('points purchases summary serializes successful paid totals', async () => {
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   const result = await service.getPointsPurchasesSummary({
@@ -649,6 +693,12 @@ test('points purchases list masks phone and returns cursor for next page', async
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
   const result = await service.listPointsPurchases({
@@ -753,6 +803,12 @@ function createReferralSearchService() {
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
   return { service, users };
 }
@@ -820,6 +876,12 @@ function createApproveListingService(params: {
     {} as any,
     {} as any,
     {} as any,
+    { notifyApprovedListing: async () => undefined } satisfies Pick<SavedSearchAlertsService, 'notifyApprovedListing'> as unknown as SavedSearchAlertsService,
+    {
+      deleteUser: async () => {
+        throw new Error('Unexpected account deletion in this test');
+      },
+    } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 }
 

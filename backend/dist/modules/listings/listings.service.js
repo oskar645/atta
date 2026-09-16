@@ -8,9 +8,14 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ListingsService = exports.LISTING_PUBLICATION_NOT_READY = exports.LISTING_PHOTO_REQUIRED = exports.LISTING_STATUSES = exports.canViewListing = exports.listingInclude = exports.normalizeOemPartNumber = void 0;
 const common_1 = require("@nestjs/common");
+const saved_search_alerts_service_1 = require("../saved-searches/saved-search-alerts.service");
+const common_2 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const listing_search_1 = require("../../common/listing-search");
 const listing_publication_1 = require("../../common/listing-publication");
@@ -43,6 +48,11 @@ exports.listingInclude = {
         },
     },
 };
+const OWNER_ARCHIVE_REASON = 'Объявление снято с публикации.';
+const OWNER_ARCHIVE_REASONS = new Set([
+    OWNER_ARCHIVE_REASON,
+    'Снято владельцем с публикации.',
+]);
 const canViewListing = (listing, authUser) => {
     const isAdmin = authUser?.role === 'admin';
     const isOwner = authUser?.userId === listing.ownerId;
@@ -320,11 +330,12 @@ const parseRankRowDate = (value) => value == null ? null : value instanceof Date
 let ListingsService = class ListingsService {
     constructor(prisma, storageService, promotionsService, userBlocksService = {
         assertNotBlocked: async () => undefined,
-    }) {
+    }, savedSearchAlerts) {
         this.prisma = prisma;
         this.storageService = storageService;
         this.promotionsService = promotionsService;
         this.userBlocksService = userBlocksService;
+        this.savedSearchAlerts = savedSearchAlerts;
     }
     async create(authUser, dto) {
         await this.userBlocksService.assertNotBlocked(authUser.userId);
@@ -334,7 +345,7 @@ let ListingsService = class ListingsService {
             },
         });
         if (!owner || owner.status === client_1.UserStatus.DELETED) {
-            throw new common_1.NotFoundException('Listing owner was not found');
+            throw new common_2.NotFoundException('Listing owner was not found');
         }
         const nextPhone = this.pickListingPhone(dto.phone, owner.phone);
         const requestedStatus = (0, serializers_1.listingStatusFromInput)(dto.status);
@@ -354,7 +365,7 @@ let ListingsService = class ListingsService {
                 city: dto.city,
                 photos: dto.photo_urls ?? [],
             })) {
-            throw new common_1.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
+            throw new common_2.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
         const listing = await this.prisma.listing.create({
             data: {
@@ -405,8 +416,11 @@ let ListingsService = class ListingsService {
             },
             include: exports.listingInclude,
         });
+        if (listing.status === client_1.ListingStatus.APPROVED) {
+            await this.savedSearchAlerts?.notifyApprovedListing(listing.id);
+        }
         return {
-            listing: (0, serializers_1.serializeListing)(listing),
+            listing: (0, serializers_1.serializeListing)(listing, { includePrivateContact: true }),
             allowed_statuses: exports.LISTING_STATUSES,
         };
     }
@@ -438,15 +452,11 @@ let ListingsService = class ListingsService {
             where.ownerId = ownerId;
         }
         if (!ownerMe && ownerId && publicMode === PUBLIC_ARCHIVE_MODE) {
-            where.status = {
-                in: [client_1.ListingStatus.ARCHIVED, client_1.ListingStatus.SOLD],
-            };
-            where.photos = {
-                some: {},
-            };
-            where.owner = {
-                deletedAt: null,
-                status: client_1.UserStatus.ACTIVE,
+            return {
+                items: [],
+                nextCursor: null,
+                hasMore: false,
+                allowed_statuses: exports.LISTING_STATUSES,
             };
         }
         else if (!ownerMe && ownerId) {
@@ -469,7 +479,23 @@ let ListingsService = class ListingsService {
             };
         }
         else if (status) {
-            where.status = (0, serializers_1.listingStatusFromInput)(status);
+            const requestedStatus = (0, serializers_1.listingStatusFromInput)(status);
+            if (requestedStatus !== client_1.ListingStatus.APPROVED) {
+                return {
+                    items: [],
+                    nextCursor: null,
+                    hasMore: false,
+                    allowed_statuses: exports.LISTING_STATUSES,
+                };
+            }
+            where.status = client_1.ListingStatus.APPROVED;
+            where.photos = {
+                some: {},
+            };
+            where.owner = {
+                deletedAt: null,
+                status: client_1.UserStatus.ACTIVE,
+            };
         }
         else if (!ownerMe && !ownerId) {
             where.status = client_1.ListingStatus.APPROVED;
@@ -1011,13 +1037,15 @@ let ListingsService = class ListingsService {
             include: exports.listingInclude,
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         if (!(0, exports.canViewListing)(listing, authUser)) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         return {
-            listing: (0, serializers_1.serializeListing)(listing),
+            listing: (0, serializers_1.serializeListing)(listing, {
+                includePrivateContact: authUser?.role === 'admin' || authUser?.userId === listing.ownerId,
+            }),
             ...this.promotionsService.enrichListing(listing, authUser),
         };
     }
@@ -1030,15 +1058,15 @@ let ListingsService = class ListingsService {
             include: exports.listingInclude,
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         if (listing.ownerId !== authUser.userId) {
-            throw new common_1.ForbiddenException('Only owner can update listing');
+            throw new common_2.ForbiddenException('Only owner can update listing');
         }
         if (dto.status &&
             dto.status.trim().toLowerCase() !== listing.status.toLowerCase() &&
             authUser.role !== 'admin') {
-            throw new common_1.ForbiddenException('Use explicit archive endpoint for sold/archive status changes');
+            throw new common_2.ForbiddenException('Use explicit archive endpoint for sold/archive status changes');
         }
         const requestedStatus = dto.status
             ? (0, serializers_1.listingStatusFromInput)(dto.status)
@@ -1126,8 +1154,11 @@ let ListingsService = class ListingsService {
             this.assertListingReadyForStatus(updatedListing, nextStatus);
             return updatedListing;
         });
+        if (updated.status === client_1.ListingStatus.APPROVED && listing.status !== client_1.ListingStatus.APPROVED) {
+            await this.savedSearchAlerts?.notifyApprovedListing(updated.id);
+        }
         return {
-            listing: (0, serializers_1.serializeListing)(updated),
+            listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
         };
     }
     async remove(id, authUser) {
@@ -1140,11 +1171,11 @@ let ListingsService = class ListingsService {
             },
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         const canDelete = listing.ownerId === authUser.userId || authUser.role === 'admin';
         if (!canDelete) {
-            throw new common_1.ForbiddenException('Удалять объявление может только владелец или администратор');
+            throw new common_2.ForbiddenException('Удалять объявление может только владелец или администратор');
         }
         const updated = await this.prisma.listing.update({
             where: {
@@ -1158,7 +1189,7 @@ let ListingsService = class ListingsService {
         });
         await this.storageService.deleteListingPhotosForListings([id]);
         return {
-            listing: (0, serializers_1.serializeListing)(updated),
+            listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
             status_after_delete: (0, serializers_1.listingStatusToResponse)(client_1.ListingStatus.DELETED),
         };
     }
@@ -1172,10 +1203,20 @@ let ListingsService = class ListingsService {
             },
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         if (listing.ownerId !== authUser.userId) {
-            throw new common_1.ForbiddenException('Only owner can archive listing');
+            throw new common_2.ForbiddenException('Only owner can archive listing');
+        }
+        if (listing.status === client_1.ListingStatus.SOLD ||
+            listing.status === client_1.ListingStatus.DELETED ||
+            listing.deletedAt != null) {
+            throw new common_2.BadRequestException('LISTING_ARCHIVE_NOT_ALLOWED');
+        }
+        if (listing.status === client_1.ListingStatus.ARCHIVED &&
+            listing.moderatedBy != null &&
+            !this.isLegacyOwnerArchivedListing(listing)) {
+            throw new common_2.BadRequestException('LISTING_ARCHIVE_NOT_ALLOWED');
         }
         const nextStatus = dto?.status?.trim().toLowerCase() === 'sold'
             ? client_1.ListingStatus.SOLD
@@ -1191,26 +1232,67 @@ let ListingsService = class ListingsService {
                     ? nextNote
                     : nextStatus === client_1.ListingStatus.SOLD
                         ? 'Объявление отмечено как проданное.'
-                        : 'Объявление снято с публикации.',
+                        : OWNER_ARCHIVE_REASON,
+                moderationNote: listing.status === client_1.ListingStatus.ARCHIVED ? listing.moderationNote : null,
+                moderatedBy: listing.status === client_1.ListingStatus.ARCHIVED ? listing.moderatedBy : null,
+                moderatedAt: listing.status === client_1.ListingStatus.ARCHIVED ? listing.moderatedAt : null,
                 archivedAt: new Date(),
             },
             include: exports.listingInclude,
         });
         return {
-            listing: (0, serializers_1.serializeListing)(updated),
+            listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
             status_after_archive: (0, serializers_1.listingStatusToResponse)(nextStatus),
         };
     }
-    async incrementView(listingId, authUser) {
+    async resubmit(id, authUser) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
+        const listing = await this.prisma.listing.findUnique({
+            where: { id },
+            include: exports.listingInclude,
+        });
+        if (!listing) {
+            throw new common_2.NotFoundException('Listing not found');
+        }
+        if (listing.ownerId !== authUser.userId) {
+            throw new common_2.ForbiddenException('Only owner can resubmit listing');
+        }
+        if (!this.canOwnerResubmitListing(listing)) {
+            throw new common_2.BadRequestException('LISTING_RESUBMIT_NOT_ALLOWED');
+        }
+        this.assertListingReadyForStatus(listing, client_1.ListingStatus.PENDING);
+        const updated = await this.prisma.$transaction(async (tx) => {
+            await this.createOwnerResubmitSnapshotIfNeeded(tx, listing);
+            return tx.listing.update({
+                where: { id },
+                data: {
+                    status: client_1.ListingStatus.PENDING,
+                    ...this.pendingModerationUpdateData(),
+                    publishedAt: null,
+                },
+                include: exports.listingInclude,
+            });
+        });
+        return {
+            listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
+            status_after_resubmit: (0, serializers_1.listingStatusToResponse)(client_1.ListingStatus.PENDING),
+        };
+    }
+    async incrementView(listingId, authUser, dto) {
         const listing = await this.prisma.listing.findUnique({
             where: {
                 id: listingId,
             },
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         const viewerUserId = authUser?.userId;
+        const rawViewerDeviceId = dto?.viewer_device_id?.trim();
+        const viewerDeviceId = rawViewerDeviceId != null &&
+            /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(rawViewerDeviceId)
+            ? rawViewerDeviceId
+            : null;
         if (viewerUserId != null && listing.ownerId === viewerUserId) {
             return {
                 listing_id: listingId,
@@ -1218,22 +1300,45 @@ let ListingsService = class ListingsService {
             };
         }
         const updated = await this.prisma.$transaction(async (tx) => {
-            if (viewerUserId != null && authUser?.role !== 'admin') {
+            const isAdmin = authUser?.role === 'admin';
+            const shouldDeduplicate = !isAdmin && (viewerUserId != null || viewerDeviceId != null);
+            if (shouldDeduplicate) {
                 await tx.$executeRaw `
           SELECT pg_advisory_xact_lock(
-            hashtextextended(${`listing-view:${listingId}:${viewerUserId}`}, 0)
+            hashtextextended(${`listing-view:${listingId}:${viewerUserId ?? viewerDeviceId}`}, 0)
           )
         `;
+                if (viewerUserId != null && viewerDeviceId != null) {
+                    await tx.$executeRaw `
+            SELECT pg_advisory_xact_lock(
+              hashtextextended(${`listing-view:${listingId}:${viewerDeviceId}`}, 0)
+            )
+          `;
+                }
                 const existingView = await tx.listingView.findFirst({
                     where: {
                         listingId,
-                        viewerUserId,
+                        OR: [
+                            ...(viewerUserId != null ? [{ viewerUserId }] : []),
+                            ...(viewerDeviceId != null ? [{ viewerDeviceId }] : []),
+                        ],
                     },
                     select: {
                         id: true,
+                        viewerUserId: true,
                     },
                 });
                 if (existingView) {
+                    if (viewerUserId != null && existingView.viewerUserId == null) {
+                        await tx.listingView.update({
+                            where: {
+                                id: existingView.id,
+                            },
+                            data: {
+                                viewerUserId,
+                            },
+                        });
+                    }
                     return listing;
                 }
             }
@@ -1241,7 +1346,7 @@ let ListingsService = class ListingsService {
                 data: {
                     listingId,
                     viewerUserId: viewerUserId || null,
-                    viewerDeviceId: null,
+                    viewerDeviceId: isAdmin ? null : viewerDeviceId,
                 },
             });
             return tx.listing.update({
@@ -1307,6 +1412,7 @@ let ListingsService = class ListingsService {
         }
         return {
             items: pageItems.map((listing) => (0, serializers_1.serializeListing)(listing, {
+                includePrivateContact: true,
                 favoriteCount: favoriteCountByListingId.get(listing.id) ?? 0,
             })),
             nextCursor,
@@ -1323,13 +1429,13 @@ let ListingsService = class ListingsService {
             include: exports.listingInclude,
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         if (listing.ownerId !== authUser.userId && authUser.role !== 'admin') {
-            throw new common_1.ForbiddenException('Only owner or admin can upload listing photo');
+            throw new common_2.ForbiddenException('Only owner or admin can upload listing photo');
         }
         if (listing.photos.length >= 10) {
-            throw new common_1.BadRequestException('Listing photo limit is 10');
+            throw new common_2.BadRequestException('Listing photo limit is 10');
         }
         const uploaded = await this.storageService.saveUploadedFile({
             buffer: file.buffer,
@@ -1370,7 +1476,7 @@ let ListingsService = class ListingsService {
                 url: photo.publicUrl,
                 sort_order: photo.sortOrder,
             },
-            listing: (0, serializers_1.serializeListing)(updated),
+            listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
         };
     }
     async deletePhoto(authUser, listingId, photoId) {
@@ -1387,17 +1493,17 @@ let ListingsService = class ListingsService {
             },
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         if (listing.ownerId !== authUser.userId && authUser.role !== 'admin') {
-            throw new common_1.ForbiddenException('Only owner or admin can delete listing photo');
+            throw new common_2.ForbiddenException('Only owner or admin can delete listing photo');
         }
         const photo = listing.photos.find((item) => item.id === photoId);
         if (!photo) {
-            throw new common_1.NotFoundException('Listing photo not found');
+            throw new common_2.NotFoundException('Listing photo not found');
         }
         if (listing.photos.length <= 1 && this.requiresPhotoBeforePublication(listing.status)) {
-            throw new common_1.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
+            throw new common_2.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
         }
         await this.storageService.deleteStoredFile('listings', photo.storageKey);
         await this.runListingTransaction(async (tx) => {
@@ -1429,7 +1535,7 @@ let ListingsService = class ListingsService {
             source: 'timeweb',
             deleted: true,
             photo_id: photoId,
-            listing: (0, serializers_1.serializeListing)(updated),
+            listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
         };
     }
     pickListingPhone(rawPhone, fallbackPhone) {
@@ -1461,6 +1567,22 @@ let ListingsService = class ListingsService {
             deletedAt: null,
         };
     }
+    canOwnerResubmitListing(listing) {
+        if (listing.status === client_1.ListingStatus.SOLD ||
+            listing.status === client_1.ListingStatus.DELETED ||
+            listing.deletedAt != null) {
+            return false;
+        }
+        if (listing.status === client_1.ListingStatus.REJECTED) {
+            return true;
+        }
+        return (listing.status === client_1.ListingStatus.ARCHIVED &&
+            (listing.moderatedBy == null || this.isLegacyOwnerArchivedListing(listing)));
+    }
+    isLegacyOwnerArchivedListing(listing) {
+        return (listing.status === client_1.ListingStatus.ARCHIVED &&
+            OWNER_ARCHIVE_REASONS.has(listing.rejectionReason?.trim() ?? ''));
+    }
     requiresPhotoBeforePublication(status) {
         switch (status) {
             case client_1.ListingStatus.APPROVED:
@@ -1477,7 +1599,7 @@ let ListingsService = class ListingsService {
             return;
         }
         if (!(0, listing_publication_1.isListingReadyForPublication)(listing)) {
-            throw new common_1.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
+            throw new common_2.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
     }
     async resubmitPublishedListingAfterOwnerEdit(listing, authUser, tx = this.prisma) {
@@ -1510,6 +1632,18 @@ let ListingsService = class ListingsService {
             },
         });
         if (existing) {
+            return;
+        }
+        await revisions.create({
+            data: {
+                listingId: listing.id,
+                snapshot: this.buildModerationSnapshot(listing),
+            },
+        });
+    }
+    async createOwnerResubmitSnapshotIfNeeded(tx, listing) {
+        const revisions = tx.listingModerationRevision;
+        if (!revisions) {
             return;
         }
         await revisions.create({
@@ -1558,10 +1692,12 @@ let ListingsService = class ListingsService {
 };
 exports.ListingsService = ListingsService;
 exports.ListingsService = ListingsService = __decorate([
-    (0, common_1.Injectable)(),
+    (0, common_2.Injectable)(),
+    __param(4, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         storage_service_1.StorageService,
         promotions_service_1.PromotionsService,
-        user_blocks_service_1.UserBlocksService])
+        user_blocks_service_1.UserBlocksService,
+        saved_search_alerts_service_1.SavedSearchAlertsService])
 ], ListingsService);
 //# sourceMappingURL=listings.service.js.map

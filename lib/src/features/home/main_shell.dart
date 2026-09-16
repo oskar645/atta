@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atta/src/features/favorites/favorites_screen.dart';
+import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/features/home/home_screen.dart';
 import 'package:atta/src/features/inbox/inbox_screen.dart';
 import 'package:atta/src/features/listings/my_listings_screen.dart';
@@ -11,18 +12,30 @@ import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/presence_service.dart';
+import 'package:atta/src/services/web_app_promo_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+void _debugMyListingsMainShellLog(String message) {
+  assert(() {
+    debugPrint('[MYLIST] $message');
+    return true;
+  }());
+}
 
 class MainShell extends StatefulWidget {
   const MainShell({
     super.key,
     this.initialIndex = 0,
     this.pageBuilder,
+    this.guestMode = false,
   });
 
   final int initialIndex;
   final Widget Function(int index, HomeTabController controller)? pageBuilder;
+  final bool guestMode;
 
   @override
   State<MainShell> createState() => _MainShellState();
@@ -37,6 +50,7 @@ class _MainShellState extends State<MainShell> {
   PresenceService? _presence;
   String? _presenceUid;
   late final Set<int> _visitedTabs = <int>{0, widget.initialIndex};
+  bool _didCheckWebPromo = false;
 
   static const _inactive = Color(0xFF8E95A3);
   static const _search = Colors.blue;
@@ -50,6 +64,7 @@ class _MainShellState extends State<MainShell> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _startPresenceHeartbeatIfNeeded();
+      _maybeShowWebAppPromo();
     });
   }
 
@@ -91,6 +106,7 @@ class _MainShellState extends State<MainShell> {
     _stopPresenceHeartbeat();
     _presenceUid = uid;
     await presence.setOnline(uid: uid, isOnline: true);
+    if (!mounted || auth.currentUser?.uid != uid || _presenceUid != uid) return;
     _presenceTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       presence.heartbeat(uid);
     });
@@ -99,6 +115,17 @@ class _MainShellState extends State<MainShell> {
   void _stopPresenceHeartbeat() {
     _presenceTimer?.cancel();
     _presenceTimer = null;
+  }
+
+  Future<void> _maybeShowWebAppPromo() async {
+    if (!kIsWeb || _didCheckWebPromo || !mounted) return;
+    _didCheckWebPromo = true;
+    if (!shouldShowWebAppPromo()) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => const _WebAppPromoDialog(),
+    );
   }
 
   Widget _dotIcon(Widget icon, bool show) {
@@ -127,7 +154,10 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  void _onDestinationSelected(int v) {
+  Future<void> _onDestinationSelected(int v) async {
+    if (v == 2) {
+      _debugMyListingsMainShellLog('MAIN_TAB_OPEN');
+    }
     if (v == 0) {
       if (_i != 0) {
         setState(() => _i = 0);
@@ -140,6 +170,10 @@ class _MainShellState extends State<MainShell> {
     }
 
     if (v == _i) return;
+    if (widget.guestMode && v != 0) {
+      final authenticated = await promptGuestAuth(context);
+      if (!authenticated || !mounted) return;
+    }
     setState(() {
       _i = v;
       _visitedTabs.add(v);
@@ -174,7 +208,7 @@ class _MainShellState extends State<MainShell> {
     final chat = context.read<ChatService>();
     final admin = context.read<AdminService>();
     final notifications = context.read<NotificationsService>();
-    final uid = auth.currentUser!.uid;
+    final uid = auth.currentUser?.uid ?? '';
 
     final navTheme = NavigationBarThemeData(
       labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
@@ -201,7 +235,9 @@ class _MainShellState extends State<MainShell> {
         }),
       ),
       bottomNavigationBar: StreamBuilder<int>(
-        stream: chat.streamUnreadTotal(uid),
+        stream: widget.guestMode
+            ? const Stream<int>.empty()
+            : chat.streamUnreadTotal(uid),
         builder: (context, chatSnap) {
           final unreadChats = chatSnap.data ?? 0;
 
@@ -215,7 +251,9 @@ class _MainShellState extends State<MainShell> {
           }
 
           return StreamBuilder<int>(
-            stream: notifications.streamUnreadSavedSearchCount(uid),
+            stream: widget.guestMode
+                ? const Stream<int>.empty()
+                : notifications.streamUnreadSavedSearchCount(uid),
             builder: (context, savedSnap) {
               final hasSavedSearchAlerts = (savedSnap.data ?? 0) > 0;
 
@@ -293,6 +331,70 @@ class _MainShellState extends State<MainShell> {
             },
           );
         },
+      ),
+    );
+  }
+}
+
+class _WebAppPromoDialog extends StatelessWidget {
+  const _WebAppPromoDialog();
+
+  Future<void> _openStore(String url) async {
+    markWebAppPromoDismissed();
+    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+  }
+
+  void _close(BuildContext context) {
+    markWebAppPromoDismissed();
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return PopScope(
+      onPopInvokedWithResult: (_, __) => markWebAppPromoDismissed(),
+      child: AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        titlePadding: const EdgeInsets.fromLTRB(24, 18, 8, 0),
+        contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Атта удобнее в приложении',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Закрыть',
+              onPressed: () => _close(context),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Скачайте приложение или продолжайте пользоваться Атта в браузере.',
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () => _openStore(webAppPromoAppStoreUrl),
+            icon: const Icon(Icons.apple),
+            label: const Text('Загрузить в App Store'),
+          ),
+          TextButton.icon(
+            onPressed: () => _openStore(webAppPromoGooglePlayUrl),
+            icon: const Icon(Icons.shop),
+            label: const Text('Доступно в Google Play'),
+          ),
+          FilledButton(
+            onPressed: () => _close(context),
+            child: const Text('Продолжить в браузере'),
+          ),
+        ],
       ),
     );
   }

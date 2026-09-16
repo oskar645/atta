@@ -1,4 +1,4 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class SignupDto {
   @IsOptional()
@@ -22,4 +22,20 @@ export class SignupDto {
     message: 'Пароль должен быть не короче 8 символов',
   })
   password!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptedLegal?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptedPersonalData?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  acceptedMarketing?: boolean;
+
+  @IsOptional()
+  @IsString()
+  platform?: string;
 }

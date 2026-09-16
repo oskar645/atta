@@ -1,3 +1,5 @@
+import { Optional } from '@nestjs/common';
+import { SavedSearchAlertsService } from '../saved-searches/saved-search-alerts.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -38,6 +40,7 @@ import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
+import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
 
 export { normalizeOemPartNumber } from '../../common/listing-search';
 
@@ -65,6 +68,12 @@ export const listingInclude = {
 export type ListingWithPublicRelations = Prisma.ListingGetPayload<{
   include: typeof listingInclude;
 }>;
+
+const OWNER_ARCHIVE_REASON = 'Объявление снято с публикации.';
+const OWNER_ARCHIVE_REASONS = new Set([
+  OWNER_ARCHIVE_REASON,
+  'Снято владельцем с публикации.',
+]);
 
 export const canViewListing = (
   listing: ListingWithPublicRelations,
@@ -479,6 +488,7 @@ export class ListingsService {
     private readonly userBlocksService: UserBlocksService = {
       assertNotBlocked: async () => undefined,
     } as unknown as UserBlocksService,
+    @Optional() private readonly savedSearchAlerts?: SavedSearchAlertsService,
   ) {}
 
   async create(authUser: AuthenticatedUser, dto: CreateListingDto) {
@@ -573,8 +583,11 @@ export class ListingsService {
       include: listingInclude,
     });
 
+    if (listing.status === ListingStatus.APPROVED) {
+      await this.savedSearchAlerts?.notifyApprovedListing(listing.id);
+    }
     return {
-      listing: serializeListing(listing),
+      listing: serializeListing(listing, { includePrivateContact: true }),
       allowed_statuses: LISTING_STATUSES,
     };
   }
@@ -624,15 +637,11 @@ export class ListingsService {
     }
 
     if (!ownerMe && ownerId && publicMode === PUBLIC_ARCHIVE_MODE) {
-      where.status = {
-        in: [ListingStatus.ARCHIVED, ListingStatus.SOLD],
-      };
-      where.photos = {
-        some: {},
-      };
-      where.owner = {
-        deletedAt: null,
-        status: UserStatus.ACTIVE,
+      return {
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+        allowed_statuses: LISTING_STATUSES,
       };
     } else if (!ownerMe && ownerId) {
       const requestedStatus = status ? listingStatusFromInput(status) : null;
@@ -653,7 +662,23 @@ export class ListingsService {
         status: UserStatus.ACTIVE,
       };
     } else if (status) {
-      where.status = listingStatusFromInput(status);
+      const requestedStatus = listingStatusFromInput(status);
+      if (requestedStatus !== ListingStatus.APPROVED) {
+        return {
+          items: [],
+          nextCursor: null,
+          hasMore: false,
+          allowed_statuses: LISTING_STATUSES,
+        };
+      }
+      where.status = ListingStatus.APPROVED;
+      where.photos = {
+        some: {},
+      };
+      where.owner = {
+        deletedAt: null,
+        status: UserStatus.ACTIVE,
+      };
     } else if (!ownerMe && !ownerId) {
       where.status = ListingStatus.APPROVED;
       where.photos = {
@@ -1279,7 +1304,10 @@ export class ListingsService {
     }
 
     return {
-      listing: serializeListing(listing),
+      listing: serializeListing(listing, {
+        includePrivateContact:
+          authUser?.role === 'admin' || authUser?.userId === listing.ownerId,
+      }),
       ...this.promotionsService.enrichListing(listing, authUser),
     };
   }
@@ -1415,8 +1443,11 @@ export class ListingsService {
       return updatedListing;
     });
 
+    if (updated.status === ListingStatus.APPROVED && listing.status !== ListingStatus.APPROVED) {
+      await this.savedSearchAlerts?.notifyApprovedListing(updated.id);
+    }
     return {
-      listing: serializeListing(updated),
+      listing: serializeListing(updated, { includePrivateContact: true }),
     };
   }
 
@@ -1457,7 +1488,7 @@ export class ListingsService {
     await this.storageService.deleteListingPhotosForListings([id]);
 
     return {
-      listing: serializeListing(updated),
+      listing: serializeListing(updated, { includePrivateContact: true }),
       status_after_delete: listingStatusToResponse(ListingStatus.DELETED),
     };
   }
@@ -1485,6 +1516,22 @@ export class ListingsService {
       throw new ForbiddenException('Only owner can archive listing');
     }
 
+    if (
+      listing.status === ListingStatus.SOLD ||
+      listing.status === ListingStatus.DELETED ||
+      listing.deletedAt != null
+    ) {
+      throw new BadRequestException('LISTING_ARCHIVE_NOT_ALLOWED');
+    }
+
+    if (
+      listing.status === ListingStatus.ARCHIVED &&
+      listing.moderatedBy != null &&
+      !this.isLegacyOwnerArchivedListing(listing)
+    ) {
+      throw new BadRequestException('LISTING_ARCHIVE_NOT_ALLOWED');
+    }
+
     const nextStatus = dto?.status?.trim().toLowerCase() === 'sold'
       ? ListingStatus.SOLD
       : ListingStatus.ARCHIVED;
@@ -1500,21 +1547,70 @@ export class ListingsService {
             ? nextNote
             : nextStatus === ListingStatus.SOLD
               ? 'Объявление отмечено как проданное.'
-              : 'Объявление снято с публикации.',
+              : OWNER_ARCHIVE_REASON,
+        moderationNote:
+          listing.status === ListingStatus.ARCHIVED ? listing.moderationNote : null,
+        moderatedBy:
+          listing.status === ListingStatus.ARCHIVED ? listing.moderatedBy : null,
+        moderatedAt:
+          listing.status === ListingStatus.ARCHIVED ? listing.moderatedAt : null,
         archivedAt: new Date(),
       },
       include: listingInclude,
     });
 
     return {
-      listing: serializeListing(updated),
+      listing: serializeListing(updated, { includePrivateContact: true }),
       status_after_archive: listingStatusToResponse(nextStatus),
+    };
+  }
+
+  async resubmit(id: string, authUser: AuthenticatedUser) {
+    await this.userBlocksService.assertNotBlocked(authUser.userId);
+
+    const listing = await this.prisma.listing.findUnique({
+      where: { id },
+      include: listingInclude,
+    });
+
+    if (!listing) {
+      throw new NotFoundException('Listing not found');
+    }
+
+    if (listing.ownerId !== authUser.userId) {
+      throw new ForbiddenException('Only owner can resubmit listing');
+    }
+
+    if (!this.canOwnerResubmitListing(listing)) {
+      throw new BadRequestException('LISTING_RESUBMIT_NOT_ALLOWED');
+    }
+
+    this.assertListingReadyForStatus(listing, ListingStatus.PENDING);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.createOwnerResubmitSnapshotIfNeeded(tx, listing);
+
+      return tx.listing.update({
+        where: { id },
+        data: {
+          status: ListingStatus.PENDING,
+          ...this.pendingModerationUpdateData(),
+          publishedAt: null,
+        },
+        include: listingInclude,
+      });
+    });
+
+    return {
+      listing: serializeListing(updated, { includePrivateContact: true }),
+      status_after_resubmit: listingStatusToResponse(ListingStatus.PENDING),
     };
   }
 
   async incrementView(
     listingId: string,
     authUser?: AuthenticatedUser,
+    dto?: IncrementListingViewDto,
   ) {
     const listing = await this.prisma.listing.findUnique({
       where: {
@@ -1527,6 +1623,14 @@ export class ListingsService {
     }
 
     const viewerUserId = authUser?.userId;
+    const rawViewerDeviceId = dto?.viewer_device_id?.trim();
+    const viewerDeviceId =
+      rawViewerDeviceId != null &&
+      /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+        rawViewerDeviceId,
+      )
+        ? rawViewerDeviceId
+        : null;
     if (viewerUserId != null && listing.ownerId === viewerUserId) {
       return {
         listing_id: listingId,
@@ -1535,24 +1639,49 @@ export class ListingsService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (viewerUserId != null && authUser?.role !== 'admin') {
+      const isAdmin = authUser?.role === 'admin';
+      const shouldDeduplicate =
+        !isAdmin && (viewerUserId != null || viewerDeviceId != null);
+
+      if (shouldDeduplicate) {
         await tx.$executeRaw`
           SELECT pg_advisory_xact_lock(
-            hashtextextended(${`listing-view:${listingId}:${viewerUserId}`}, 0)
+            hashtextextended(${`listing-view:${listingId}:${viewerUserId ?? viewerDeviceId}`}, 0)
           )
         `;
+        if (viewerUserId != null && viewerDeviceId != null) {
+          await tx.$executeRaw`
+            SELECT pg_advisory_xact_lock(
+              hashtextextended(${`listing-view:${listingId}:${viewerDeviceId}`}, 0)
+            )
+          `;
+        }
 
         const existingView = await tx.listingView.findFirst({
           where: {
             listingId,
-            viewerUserId,
+            OR: [
+              ...(viewerUserId != null ? [{ viewerUserId }] : []),
+              ...(viewerDeviceId != null ? [{ viewerDeviceId }] : []),
+            ],
           },
           select: {
             id: true,
+            viewerUserId: true,
           },
         });
 
         if (existingView) {
+          if (viewerUserId != null && existingView.viewerUserId == null) {
+            await tx.listingView.update({
+              where: {
+                id: existingView.id,
+              },
+              data: {
+                viewerUserId,
+              },
+            });
+          }
           return listing;
         }
       }
@@ -1561,7 +1690,7 @@ export class ListingsService {
         data: {
           listingId,
           viewerUserId: viewerUserId || null,
-          viewerDeviceId: null,
+          viewerDeviceId: isAdmin ? null : viewerDeviceId,
         },
       });
 
@@ -1642,6 +1771,7 @@ export class ListingsService {
     return {
       items: pageItems.map((listing) =>
         serializeListing(listing, {
+          includePrivateContact: true,
           favoriteCount: favoriteCountByListingId.get(listing.id) ?? 0,
         }),
       ),
@@ -1717,7 +1847,7 @@ export class ListingsService {
         url: photo.publicUrl,
         sort_order: photo.sortOrder,
       },
-      listing: serializeListing(updated),
+      listing: serializeListing(updated, { includePrivateContact: true }),
     };
   }
 
@@ -1791,7 +1921,7 @@ export class ListingsService {
       source: 'timeweb',
       deleted: true,
       photo_id: photoId,
-      listing: serializeListing(updated),
+      listing: serializeListing(updated, { includePrivateContact: true }),
     };
   }
 
@@ -1835,6 +1965,40 @@ export class ListingsService {
       archivedAt: null,
       deletedAt: null,
     };
+  }
+
+  private canOwnerResubmitListing(listing: {
+    status: ListingStatus;
+    rejectionReason: string | null;
+    moderatedBy: string | null;
+    deletedAt: Date | null;
+  }) {
+    if (
+      listing.status === ListingStatus.SOLD ||
+      listing.status === ListingStatus.DELETED ||
+      listing.deletedAt != null
+    ) {
+      return false;
+    }
+
+    if (listing.status === ListingStatus.REJECTED) {
+      return true;
+    }
+
+    return (
+      listing.status === ListingStatus.ARCHIVED &&
+      (listing.moderatedBy == null || this.isLegacyOwnerArchivedListing(listing))
+    );
+  }
+
+  private isLegacyOwnerArchivedListing(listing: {
+    status: ListingStatus;
+    rejectionReason: string | null;
+  }) {
+    return (
+      listing.status === ListingStatus.ARCHIVED &&
+      OWNER_ARCHIVE_REASONS.has(listing.rejectionReason?.trim() ?? '')
+    );
   }
 
   private requiresPhotoBeforePublication(status: ListingStatus) {
@@ -1903,6 +2067,23 @@ export class ListingsService {
       },
     });
     if (existing) {
+      return;
+    }
+
+    await revisions.create({
+      data: {
+        listingId: listing.id,
+        snapshot: this.buildModerationSnapshot(listing),
+      },
+    });
+  }
+
+  private async createOwnerResubmitSnapshotIfNeeded(
+    tx: Prisma.TransactionClient,
+    listing: ListingWithModerationSnapshot,
+  ) {
+    const revisions = tx.listingModerationRevision;
+    if (!revisions) {
       return;
     }
 

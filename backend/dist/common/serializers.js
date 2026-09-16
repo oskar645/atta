@@ -156,6 +156,11 @@ const normalizeStoredMediaUrl = (url, options) => {
 };
 exports.normalizeStoredMediaUrl = normalizeStoredMediaUrl;
 const serializeUser = (user, options) => {
+    if (user.deletedAt || user.status === 'DELETED') {
+        user = { ...user, displayName: 'Удалённый пользователь', name: 'Удалённый пользователь',
+            phone: null, email: null, phoneVerified: false, avatarUrl: null, photoUrl: null,
+            lastLoginAt: null, adminProfile: null };
+    }
     const isAdmin = user.adminProfile?.isAdmin === true;
     const role = isAdmin ? 'admin' : 'user';
     const referralCode = (0, referral_code_1.buildReferralCode)(user.id);
@@ -246,14 +251,13 @@ const serializeListing = (listing, options) => {
         previousPrice > price &&
         priceReducedAt != null &&
         Date.now() - priceReducedAt.getTime() < 48 * 60 * 60 * 1000;
+    const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
+    const normalizedPhone = (0, phone_1.normalizeRussianPhone)(fallbackPhone) || fallbackPhone;
+    const publicPhone = listing.phoneHidden && options?.includePrivateContact !== true
+        ? null
+        : normalizedPhone;
     return {
-        ...(() => {
-            const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
-            const normalizedPhone = (0, phone_1.normalizeRussianPhone)(fallbackPhone) || fallbackPhone;
-            return {
-                phone: normalizedPhone,
-            };
-        })(),
+        phone: publicPhone,
         ...(() => {
             const activePromotions = new Map();
             for (const promotion of listing.promotions ?? []) {

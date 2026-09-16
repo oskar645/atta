@@ -1,3 +1,4 @@
+import { AccountDeletionService } from './account-deletion.service';
 import { forwardRef, Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -28,11 +29,12 @@ import { RedisModule } from '../redis/redis.module';
   controllers: [AuthController],
   providers: [
     AuthService,
+    AccountDeletionService,
     RestoreCredentialsService,
     JwtAuthGuard,
     OptionalJwtAuthGuard,
     AdminGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, OptionalJwtAuthGuard, AdminGuard, JwtModule],
+  exports: [AccountDeletionService, AuthService, JwtAuthGuard, OptionalJwtAuthGuard, AdminGuard, JwtModule],
 })
 export class AuthModule {}

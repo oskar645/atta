@@ -32,6 +32,24 @@ void main() {
     expect(actionType, 'review_new');
   });
 
+  test('saved-search alert routes to the matched listing', () {
+    final notification = <String, dynamic>{
+      'type': 'saved_search',
+      'payload': {
+        'actionType': 'saved_search',
+        'listingId': 'listing-1',
+        'savedSearchId': 'search-1'
+      },
+    };
+    expect(
+        NotificationNavigationService.actionTypeForNotification(notification),
+        'saved_search');
+    expect(
+        NotificationNavigationService.shouldNavigateForNotification(
+            notification),
+        true);
+  });
+
   test('payloadForNotification returns normalized map', () {
     final payload = NotificationNavigationService.payloadForNotification(
       <String, dynamic>{

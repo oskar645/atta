@@ -66,6 +66,8 @@ class BackendAuthService {
   Future<void>? _privateAuthReadyInFlight;
   Future<void>? _restoreCredentialSyncInFlight;
   AuthUser? _currentUser;
+  int get _authGeneration => _tokenStorage.sessionGeneration;
+  int get sessionGeneration => _authGeneration;
   DateTime? _lastResumeRestoreAt;
   bool _startupRestoreAttempted = false;
 
@@ -83,7 +85,10 @@ class BackendAuthService {
   }
 
   Future<void> _restoreSession() async {
-    _currentUser = await _tokenStorage.readCurrentUser();
+    final generation = _authGeneration;
+    final cached = await _tokenStorage.readCurrentUser();
+    if (!_isCurrentAuthGeneration(generation)) return;
+    _currentUser = cached;
     if (_currentUser == null) {
       await _restoreSessionWithRestoreCredential();
       return;
@@ -130,7 +135,9 @@ class BackendAuthService {
   }
 
   Future<void> _ensurePrivateAuthReady() async {
+    final generation = _authGeneration;
     final accessToken = await _tokenStorage.readAccessToken();
+    if (!_isCurrentAuthGeneration(generation)) return;
     if (!_isJwtExpired(accessToken)) {
       final user = _currentUser;
       if (user != null) {
@@ -156,8 +163,10 @@ class BackendAuthService {
     required String email,
     required String password,
   }) async {
+    final generation = _beginAuthSessionChange();
     final response = await _authApi.login(email: email, password: password);
-    await _consumeAuthPayload(response);
+    await _consumeAuthPayload(response, generation: generation);
+    if (!_isCurrentAuthGeneration(generation)) return _staleAuthResult();
     return me();
   }
 
@@ -166,14 +175,22 @@ class BackendAuthService {
     required String password,
     String? displayName,
     String? phone,
+    bool acceptedLegal = false,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
   }) async {
+    final generation = _beginAuthSessionChange();
     final response = await _authApi.signup(
       email: email,
       password: password,
       displayName: displayName,
       phone: phone,
+      acceptedLegal: acceptedLegal,
+      acceptedPersonalData: acceptedPersonalData,
+      acceptedMarketing: acceptedMarketing,
     );
-    await _consumeAuthPayload(response);
+    await _consumeAuthPayload(response, generation: generation);
+    if (!_isCurrentAuthGeneration(generation)) return _staleAuthResult();
     return me();
   }
 
@@ -195,29 +212,46 @@ class BackendAuthService {
   }
 
   Future<void> signOut() async {
-    final refreshToken = await _tokenStorage.readRefreshToken();
-    final restoreCredentialId = await _tokenStorage.readRestoreCredentialId();
+    final generation = _beginAuthSessionChange();
+    _currentUser = null;
     try {
-      await _clearRestoreCredentialForLogout(restoreCredentialId);
-      if (refreshToken != null && refreshToken.isNotEmpty) {
+      final refreshToken = await _tokenStorage.readRefreshToken();
+      final restoreCredentialId = await _tokenStorage.readRestoreCredentialId();
+      await _clearRestoreCredentialForLogout(restoreCredentialId, generation);
+      if (_isCurrentAuthGeneration(generation) &&
+          refreshToken != null &&
+          refreshToken.isNotEmpty) {
         await _authApi.logout(refreshToken: refreshToken);
       }
     } finally {
-      await _clearSession();
+      await _clearSession(generation: generation);
     }
   }
 
   Future<void> deleteAccount() async {
-    final restoreCredentialId = await _tokenStorage.readRestoreCredentialId();
-    await _clearRestoreCredentialForLogout(restoreCredentialId);
-    await _authApi.deleteAccount();
-    await _clearSession();
+    final generation = _authGeneration;
+    final response = await _authApi.deleteAccount();
+    if (response['deleted'] != true) {
+      throw const ApiException('Не удалось удалить аккаунт. Попробуйте позже.');
+    }
+    if (!_isCurrentAuthGeneration(generation)) return;
+    // Invalidate in-flight refresh/profile responses before native cleanup awaits.
+    final clearedGeneration = await _clearSession(generation: generation);
+    if (clearedGeneration == null) return;
+    try {
+      await _restoreCredentialsService.clear();
+    } catch (_) {
+      // Server has already removed every restore credential; guest mode must win.
+    }
+    await _tokenStorage.mutateSession(
+        clearedGeneration, _tokenStorage.clearRestoreCredentialState);
   }
 
   Future<void> updateProfile({
     String? displayName,
     String? photoUrl,
   }) async {
+    final generation = _authGeneration;
     final response = await _usersApi.updateMe({
       if (displayName != null && displayName.trim().isNotEmpty)
         'display_name': displayName.trim(),
@@ -228,7 +262,7 @@ class BackendAuthService {
     });
 
     final user = _parseUser((response['user'] ?? response) as Map);
-    await _replaceCurrentUser(user);
+    await _replaceCurrentUser(user, generation);
   }
 
   Future<AuthUser?> syncCurrentUserFromProfile(
@@ -249,7 +283,7 @@ class BackendAuthService {
       if (!profile.containsKey('block_status') && current.blockStatus != null)
         'block_status': current.blockStatus!.toJson(),
     };
-    await _replaceCurrentUser(_parseUser(raw));
+    await _replaceCurrentUser(_parseUser(raw), _authGeneration);
     return _currentUser;
   }
 
@@ -322,19 +356,20 @@ class BackendAuthService {
   }) async {
     _debugAuthLog('Auth phone login request -> /auth/login-phone',
         phone: phone);
+    final generation = _beginAuthSessionChange();
     final response = await _authApi.loginPhone(
       phone: phone,
       password: password,
       verificationCheckId: verificationCheckId,
     );
-    await _consumeAuthPayload(response);
+    await _consumeAuthPayload(response, generation: generation);
+    if (!_isCurrentAuthGeneration(generation)) return;
     unawaited(
-      me().catchError((Object error, StackTrace stackTrace) {
+      me().then<void>((_) {}, onError: (Object error, StackTrace stackTrace) {
         _debugAuthLog(
           'Auth phone login profile refresh deferred failure: $error',
           phone: phone,
         );
-        throw error;
       }),
     );
     _debugAuthLog('Auth phone login success -> /auth/login-phone',
@@ -348,9 +383,13 @@ class BackendAuthService {
     required String verificationCheckId,
     String referralCode = '',
     String referralId = '',
+    bool acceptedLegal = false,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
   }) async {
     _debugAuthLog('Auth phone signup request -> /auth/signup-phone',
         phone: phone);
+    final generation = _beginAuthSessionChange();
     final response = await _authApi.signupPhone(
       phone: phone,
       password: password,
@@ -358,8 +397,12 @@ class BackendAuthService {
       verificationCheckId: verificationCheckId,
       referralCode: referralCode,
       referralId: referralId,
+      acceptedLegal: acceptedLegal,
+      acceptedPersonalData: acceptedPersonalData,
+      acceptedMarketing: acceptedMarketing,
     );
-    await _consumeAuthPayload(response);
+    await _consumeAuthPayload(response, generation: generation);
+    if (!_isCurrentAuthGeneration(generation)) return;
     await me();
     _debugAuthLog('Auth phone signup success -> /auth/signup-phone',
         phone: phone);
@@ -472,28 +515,33 @@ class BackendAuthService {
   }
 
   Future<bool> _refreshSessionInternal() async {
+    final generation = _authGeneration;
     final refreshToken = await _tokenStorage.readRefreshToken();
+    if (!_isCurrentAuthGeneration(generation)) {
+      return false;
+    }
     if (refreshToken == null || refreshToken.isEmpty) {
-      await _clearSession();
+      await _clearSession(generation: generation);
       return false;
     }
     try {
       final response = await _authApi.refresh(refreshToken: refreshToken);
-      await _consumeAuthPayload(response);
+      await _consumeAuthPayload(response, generation: generation);
       // Do not call `me()` here. During cold start this refresh is itself the
       // private-auth gate; `me()` is an authorized ApiClient request and would
       // wait for this very gate, creating a self-await deadlock. The refresh
       // payload is already persisted by _consumeAuthPayload, and profile data
       // is revalidated later by the normal foreground/profile refresh path.
-      return true;
+      return _isCurrentAuthGeneration(generation);
     } on ApiException catch (error) {
+      if (!_isCurrentAuthGeneration(generation)) return false;
       if (error.isNetworkError ||
           error.isTimeout ||
           error.isServerUnavailable) {
         return _currentUser != null ||
             await _tokenStorage.readCurrentUser() != null;
       }
-      await _clearSession();
+      await _clearSession(generation: generation);
       return false;
     }
   }
@@ -510,7 +558,10 @@ class BackendAuthService {
   }
 
   Future<AuthUser?> restoreSessionOnResume({bool force = false}) async {
-    _currentUser ??= await _tokenStorage.readCurrentUser();
+    final generation = _authGeneration;
+    final cached = _currentUser ?? await _tokenStorage.readCurrentUser();
+    if (!_isCurrentAuthGeneration(generation)) return _currentUser;
+    _currentUser = cached;
     if (_currentUser == null) {
       return null;
     }
@@ -532,7 +583,9 @@ class BackendAuthService {
     _resumeRestoreInFlight = future;
     try {
       final user = await future;
-      _lastResumeRestoreAt = DateTime.now();
+      if (_isCurrentAuthGeneration(generation)) {
+        _lastResumeRestoreAt = DateTime.now();
+      }
       return user;
     } finally {
       if (identical(_resumeRestoreInFlight, future)) {
@@ -542,11 +595,14 @@ class BackendAuthService {
   }
 
   Future<AuthUser?> _restoreSessionOnResumeInternal() async {
+    final generation = _authGeneration;
     try {
       return await me();
     } on ApiException catch (error) {
+      if (!_isCurrentAuthGeneration(generation)) return _currentUser;
       if (error.isUnauthorized) {
         final refreshed = await refreshSession();
+        if (!_isCurrentAuthGeneration(generation)) return _currentUser;
         if (!refreshed) {
           return _currentUser;
         }
@@ -561,7 +617,10 @@ class BackendAuthService {
     }
   }
 
-  Future<AuthUser> _consumeAuthPayload(Map<String, dynamic> response) async {
+  Future<AuthUser> _consumeAuthPayload(
+    Map<String, dynamic> response, {
+    required int generation,
+  }) async {
     final auth =
         Map<String, dynamic>.from((response['auth'] ?? const {}) as Map);
     final rawUser =
@@ -588,12 +647,20 @@ class BackendAuthService {
       throw const ApiException('Backend не вернул access/refresh token.');
     }
 
-    await _tokenStorage.saveSession(
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      currentUser: user,
-    );
+    if (!_isCurrentAuthGeneration(generation)) {
+      return _staleAuthResult();
+    }
+    await _tokenStorage.mutateSession(
+        generation,
+        () => _tokenStorage.saveSession(
+              accessToken: accessToken,
+              refreshToken: refreshToken,
+              currentUser: user,
+            ));
 
+    if (!_isCurrentAuthGeneration(generation)) {
+      return _staleAuthResult();
+    }
     _currentUser = user;
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedIn));
     _scheduleRestoreCredentialSync();
@@ -606,10 +673,13 @@ class BackendAuthService {
       return null;
     }
     _startupRestoreAttempted = true;
+    final generation = _authGeneration;
 
     try {
       final options = await _authApi.restoreCredentialAuthenticationOptions();
+      if (!_isCurrentAuthGeneration(generation)) return _currentUser;
       final nativeResult = await _restoreCredentialsService.get(options);
+      if (!_isCurrentAuthGeneration(generation)) return _currentUser;
       final responseJson = nativeResult.responseJson;
       if (!nativeResult.isSuccess || responseJson == null) {
         return null;
@@ -618,11 +688,14 @@ class BackendAuthService {
       final response = await _authApi.authenticateWithRestoreCredential(
         responseJson: responseJson,
       );
-      final user = await _consumeAuthPayload(response);
+      final user = await _consumeAuthPayload(response, generation: generation);
       final credentialId = _pickCredentialId(responseJson);
+      if (!_isCurrentAuthGeneration(generation)) return _currentUser;
       if (credentialId.isNotEmpty) {
-        await _tokenStorage.markRestoreCredentialSynced(credentialId);
+        await _tokenStorage.mutateSession(generation,
+            () => _tokenStorage.markRestoreCredentialSynced(credentialId));
       }
+      if (!_isCurrentAuthGeneration(generation)) return _currentUser;
       _primePrivateAuthReady();
       return user;
     } catch (error) {
@@ -651,17 +724,22 @@ class BackendAuthService {
   }
 
   Future<void> _syncRestoreCredentialIfNeeded() async {
+    final generation = _authGeneration;
     try {
       if (await _tokenStorage.hasSyncedRestoreCredential()) {
         return;
       }
+      if (!_isCurrentAuthGeneration(generation)) return;
       final accessToken = await _tokenStorage.readAccessToken();
       if (accessToken == null || accessToken.trim().isEmpty) {
         return;
       }
+      if (!_isCurrentAuthGeneration(generation)) return;
 
       final options = await _authApi.restoreCredentialRegistrationOptions();
+      if (!_isCurrentAuthGeneration(generation)) return;
       final nativeResult = await _restoreCredentialsService.create(options);
+      if (!_isCurrentAuthGeneration(generation)) return;
       final responseJson = nativeResult.responseJson;
       if (!nativeResult.isSuccess || responseJson == null) {
         return;
@@ -674,24 +752,30 @@ class BackendAuthService {
           (response['credential_id'] ?? _pickCredentialId(responseJson))
               .toString()
               .trim();
-      await _tokenStorage.markRestoreCredentialSynced(credentialId);
+      if (!_isCurrentAuthGeneration(generation)) return;
+      await _tokenStorage.mutateSession(generation,
+          () => _tokenStorage.markRestoreCredentialSynced(credentialId));
     } catch (error) {
       _debugAuthLog('Restore credential sync skipped: $error');
     }
   }
 
-  Future<void> _clearRestoreCredentialForLogout(String? credentialId) async {
+  Future<void> _clearRestoreCredentialForLogout(
+      String? credentialId, int generation) async {
     try {
+      if (!_isCurrentAuthGeneration(generation)) return;
       await _restoreCredentialsService.clear();
     } catch (_) {
       // Explicit logout must continue even if Credential Manager is unavailable.
     }
     try {
+      if (!_isCurrentAuthGeneration(generation)) return;
       await _authApi.revokeRestoreCredential(credentialId: credentialId ?? '');
     } catch (_) {
       // Backend revoke is best-effort from the client side; local logout wins.
     }
-    await _tokenStorage.clearRestoreCredentialState();
+    await _tokenStorage.mutateSession(
+        generation, _tokenStorage.clearRestoreCredentialState);
   }
 
   String _pickCredentialId(Map<String, dynamic> responseJson) {
@@ -731,10 +815,13 @@ class BackendAuthService {
   }
 
   Future<AuthUser> _loadCurrentUser() async {
+    final generation = _authGeneration;
+    final expectedUserId = _currentUser?.uid.trim() ?? '';
     late final Map<String, dynamic> response;
     try {
       response = await _authApi.me();
     } on ApiException catch (error) {
+      if (!_isCurrentAuthGeneration(generation)) return _staleAuthResult();
       if (!error.isNotFound) rethrow;
       response = await _usersApi.me();
     }
@@ -743,9 +830,25 @@ class BackendAuthService {
     if (response['block_status'] != null) {
       rawUser['block_status'] = response['block_status'];
     }
+    final parsedUser = _parseUser(rawUser);
+    if (!_isCurrentAuthGeneration(generation)) {
+      return _staleAuthResult();
+    }
+    final currentUserId = _currentUser?.uid.trim() ?? '';
+    final responseUserId = parsedUser.uid.trim();
+    if (currentUserId.isNotEmpty &&
+        responseUserId.isNotEmpty &&
+        currentUserId != responseUserId) {
+      return _currentUser!;
+    }
+    if (expectedUserId.isNotEmpty &&
+        responseUserId.isNotEmpty &&
+        expectedUserId != responseUserId) {
+      return _currentUser ?? _staleAuthResult();
+    }
     final user = _mergeUser(
       _currentUser,
-      _parseUser(rawUser),
+      parsedUser,
       preferServerAdmin: _hasExplicitAdminFlag(rawUser, response),
     );
     _currentUser = user;
@@ -753,11 +856,16 @@ class BackendAuthService {
     final accessToken = await _tokenStorage.readAccessToken();
     final refreshToken = await _tokenStorage.readRefreshToken();
     if (accessToken != null && refreshToken != null) {
-      await _tokenStorage.saveSession(
-        accessToken: accessToken,
-        refreshToken: refreshToken,
-        currentUser: user,
-      );
+      if (!_isCurrentAuthGeneration(generation)) {
+        return _staleAuthResult();
+      }
+      await _tokenStorage.mutateSession(
+          generation,
+          () => _tokenStorage.saveSession(
+                accessToken: accessToken,
+                refreshToken: refreshToken,
+                currentUser: user,
+              ));
     }
 
     return user;
@@ -809,21 +917,50 @@ class BackendAuthService {
     return resolvePublicMediaUrl(trimmed, categoryHint: 'avatars').trim();
   }
 
-  Future<void> _replaceCurrentUser(AuthUser user) async {
+  Future<void> _replaceCurrentUser(AuthUser user, int generation) async {
     final accessToken = await _tokenStorage.readAccessToken();
     final refreshToken = await _tokenStorage.readRefreshToken();
+    if (!_isCurrentAuthGeneration(generation)) {
+      return;
+    }
     if (accessToken == null || refreshToken == null) {
       _currentUser = user;
       return;
     }
 
     _currentUser = _mergeUser(_currentUser, user);
-    await _tokenStorage.saveSession(
-      accessToken: accessToken,
-      refreshToken: refreshToken,
-      currentUser: _currentUser!,
-    );
+    await _tokenStorage.mutateSession(
+        generation,
+        () => _tokenStorage.saveSession(
+              accessToken: accessToken,
+              refreshToken: refreshToken,
+              currentUser: _currentUser!,
+            ));
+    if (!_isCurrentAuthGeneration(generation)) return;
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.userUpdated));
+  }
+
+  int _beginAuthSessionChange() {
+    _tokenStorage.beginSessionChange();
+    _refreshInFlight = null;
+    _meInFlight = null;
+    _resumeRestoreInFlight = null;
+    _privateAuthReadyInFlight = null;
+    _restoreCredentialSyncInFlight = null;
+    return _authGeneration;
+  }
+
+  bool _isCurrentAuthGeneration(int generation) {
+    return generation == _authGeneration;
+  }
+
+  AuthUser _staleAuthResult() {
+    final user = _currentUser;
+    if (user != null) return user;
+    throw const ApiException(
+      'Устаревшая auth операция проигнорирована.',
+      code: 'stale_auth_generation',
+    );
   }
 
   AuthUser _mergeUser(
@@ -831,7 +968,7 @@ class BackendAuthService {
     AuthUser next, {
     bool preferServerAdmin = false,
   }) {
-    if (previous == null) return next;
+    if (previous == null || previous.uid != next.uid) return next;
     final sameUser =
         previous.uid.isEmpty || next.uid.isEmpty || previous.uid == next.uid;
     return AuthUser(
@@ -889,12 +1026,18 @@ class BackendAuthService {
         'v=${Uri.encodeQueryComponent(trimmedVersion)}';
   }
 
-  Future<void> _clearSession() async {
+  Future<int?> _clearSession({int? generation}) async {
+    if (generation != null && !_isCurrentAuthGeneration(generation)) {
+      return null;
+    }
+    final clearedGeneration = _beginAuthSessionChange();
     _currentUser = null;
     _lastResumeRestoreAt = null;
     _privateAuthReadyInFlight = null;
-    await _tokenStorage.clear();
+    await _tokenStorage.mutateSession(clearedGeneration, _tokenStorage.clear);
+    if (!_isCurrentAuthGeneration(clearedGeneration)) return null;
     _events.add(const AuthSessionEvent(type: AuthSessionEventType.signedOut));
+    return clearedGeneration;
   }
 
   void _debugAuthLog(String message, {String? phone}) {

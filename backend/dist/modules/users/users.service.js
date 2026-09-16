@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UsersService = void 0;
 const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
 const phone_1 = require("../../common/phone");
 const env_1 = require("../../config/env");
@@ -91,6 +92,40 @@ let UsersService = class UsersService {
                 nextPhone = undefined;
             }
         }
+        if (nextPhone != null) {
+            const currentUser = await this.prisma.user.findUnique({
+                where: {
+                    id: authUser.userId,
+                },
+                select: {
+                    phone: true,
+                },
+            });
+            if (!currentUser) {
+                throw new common_1.NotFoundException('Current user was not found');
+            }
+            if (currentUser.phone !== nextPhone) {
+                const existingUser = await this.prisma.user.findFirst({
+                    where: {
+                        phone: nextPhone,
+                        id: {
+                            not: authUser.userId,
+                        },
+                        deletedAt: null,
+                        status: {
+                            not: client_1.UserStatus.DELETED,
+                        },
+                    },
+                    select: {
+                        id: true,
+                    },
+                });
+                if (existingUser) {
+                    throw new common_1.BadRequestException('PHONE_ALREADY_REGISTERED');
+                }
+                await this.assertConfirmedPhoneChangeVerification(nextPhone, dto.verificationCheckId ?? dto.verification_check_id);
+            }
+        }
         const user = await this.prisma.user.update({
             where: {
                 id: authUser.userId,
@@ -101,6 +136,7 @@ let UsersService = class UsersService {
                 avatarUrl: dto.avatar_url?.trim(),
                 photoUrl: dto.photo_url?.trim() || dto.avatar_url?.trim(),
                 phone: nextPhone,
+                phoneVerified: nextPhone == null ? undefined : true,
             },
             include: {
                 adminProfile: true,
@@ -190,6 +226,29 @@ let UsersService = class UsersService {
             is_admin: user.adminProfile?.isAdmin === true,
             isAdmin: user.adminProfile?.isAdmin === true,
         };
+    }
+    async assertConfirmedPhoneChangeVerification(phone, rawCheckId) {
+        const checkId = rawCheckId?.trim() ?? '';
+        if (!checkId) {
+            throw new common_1.BadRequestException('PHONE_VERIFICATION_REQUIRED');
+        }
+        const verification = await this.prisma.phoneVerification.findFirst({
+            where: {
+                phone,
+                purpose: client_1.PhoneVerificationPurpose.CHANGE_PHONE,
+                checkId,
+                status: client_1.PhoneVerificationStatus.CONFIRMED,
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+        if (!verification) {
+            throw new common_1.BadRequestException('PHONE_VERIFICATION_REQUIRED');
+        }
+        if (verification.expiresAt.getTime() <= Date.now()) {
+            throw new common_1.BadRequestException('PHONE_VERIFICATION_EXPIRED');
+        }
     }
 };
 exports.UsersService = UsersService;

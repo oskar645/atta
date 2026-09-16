@@ -14,6 +14,7 @@ test('listInAppNotifications excludes chat message records', async () => {
     {} as never,
     {
       userNotification: {
+        count: async () => 2,
         findMany: async (args: Record<string, unknown>) => {
           capturedWhere = args['where'] as Record<string, unknown> | undefined;
           return [
@@ -37,7 +38,7 @@ test('listInAppNotifications excludes chat message records', async () => {
         }),
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
 
   const result = await service.listInAppNotifications({
@@ -65,13 +66,14 @@ test('markRead does not allow reading hidden chat notifications', async () => {
     {} as never,
     {
       userNotification: {
+        count: async () => 2,
         findFirst: async (args: Record<string, unknown>) => {
           capturedWhere = args['where'] as Record<string, unknown> | undefined;
           return null;
         },
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
 
   await assert.rejects(
@@ -113,13 +115,14 @@ test('markAllSeen stores seen timestamp and returns updated counters', async () 
         },
       },
       userNotification: {
+        count: async () => 2,
         updateMany: async () => {
           updateManyCalled = true;
           return { count: 2 };
         },
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
 
   const result = await service.markAllSeen({
@@ -138,6 +141,7 @@ test('sendToAll keeps media and link payload in serialized notification', async 
     {} as never,
     {
       userNotification: {
+        count: async () => 2,
         create: async ({ data }: Record<string, any>) => ({
           id: 'global-1',
           userId: null,
@@ -150,11 +154,13 @@ test('sendToAll keeps media and link payload in serialized notification', async 
           payload: data.payload,
         }),
       },
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 3, unreadForSeller: 4 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
       userDevice: {
         findMany: async () => [],
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
 
   const result = await service.sendToAll({
@@ -181,6 +187,7 @@ test('createSystemNotification emits personal realtime event for recipient only'
     {} as never,
     {
       userNotification: {
+        count: async () => 2,
         create: async ({ data }: Record<string, any>) => ({
           id: 'personal-1',
           userId: data.userId,
@@ -193,6 +200,8 @@ test('createSystemNotification emits personal realtime event for recipient only'
           payload: data.payload,
         }),
       },
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 3, unreadForSeller: 4 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
       userDevice: {
         findMany: async () => [],
       },
@@ -234,6 +243,9 @@ test('chat message push sends absolute APNs badge count', async () => {
       },
     } as never,
     {
+      userNotification: { count: async () => 2 },
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 3, unreadForSeller: 4 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
       userDevice: {
         findMany: async () => [
           {
@@ -247,7 +259,7 @@ test('chat message push sends absolute APNs badge count', async () => {
         ],
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
 
   await service.sendChatMessagePush({
@@ -268,7 +280,7 @@ test('chat message push sends absolute APNs badge count', async () => {
   assert.equal(pushes.length, 2);
   assert.deepEqual(
     pushes.map((push) => push['badge']),
-    [7, 7],
+    [9, 9],
   );
 });
 
@@ -284,6 +296,7 @@ test('createSystemNotification keeps in-app notification when APNs send throws',
     } as never,
     {
       userNotification: {
+        count: async () => 2,
         create: async ({ data }: Record<string, any>) => {
           notificationCreated = true;
           return {
@@ -299,6 +312,8 @@ test('createSystemNotification keeps in-app notification when APNs send throws',
           };
         },
       },
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 3, unreadForSeller: 4 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
       userDevice: {
         findMany: async () => [
           {
@@ -350,6 +365,7 @@ test('sendToAll returns success when APNs send throws', async () => {
     } as never,
     {
       userNotification: {
+        count: async () => 2,
         create: async ({ data }: Record<string, any>) => ({
           id: 'global-apns-fail-1',
           userId: null,
@@ -362,6 +378,8 @@ test('sendToAll returns success when APNs send throws', async () => {
           payload: data.payload,
         }),
       },
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 3, unreadForSeller: 4 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
       userDevice: {
         findMany: async () => [
           {
@@ -375,7 +393,7 @@ test('sendToAll returns success when APNs send throws', async () => {
         ],
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
   (service as unknown as { logger: { warn: (message: string) => void } }).logger = {
     warn: (message: string) => warnings.push(message),
@@ -400,6 +418,9 @@ test('chat message push returns when APNs send throws', async () => {
       },
     } as never,
     {
+      userNotification: { count: async () => 2 },
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 3, unreadForSeller: 4 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
       userDevice: {
         findMany: async () => [
           {
@@ -409,7 +430,7 @@ test('chat message push returns when APNs send throws', async () => {
         ],
       },
     } as never,
-    {} as never,
+    { emitNotificationNew: () => undefined } as never,
   );
   (service as unknown as { logger: { warn: (message: string) => void } }).logger = {
     warn: (message: string) => warnings.push(message),
@@ -433,4 +454,41 @@ test('chat message push returns when APNs send throws', async () => {
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /unexpected send failure/);
   assert.doesNotMatch(warnings[0], /secret-device-token/);
+});
+
+test('canonical badge sums chat counters and non-chat unread notifications with per-user global cutoff', async () => {
+  let where: any;
+  const service = new NotificationsService({} as never, {
+    chat: { aggregate: async ({ where }: any) => ({ _sum: where.buyerId ? { unreadForBuyer: 2 } : { unreadForSeller: 3 } }) },
+    user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
+    userNotification: { count: async (args: any) => { where = args.where; return 4; } },
+  } as never, {} as never);
+  assert.equal(await service.canonicalBadgeCount('A'), 9);
+  assert.deepEqual(where.type, { notIn: [NotificationType.CHAT_MESSAGE] });
+  assert.deepEqual(where.OR[0], { userId: 'A', scope: NotificationScope.PERSONAL, isRead: false });
+  assert.equal(where.OR[1].createdAt.gt, baseDate);
+});
+
+test('token registration reassigns same device to B session; late A delete cannot deactivate B', async () => {
+  let device: any;
+  const prisma: any = {
+    $queryRaw: async () => [],
+    userSession: { findFirst: async ({ where }: any) => ({ id: where.id, createdAt: new Date(where.id === 'session-A' ? '2026-01-01' : '2026-02-01') }) },
+    userDevice: {
+      findUnique: async () => device ? { ...device, session: { createdAt: new Date(device.sessionId === 'session-A' ? '2026-01-01' : '2026-02-01') } } : null,
+      upsert: async ({ update }: any) => { device = { ...update, id: 'd' }; return device; },
+      updateMany: async ({ where, data }: any) => {
+        if (device.userId !== where.userId) return { count: 0 };
+        Object.assign(device, data); return { count: 1 };
+      },
+    },
+  };
+  prisma.$transaction = async (fn: any) => fn(prisma);
+  const service = new NotificationsService({} as never, prisma, {} as never);
+  await service.registerDevice({ userId: 'A', sessionId: 'session-A' } as never, { token: 'same', platform: 'ios' });
+  assert.equal(device.sessionId, 'session-A');
+  await service.registerDevice({ userId: 'B', sessionId: 'session-B' } as never, { token: 'same', platform: 'ios' });
+  await service.unregisterDevice({ userId: 'A' } as never, 'same');
+  await assert.rejects(() => service.registerDevice({ userId: 'A', sessionId: 'session-A' } as never, { token: 'same', platform: 'ios' }), /newer session/);
+  assert.equal(device.userId, 'B'); assert.equal(device.sessionId, 'session-B'); assert.equal(device.isActive, true);
 });

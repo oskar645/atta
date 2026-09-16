@@ -96,6 +96,14 @@ class ListingsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> resubmit(String id) async {
+    final response = await client.post(
+      '/listings/$id/resubmit',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> deleteListing(String id) async {
     final response = await client.delete(
       '/listings/$id',

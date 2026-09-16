@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:atta/src/services/auth/auth_models.dart';
@@ -80,5 +81,35 @@ void main() {
     expect(prefs.getString(currentUserKey), isNull);
     expect(await secureStorage.read(key: accessTokenKey), isNull);
     expect(await secureStorage.read(key: refreshTokenKey), isNull);
+  });
+  test(
+      'in-flight A write finishes before B commit; queued stale clear is ignored',
+      () async {
+    final storage = TokenStorage();
+    final generationA = storage.beginSessionChange();
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final oldWrite = storage.mutateSession(generationA, () async {
+      started.complete();
+      await release.future;
+      await storage.saveSession(
+          accessToken: 'a',
+          refreshToken: 'a',
+          currentUser: const AuthUser(uid: 'a'));
+    });
+    await started.future;
+    final generationB = storage.beginSessionChange();
+    final newWrite = storage.mutateSession(
+        generationB,
+        () => storage.saveSession(
+            accessToken: 'b',
+            refreshToken: 'b',
+            currentUser: const AuthUser(uid: 'b')));
+    final staleClear = storage.mutateSession(generationA, storage.clear);
+    release.complete();
+    await Future.wait([oldWrite, newWrite, staleClear]);
+    expect((await storage.readCurrentUser())?.uid, 'b');
+    expect(await storage.readAccessToken(), 'b');
+    expect(await storage.readRefreshToken(), 'b');
   });
 }

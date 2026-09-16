@@ -21,7 +21,6 @@ import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
-import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
@@ -488,13 +487,13 @@ class _TimewebAdminListingsModerationTabState
       case 'approved':
         return 'Активно';
       case 'rejected':
-        return 'Отклонено';
+        return 'Отклонённые';
       case 'archived':
         return 'В архиве';
       case 'deleted':
-        return 'Скрыто';
+        return 'Удалённые';
       case 'sold':
-        return 'Продано';
+        return 'Проданные';
       default:
         return status;
     }
@@ -1467,18 +1466,9 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
 
   Future<void> _approve() async {
     final adminService = context.read<AdminService>();
-    final savedSearchService = context.read<SavedSearchService>();
     setState(() => _busy = true);
     try {
       await adminService.approveListing(widget.listingId);
-
-      try {
-        await savedSearchService.notifyMatchesForApprovedListing(
-          widget.listingData,
-        );
-      } catch (e) {
-        debugPrint('Ошибка уведомлений по сохраненным поискам: $e');
-      }
 
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -2489,13 +2479,13 @@ String _moderationStatusLabel(String status) {
     case 'approved':
       return 'Активно';
     case 'rejected':
-      return 'Отклонено';
+      return 'Отклонённые';
     case 'archived':
       return 'В архиве';
     case 'deleted':
-      return 'Скрыто';
+      return 'Удалённые';
     case 'sold':
-      return 'Продано';
+      return 'Проданные';
     default:
       return status.trim().isEmpty ? 'Не указан' : status;
   }

@@ -7,6 +7,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthModule = void 0;
+const account_deletion_service_1 = require("./account-deletion.service");
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const env_1 = require("../../config/env");
@@ -39,12 +40,13 @@ exports.AuthModule = AuthModule = __decorate([
         controllers: [auth_controller_1.AuthController],
         providers: [
             auth_service_1.AuthService,
+            account_deletion_service_1.AccountDeletionService,
             restore_credentials_service_1.RestoreCredentialsService,
             jwt_auth_guard_1.JwtAuthGuard,
             optional_jwt_auth_guard_1.OptionalJwtAuthGuard,
             admin_guard_1.AdminGuard,
         ],
-        exports: [auth_service_1.AuthService, jwt_auth_guard_1.JwtAuthGuard, optional_jwt_auth_guard_1.OptionalJwtAuthGuard, admin_guard_1.AdminGuard, jwt_1.JwtModule],
+        exports: [account_deletion_service_1.AccountDeletionService, auth_service_1.AuthService, jwt_auth_guard_1.JwtAuthGuard, optional_jwt_auth_guard_1.OptionalJwtAuthGuard, admin_guard_1.AdminGuard, jwt_1.JwtModule],
     })
 ], AuthModule);
 //# sourceMappingURL=auth.module.js.map

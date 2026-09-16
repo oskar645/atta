@@ -10,6 +10,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
+const account_deletion_service_1 = require("./account-deletion.service");
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const client_1 = require("@prisma/client");
@@ -24,13 +25,15 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
 const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const wallet_service_1 = require("../wallet/wallet.service");
+const LEGAL_DOCUMENT_VERSION = '2026-09-12';
 let AuthService = class AuthService {
-    constructor(prisma, jwtService, storageService, walletService, userBlocksService) {
+    constructor(prisma, jwtService, storageService, walletService, userBlocksService, accountDeletion) {
         this.prisma = prisma;
         this.jwtService = jwtService;
         this.storageService = storageService;
         this.walletService = walletService;
         this.userBlocksService = userBlocksService;
+        this.accountDeletion = accountDeletion;
     }
     async signup(payload) {
         const email = payload.email?.trim().toLowerCase();
@@ -52,24 +55,31 @@ let AuthService = class AuthService {
             throw new common_1.ConflictException('User already exists');
         }
         const displayName = (payload.display_name ?? payload.displayName ?? '').trim();
+        this.assertRequiredSignupConsents(payload);
         const passwordHash = await (0, bcryptjs_1.hash)(payload.password, 10);
-        const user = await this.prisma.user.create({
-            data: {
-                id: (0, crypto_1.randomUUID)(),
-                email,
-                phone: payload.phone?.trim() || null,
-                displayName,
-                name: displayName,
-                passwordHash,
-            },
-            include: {
-                adminProfile: true,
-            },
+        const { user, session } = await this.prisma.$transaction(async (tx) => {
+            const created = await tx.user.create({
+                data: {
+                    id: (0, crypto_1.randomUUID)(),
+                    email,
+                    phone: payload.phone?.trim() || null,
+                    displayName,
+                    name: displayName,
+                    passwordHash,
+                },
+                include: {
+                    adminProfile: true,
+                },
+            });
+            const userWithAdmin = await this.ensureAdminBootstrapForUser(created, tx);
+            await this.recordSignupConsents(userWithAdmin.id, payload, tx);
+            return {
+                user: userWithAdmin,
+                session: await this.createSession(userWithAdmin, tx),
+            };
         });
-        const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
-        const session = await this.createSession(userWithAdmin);
         await this.ensureWalletBootstrapSafely(user.id);
-        return this.buildAuthResponse(userWithAdmin, session.auth);
+        return this.buildAuthResponse(user, session.auth);
     }
     async login(payload) {
         const email = payload.email?.trim().toLowerCase();
@@ -118,6 +128,7 @@ let AuthService = class AuthService {
         const referralCode = this.pickOptionalReferralCode(payload.referralCode, payload.referral_code);
         const referralId = this.pickOptionalReferralCode(payload.referralId, payload.referral_id);
         const displayName = (payload.displayName ?? payload.display_name ?? '').trim();
+        this.assertRequiredSignupConsents(payload);
         if (!displayName) {
             throw new common_1.BadRequestException('Display name is required');
         }
@@ -155,6 +166,7 @@ let AuthService = class AuthService {
             });
             const createdUserWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
             const createdSession = await this.createSession(createdUserWithAdmin, tx);
+            await this.recordSignupConsents(createdUserWithAdmin.id, payload, tx);
             await tx.phoneVerification.update({
                 where: {
                     id: verification.id,
@@ -178,6 +190,116 @@ let AuthService = class AuthService {
             };
         });
         return this.buildAuthResponse(userWithAdmin, session.auth);
+    }
+    async getMarketingConsent(authUser) {
+        const consent = await this.prisma.userConsent.findFirst({
+            where: {
+                userId: authUser.userId,
+                consentType: 'MARKETING_MESSAGES',
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
+        return {
+            accepted: Boolean(consent?.acceptedAt && !consent?.withdrawnAt),
+            documentVersion: consent?.documentVersion ?? LEGAL_DOCUMENT_VERSION,
+            acceptedAt: consent?.acceptedAt ?? null,
+            withdrawnAt: consent?.withdrawnAt ?? null,
+        };
+    }
+    async updateMarketingConsent(authUser, payload, request) {
+        const now = new Date();
+        const accepted = payload.accepted === true;
+        const platform = this.parseConsentPlatform(payload.platform);
+        const technicalInfo = {
+            source: 'settings',
+            ip: this.pickRequestIp(request),
+            userAgent: request?.headers?.['user-agent']?.toString() ?? null,
+        };
+        const consent = await this.prisma.userConsent.create({
+            data: {
+                userId: authUser.userId,
+                consentType: 'MARKETING_MESSAGES',
+                documentVersion: LEGAL_DOCUMENT_VERSION,
+                acceptedAt: accepted ? now : null,
+                withdrawnAt: accepted ? null : now,
+                platform,
+                technicalInfo,
+            },
+        });
+        return {
+            accepted,
+            documentVersion: consent.documentVersion,
+            acceptedAt: consent.acceptedAt,
+            withdrawnAt: consent.withdrawnAt,
+        };
+    }
+    assertRequiredSignupConsents(payload) {
+        if (payload.acceptedLegal !== true) {
+            throw new common_1.BadRequestException('Terms acceptance is required');
+        }
+        if (payload.acceptedPersonalData !== true) {
+            throw new common_1.BadRequestException('Personal data consent is required');
+        }
+    }
+    async recordSignupConsents(userId, payload, tx) {
+        const acceptedAt = new Date();
+        const platform = this.parseConsentPlatform(payload.platform);
+        const technicalInfo = {
+            source: 'signup',
+            marketingDefaultFalse: payload.acceptedMarketing !== true,
+        };
+        await tx.userConsent.createMany({
+            data: [
+                {
+                    userId,
+                    consentType: 'TERMS_ACCEPTANCE',
+                    documentVersion: LEGAL_DOCUMENT_VERSION,
+                    acceptedAt,
+                    platform,
+                    technicalInfo,
+                },
+                {
+                    userId,
+                    consentType: 'PERSONAL_DATA_PROCESSING',
+                    documentVersion: LEGAL_DOCUMENT_VERSION,
+                    acceptedAt,
+                    platform,
+                    technicalInfo,
+                },
+                ...(payload.acceptedMarketing === true
+                    ? [
+                        {
+                            userId,
+                            consentType: 'MARKETING_MESSAGES',
+                            documentVersion: LEGAL_DOCUMENT_VERSION,
+                            acceptedAt,
+                            platform,
+                            technicalInfo,
+                        },
+                    ]
+                    : []),
+            ],
+        });
+    }
+    parseConsentPlatform(value) {
+        switch ((value ?? '').trim().toUpperCase()) {
+            case 'IOS':
+                return client_1.DevicePlatform.IOS;
+            case 'ANDROID':
+                return client_1.DevicePlatform.ANDROID;
+            case 'WEB':
+                return client_1.DevicePlatform.WEB;
+            default:
+                return undefined;
+        }
+    }
+    pickRequestIp(request) {
+        const forwarded = request?.headers?.['x-forwarded-for']?.toString() ?? '';
+        return (request?.ip?.toString().trim() ||
+            forwarded.split(',')[0]?.trim() ||
+            null);
     }
     async loginPhone(payload) {
         const rawPhone = (payload.phone ?? '').trim();
@@ -336,6 +458,10 @@ let AuthService = class AuthService {
         return this.buildAuthResponse(userWithAdmin, tokens);
     }
     async logout(authUser, payload) {
+        await this.prisma.userDevice.updateMany({
+            where: { userId: authUser.userId, sessionId: authUser.sessionId },
+            data: { isActive: false },
+        });
         if (payload?.refreshToken) {
             await this.revokeSessionByRefreshToken(payload.refreshToken, authUser.userId);
         }
@@ -387,165 +513,7 @@ let AuthService = class AuthService {
         };
     }
     async deleteAccount(authUser) {
-        const user = await this.prisma.user.findUnique({
-            where: {
-                id: authUser.userId,
-            },
-            include: {
-                adminProfile: true,
-            },
-        });
-        if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
-            throw new common_1.NotFoundException('User not found');
-        }
-        if (user.adminProfile?.isAdmin === true) {
-            throw new common_1.BadRequestException('Удаление admin-аккаунта через этот endpoint запрещено');
-        }
-        const now = new Date();
-        const userId = authUser.userId;
-        const deletedEmail = `deleted+${userId}@atta.local`;
-        const listingIds = (await this.prisma.listing.findMany({
-            where: {
-                ownerId: userId,
-            },
-            select: {
-                id: true,
-            },
-        })).map((item) => item.id);
-        const chatIds = (await this.prisma.chat.findMany({
-            where: {
-                OR: [{ buyerId: userId }, { sellerId: userId }],
-            },
-            select: {
-                id: true,
-            },
-        })).map((item) => item.id);
-        await this.storageService.deleteAvatarUrl(user.avatarUrl);
-        await this.storageService.deleteListingPhotosForListings(listingIds);
-        await this.storageService.deleteChatImagesForChats(chatIds);
-        await this.prisma.$transaction(async (tx) => {
-            if (chatIds.length > 0) {
-                await tx.chatMessage.updateMany({
-                    where: {
-                        chatId: {
-                            in: chatIds,
-                        },
-                        deletedAt: null,
-                    },
-                    data: {
-                        deletedAt: now,
-                    },
-                });
-                await tx.chat.updateMany({
-                    where: {
-                        id: {
-                            in: chatIds,
-                        },
-                    },
-                    data: {
-                        deletedByBuyerAt: now,
-                        deletedBySellerAt: now,
-                        unreadForBuyer: 0,
-                        unreadForSeller: 0,
-                        lastMessage: '',
-                    },
-                });
-            }
-            await tx.favorite.deleteMany({ where: { userId } });
-            await tx.savedSearch.deleteMany({ where: { userId } });
-            await tx.viewedListing.deleteMany({ where: { userId } });
-            await tx.userFollow.deleteMany({
-                where: {
-                    OR: [{ followerId: userId }, { sellerId: userId }],
-                },
-            });
-            await tx.review.updateMany({
-                where: {
-                    reviewerId: userId,
-                    deletedAt: null,
-                },
-                data: {
-                    deletedAt: now,
-                    updatedAt: now,
-                },
-            });
-            await tx.userNotification.deleteMany({
-                where: {
-                    userId,
-                },
-            });
-            await tx.supportMessage.updateMany({
-                where: {
-                    senderUserId: userId,
-                },
-                data: {
-                    senderUserId: null,
-                },
-            });
-            await tx.supportTicket.updateMany({
-                where: {
-                    userId,
-                },
-                data: {
-                    name: 'Удалённый пользователь',
-                },
-            });
-            await tx.listing.updateMany({
-                where: {
-                    ownerId: userId,
-                    deletedAt: null,
-                },
-                data: {
-                    status: client_1.ListingStatus.DELETED,
-                    deletedAt: now,
-                    publishedAt: null,
-                    rejectionReason: 'Deleted with owner account',
-                },
-            });
-            await tx.userSession.updateMany({
-                where: {
-                    userId,
-                    revokedAt: null,
-                },
-                data: {
-                    revokedAt: now,
-                },
-            });
-            await tx.user.update({
-                where: {
-                    id: userId,
-                },
-                data: {
-                    status: client_1.UserStatus.DELETED,
-                    deletedAt: now,
-                    blockedAt: now,
-                    blockReason: 'Account deleted by user',
-                    phoneVerified: false,
-                    phone: null,
-                    email: deletedEmail,
-                    displayName: 'Удалённый пользователь',
-                    name: 'Удалённый пользователь',
-                    avatarUrl: null,
-                    photoUrl: null,
-                },
-            });
-            if (listingIds.length > 0) {
-                await tx.report.updateMany({
-                    where: {
-                        listingId: {
-                            in: listingIds,
-                        },
-                    },
-                    data: {
-                        listingOwnerId: null,
-                    },
-                });
-            }
-        });
-        return {
-            deleted: true,
-            user_id: userId,
-        };
+        return this.accountDeletion.deleteUser(authUser.userId);
     }
     async createSessionForUser(user) {
         const userWithAdmin = await this.ensureAdminBootstrapForUser(user);
@@ -976,6 +944,7 @@ exports.AuthService = AuthService = __decorate([
         jwt_1.JwtService,
         storage_service_1.StorageService,
         wallet_service_1.WalletService,
-        user_blocks_service_1.UserBlocksService])
+        user_blocks_service_1.UserBlocksService,
+        account_deletion_service_1.AccountDeletionService])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

@@ -250,9 +250,14 @@ export class ChatsService {
       avatarUrl: string | null;
       photoUrl: string | null;
       updatedAt?: Date | null;
+      status?: string;
+      deletedAt?: Date | null;
     },
     presence: { isOnline: boolean; lastSeen: string | null } | undefined,
   ) {
+    if (user.deletedAt || user.status === 'DELETED') {
+      return { id: user.id, displayName: 'Удалённый пользователь', avatarUrl: '', isOnline: false, lastSeen: null };
+    }
     return {
       id: user.id,
       displayName:

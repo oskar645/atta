@@ -204,6 +204,9 @@ let ChatsService = class ChatsService {
         return `${trimmedUrl}${separator}v=${encodeURIComponent(updatedAt.toISOString())}`;
     }
     participantPreview(user, presence) {
+        if (user.deletedAt || user.status === 'DELETED') {
+            return { id: user.id, displayName: 'Удалённый пользователь', avatarUrl: '', isOnline: false, lastSeen: null };
+        }
         return {
             id: user.id,
             displayName: user.displayName || user.name || user.email || 'Пользователь',

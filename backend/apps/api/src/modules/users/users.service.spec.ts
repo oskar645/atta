@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { BadRequestException } from '@nestjs/common';
+import {
+  PhoneVerificationPurpose,
+  PhoneVerificationStatus,
+  UserStatus,
+} from '@prisma/client';
+
 import { UsersService } from './users.service';
 
 test('getMe does not crash if wallet has issue', async () => {
@@ -44,6 +51,135 @@ test('getMe does not crash if wallet has issue', async () => {
 
   assert.equal(response.user.id, 'user-1');
   assert.equal(response.isAdmin, false);
+});
+
+test('updateMe rejects changed phone without confirmed verification', async () => {
+  let updateCalled = false;
+  const service = new UsersService(
+    {
+      user: {
+        findUnique: async () => ({ phone: '79281234567' }),
+        findFirst: async () => null,
+        update: async () => {
+          updateCalled = true;
+          throw new Error('should not update');
+        },
+      },
+      phoneVerification: {
+        findFirst: async () => null,
+      },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+
+  await assert.rejects(
+    () =>
+      service.updateMe(
+        { userId: 'user-1', role: 'user' } as never,
+        { phone: '+7 928 111-22-33' },
+      ),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'PHONE_VERIFICATION_REQUIRED',
+  );
+  assert.equal(updateCalled, false);
+});
+
+test('updateMe allows changed phone with confirmed verification', async () => {
+  let updateArgs: Record<string, any> | undefined;
+  const service = new UsersService(
+    {
+      user: {
+        findUnique: async () => ({ phone: '79281234567' }),
+        findFirst: async () => null,
+        update: async (args: Record<string, any>) => {
+          updateArgs = args;
+          return {
+            id: 'user-1',
+            email: 'user@example.com',
+            phone: args.data.phone,
+            phoneVerified: args.data.phoneVerified,
+            displayName: 'ATTA User',
+            name: 'ATTA User',
+            avatarUrl: null,
+            photoUrl: null,
+            status: UserStatus.ACTIVE,
+            blockedAt: null,
+            blockReason: null,
+            lastLoginAt: null,
+            createdAt: new Date('2026-06-18T10:00:00.000Z'),
+            updatedAt: new Date('2026-06-18T10:00:00.000Z'),
+            deletedAt: null,
+            adminProfile: null,
+          };
+        },
+      },
+      phoneVerification: {
+        findFirst: async (args: Record<string, any>) => ({
+          id: 'verification-1',
+          phone: args.where.phone,
+          purpose: PhoneVerificationPurpose.CHANGE_PHONE,
+          checkId: args.where.checkId,
+          status: PhoneVerificationStatus.CONFIRMED,
+          expiresAt: new Date(Date.now() + 60_000),
+        }),
+      },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+
+  const response = await service.updateMe(
+    { userId: 'user-1', role: 'user' } as never,
+    {
+      phone: '+7 928 111-22-33',
+      verificationCheckId: 'verification-1',
+    },
+  );
+
+  assert.equal(updateArgs?.data.phone, '79281112233');
+  assert.equal(updateArgs?.data.phoneVerified, true);
+  assert.ok('phone' in response.user);
+  assert.equal(response.user.phone, '79281112233');
+});
+
+test('updateMe rejects changed phone owned by another active account', async () => {
+  let verificationCalled = false;
+  const service = new UsersService(
+    {
+      user: {
+        findUnique: async () => ({ phone: '79281234567' }),
+        findFirst: async () => ({ id: 'user-2' }),
+        update: async () => {
+          throw new Error('should not update');
+        },
+      },
+      phoneVerification: {
+        findFirst: async () => {
+          verificationCalled = true;
+          return null;
+        },
+      },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+
+  await assert.rejects(
+    () =>
+      service.updateMe(
+        { userId: 'user-1', role: 'user' } as never,
+        {
+          phone: '+7 928 111-22-33',
+          verificationCheckId: 'verification-1',
+        },
+      ),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'PHONE_ALREADY_REGISTERED',
+  );
+  assert.equal(verificationCalled, false);
 });
 
 test('avatar upload uses selected storage provider flow', async () => {

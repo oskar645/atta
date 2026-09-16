@@ -19,6 +19,52 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
+  test(
+      'mark all seen clears realtime saved-search/support and excludes duplicate chat records',
+      () async {
+    final api = _FakeInAppNotificationsApi(items: []);
+    final service = NotificationsService(api: api)..activateSession('A');
+    await service.preload('A');
+    for (final type in [
+      'saved_search',
+      'support',
+      'moderation',
+      'chat_message'
+    ]) {
+      service.ingestRealtimeNotification(userId: 'A', notification: {
+        'id': type,
+        'type': type,
+        'scope': 'personal',
+        'user_id': 'A'
+      });
+    }
+    expect(await service.streamUnreadBadgeCount('A').first, 3);
+    await service.markAllSeen('A');
+    expect(await service.streamUnreadPersonalCount('A').first, 0);
+    expect(service.peekPersonal('A').every((r) => r['is_read'] == true), true);
+    service.resetSession();
+    service.activateSession('B');
+    service.ingestRealtimeNotification(
+        userId: 'A', notification: {'id': 'late', 'type': 'support'});
+    expect(service.peekPersonal('A'), isEmpty);
+  });
+
+  test('late unauthorized refresh of A does not reset B', () async {
+    final gate = Completer<void>();
+    final api = _FakeInAppNotificationsApi(
+        items: [], listError: const ApiException('expired', statusCode: 401))
+      ..listCompleter = gate;
+    final service = NotificationsService(api: api)..activateSession('A');
+    final old = service.refreshActiveSession();
+    service.resetSession();
+    service.activateSession('B');
+    gate.complete();
+    await old;
+    service.ingestRealtimeNotification(
+        userId: 'B', notification: {'id': 'B-only', 'type': 'support'});
+    expect(service.peekPersonal('B').single['id'], 'B-only');
+  });
+
   test('streamPersonal uses Timeweb notifications list immediately', () async {
     final api = _FakeInAppNotificationsApi(
       items: <Map<String, dynamic>>[

@@ -1,4 +1,17 @@
 import 'package:atta/src/services/api/api_client.dart';
+import 'package:flutter/foundation.dart';
+
+String _currentConsentPlatform() {
+  if (kIsWeb) return 'WEB';
+  switch (defaultTargetPlatform) {
+    case TargetPlatform.iOS:
+      return 'IOS';
+    case TargetPlatform.android:
+      return 'ANDROID';
+    default:
+      return '';
+  }
+}
 
 class AuthApi {
   const AuthApi(this._client);
@@ -24,6 +37,9 @@ class AuthApi {
     required String password,
     String? displayName,
     String? phone,
+    bool acceptedLegal = false,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
   }) async {
     final response = await _client.post(
       '/auth/signup',
@@ -33,6 +49,11 @@ class AuthApi {
         if (displayName != null && displayName.trim().isNotEmpty)
           'display_name': displayName.trim(),
         if (phone != null && phone.trim().isNotEmpty) 'phone': phone.trim(),
+        'acceptedLegal': acceptedLegal,
+        'acceptedPersonalData': acceptedPersonalData,
+        'acceptedMarketing': acceptedMarketing,
+        if (_currentConsentPlatform().isNotEmpty)
+          'platform': _currentConsentPlatform(),
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -52,6 +73,29 @@ class AuthApi {
 
   Future<Map<String, dynamic>> me() async {
     final response = await _client.get('/auth/me', authorized: true);
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> getMarketingConsent() async {
+    final response = await _client.get(
+      '/auth/consents/marketing',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> updateMarketingConsent({
+    required bool accepted,
+  }) async {
+    final response = await _client.patch(
+      '/auth/consents/marketing',
+      authorized: true,
+      body: {
+        'accepted': accepted,
+        if (_currentConsentPlatform().isNotEmpty)
+          'platform': _currentConsentPlatform(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -192,6 +236,9 @@ class AuthApi {
     required String verificationCheckId,
     String referralCode = '',
     String referralId = '',
+    bool acceptedLegal = false,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
   }) async {
     final response = await _client.post(
       '/auth/signup-phone',
@@ -200,6 +247,11 @@ class AuthApi {
         'password': password,
         'displayName': displayName,
         'verificationCheckId': verificationCheckId,
+        'acceptedLegal': acceptedLegal,
+        'acceptedPersonalData': acceptedPersonalData,
+        'acceptedMarketing': acceptedMarketing,
+        if (_currentConsentPlatform().isNotEmpty)
+          'platform': _currentConsentPlatform(),
         if (referralCode.trim().isNotEmpty) 'referralCode': referralCode.trim(),
         if (referralId.trim().isNotEmpty) 'referralId': referralId.trim(),
       },

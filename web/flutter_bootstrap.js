@@ -1,8 +1,13 @@
 {{flutter_js}}
 {{flutter_build_config}}
 
-_flutter.loader.load({
+const attaWebTitle = "Атта Маркет";
+document.title = attaWebTitle;
+
+Promise.resolve(_flutter.loader.load({
   config: {
-    renderer: "html",
+    renderer: "canvaskit",
   },
+})).then(() => {
+  document.title = attaWebTitle;
 });

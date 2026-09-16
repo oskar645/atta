@@ -27,6 +27,7 @@ enum PhoneVerificationPurpose {
   LOGIN
   RESET_PASSWORD
   LINK_PHONE
+  CHANGE_PHONE
 }
 
 enum PhoneVerificationProvider {
@@ -157,6 +158,12 @@ enum RestoreCredentialType {
   RESTORE
 }
 
+enum UserConsentType {
+  TERMS_ACCEPTANCE
+  PERSONAL_DATA_PROCESSING
+  MARKETING_MESSAGES
+}
+
 model User {
   id             String              @id @db.Uuid
   email          String?             @unique
@@ -213,8 +220,26 @@ model User {
   peerBlocksIssued ChatPeerBlock[]   @relation("ChatPeerBlocksIssued")
   peerBlocksReceived ChatPeerBlock[] @relation("ChatPeerBlocksReceived")
   restoreCredentials RestoreCredential[]
+  consents       UserConsent[]
 
   @@map("users")
+}
+
+model UserConsent {
+  id              String          @id @default(uuid()) @db.Uuid
+  userId          String          @map("user_id") @db.Uuid
+  consentType     UserConsentType @map("consent_type")
+  documentVersion String          @map("document_version")
+  acceptedAt      DateTime?       @map("accepted_at")
+  withdrawnAt     DateTime?       @map("withdrawn_at")
+  platform        DevicePlatform?
+  technicalInfo   Json            @default("{}") @map("technical_info")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consentType, createdAt])
+  @@map("user_consents")
 }
 
 model RestoreCredential {
@@ -275,6 +300,8 @@ model UserSession {
   createdAt        DateTime @default(now()) @map("created_at")
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  pushDevices UserDevice[]
+
   @@index([userId, createdAt])
   @@index([expiresAt])
   @@map("user_sessions")
@@ -313,6 +340,7 @@ model UserDevice {
   platform    DevicePlatform
   deviceToken String         @unique @map("device_token")
   deviceUid   String?        @map("device_uid")
+  sessionId   String?        @map("session_id") @db.Uuid
   appVersion  String?        @map("app_version")
   buildNumber String?        @map("build_number")
   locale      String?
@@ -321,6 +349,8 @@ model UserDevice {
   createdAt   DateTime       @default(now()) @map("created_at")
   updatedAt   DateTime       @updatedAt @map("updated_at")
   user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  session UserSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@index([userId, isActive])
   @@map("user_devices")
@@ -376,6 +406,7 @@ model Listing {
   raiseCampaigns  ListingRaiseCampaign[]
   userBlocks      UserBlock[]
   moderationRevisions ListingModerationRevision[]
+  savedSearchAlerts SavedSearchAlert[]
 
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
@@ -474,6 +505,7 @@ model ListingView {
 
   @@index([listingId, viewedAt])
   @@index([viewerUserId, viewedAt])
+  @@unique([listingId, viewerDeviceId])
   @@map("listing_views")
 }
 
@@ -523,6 +555,8 @@ model SavedSearch {
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  alerts SavedSearchAlert[]
 
   @@unique([userId, queryKey])
   @@index([userId, updatedAt])
@@ -894,4 +928,26 @@ model AuditLog {
   @@index([actorUserId, createdAt])
   @@index([action, createdAt])
   @@map("audit_logs")
+}
+
+model SavedSearchAlert {
+  savedSearchId String @map("saved_search_id") @db.Uuid
+  listingId String @map("listing_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  savedSearch SavedSearch @relation(fields: [savedSearchId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@id([savedSearchId, listingId])
+  @@map("saved_search_alerts")
+}
+
+// Durable post-commit cleanup; intentionally independent of User hard-delete cascades.
+model AccountDeletionCleanup {
+  userId     String   @id @map("user_id") @db.Uuid
+  avatarUrls String[] @map("avatar_urls")
+  createdAt  DateTime @default(now()) @map("created_at")
+  retryAt    DateTime @default(now()) @map("retry_at")
+
+  @@index([retryAt])
+  @@map("account_deletion_cleanup")
 }

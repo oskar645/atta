@@ -1,4 +1,5 @@
 import 'package:atta/src/features/notifications/notifications_screen.dart';
+import 'package:atta/src/features/auth/legal_document_screen.dart';
 import 'package:atta/src/features/profile/about_app_screen.dart';
 import 'package:atta/src/features/profile/change_password_screen.dart';
 import 'package:atta/src/features/support/support_screen.dart';
@@ -22,6 +23,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _emailCtrl = TextEditingController();
   bool _saving = false;
   bool _deletingAccount = false;
+  bool _loadingMarketingConsent = true;
+  bool _marketingConsent = false;
 
   @override
   void initState() {
@@ -55,6 +58,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       if (mounted) {
         setState(() {});
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final auth = context.read<AuthService>();
+      try {
+        final accepted = await auth.getMarketingConsent();
+        if (!mounted) return;
+        setState(() {
+          _marketingConsent = accepted;
+          _loadingMarketingConsent = false;
+        });
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _loadingMarketingConsent = false);
       }
     });
   }
@@ -170,7 +187,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _deletingAccount = true);
     try {
       await auth.deleteAccount();
-      await auth.signOut();
       if (!mounted) return;
       showAppSnack(context, 'Ваш аккаунт удалён.');
     } catch (e) {
@@ -179,6 +195,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
       showAppSnack(context, message, isError: true);
     } finally {
       if (mounted) setState(() => _deletingAccount = false);
+    }
+  }
+
+  Future<void> _setMarketingConsent(bool accepted) async {
+    final previous = _marketingConsent;
+    setState(() {
+      _marketingConsent = accepted;
+      _loadingMarketingConsent = true;
+    });
+
+    try {
+      final saved = await context.read<AuthService>().updateMarketingConsent(
+            accepted: accepted,
+          );
+      if (!mounted) return;
+      setState(() {
+        _marketingConsent = saved;
+        _loadingMarketingConsent = false;
+      });
+      showAppSnack(
+        context,
+        saved
+            ? 'Маркетинговые сообщения включены'
+            : 'Маркетинговые сообщения выключены',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _marketingConsent = previous;
+        _loadingMarketingConsent = false;
+      });
+      showAppSnack(
+        context,
+        'Не удалось обновить согласие. Попробуйте позже.',
+        isError: true,
+      );
     }
   }
 
@@ -325,10 +377,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.delete_outline,
             iconColor: Theme.of(context).colorScheme.error,
             title: _deletingAccount ? 'Удаляем аккаунт...' : 'Удалить аккаунт',
-            subtitle: 'Полное удаление аккаунта и связанных данных',
+            subtitle: 'Удаление профиля и снятие объявлений с публикации',
             onTap: _deletingAccount ? null : _deleteAccount,
           ),
           _sectionTitle('Приложение'),
+          SwitchListTile(
+            secondary: const Icon(Icons.campaign_outlined),
+            title: const Text(
+                'Получать новости, акции и рекламные предложения ATTA'),
+            subtitle: const Text(
+              'Реклама и предложения ATTA. Сервисные уведомления остаются отдельно.',
+            ),
+            value: _marketingConsent,
+            onChanged: _loadingMarketingConsent ? null : _setMarketingConsent,
+          ),
+          _tile(
+            icon: Icons.gavel_outlined,
+            title: 'Правовая информация',
+            subtitle: 'Соглашение, политика и согласия',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const _LegalInfoScreen(),
+                ),
+              );
+            },
+          ),
           _tile(
             icon: Icons.notifications_none,
             title: 'Уведомления',
@@ -364,6 +438,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               );
             },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LegalInfoScreen extends StatelessWidget {
+  const _LegalInfoScreen();
+
+  Widget _tile(
+    BuildContext context, {
+    required String title,
+    required LegalDocumentKind kind,
+  }) {
+    return ListTile(
+      title: Text(title),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => LegalDocumentScreen(kind: kind),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Правовая информация')),
+      body: ListView(
+        children: [
+          _tile(
+            context,
+            title: 'Пользовательское соглашение',
+            kind: LegalDocumentKind.terms,
+          ),
+          _tile(
+            context,
+            title: 'Политика конфиденциальности',
+            kind: LegalDocumentKind.privacy,
+          ),
+          _tile(
+            context,
+            title: 'Согласие на обработку персональных данных',
+            kind: LegalDocumentKind.personalDataConsent,
+          ),
+          _tile(
+            context,
+            title: 'Маркетинговое согласие',
+            kind: LegalDocumentKind.marketingConsent,
+          ),
+          _tile(
+            context,
+            title: 'Согласие на распространение персональных данных',
+            kind: LegalDocumentKind.publicDataConsent,
           ),
         ],
       ),

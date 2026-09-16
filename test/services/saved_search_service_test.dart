@@ -1,8 +1,45 @@
+import 'dart:async';
+import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/saved_searches_api.dart';
+import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+      'session reset drops saved-search cache and ignores in-flight A response',
+      () async {
+    final api = _PendingSavedSearchesApi();
+    final service = SavedSearchService(api: api);
+    final first = service.refreshSavedSearches('A');
+    api.pending.removeAt(0).complete({
+      'items': [
+        {'id': 'private-a', 'user_id': 'A'}
+      ]
+    });
+    expect(await first, hasLength(1));
+    expect(service.peekSavedSearches('A'), hasLength(1));
+    final stale = service.refreshSavedSearches('A');
+    service.resetSession();
+    expect(service.peekSavedSearches('A'), isEmpty);
+    final next = service.refreshSavedSearches('B');
+    api.pending.removeAt(0).complete({
+      'items': [
+        {'id': 'private-a', 'user_id': 'A'}
+      ]
+    });
+    api.pending.removeAt(0).complete({
+      'items': [
+        {'id': 'private-b', 'user_id': 'B'}
+      ]
+    });
+    expect(await stale, isEmpty);
+    expect((await next).single.id, 'private-b');
+    expect(service.peekSavedSearches('A'), isEmpty);
+    expect(service.peekSavedSearches('B').single.id, 'private-b');
+  });
+
   test('saved search query key restores new filters without schema columns',
       () {
     final service = SavedSearchService();
@@ -104,4 +141,15 @@ void main() {
     expect(restored.priceFrom, isNull);
     expect(restored.onlyWithPhoto, isFalse);
   });
+}
+
+class _PendingSavedSearchesApi extends SavedSearchesApi {
+  _PendingSavedSearchesApi() : super(ApiClient(tokenStorage: TokenStorage()));
+  final pending = <Completer<Map<String, dynamic>>>[];
+  @override
+  Future<Map<String, dynamic>> list() {
+    final request = Completer<Map<String, dynamic>>();
+    pending.add(request);
+    return request.future;
+  }
 }

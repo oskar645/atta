@@ -139,7 +139,7 @@ class WalletService {
           const Wallet(
             balance: 0,
             maxBalance: 0,
-            welcomeBonus: 500,
+            welcomeBonus: 250,
             dailyBonusAmount: 15,
             lastDailyBonusAt: null,
             canClaimDailyBonus: true,
@@ -156,7 +156,7 @@ class WalletService {
           const Wallet(
             balance: 0,
             maxBalance: 0,
-            welcomeBonus: 500,
+            welcomeBonus: 250,
             dailyBonusAmount: 15,
             lastDailyBonusAt: null,
             canClaimDailyBonus: true,

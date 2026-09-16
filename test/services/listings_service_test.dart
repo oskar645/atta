@@ -196,6 +196,36 @@ void main() {
     expect(api.lastUpdateBody['oem_part_number'], '');
   });
 
+  test('increment view sends stable guest viewer device id', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.incrementView('listing-1');
+    await service.incrementView('listing-1');
+
+    expect(api.incrementViewCalls, 2);
+    expect(api.lastIncrementViewListingId, 'listing-1');
+    expect(api.lastIncrementViewUserId, isNull);
+    expect(api.incrementViewDeviceIds, hasLength(2));
+    expect(api.incrementViewDeviceIds.first, isNotEmpty);
+    expect(api.incrementViewDeviceIds.last, api.incrementViewDeviceIds.first);
+  });
+
+  test('increment view keeps authenticated user id and device id', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'timeweb_current_user': '''
+{"uid":"user-1","email":"u@example.com","display_name":"User"}
+''',
+    });
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.incrementView('listing-1');
+
+    expect(api.lastIncrementViewUserId, 'user-1');
+    expect(api.incrementViewDeviceIds.single, isNotEmpty);
+  });
+
   test('one failed photo reports partial failure without silent drop',
       () async {
     final mediaApi = _FakeMediaApi(failIndexes: <int>{1});
@@ -1091,6 +1121,83 @@ void main() {
     );
   });
 
+  test('stale empty my listings cache is not final for archived tab', () async {
+    final api = _FakeListingsApi(myListItems: <Map<String, dynamic>>[]);
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final active = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+    expect(active.items, isEmpty);
+    expect(api.myListingsCalls, 1);
+
+    api.myListItems.add(
+      _listingMap(
+        const <String>[],
+        id: 'archive-1',
+        status: 'archived',
+        ownerId: 'user-1',
+      ),
+    );
+
+    final archived = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived'},
+    );
+
+    expect(archived.items.map((item) => item.id), <String>['archive-1']);
+    expect(api.myListingsCalls, 2);
+    expect(api.myListingsQueries.last['status'], 'archived');
+  });
+
+  test('stale empty my listings cache is not final for active tab', () async {
+    final api = _FakeListingsApi(myListItems: <Map<String, dynamic>>[]);
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived'},
+    );
+
+    api.myListItems.add(
+      _listingMap(
+        const <String>[],
+        id: 'active-1',
+        status: 'approved',
+        ownerId: 'user-1',
+      ),
+    );
+
+    final active = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    expect(active.items.map((item) => item.id), <String>['active-1']);
+    expect(api.myListingsCalls, 2);
+    expect(api.myListingsQueries.last['status'], 'approved');
+  });
+
+  test('confirmed empty my listings page does not duplicate fresh request',
+      () async {
+    final api = _FakeListingsApi(myListItems: <Map<String, dynamic>>[]);
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final first = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+    final second = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'approved'},
+    );
+
+    expect(first.items, isEmpty);
+    expect(second.items, isEmpty);
+    expect(api.myListingsCalls, 1);
+  });
+
   test('detail refresh event keeps loaded active my listings cache', () async {
     final api = _FakeListingsApi(
       myListItems: <Map<String, dynamic>>[
@@ -1674,8 +1781,13 @@ class _FakeListingsApi extends ListingsApi {
   final List<Map<String, dynamic>> myListingsQueries = <Map<String, dynamic>>[];
   Map<String, dynamic> lastCreateBody = const <String, dynamic>{};
   Map<String, dynamic> lastUpdateBody = const <String, dynamic>{};
+  String? lastIncrementViewListingId;
+  String? lastIncrementViewUserId;
+  final List<String> incrementViewDeviceIds = <String>[];
   int myListingsCalls = 0;
   Object? myListingsError;
+
+  int get incrementViewCalls => incrementViewDeviceIds.length;
 
   @override
   Future<Map<String, dynamic>> create(Map<String, dynamic> body) async {
@@ -1805,6 +1917,18 @@ class _FakeListingsApi extends ListingsApi {
       'nextCursor': end < filtered.length ? '$end' : null,
       'hasMore': end < filtered.length,
     };
+  }
+
+  @override
+  Future<Map<String, dynamic>> incrementView(
+    String id, {
+    String? viewerUserId,
+    String? viewerDeviceId,
+  }) async {
+    lastIncrementViewListingId = id;
+    lastIncrementViewUserId = viewerUserId;
+    incrementViewDeviceIds.add(viewerDeviceId ?? '');
+    return <String, dynamic>{'ok': true};
   }
 }
 

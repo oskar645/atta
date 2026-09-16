@@ -1,6 +1,6 @@
 import { env } from '../../config/env';
 
-export const WALLET_WELCOME_BONUS = 500;
+export const WALLET_WELCOME_BONUS = 250;
 export const WALLET_DAILY_BONUS_AMOUNT = 15;
 export const WALLET_REFERRAL_INVITER_BONUS = 100;
 export const WALLET_TIME_ZONE = env.WALLET_TIME_ZONE;

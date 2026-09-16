@@ -24,6 +24,7 @@ class AuthService {
         notificationsApi = NotificationsApi(_apiClient),
         adminApi = AdminApi(_apiClient) {
     ApiClient.configureAuthHandlers(
+      sessionGeneration: () => _backend.sessionGeneration,
       onRefreshSession: _backend.refreshSession,
       onSessionExpired: _backend.expireSession,
       onAwaitAuthorizedSession: _backend.awaitPrivateAuthReady,
@@ -58,12 +59,18 @@ class AuthService {
     required String password,
     String? displayName,
     String? phone,
+    bool acceptedLegal = false,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
   }) =>
       _backend.signUp(
         email: email,
         password: password,
         displayName: displayName,
         phone: phone,
+        acceptedLegal: acceptedLegal,
+        acceptedPersonalData: acceptedPersonalData,
+        acceptedMarketing: acceptedMarketing,
       );
 
   Future<void> signOut() => _backend.signOut();
@@ -102,6 +109,18 @@ class AuthService {
     await AuthApi(_apiClient).markAppOpened();
   }
 
+  Future<bool> getMarketingConsent() async {
+    final response = await AuthApi(_apiClient).getMarketingConsent();
+    return response['accepted'] == true;
+  }
+
+  Future<bool> updateMarketingConsent({required bool accepted}) async {
+    final response = await AuthApi(_apiClient).updateMarketingConsent(
+      accepted: accepted,
+    );
+    return response['accepted'] == true;
+  }
+
   Future<Map<String, dynamic>> recordReferralOpen({
     required String referralCode,
   }) =>
@@ -123,19 +142,28 @@ class AuthService {
     required String password,
     required String displayName,
     required bool acceptedLegal,
+    bool acceptedPersonalData = false,
+    bool acceptedMarketing = false,
     required String verificationCheckId,
     String referralCode = '',
   }) async {
+    final generation = _backend.sessionGeneration;
     final pendingReferralCode = referralCode.trim().isNotEmpty
         ? referralCode.trim()
         : (await DeepLinkService().readPendingInviteReferrerId()) ?? '';
     final pendingReferralId =
         (await DeepLinkService().readPendingInviteReferralId()) ?? '';
+    if (generation != _backend.sessionGeneration) {
+      return;
+    }
     await _backend.signUpWithVerifiedPhone(
       phone: phone,
       password: password,
       displayName: displayName,
       verificationCheckId: verificationCheckId,
+      acceptedLegal: acceptedLegal,
+      acceptedPersonalData: acceptedPersonalData,
+      acceptedMarketing: acceptedMarketing,
       referralCode: pendingReferralCode,
       referralId: pendingReferralId,
     );

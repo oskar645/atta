@@ -66,11 +66,13 @@ test('configured APNs sends push through http2 client', async () => {
   );
   env.APNS_PRIVATE_KEY_PATH = keyPath;
 
+  let authorization = '';
   let requestPath = '';
   let requestBody = '';
   setHttp2Connect((() => ({
     on: () => undefined,
     request: (headers: http2.OutgoingHttpHeaders) => {
+      authorization = `${headers.authorization ?? ''}`;
       requestPath = `${headers[':path'] ?? ''}`;
       const request = new EventEmitter() as EventEmitter & {
         setEncoding: () => void;
@@ -98,6 +100,11 @@ test('configured APNs sends push through http2 client', async () => {
   assert.equal(result.sent, true);
   assert.equal(result.status, 200);
   assert.equal(requestPath, '/3/device/ios-token');
+  const [header, claims, signature] = authorization.replace(/^bearer /, '').split('.');
+  const decodedSignature = Buffer.from(signature, 'base64url');
+  assert.equal(decodedSignature.length, 64, 'APNs ES256 JWT uses raw R||S');
+  assert.equal(crypto.verify('sha256', Buffer.from(`${header}.${claims}`),
+    { key: crypto.createPublicKey(privateKey), dsaEncoding: 'ieee-p1363' }, decodedSignature), true);
   assert.equal(JSON.parse(requestBody).aps.badge, 3);
   assert.equal(JSON.parse(requestBody).actionType, 'test');
   fs.unlinkSync(keyPath);

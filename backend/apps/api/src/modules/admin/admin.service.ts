@@ -1,3 +1,6 @@
+import { AccountDeletionService } from '../auth/account-deletion.service';
+import { Inject, Optional } from '@nestjs/common';
+import { SavedSearchAlertsService } from '../saved-searches/saved-search-alerts.service';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   FeedAdPlacement,
@@ -157,6 +160,8 @@ export class AdminService {
     private readonly reviewsService: ReviewsService,
     private readonly storageService: StorageService,
     private readonly userBlocksService: UserBlocksService,
+    @Optional() @Inject(SavedSearchAlertsService) private readonly savedSearchAlerts: SavedSearchAlertsService | undefined,
+    private readonly accountDeletion: AccountDeletionService,
   ) {}
 
   private pageLimit(value: number | undefined, fallback: number, max = 100) {
@@ -1091,7 +1096,7 @@ export class AdminService {
 
     await this.performSoftDeleteUser(id, {
       actorUserId: authUser.userId,
-      reason: 'Deleted by admin',
+      reason: 'Удалено администратором',
     });
 
     return {
@@ -2280,6 +2285,7 @@ export class AdminService {
       },
     });
 
+    await this.savedSearchAlerts?.notifyApprovedListing(id);
     await this.resolveModerationRevisions(id, now);
 
     await this.notificationsService.createSystemNotification({
@@ -2314,7 +2320,7 @@ export class AdminService {
       where: { id },
       data: {
         status: ListingStatus.REJECTED,
-        rejectionReason: params?.reason?.trim() || 'Rejected by moderator',
+        rejectionReason: params?.reason?.trim() || 'Отклонено модератором',
         moderationNote: params?.moderationNote?.trim() || null,
         moderatedBy: authUser.userId,
         moderatedAt: now,
@@ -2415,7 +2421,7 @@ export class AdminService {
       where: { id },
       data: {
         status: ListingStatus.DELETED,
-        rejectionReason: params?.reason?.trim() || 'Deleted by moderator',
+        rejectionReason: params?.reason?.trim() || 'Удалено модератором',
         moderationNote: params?.moderationNote?.trim() || null,
         moderatedBy: authUser.userId,
         moderatedAt: new Date(),
@@ -2525,175 +2531,7 @@ export class AdminService {
       reason: string;
     },
   ) {
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-      select: {
-        avatarUrl: true,
-      },
-    });
-    const now = new Date();
-    const deletedEmail = `deleted+${userId}@atta.local`;
-    const listingIds = (
-      await this.prisma.listing.findMany({
-        where: {
-          ownerId: userId,
-        },
-        select: {
-          id: true,
-        },
-      })
-    ).map((item) => item.id);
-    const chatIds = (
-      await this.prisma.chat.findMany({
-        where: {
-          OR: [{ buyerId: userId }, { sellerId: userId }],
-        },
-        select: {
-          id: true,
-        },
-      })
-    ).map((item) => item.id);
-
-    await this.storageService.deleteAvatarUrl(user?.avatarUrl ?? null);
-    await this.storageService.deleteListingPhotosForListings(listingIds);
-    await this.storageService.deleteChatImagesForChats(chatIds);
-
-    await this.prisma.$transaction(async (tx) => {
-      if (chatIds.length > 0) {
-        await tx.chatMessage.updateMany({
-          where: {
-            chatId: {
-              in: chatIds,
-            },
-            deletedAt: null,
-          },
-          data: {
-            deletedAt: now,
-          },
-        });
-        await tx.chat.updateMany({
-          where: {
-            id: {
-              in: chatIds,
-            },
-          },
-          data: {
-            deletedByBuyerAt: now,
-            deletedBySellerAt: now,
-            unreadForBuyer: 0,
-            unreadForSeller: 0,
-            lastMessage: '',
-          },
-        });
-      }
-
-      await tx.favorite.deleteMany({
-        where: {
-          userId,
-        },
-      });
-      await tx.savedSearch.deleteMany({
-        where: {
-          userId,
-        },
-      });
-      await tx.viewedListing.deleteMany({
-        where: {
-          userId,
-        },
-      });
-      await tx.userFollow.deleteMany({
-        where: {
-          OR: [{ followerId: userId }, { sellerId: userId }],
-        },
-      });
-      await tx.review.updateMany({
-        where: {
-          reviewerId: userId,
-          deletedAt: null,
-        },
-        data: {
-          deletedAt: now,
-          updatedAt: now,
-        },
-      });
-      await tx.userNotification.deleteMany({
-        where: {
-          userId,
-        },
-      });
-      await tx.supportMessage.updateMany({
-        where: {
-          senderUserId: userId,
-        },
-        data: {
-          senderUserId: null,
-        },
-      });
-      await tx.supportTicket.updateMany({
-        where: {
-          userId,
-        },
-        data: {
-          name: 'Удалённый пользователь',
-        },
-      });
-      await tx.listing.updateMany({
-        where: {
-          ownerId: userId,
-          deletedAt: null,
-        },
-        data: {
-          status: ListingStatus.DELETED,
-          deletedAt: now,
-          publishedAt: null,
-          moderatedBy: params.actorUserId,
-          moderatedAt: now,
-          rejectionReason: params.reason,
-        },
-      });
-      await tx.userSession.updateMany({
-        where: {
-          userId,
-          revokedAt: null,
-        },
-        data: {
-          revokedAt: now,
-        },
-      });
-      await tx.user.update({
-        where: {
-          id: userId,
-        },
-        data: {
-          status: UserStatus.DELETED,
-          deletedAt: now,
-          blockedAt: now,
-          blockReason: params.reason,
-          phoneVerified: false,
-          phone: null,
-          email: deletedEmail,
-          displayName: 'Удалённый пользователь',
-          name: 'Удалённый пользователь',
-          avatarUrl: null,
-          photoUrl: null,
-        },
-      });
-      if (listingIds.length > 0) {
-        await tx.report.updateMany({
-          where: {
-            listingId: {
-              in: listingIds,
-            },
-          },
-          data: {
-            listingOwnerId: null,
-          },
-        });
-      }
-    });
+    await this.accountDeletion.deleteUser(userId, params);
   }
 
   private async expirePromotionsByTime() {

@@ -962,6 +962,7 @@ class AdminService {
   Future<AuthUser?> _refreshAdminIdentity({
     bool forceRefresh = false,
   }) async {
+    final generation = _tokenStorage.sessionGeneration;
     final now = DateTime.now();
     if (!forceRefresh &&
         _lastAdminResolvedAt != null &&
@@ -1000,11 +1001,15 @@ class AdminService {
         'role': normalizedMap['role'] ?? response['role'],
       });
       final nextUser = _mergeUsers(cachedUser, hydratedUser);
-      await _tokenStorage.saveSession(
-        accessToken: accessToken,
-        refreshToken: refreshToken,
-        currentUser: nextUser,
+      await _tokenStorage.mutateSession(
+        generation,
+        () => _tokenStorage.saveSession(
+          accessToken: accessToken,
+          refreshToken: refreshToken,
+          currentUser: nextUser,
+        ),
       );
+      if (generation != _tokenStorage.sessionGeneration) return null;
       _lastAdminResolvedUser = nextUser;
       _lastAdminResolvedAt = now;
       return nextUser;

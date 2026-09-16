@@ -87,6 +87,12 @@ let AuthController = class AuthController {
     getMe(authUser) {
         return this.authService.getMe(authUser);
     }
+    getMarketingConsent(authUser) {
+        return this.authService.getMarketingConsent(authUser);
+    }
+    updateMarketingConsent(authUser, request, dto) {
+        return this.authService.updateMarketingConsent(authUser, dto, request);
+    }
     createRestoreCredentialRegistrationOptions(authUser) {
         return this.restoreCredentialsService.createRegistrationOptions(authUser);
     }
@@ -186,6 +192,24 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "getMe", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Get)('consents/marketing'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "getMarketingConsent", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Patch)('consents/marketing'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Req)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object]),
+    __metadata("design:returntype", void 0)
+], AuthController.prototype, "updateMarketingConsent", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('restore-credentials/registration-options'),

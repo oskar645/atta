@@ -340,12 +340,19 @@ function createService(overrides?: {
   return new ListingsService(
     prisma as never,
     {} as never,
-    { expirePromotionsByTime: async () => undefined } as never,
+    {
+      expirePromotionsByTime: async () => undefined,
+      enrichListing: () => ({}),
+    } as never,
   );
 }
 
 function createListingViewCounterService(options?: {
-  existingViews?: Array<{ listingId: string; viewerUserId: string | null }>;
+  existingViews?: Array<{
+    listingId: string;
+    viewerUserId: string | null;
+    viewerDeviceId?: string | null;
+  }>;
   ownerId?: string;
   initialViewCount?: number;
 }) {
@@ -356,7 +363,11 @@ function createListingViewCounterService(options?: {
     viewCount: options?.initialViewCount ?? 0,
   };
   const views = [...(options?.existingViews ?? [])];
-  const createdViews: Array<{ listingId: string; viewerUserId: string | null }> = [];
+  const createdViews: Array<{
+    listingId: string;
+    viewerUserId: string | null;
+    viewerDeviceId: string | null;
+  }> = [];
   const advisoryLocks: unknown[][] = [];
   let transactionQueue = Promise.resolve();
 
@@ -374,18 +385,43 @@ function createListingViewCounterService(options?: {
         const found = views.find(
           (view) =>
             view.listingId === where.listingId &&
-            view.viewerUserId === where.viewerUserId,
+            (Array.isArray(where.OR)
+              ? where.OR.some(
+                  (condition: Record<string, any>) =>
+                    (condition.viewerUserId != null &&
+                      view.viewerUserId === condition.viewerUserId) ||
+                    (condition.viewerDeviceId != null &&
+                      view.viewerDeviceId === condition.viewerDeviceId),
+                )
+              : view.viewerUserId === where.viewerUserId),
         );
-        return found ? { id: `view-${views.indexOf(found) + 1}` } : null;
+        return found
+          ? {
+              id: `view-${views.indexOf(found) + 1}`,
+              viewerUserId: found.viewerUserId,
+            }
+          : null;
       },
       create: async (args: Record<string, any>) => {
         const view = {
           listingId: String(args.data.listingId),
           viewerUserId: (args.data.viewerUserId ?? null) as string | null,
+          viewerDeviceId: (args.data.viewerDeviceId ?? null) as string | null,
         };
         views.push(view);
         createdViews.push(view);
         return { id: `view-${views.length}`, ...view };
+      },
+      update: async (args: Record<string, any>) => {
+        const id = String(args.where.id);
+        const index = Number(id.replace('view-', '')) - 1;
+        const view = views[index];
+        if (view) {
+          view.viewerUserId = (args.data.viewerUserId ?? view.viewerUserId) as
+            | string
+            | null;
+        }
+        return view ? { id, ...view } : null;
       },
     },
     $executeRaw: async (
@@ -415,6 +451,9 @@ function createListingViewCounterService(options?: {
     advisoryLocks,
   };
 }
+
+const guestDeviceId = '11111111-1111-4111-8111-111111111111';
+const anotherGuestDeviceId = '22222222-2222-4222-8222-222222222222';
 
 test('incrementView does not count owner views', async () => {
   const harness = createListingViewCounterService();
@@ -796,7 +835,11 @@ test('incrementView counts a regular user once per listing', async () => {
 
   assert.equal(harness.viewCount, 1);
   assert.deepEqual(harness.createdViews, [
-    { listingId: harness.listingId, viewerUserId: strangerUser.userId },
+    {
+      listingId: harness.listingId,
+      viewerUserId: strangerUser.userId,
+      viewerDeviceId: null,
+    },
   ]);
 });
 
@@ -817,6 +860,21 @@ test('incrementView counts another regular user for the same listing', async () 
   );
 });
 
+test('incrementView does not count the same regular user from another device', async () => {
+  const harness = createListingViewCounterService();
+
+  await harness.service.incrementView(harness.listingId, strangerUser, {
+    viewer_device_id: guestDeviceId,
+  });
+  const response = await harness.service.incrementView(harness.listingId, strangerUser, {
+    viewer_device_id: anotherGuestDeviceId,
+  });
+
+  assert.equal(response.view_count, 1);
+  assert.equal(harness.viewCount, 1);
+  assert.equal(harness.createdViews.length, 1);
+});
+
 test('incrementView counts every admin view of another owner listing', async () => {
   const harness = createListingViewCounterService();
 
@@ -831,6 +889,101 @@ test('incrementView counts every admin view of another owner listing', async () 
   assert.equal(harness.viewCount, 10);
   assert.equal(harness.createdViews.length, 10);
   assert.equal(harness.advisoryLocks.length, 0);
+});
+
+test('incrementView counts a guest device first view once', async () => {
+  const harness = createListingViewCounterService();
+
+  const response = await harness.service.incrementView(harness.listingId, undefined, {
+    viewer_device_id: guestDeviceId,
+  });
+
+  assert.equal(response.view_count, 1);
+  assert.equal(harness.viewCount, 1);
+  assert.deepEqual(harness.createdViews, [
+    {
+      listingId: harness.listingId,
+      viewerUserId: null,
+      viewerDeviceId: guestDeviceId,
+    },
+  ]);
+});
+
+test('incrementView does not count the same guest device repeatedly', async () => {
+  const harness = createListingViewCounterService();
+
+  await harness.service.incrementView(harness.listingId, undefined, {
+    viewer_device_id: guestDeviceId,
+  });
+  for (let index = 0; index < 10; index += 1) {
+    const response = await harness.service.incrementView(harness.listingId, undefined, {
+      viewer_device_id: guestDeviceId,
+    });
+    assert.equal(response.view_count, 1);
+  }
+
+  assert.equal(harness.viewCount, 1);
+  assert.equal(harness.createdViews.length, 1);
+});
+
+test('incrementView treats guest refresh as the same device view', async () => {
+  const harness = createListingViewCounterService({
+    initialViewCount: 3,
+    existingViews: [
+      {
+        listingId: 'listing-1',
+        viewerUserId: null,
+        viewerDeviceId: guestDeviceId,
+      },
+    ],
+  });
+
+  const response = await harness.service.incrementView(harness.listingId, undefined, {
+    viewer_device_id: guestDeviceId,
+  });
+
+  assert.equal(response.view_count, 3);
+  assert.equal(harness.viewCount, 3);
+  assert.equal(harness.createdViews.length, 0);
+});
+
+test('incrementView counts another anonymous device for the same listing', async () => {
+  const harness = createListingViewCounterService();
+
+  await harness.service.incrementView(harness.listingId, undefined, {
+    viewer_device_id: guestDeviceId,
+  });
+  const response = await harness.service.incrementView(harness.listingId, undefined, {
+    viewer_device_id: anotherGuestDeviceId,
+  });
+
+  assert.equal(response.view_count, 2);
+  assert.equal(harness.viewCount, 2);
+  assert.deepEqual(
+    harness.createdViews.map((view) => view.viewerDeviceId),
+    [guestDeviceId, anotherGuestDeviceId],
+  );
+});
+
+test('incrementView does not recount guest device after login in same browser', async () => {
+  const harness = createListingViewCounterService({
+    initialViewCount: 1,
+    existingViews: [
+      {
+        listingId: 'listing-1',
+        viewerUserId: null,
+        viewerDeviceId: guestDeviceId,
+      },
+    ],
+  });
+
+  const response = await harness.service.incrementView(harness.listingId, strangerUser, {
+    viewer_device_id: guestDeviceId,
+  });
+
+  assert.equal(response.view_count, 1);
+  assert.equal(harness.viewCount, 1);
+  assert.equal(harness.createdViews.length, 0);
 });
 
 test('incrementView does not count admin views of own listing', async () => {
@@ -878,7 +1031,11 @@ test('incrementView protects regular user duplicate race with transaction lock',
 
   assert.equal(harness.viewCount, 1);
   assert.deepEqual(harness.createdViews, [
-    { listingId: harness.listingId, viewerUserId: strangerUser.userId },
+    {
+      listingId: harness.listingId,
+      viewerUserId: strangerUser.userId,
+      viewerDeviceId: null,
+    },
   ]);
   assert.equal(harness.advisoryLocks.length, 8);
 });
@@ -1680,6 +1837,14 @@ test('archive without sale works through explicit archive endpoint', async () =>
     (updateArgs?.data as Record<string, unknown>).status,
     ListingStatus.ARCHIVED,
   );
+  assert.equal(
+    (updateArgs?.data as Record<string, unknown>).rejectionReason,
+    'Объявление снято с публикации.',
+  );
+  assert.equal((updateArgs?.data as Record<string, unknown>).moderationNote, null);
+  assert.equal((updateArgs?.data as Record<string, unknown>).moderatedBy, null);
+  assert.equal((updateArgs?.data as Record<string, unknown>).moderatedAt, null);
+  assert.ok((updateArgs?.data as Record<string, unknown>).archivedAt instanceof Date);
 });
 
 test('non-owner cannot archive listing through explicit endpoint', async () => {
@@ -1695,6 +1860,54 @@ test('non-owner cannot archive listing through explicit endpoint', async () => {
     service.archive('listing-1', strangerUser, { status: 'sold' }),
     ForbiddenException,
   );
+});
+
+test('owner archive cannot overwrite admin archived state', async () => {
+  let updateCalled = false;
+  const service = createService({
+    findUnique: async () => ({
+      id: 'listing-1',
+      ownerId: ownerUser.userId,
+      status: ListingStatus.ARCHIVED,
+      rejectionReason: 'Объявление снято с публикации администратором.',
+      moderationNote: 'admin note',
+      moderatedBy: adminUser.userId,
+      moderatedAt: new Date('2026-07-02T10:00:00.000Z'),
+      deletedAt: null,
+    }),
+    update: async () => {
+      updateCalled = true;
+      throw new Error('should not update');
+    },
+  });
+
+  await assert.rejects(
+    () => service.archive('listing-1', ownerUser, { status: 'archived' }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_ARCHIVE_NOT_ALLOWED',
+  );
+  assert.equal(updateCalled, false);
+});
+
+test('owner archive remains forbidden for sold and deleted listings', async () => {
+  for (const status of [ListingStatus.SOLD, ListingStatus.DELETED]) {
+    const service = createService({
+      findUnique: async () => ({
+        id: 'listing-1',
+        ownerId: ownerUser.userId,
+        status,
+        deletedAt: status === ListingStatus.DELETED ? new Date() : null,
+      }),
+    });
+
+    await assert.rejects(
+      () => service.archive('listing-1', ownerUser, { status: 'archived' }),
+      (error) =>
+        error instanceof BadRequestException &&
+        error.message === 'LISTING_ARCHIVE_NOT_ALLOWED',
+    );
+  }
 });
 
 test('create uses owner phone when dto phone is empty', async () => {
@@ -3657,6 +3870,202 @@ function createPendingPatchService(initial: Record<string, any>) {
   return new ListingsService(prisma as never, {} as never, {} as never);
 }
 
+function createResubmitService(initial: Record<string, any>) {
+  const revisions: Array<Record<string, any>> = [];
+  let savedListing: Record<string, any> = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Авто'),
+    title: 'Toyota Camry',
+    description: 'Живой автомобиль',
+    subcategory: 'Легковые автомобили',
+    price: BigInt(1200000),
+    city: 'Грозный',
+    status: ListingStatus.ARCHIVED,
+    publishedAt: new Date('2026-07-01T10:00:00.000Z'),
+    archivedAt: new Date('2026-07-02T10:00:00.000Z'),
+    rejectionReason: 'Объявление снято с публикации.',
+    moderationNote: 'old note',
+    moderatedBy: null,
+    moderatedAt: null,
+    deletedAt: null,
+    photos: [listingPhoto()],
+    owner: listingOwner(),
+    ...initial,
+  };
+  const prisma = {
+    listing: {
+      findUnique: async () => savedListing,
+      update: async (args: Record<string, any>) => {
+        savedListing = {
+          ...savedListing,
+          ...Object.fromEntries(
+            Object.entries(args.data ?? {}).filter(([, value]) => value !== undefined),
+          ),
+          updatedAt: new Date(),
+        };
+        return savedListing;
+      },
+    },
+    listingModerationRevision: {
+      create: async (args: Record<string, any>) => {
+        revisions.push(args.data);
+        return { id: `revision-${revisions.length}`, ...args.data };
+      },
+    },
+    $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
+      handler(prisma),
+  };
+  const service = new ListingsService(
+    prisma as never,
+    {} as never,
+    {} as never,
+  );
+  return {
+    service,
+    get listing() {
+      return savedListing;
+    },
+    revisions,
+  };
+}
+
+test('owner archived listing resubmit moves to pending and keeps listing data', async () => {
+  const context = createResubmitService({});
+
+  const response = await context.service.resubmit('listing-1', ownerUser);
+
+  const listing = context.listing;
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(response.status_after_resubmit, 'pending');
+  assert.equal(listing.archivedAt, null);
+  assert.equal(listing.rejectionReason, null);
+  assert.equal(listing.moderationNote, null);
+  assert.equal(listing.moderatedBy, null);
+  assert.equal(listing.title, 'Toyota Camry');
+  assert.equal(listing.price, BigInt(1200000));
+  assert.equal(listing.photos.length, 1);
+  assert.equal(response.listing.photo_items.length, 1);
+  assert.equal(context.revisions.length, 1);
+});
+
+test('legacy owner archived listing with stale moderation fields can be resubmitted', async () => {
+  const context = createResubmitService({
+    status: ListingStatus.ARCHIVED,
+    rejectionReason: 'Объявление снято с публикации.',
+    moderationNote: 'old moderation note',
+    moderatedBy: ownerUser.userId,
+    moderatedAt: new Date('2026-07-01T10:05:00.000Z'),
+    archivedAt: new Date('2026-07-02T10:00:00.000Z'),
+  });
+
+  const response = await context.service.resubmit('listing-1', ownerUser);
+
+  const listing = context.listing;
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(listing.archivedAt, null);
+  assert.equal(listing.rejectionReason, null);
+  assert.equal(listing.moderationNote, null);
+  assert.equal(listing.moderatedBy, null);
+  assert.equal(listing.moderatedAt, null);
+  assert.equal(listing.photos.length, 1);
+});
+
+test('legacy owner archived listing with old owner reason can be resubmitted', async () => {
+  const context = createResubmitService({
+    status: ListingStatus.ARCHIVED,
+    rejectionReason: 'Снято владельцем с публикации.',
+    moderationNote: 'old moderation note',
+    moderatedBy: ownerUser.userId,
+    moderatedAt: new Date('2026-07-01T10:05:00.000Z'),
+    archivedAt: new Date('2026-07-02T10:00:00.000Z'),
+  });
+
+  const response = await context.service.resubmit('listing-1', ownerUser);
+
+  const listing = context.listing;
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(listing.archivedAt, null);
+  assert.equal(listing.rejectionReason, null);
+  assert.equal(listing.moderationNote, null);
+  assert.equal(listing.moderatedBy, null);
+  assert.equal(listing.moderatedAt, null);
+  assert.equal(listing.photos.length, 1);
+});
+
+test('resubmit does not approve listing without moderator approval', async () => {
+  const { service } = createResubmitService({});
+
+  const response = await service.resubmit('listing-1', ownerUser);
+
+  assert.equal(response.listing.status, 'pending');
+  assert.notEqual(response.listing.status, 'approved');
+});
+
+test('rejected listing can be resubmitted to pending', async () => {
+  const { service } = createResubmitService({
+    status: ListingStatus.REJECTED,
+    rejectionReason: 'Отклонено модератором',
+    moderatedBy: adminUser.userId,
+    moderatedAt: new Date('2026-07-02T10:00:00.000Z'),
+    archivedAt: null,
+  });
+
+  const response = await service.resubmit('listing-1', ownerUser);
+
+  assert.equal(response.listing.status, 'pending');
+});
+
+test('sold listing resubmit is forbidden', async () => {
+  const { service } = createResubmitService({ status: ListingStatus.SOLD });
+
+  await assert.rejects(
+    () => service.resubmit('listing-1', ownerUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_RESUBMIT_NOT_ALLOWED',
+  );
+});
+
+test('deleted listing resubmit is forbidden', async () => {
+  const { service } = createResubmitService({
+    status: ListingStatus.DELETED,
+    deletedAt: new Date('2026-07-02T10:00:00.000Z'),
+  });
+
+  await assert.rejects(
+    () => service.resubmit('listing-1', ownerUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_RESUBMIT_NOT_ALLOWED',
+  );
+});
+
+test('admin archived listing cannot be resubmitted by owner', async () => {
+  const { service } = createResubmitService({
+    status: ListingStatus.ARCHIVED,
+    rejectionReason: 'Объявление снято с публикации администратором.',
+    moderatedBy: adminUser.userId,
+    moderatedAt: new Date('2026-07-02T10:00:00.000Z'),
+  });
+
+  await assert.rejects(
+    () => service.resubmit('listing-1', ownerUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_RESUBMIT_NOT_ALLOWED',
+  );
+});
+
+test('stranger cannot resubmit listing', async () => {
+  const { service } = createResubmitService({});
+
+  await assert.rejects(
+    () => service.resubmit('listing-1', strangerUser),
+    (error) =>
+      error instanceof ForbiddenException &&
+      error.message === 'Only owner can resubmit listing',
+  );
+});
+
 test('pending PATCH rejects zero price direct API bypass', async () => {
   const service = createPendingPatchService({});
 
@@ -3740,6 +4149,58 @@ test('public feed only returns approved listings with at least one photo', async
   assert.equal(findManyArgs?.where.category, 'Одежда');
 });
 
+test('public listing query ignores manipulated non-public status filter', async () => {
+  let findManyCalled = false;
+  const service = createService({
+    findMany: async () => {
+      findManyCalled = true;
+      return [createApprovedListing('listing-pending', '2026-06-19T10:00:00.000Z')];
+    },
+  });
+
+  const response = await service.findAll({ status: 'pending' });
+
+  assert.equal(findManyCalled, false);
+  assert.deepEqual(response.items, []);
+  assert.equal(response.hasMore, false);
+});
+
+test('public listing response omits hidden contact phone', async () => {
+  const hidden = {
+    ...createApprovedListing('listing-hidden-phone', '2026-06-19T10:00:00.000Z'),
+    phone: '79281234567',
+    phoneHidden: true,
+    photos: [listingPhoto()],
+    owner: listingOwner(),
+  };
+  const service = createService({
+    findUnique: async () => hidden,
+  });
+
+  const response = await service.findOne('listing-hidden-phone');
+
+  assert.equal(response.listing.phone_hidden, true);
+  assert.equal(response.listing.phone, null);
+});
+
+test('owner listing response keeps hidden contact phone for private flow', async () => {
+  const hidden = {
+    ...createApprovedListing('listing-hidden-phone', '2026-06-19T10:00:00.000Z'),
+    phone: '79281234567',
+    phoneHidden: true,
+    photos: [listingPhoto()],
+    owner: listingOwner(),
+  };
+  const service = createService({
+    findUnique: async () => hidden,
+  });
+
+  const response = await service.findOne('listing-hidden-phone', ownerUser);
+
+  assert.equal(response.listing.phone_hidden, true);
+  assert.equal(response.listing.phone, '79281234567');
+});
+
 test('public owner listing query does not expose non-public statuses', async () => {
   let findManyCalled = false;
   const service = createService({
@@ -3783,22 +4244,12 @@ test('public owner listing query keeps approved owner listings public-compatible
   });
 });
 
-test('public owner archive mode only exposes archived and sold statuses', async () => {
-  let findManyArgs: Record<string, any> | undefined;
-  const archived = {
-    ...createApprovedListing('listing-archived', '2026-06-19T10:00:00.000Z'),
-    status: ListingStatus.ARCHIVED,
-    archivedAt: new Date('2026-06-20T10:00:00.000Z'),
-  };
-  const sold = {
-    ...createApprovedListing('listing-sold', '2026-06-18T10:00:00.000Z'),
-    status: ListingStatus.SOLD,
-    archivedAt: new Date('2026-06-21T10:00:00.000Z'),
-  };
+test('public owner archive mode does not expose archived or sold listings', async () => {
+  let findManyCalled = false;
   const service = createService({
-    findMany: async (args?: Record<string, unknown>) => {
-      findManyArgs = args as Record<string, any>;
-      return [archived, sold];
+    findMany: async () => {
+      findManyCalled = true;
+      return [];
     },
   });
 
@@ -3808,19 +4259,9 @@ test('public owner archive mode only exposes archived and sold statuses', async 
     limit: 20,
   });
 
-  assert.deepEqual(
-    response.items.map((item: { status: string }) => item.status),
-    ['archived', 'sold'],
-  );
-  assert.equal(findManyArgs?.where?.ownerId, 'owner-2');
-  assert.deepEqual(findManyArgs?.where?.status, {
-    in: [ListingStatus.ARCHIVED, ListingStatus.SOLD],
-  });
-  assert.deepEqual(findManyArgs?.where?.photos, { some: {} });
-  assert.deepEqual(findManyArgs?.where?.owner, {
-    deletedAt: null,
-    status: UserStatus.ACTIVE,
-  });
+  assert.equal(findManyCalled, false);
+  assert.deepEqual(response.items, []);
+  assert.equal(response.hasMore, false);
 });
 
 test('delete last photo is rejected for publishable listing statuses', async () => {

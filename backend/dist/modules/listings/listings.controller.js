@@ -21,6 +21,7 @@ const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_listing_dto_1 = require("./dto/create-listing.dto");
 const archive_listing_dto_1 = require("./dto/archive-listing.dto");
 const update_listing_dto_1 = require("./dto/update-listing.dto");
+const increment_listing_view_dto_1 = require("./dto/increment-listing-view.dto");
 const listings_service_1 = require("./listings.service");
 let ListingsController = class ListingsController {
     constructor(listingsService, rateLimitService) {
@@ -75,11 +76,14 @@ let ListingsController = class ListingsController {
     archive(id, authUser, dto) {
         return this.listingsService.archive(id, authUser, dto);
     }
-    incrementView(id, authUser) {
-        return this.listingsService.incrementView(id, authUser);
+    resubmit(id, authUser) {
+        return this.listingsService.resubmit(id, authUser);
     }
-    incrementViewAlias(id, authUser) {
-        return this.listingsService.incrementView(id, authUser);
+    incrementView(id, authUser, dto) {
+        return this.listingsService.incrementView(id, authUser, dto);
+    }
+    incrementViewAlias(id, authUser, dto) {
+        return this.listingsService.incrementView(id, authUser, dto);
     }
     remove(id, authUser) {
         return this.listingsService.remove(id, authUser);
@@ -166,12 +170,22 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "archive", null);
 __decorate([
-    (0, common_1.Post)(':id/views'),
-    (0, common_1.UseGuards)(optional_jwt_auth_guard_1.OptionalJwtAuthGuard),
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)(':id/resubmit'),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], ListingsController.prototype, "resubmit", null);
+__decorate([
+    (0, common_1.Post)(':id/views'),
+    (0, common_1.UseGuards)(optional_jwt_auth_guard_1.OptionalJwtAuthGuard),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, increment_listing_view_dto_1.IncrementListingViewDto]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "incrementView", null);
 __decorate([
@@ -179,8 +193,9 @@ __decorate([
     (0, common_1.UseGuards)(optional_jwt_auth_guard_1.OptionalJwtAuthGuard),
     __param(0, (0, common_1.Param)('id')),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:paramtypes", [String, Object, increment_listing_view_dto_1.IncrementListingViewDto]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "incrementViewAlias", null);
 __decorate([

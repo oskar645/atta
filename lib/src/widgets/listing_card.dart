@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../features/auth/guest_auth_prompt.dart';
 import '../models/listing.dart';
+import '../services/auth_service.dart';
 import '../services/favorites_service.dart';
 import '../services/reviews_service.dart';
 import 'listing_price_row.dart';
@@ -341,9 +344,17 @@ class FavoriteToggleButton extends StatelessWidget {
         final isFav = snapshot.data ?? false;
         return IconButton(
           onPressed: () async {
+            if (userId.trim().isEmpty) {
+              final authenticated = await promptGuestAuth(context);
+              if (!authenticated || !context.mounted) return;
+            }
+            final resolvedUserId = userId.trim().isNotEmpty
+                ? userId.trim()
+                : context.read<AuthService>().currentUser?.uid.trim() ?? '';
+            if (resolvedUserId.isEmpty) return;
             try {
               await favoritesService.toggleFavorite(
-                uid: userId,
+                uid: resolvedUserId,
                 listingId: listingId,
                 makeFavorite: !isFav,
               );
@@ -394,9 +405,17 @@ class FavoriteListingCard extends StatelessWidget {
           isSeen: isSeen,
           reviews: reviews,
           onToggleFav: (makeFav) async {
+            if (userId.trim().isEmpty) {
+              final authenticated = await promptGuestAuth(context);
+              if (!authenticated || !context.mounted) return;
+            }
+            final resolvedUserId = userId.trim().isNotEmpty
+                ? userId.trim()
+                : context.read<AuthService>().currentUser?.uid.trim() ?? '';
+            if (resolvedUserId.isEmpty) return;
             try {
               await favoritesService.toggleFavorite(
-                uid: userId,
+                uid: resolvedUserId,
                 listingId: listing.id,
                 makeFavorite: makeFav,
               );

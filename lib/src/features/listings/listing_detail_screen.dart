@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:atta/src/features/auth/login_screen.dart';
+import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
 import 'package:atta/src/features/listings/listing_archive_flow.dart';
@@ -174,7 +174,13 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       case 'approved':
         return 'Одобрено';
       case 'rejected':
-        return 'Отклонено';
+        return 'Отклонённые';
+      case 'sold':
+        return 'Проданные';
+      case 'archived':
+        return 'В архиве';
+      case 'deleted':
+        return 'Удалённые';
       default:
         return status.isEmpty ? 'Одобрено' : status;
     }
@@ -264,11 +270,133 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     });
   }
 
+  String _ownerResubmitLabel(Listing listing) {
+    return listing.normalizedStatus == 'rejected'
+        ? 'Отправить на модерацию'
+        : 'Опубликовать снова';
+  }
+
+  Future<void> _resubmitListing(Listing listing) async {
+    try {
+      final updated = await context
+          .read<ListingsService>()
+          .resubmitListing(listingId: listing.id);
+      if (!mounted) return;
+      if (updated != null) {
+        setState(() {
+          _listingFuture = Future<Listing?>.value(updated);
+        });
+      } else {
+        _reloadListing();
+      }
+      if (_scrollController.hasClients) {
+        unawaited(
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+          ),
+        );
+      }
+      showAppSnack(context, 'Объявление отправлено на модерацию');
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(
+        context,
+        'Не удалось отправить объявление на модерацию: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _openLoginScreen() {
+    return promptGuestAuth(context).then((_) {});
+  }
+
+  Future<void> _toggleFavoriteAfterAuth({
+    required FavoritesService favoritesService,
+    required Listing listing,
+  }) async {
+    if (!context.read<AuthService>().isAuthenticated) {
+      final authenticated = await promptGuestAuth(context);
+      if (!authenticated || !mounted) return;
+    }
+    final userId = context.read<AuthService>().currentUser?.uid.trim() ?? '';
+    if (userId.isEmpty) return;
+    try {
+      await favoritesService.toggleFavorite(
+        uid: userId,
+        listingId: listing.id,
+        makeFavorite: true,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(
+        context,
+        'Не удалось изменить избранное: $error',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _callSellerAfterAuthIfAllowed(Listing listing) async {
+    if (!context.read<AuthService>().isAuthenticated) {
+      final authenticated = await promptGuestAuth(context);
+      if (!authenticated || !mounted) return;
+    }
+    final normalizedPhone = normalizeRuPhoneForApi(listing.phone);
+    final uri = Uri(
+      scheme: 'tel',
+      path:
+          normalizedPhone.isEmpty ? listing.phone.trim() : '+$normalizedPhone',
+    );
+    await launchUrl(uri);
+  }
+
+  Future<void> _messageSellerAfterAuthIfAllowed({
+    required Listing listing,
+    required ChatService chats,
+    required String sellerName,
+    required String sellerAvatar,
+  }) async {
+    if (!context.read<AuthService>().isAuthenticated) {
+      final authenticated = await promptGuestAuth(context);
+      if (!authenticated || !mounted) return;
+    }
+    final myUid = context.read<AuthService>().currentUser?.uid.trim() ?? '';
+    if (myUid.isEmpty || listing.ownerId == myUid) return;
+
+    final chatId = await chats.getOrCreateChat(
+      listingId: listing.id,
+      listingTitle: listing.title,
+      buyerId: myUid,
+      sellerId: listing.ownerId,
+    );
+
+    if (!mounted) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          chatId: chatId,
+          initialOtherUserName: sellerName,
+          initialOtherUserAvatar: sellerAvatar,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openReportDialog({
     required String listingId,
     required String listingOwnerId,
   }) async {
-    final me = context.read<AuthService>().currentUser!;
+    var me = context.read<AuthService>().currentUser;
+    if (me == null) {
+      final authenticated = await promptGuestAuth(context);
+      if (!authenticated || !mounted) return;
+      me = context.read<AuthService>().currentUser;
+      if (me == null) return;
+    }
     final reports = context.read<ReportsService>();
 
     final reasons = <String>[
@@ -617,6 +745,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     required String sellerName,
     required String sellerAvatar,
   }) {
+    final isGuest = myUid.isEmpty;
     return SafeArea(
       top: false,
       child: Container(
@@ -633,18 +762,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             Expanded(
               child: FilledButton.icon(
                 onPressed: (!canContact || listing.phone.trim().isEmpty)
-                    ? null
-                    : () async {
-                        final normalizedPhone =
-                            normalizeRuPhoneForApi(listing.phone);
-                        final uri = Uri(
-                          scheme: 'tel',
-                          path: normalizedPhone.isEmpty
-                              ? listing.phone.trim()
-                              : '+$normalizedPhone',
-                        );
-                        await launchUrl(uri);
-                      },
+                    ? isGuest
+                        ? () => _openLoginScreen()
+                        : null
+                    : () => _callSellerAfterAuthIfAllowed(listing),
                 icon: const Icon(Icons.call),
                 label: Text(status == 'approved' ? 'Позвонить' : 'Недоступно'),
               ),
@@ -653,27 +774,15 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             Expanded(
               child: FilledButton.tonalIcon(
                 onPressed: (!canContact || listing.ownerId == myUid)
-                    ? null
-                    : () async {
-                        final chatId = await chats.getOrCreateChat(
-                          listingId: listing.id,
-                          listingTitle: listing.title,
-                          buyerId: myUid,
-                          sellerId: listing.ownerId,
-                        );
-
-                        if (!context.mounted) return;
-
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => ChatScreen(
-                              chatId: chatId,
-                              initialOtherUserName: sellerName,
-                              initialOtherUserAvatar: sellerAvatar,
-                            ),
-                          ),
-                        );
-                      },
+                    ? isGuest
+                        ? () => _openLoginScreen()
+                        : null
+                    : () => _messageSellerAfterAuthIfAllowed(
+                          listing: listing,
+                          chats: chats,
+                          sellerName: sellerName,
+                          sellerAvatar: sellerAvatar,
+                        ),
                 icon: const Icon(Icons.chat_bubble_outline),
                 label: Text(
                   listing.ownerId == myUid
@@ -692,7 +801,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final me = context.read<AuthService>().currentUser!;
+    final me = context.read<AuthService>().currentUser;
     final favs = context.read<FavoritesService>();
     final chats = context.read<ChatService>();
     final history = context.read<ListingHistoryService>();
@@ -700,7 +809,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final presence = context.read<PresenceService>();
 
     return StreamBuilder<bool>(
-      stream: _streamIsAdmin(me.uid),
+      stream: me == null ? const Stream<bool>.empty() : _streamIsAdmin(me.uid),
       builder: (context, adminSnap) {
         final isAdmin = adminSnap.data == true;
 
@@ -719,11 +828,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 _loginRedirectScheduled = true;
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (!mounted) return;
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => const LoginScreen(),
-                    ),
-                  );
+                  unawaited(promptGuestAuth(context));
                 });
               }
               return Scaffold(
@@ -766,13 +871,24 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 ),
               );
             }
-            final status = listing.status;
+            final status = listing.normalizedStatus;
             final rejectionReason = listing.rejectionReason.trim();
 
-            final isOwner = listing.ownerId == me.uid;
+            final myUid = me?.uid ?? '';
+            final isOwner = myUid.isNotEmpty && listing.ownerId == myUid;
             final canSee = (status == 'approved') || isOwner || isAdmin;
-            final canEdit =
-                isOwner && (status == 'approved' || status == 'rejected');
+            final canEdit = isOwner && listing.canOwnerEdit;
+            final canResubmit = isOwner && listing.canOwnerResubmit;
+            assert(() {
+              debugPrint(
+                'ListingDetail listing=${listing.id} status=${listing.status} '
+                'normalizedStatus=$status '
+                'moderatedBy=${listing.moderatedBy} isOwner=$isOwner '
+                'canOwnerEdit=${listing.canOwnerEdit} '
+                'canOwnerResubmit=${listing.canOwnerResubmit}',
+              );
+              return true;
+            }());
             if (!canSee) {
               return Scaffold(
                 appBar: AppBar(),
@@ -797,7 +913,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
               if (status != 'approved') return;
               _viewCounted = true;
               history.markViewed(listing.id);
-              if (listing.ownerId != me.uid) {
+              if (me == null || listing.ownerId != me.uid) {
                 listingsSvc.incrementView(listing.id);
               }
             });
@@ -828,19 +944,29 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     ),
                     icon: const Icon(Icons.share_outlined),
                   ),
-                  FavoriteToggleButton(
-                    favoritesService: favs,
-                    userId: me.uid,
-                    listingId: listing.id,
-                    onError: (error) {
-                      if (!context.mounted) return;
-                      showAppSnack(
-                        context,
-                        'Не удалось изменить избранное: $error',
-                        isError: true,
-                      );
-                    },
-                  ),
+                  if (me == null)
+                    IconButton(
+                      tooltip: 'Добавить в избранное',
+                      onPressed: () => _toggleFavoriteAfterAuth(
+                        favoritesService: favs,
+                        listing: listing,
+                      ),
+                      icon: const Icon(Icons.favorite_border),
+                    )
+                  else
+                    FavoriteToggleButton(
+                      favoritesService: favs,
+                      userId: me.uid,
+                      listingId: listing.id,
+                      onError: (error) {
+                        if (!context.mounted) return;
+                        showAppSnack(
+                          context,
+                          'Не удалось изменить избранное: $error',
+                          isError: true,
+                        );
+                      },
+                    ),
                   PopupMenuButton<String>(
                     onSelected: (v) async {
                       if (v == 'edit') {
@@ -849,6 +975,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               builder: (_) =>
                                   EditListingScreen(listingId: listing.id)),
                         );
+                      } else if (v == 'resubmit') {
+                        await _resubmitListing(listing);
                       } else if (v == 'report') {
                         await _openReportDialog(
                           listingId: listing.id,
@@ -871,6 +999,23 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                               Icon(Icons.edit_outlined, size: 18),
                               SizedBox(width: 8),
                               Text('Редактировать'),
+                            ],
+                          ),
+                        ),
+                      if (canResubmit)
+                        PopupMenuItem(
+                          value: 'resubmit',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.publish_outlined, size: 18),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _ownerResubmitLabel(listing),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -905,7 +1050,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 canContact: canContact,
                 status: status,
                 listing: listing,
-                myUid: me.uid,
+                myUid: myUid,
                 chats: chats,
                 sellerName: sellerName,
                 sellerAvatar: sellerAvatar,
@@ -1087,7 +1232,12 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                         final cachedWallet = walletService.cachedWallet;
                         final wallet = walletSnap.data ?? cachedWallet;
                         final balance = wallet?.balance;
-                        final canShowSellFaster = listing.status == 'approved';
+                        final canShowSellFaster =
+                            listing.normalizedStatus == 'approved';
+                        final canArchive =
+                            listing.normalizedStatus == 'approved';
+                        const ownerSecondaryLabel = 'Снять с публикации';
+                        final showOwnerSecondaryAction = canArchive;
                         final walletError =
                             walletSnap.hasError && cachedWallet == null;
                         return Container(
@@ -1170,6 +1320,51 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                     : const SizedBox.shrink(),
                               ),
                               if (canShowSellFaster) const SizedBox(height: 10),
+                              if (canEdit || canResubmit) ...[
+                                Row(
+                                  children: [
+                                    if (canEdit)
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: () {
+                                            Navigator.of(context).push(
+                                              MaterialPageRoute(
+                                                builder: (_) =>
+                                                    EditListingScreen(
+                                                  listingId: listing.id,
+                                                ),
+                                              ),
+                                            );
+                                          },
+                                          icon: const Icon(Icons.edit_outlined),
+                                          label: const Text(
+                                            'Редактировать',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ),
+                                    if (canEdit && canResubmit)
+                                      const SizedBox(width: 10),
+                                    if (canResubmit)
+                                      Expanded(
+                                        child: OutlinedButton.icon(
+                                          onPressed: () =>
+                                              _resubmitListing(listing),
+                                          icon: const Icon(
+                                            Icons.publish_outlined,
+                                          ),
+                                          label: Text(
+                                            _ownerResubmitLabel(listing),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                              ],
                               Row(
                                 children: [
                                   Expanded(
@@ -1188,25 +1383,29 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                       child: const Text('Статистика'),
                                     ),
                                   ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: OutlinedButton(
-                                      onPressed: status == 'approved'
-                                          ? () async {
-                                              final updated =
-                                                  await runListingArchiveFlow(
-                                                context,
-                                                listingId: listing.id,
-                                                listingsService: listingsSvc,
-                                              );
-                                              if (updated && mounted) {
-                                                setState(() {});
-                                              }
-                                            }
-                                          : null,
-                                      child: const Text('Снять с публикации'),
+                                  if (showOwnerSecondaryAction) ...[
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: () async {
+                                          final updated =
+                                              await runListingArchiveFlow(
+                                            context,
+                                            listingId: listing.id,
+                                            listingsService: listingsSvc,
+                                          );
+                                          if (updated && mounted) {
+                                            setState(() {});
+                                          }
+                                        },
+                                        child: const Text(
+                                          ownerSecondaryLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
                                     ),
-                                  ),
+                                  ],
                                 ],
                               ),
                               const SizedBox(height: 12),
@@ -1394,7 +1593,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                   const SizedBox(height: 12),
                   _SimilarListingsSection(
                     baseListing: listing,
-                    currentUserId: me.uid,
+                    currentUserId: myUid,
                     listingsSvc: listingsSvc,
                     favs: favs,
                     history: history,
@@ -1403,7 +1602,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     platform: Theme.of(context).platform,
                   ),
                   const SizedBox(height: 12),
-                  if (listing.ownerId == me.uid)
+                  if (isOwner)
                     Text(
                       status == 'approved'
                           ? 'Это ваше объявление. Сообщения доступны покупателям.'

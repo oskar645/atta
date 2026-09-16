@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'package:atta/src/features/auth/auth_gate.dart';
+import 'package:atta/src/features/auth/legal_document_screen.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/app_badge_service.dart';
@@ -127,7 +128,7 @@ class AttaApp extends StatelessWidget {
       child: Consumer<ThemeService>(
         builder: (_, theme, __) {
           return MaterialApp(
-            title: 'Atta',
+            title: 'Атта Маркет',
             debugShowCheckedModeBanner: false,
             theme: base,
             darkTheme: darkBase,
@@ -136,11 +137,83 @@ class AttaApp extends StatelessWidget {
             supportedLocales: attaSupportedLocales,
             localizationsDelegates: attaLocalizationsDelegates,
             navigatorKey: attaNavigatorKey,
+            onGenerateRoute: (settings) {
+              final uri = Uri.tryParse(settings.name ?? '');
+              if (uri != null &&
+                  uri.pathSegments.length == 2 &&
+                  uri.pathSegments.first == 'legal') {
+                final kind = switch (uri.pathSegments[1]) {
+                  'terms' => LegalDocumentKind.terms,
+                  'privacy' => LegalDocumentKind.privacy,
+                  'personal-data-consent' =>
+                    LegalDocumentKind.personalDataConsent,
+                  'marketing-consent' => LegalDocumentKind.marketingConsent,
+                  'public-data-consent' => LegalDocumentKind.publicDataConsent,
+                  _ => null,
+                };
+                if (kind != null) {
+                  return MaterialPageRoute<void>(
+                    settings: settings,
+                    builder: (_) => LegalDocumentScreen(kind: kind),
+                  );
+                }
+              }
+              if (uri != null &&
+                  uri.pathSegments.length == 2 &&
+                  uri.pathSegments.first == 'listing') {
+                final listingId = uri.pathSegments[1].trim();
+                if (listingId.isNotEmpty) {
+                  return MaterialPageRoute<void>(
+                    settings: settings,
+                    builder: (_) => ListingDetailScreen(listingId: listingId),
+                  );
+                }
+              }
+              return null;
+            },
             builder: (context, child) => AppKeyboardDismissOnTap(
-              child: child ?? const SizedBox.shrink(),
+              child:
+                  WebAppWidthLimiter(child: child ?? const SizedBox.shrink()),
             ),
             navigatorObservers: [attaRouteObserver],
             home: const SessionPresenceBinder(child: AuthGate()),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class WebAppWidthLimiter extends StatelessWidget {
+  const WebAppWidthLimiter({super.key, required this.child});
+
+  final Widget child;
+
+  static double _maxWidthFor(double width) {
+    if (width < 600) return width;
+    if (width < 900) return 720;
+    return 800;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!kIsWeb) return child;
+
+    final theme = Theme.of(context);
+    return ColoredBox(
+      color: theme.colorScheme.surfaceContainerLowest,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final maxWidth = _maxWidthFor(constraints.maxWidth);
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: ColoredBox(
+                color: theme.scaffoldBackgroundColor,
+                child: child,
+              ),
+            ),
           );
         },
       ),
@@ -204,6 +277,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   late final ListingHistoryService _listingHistory;
   late final ListingsService _listings;
   late final ProfileService _profile;
+  SavedSearchService? _savedSearches;
   late final ReviewsService _reviews;
   late final WalletService _walletService;
   late final NetworkRecoveryService _networkRecovery;
@@ -237,6 +311,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     _listingHistory = context.read<ListingHistoryService>();
     _listings = context.read<ListingsService>();
     _profile = context.read<ProfileService>();
+    _savedSearches = Provider.of<SavedSearchService?>(context, listen: false);
     _reviews = context.read<ReviewsService>();
     _walletService = context.read<WalletService>();
     // Some focused widget tests provide the legacy service graph. Recovery is
@@ -255,25 +330,41 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         _activeUid = null;
         _walletService.resetSession();
         _notifications.resetSession();
-        await _pushNotifications.unbind(api: _auth.notificationsApi);
+        final pushCleanup =
+            _pushNotifications.unbind(api: _auth.notificationsApi);
         _admin.resetSession();
         _support.resetSession();
-        await _presence.resetSession();
-        await _chats.resetSession();
+        final presenceCleanup = _presence.resetSession();
+        final chatsCleanup = _chats.resetSession();
         _follow.resetSession();
+        _savedSearches?.resetSession();
         _favorites.resetSession();
         _listings.resetSession();
         _profile.resetSession();
-        await _listingHistory.resetSession();
+        final historyCleanup = _listingHistory.resetSession();
         _reviews.resetSession();
-        await _badge.clear();
+        final badgeCleanup = _badge.clear();
+        await Future.wait([
+          pushCleanup,
+          presenceCleanup,
+          chatsCleanup,
+          historyCleanup,
+          badgeCleanup,
+        ]);
         return;
       }
       if (didChangeUser) {
+        _notifications.resetSession();
+        unawaited(_pushNotifications.unbind());
+        unawaited(_badge.clear());
+        unawaited(_presence.resetSession());
+        unawaited(_chats.resetSession());
+        _savedSearches?.resetSession();
         _favorites.resetSession();
         _listings.resetSession();
         _profile.resetSession();
         await _listingHistory.resetSession();
+        if (_auth.currentUser?.uid != uid) return;
       }
       _activeUid = uid;
       final isAdminUser = _auth.currentUser?.isAdmin == true;
@@ -564,13 +655,15 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       _activeUid = null;
       _walletService.resetSession();
       _notifications.resetSession();
-      await _pushNotifications.unbind(api: _auth.notificationsApi);
+      final pushCleanup =
+          _pushNotifications.unbind(api: _auth.notificationsApi);
       _support.resetSession();
       _favorites.resetSession();
       _listings.resetSession();
       _profile.resetSession();
-      await _listingHistory.resetSession();
-      await _badge.clear();
+      final historyCleanup = _listingHistory.resetSession();
+      final badgeCleanup = _badge.clear();
+      await Future.wait([pushCleanup, historyCleanup, badgeCleanup]);
       return;
     }
 

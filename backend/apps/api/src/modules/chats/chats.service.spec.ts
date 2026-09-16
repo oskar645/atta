@@ -635,3 +635,30 @@ test('markMessageDelivered does not convert message to read', async () => {
   assert.equal(result.message.readAt, null);
   assert.ok(result.message.deliveredAt);
 });
+
+for (const userId of ['buyer-1', 'seller-1', 'stranger-1']) {
+  test(`private chat image permission by id: ${userId}`, async () => {
+    const service = new ChatsService({ chatMessage: {
+      findUnique: async () => ({ ...createMessage(), imageKey: 'chats/chat-1/photo.jpg', imageBucket: 's3' }),
+    } } as never, {} as never, {} as never, {} as never);
+    const result = service.getChatImageAccess({ userId, role: 'user' } as any, 'message-1');
+    if (userId === 'stranger-1') {
+      await assert.rejects(() => result, { message: 'No access to chat image' });
+    } else {
+      assert.equal((await result).key, 'chats/chat-1/photo.jpg');
+    }
+  });
+}
+
+test('chat key lookup requires exact key and participant permission', async () => {
+  const service = new ChatsService({ chatMessage: {
+    findFirst: async (query: any) => {
+      assert.equal(query.where.imageKey, 'chats/chat-1/photo.jpg');
+      assert.equal(query.where.deletedAt, null);
+      assert.deepEqual(query.where.chat.OR, [{ buyerId: 'stranger-1' }, { sellerId: 'stranger-1' }]);
+      return null;
+    },
+  } } as never, {} as never, {} as never, {} as never);
+  await assert.rejects(() => service.getChatImageAccessByKey({ userId: 'stranger-1' } as any, 'chats/chat-1/photo.jpg'),
+    { message: 'Chat image not found' });
+});

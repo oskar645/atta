@@ -7,6 +7,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SavedSearchesModule = void 0;
+const notifications_module_1 = require("../notifications/notifications.module");
+const saved_search_alerts_service_1 = require("./saved-search-alerts.service");
 const common_1 = require("@nestjs/common");
 const auth_module_1 = require("../auth/auth.module");
 const prisma_module_1 = require("../prisma/prisma.module");
@@ -18,10 +20,10 @@ let SavedSearchesModule = class SavedSearchesModule {
 exports.SavedSearchesModule = SavedSearchesModule;
 exports.SavedSearchesModule = SavedSearchesModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, user_blocks_module_1.UserBlocksModule],
+        imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, user_blocks_module_1.UserBlocksModule, notifications_module_1.NotificationsModule],
         controllers: [saved_searches_controller_1.SavedSearchesController],
-        providers: [saved_searches_service_1.SavedSearchesService],
-        exports: [saved_searches_service_1.SavedSearchesService],
+        providers: [saved_searches_service_1.SavedSearchesService, saved_search_alerts_service_1.SavedSearchAlertsService],
+        exports: [saved_searches_service_1.SavedSearchesService, saved_search_alerts_service_1.SavedSearchAlertsService],
     })
 ], SavedSearchesModule);
 //# sourceMappingURL=saved-searches.module.js.map

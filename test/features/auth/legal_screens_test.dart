@@ -41,48 +41,62 @@ void main() {
 
     await tester.tap(find.text('Нет аккаунта? Создать аккаунт'));
     await tester.pumpAndSettle();
-    await _tapSpanText(tester, 'Политику конфиденциальности');
+    await _tapSpanText(
+      tester,
+      'Политикой конфиденциальности',
+    );
     await tester.pumpAndSettle();
 
     expect(find.byType(PrivacyScreen), findsOneWidget);
     expect(find.text('Политика конфиденциальности'), findsWidgets);
-    expect(find.textContaining('ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ ATTA'),
-        findsOneWidget);
+    expect(
+      find.textContaining(
+        'ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ\nИ ОБРАБОТКИ ПЕРСОНАЛЬНЫХ ДАННЫХ ATTA',
+      ),
+      findsOneWidget,
+    );
     expect(launcher.launchCalls, 0);
   });
 
   test('terms text includes moderation and user responsibility sections', () {
-    expect(attaTermsText, contains('8. Права администрации ATTA'));
-    expect(attaTermsText, contains('9. Модерация'));
-    expect(attaTermsText, contains('7. Запрещённые объявления и действия'));
-    expect(attaTermsText, contains('12. Жалобы'));
-    expect(
-        attaTermsText, contains('4. Ответственность пользователя за аккаунт'));
+    expect(attaTermsText, contains('8. МОДЕРАЦИЯ'));
+    expect(attaTermsText, contains('7. ЗАПРЕЩЁННЫЕ МАТЕРИАЛЫ И ДЕЙСТВИЯ'));
+    expect(attaTermsText, contains('10. ОТЗЫВЫ И ЖАЛОБЫ'));
+    expect(attaTermsText, contains('4. БЕЗОПАСНОСТЬ АККАУНТА'));
+    expect(attaTermsText, contains('13. ВНУТРЕННИЙ БАЛАНС И БОНУСЫ'));
   });
 
   test('privacy text includes data and communications sections', () {
-    expect(
-        attaPrivacyText, contains('2. Какие данные может обрабатывать ATTA'));
-    expect(attaPrivacyText, contains('4. Фото и объявления'));
-    expect(attaPrivacyText, contains('5. Чаты и поддержка'));
-    expect(attaPrivacyText, contains('6. Жалобы'));
-    expect(attaPrivacyText, contains('7. Уведомления'));
+    expect(attaPrivacyText, contains('3. КАТЕГОРИИ ДАННЫХ'));
+    expect(attaPrivacyText, contains('5. ПУБЛИЧНЫЕ ДАННЫЕ'));
+    expect(attaPrivacyText, contains('7. СООБЩЕНИЯ И ПОДДЕРЖКА'));
+    expect(attaPrivacyText, contains('8. МОДЕРАЦИЯ'));
+    expect(attaPrivacyText, contains('14. ПРАВА ПОЛЬЗОВАТЕЛЯ'));
   });
 
-  testWidgets('legal consent checkbox still works as before', (tester) async {
+  testWidgets('registration has two required consent checkboxes',
+      (tester) async {
     await tester.pumpWidget(_buildApp());
 
     await tester.tap(find.text('Нет аккаунта? Создать аккаунт'));
     await tester.pumpAndSettle();
 
-    Checkbox checkbox = tester.widget<Checkbox>(find.byType(Checkbox));
+    final checkboxes = find.byType(Checkbox);
+    expect(checkboxes, findsNWidgets(2));
+    expect(find.textContaining('рекламные и маркетинговые сообщения'),
+        findsNothing);
+
+    Checkbox checkbox = tester.widget<Checkbox>(checkboxes.at(0));
     expect(checkbox.value, isFalse);
 
-    await tester.tap(find.byType(Checkbox));
+    await tester.tap(checkboxes.at(0));
     await tester.pumpAndSettle();
 
-    checkbox = tester.widget<Checkbox>(find.byType(Checkbox));
+    checkbox = tester.widget<Checkbox>(checkboxes.at(0));
     expect(checkbox.value, isTrue);
+
+    final personalData = tester.widget<Checkbox>(checkboxes.at(1));
+    expect(personalData.value, isFalse);
   });
 }
 

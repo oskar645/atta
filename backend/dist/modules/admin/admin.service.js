@@ -8,9 +8,15 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminService = void 0;
+const account_deletion_service_1 = require("../auth/account-deletion.service");
 const common_1 = require("@nestjs/common");
+const saved_search_alerts_service_1 = require("../saved-searches/saved-search-alerts.service");
+const common_2 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const phone_1 = require("../../common/phone");
 const referral_code_1 = require("../../common/referral-code");
@@ -102,13 +108,15 @@ const moderationDiffFields = [
     'oem_part_number',
 ];
 let AdminService = class AdminService {
-    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService) {
+    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService, savedSearchAlerts, accountDeletion) {
         this.prisma = prisma;
         this.appVisitsService = appVisitsService;
         this.notificationsService = notificationsService;
         this.reviewsService = reviewsService;
         this.storageService = storageService;
         this.userBlocksService = userBlocksService;
+        this.savedSearchAlerts = savedSearchAlerts;
+        this.accountDeletion = accountDeletion;
     }
     pageLimit(value, fallback, max = 100) {
         const parsed = Number(value ?? fallback);
@@ -494,7 +502,7 @@ let AdminService = class AdminService {
         if (duration === 'custom') {
             const endsAt = dto.ends_at ? new Date(dto.ends_at) : null;
             if (!endsAt || Number.isNaN(endsAt.getTime()) || endsAt <= now) {
-                throw new common_1.BadRequestException('Укажите будущую дату окончания блокировки');
+                throw new common_2.BadRequestException('Укажите будущую дату окончания блокировки');
             }
             return {
                 type: client_1.UserBlockType.TEMPORARY,
@@ -514,7 +522,7 @@ let AdminService = class AdminService {
         };
         const days = daysByDuration[duration];
         if (!days) {
-            throw new common_1.BadRequestException('Неизвестный срок блокировки');
+            throw new common_2.BadRequestException('Неизвестный срок блокировки');
         }
         return {
             type: client_1.UserBlockType.TEMPORARY,
@@ -658,11 +666,11 @@ let AdminService = class AdminService {
     }
     async blockUser(userId, authUser, dto) {
         if (userId === authUser.userId) {
-            throw new common_1.BadRequestException('Нельзя заблокировать текущий аккаунт администратора');
+            throw new common_2.BadRequestException('Нельзя заблокировать текущий аккаунт администратора');
         }
         const reason = dto.reason?.trim() ?? '';
         if (!reason) {
-            throw new common_1.BadRequestException('Причина блокировки обязательна');
+            throw new common_2.BadRequestException('Причина блокировки обязательна');
         }
         const now = new Date();
         const duration = this.resolveBlockDuration(dto, now);
@@ -672,11 +680,11 @@ let AdminService = class AdminService {
             select: { id: true, phone: true, deletedAt: true, status: true },
         });
         if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
-            throw new common_1.NotFoundException('Пользователь не найден');
+            throw new common_2.NotFoundException('Пользователь не найден');
         }
         const existing = await this.userBlocksService.getActiveBlock(userId);
         if (existing) {
-            throw new common_1.BadRequestException('У пользователя уже есть активная блокировка');
+            throw new common_2.BadRequestException('У пользователя уже есть активная блокировка');
         }
         const block = await this.prisma.$transaction(async (tx) => {
             const created = await tx.userBlock.create({
@@ -775,7 +783,7 @@ let AdminService = class AdminService {
     async unblockUserBlock(blockId, authUser, dto) {
         const block = await this.prisma.userBlock.findUnique({ where: { id: blockId } });
         if (!block) {
-            throw new common_1.NotFoundException('Блокировка не найдена');
+            throw new common_2.NotFoundException('Блокировка не найдена');
         }
         const now = new Date();
         const reason = dto?.reason?.trim() || 'Разблокировано администратором';
@@ -837,10 +845,10 @@ let AdminService = class AdminService {
     async updateUserBlock(blockId, authUser, dto) {
         const block = await this.prisma.userBlock.findUnique({ where: { id: blockId } });
         if (!block) {
-            throw new common_1.NotFoundException('Блокировка не найдена');
+            throw new common_2.NotFoundException('Блокировка не найдена');
         }
         if (block.status !== client_1.UserBlockStatus.ACTIVE) {
-            throw new common_1.BadRequestException('Можно изменить только активную блокировку');
+            throw new common_2.BadRequestException('Можно изменить только активную блокировку');
         }
         const now = new Date();
         const permanentRequested = dto.permanent === true;
@@ -854,7 +862,7 @@ let AdminService = class AdminService {
         else if (temporaryRequested) {
             const endsAt = dto.ends_at ? new Date(dto.ends_at) : block.endsAt;
             if (!endsAt || Number.isNaN(endsAt.getTime()) || endsAt <= now) {
-                throw new common_1.BadRequestException('Укажите будущую дату окончания блокировки');
+                throw new common_2.BadRequestException('Укажите будущую дату окончания блокировки');
             }
             nextType = client_1.UserBlockType.TEMPORARY;
             nextEndsAt = endsAt;
@@ -929,7 +937,7 @@ let AdminService = class AdminService {
             },
         });
         if (!user) {
-            throw new common_1.NotFoundException('Пользователь не найден');
+            throw new common_2.NotFoundException('Пользователь не найден');
         }
         if (protectedAdminPhones.has((user.phone ?? '').trim())) {
             return {
@@ -954,7 +962,7 @@ let AdminService = class AdminService {
         }
         await this.performSoftDeleteUser(id, {
             actorUserId: authUser.userId,
-            reason: 'Deleted by admin',
+            reason: 'Удалено администратором',
         });
         return {
             source: 'timeweb',
@@ -1391,7 +1399,7 @@ let AdminService = class AdminService {
             },
         });
         if (!promotion) {
-            throw new common_1.NotFoundException('Promotion not found');
+            throw new common_2.NotFoundException('Promotion not found');
         }
         const updated = await this.prisma.promotion.update({
             where: {
@@ -1744,7 +1752,7 @@ let AdminService = class AdminService {
     async getUserReferrals(userId, query) {
         const normalizedUserId = userId.trim();
         if (!this.isUuid(normalizedUserId)) {
-            throw new common_1.NotFoundException('User not found');
+            throw new common_2.NotFoundException('User not found');
         }
         const user = await this.prisma.user.findFirst({
             where: {
@@ -1759,7 +1767,7 @@ let AdminService = class AdminService {
             },
         });
         if (!user) {
-            throw new common_1.NotFoundException('User not found');
+            throw new common_2.NotFoundException('User not found');
         }
         const range = this.resolveAnalyticsRange(query);
         return {
@@ -1931,7 +1939,7 @@ let AdminService = class AdminService {
             },
         });
         if (!referral) {
-            throw new common_1.NotFoundException('Referral not found');
+            throw new common_2.NotFoundException('Referral not found');
         }
         return {
             source: 'timeweb',
@@ -1964,13 +1972,13 @@ let AdminService = class AdminService {
             },
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
         if (listing.photos.length === 0) {
-            throw new common_1.BadRequestException(listings_service_1.LISTING_PHOTO_REQUIRED);
+            throw new common_2.BadRequestException(listings_service_1.LISTING_PHOTO_REQUIRED);
         }
         if (!(0, listing_publication_1.isListingReadyForPublication)(listing)) {
-            throw new common_1.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
+            throw new common_2.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
         const now = new Date();
         const updated = await this.prisma.listing.update({
@@ -1999,6 +2007,7 @@ let AdminService = class AdminService {
                 },
             },
         });
+        await this.savedSearchAlerts?.notifyApprovedListing(id);
         await this.resolveModerationRevisions(id, now);
         await this.notificationsService.createSystemNotification({
             userId: updated.ownerId,
@@ -2022,7 +2031,7 @@ let AdminService = class AdminService {
             where: { id },
             data: {
                 status: client_1.ListingStatus.REJECTED,
-                rejectionReason: params?.reason?.trim() || 'Rejected by moderator',
+                rejectionReason: params?.reason?.trim() || 'Отклонено модератором',
                 moderationNote: params?.moderationNote?.trim() || null,
                 moderatedBy: authUser.userId,
                 moderatedAt: now,
@@ -2103,7 +2112,7 @@ let AdminService = class AdminService {
             where: { id },
             data: {
                 status: client_1.ListingStatus.DELETED,
-                rejectionReason: params?.reason?.trim() || 'Deleted by moderator',
+                rejectionReason: params?.reason?.trim() || 'Удалено модератором',
                 moderationNote: params?.moderationNote?.trim() || null,
                 moderatedBy: authUser.userId,
                 moderatedAt: new Date(),
@@ -2192,172 +2201,11 @@ let AdminService = class AdminService {
             select: { id: true },
         });
         if (!listing) {
-            throw new common_1.NotFoundException('Listing not found');
+            throw new common_2.NotFoundException('Listing not found');
         }
     }
     async performSoftDeleteUser(userId, params) {
-        const user = await this.prisma.user.findUnique({
-            where: {
-                id: userId,
-            },
-            select: {
-                avatarUrl: true,
-            },
-        });
-        const now = new Date();
-        const deletedEmail = `deleted+${userId}@atta.local`;
-        const listingIds = (await this.prisma.listing.findMany({
-            where: {
-                ownerId: userId,
-            },
-            select: {
-                id: true,
-            },
-        })).map((item) => item.id);
-        const chatIds = (await this.prisma.chat.findMany({
-            where: {
-                OR: [{ buyerId: userId }, { sellerId: userId }],
-            },
-            select: {
-                id: true,
-            },
-        })).map((item) => item.id);
-        await this.storageService.deleteAvatarUrl(user?.avatarUrl ?? null);
-        await this.storageService.deleteListingPhotosForListings(listingIds);
-        await this.storageService.deleteChatImagesForChats(chatIds);
-        await this.prisma.$transaction(async (tx) => {
-            if (chatIds.length > 0) {
-                await tx.chatMessage.updateMany({
-                    where: {
-                        chatId: {
-                            in: chatIds,
-                        },
-                        deletedAt: null,
-                    },
-                    data: {
-                        deletedAt: now,
-                    },
-                });
-                await tx.chat.updateMany({
-                    where: {
-                        id: {
-                            in: chatIds,
-                        },
-                    },
-                    data: {
-                        deletedByBuyerAt: now,
-                        deletedBySellerAt: now,
-                        unreadForBuyer: 0,
-                        unreadForSeller: 0,
-                        lastMessage: '',
-                    },
-                });
-            }
-            await tx.favorite.deleteMany({
-                where: {
-                    userId,
-                },
-            });
-            await tx.savedSearch.deleteMany({
-                where: {
-                    userId,
-                },
-            });
-            await tx.viewedListing.deleteMany({
-                where: {
-                    userId,
-                },
-            });
-            await tx.userFollow.deleteMany({
-                where: {
-                    OR: [{ followerId: userId }, { sellerId: userId }],
-                },
-            });
-            await tx.review.updateMany({
-                where: {
-                    reviewerId: userId,
-                    deletedAt: null,
-                },
-                data: {
-                    deletedAt: now,
-                    updatedAt: now,
-                },
-            });
-            await tx.userNotification.deleteMany({
-                where: {
-                    userId,
-                },
-            });
-            await tx.supportMessage.updateMany({
-                where: {
-                    senderUserId: userId,
-                },
-                data: {
-                    senderUserId: null,
-                },
-            });
-            await tx.supportTicket.updateMany({
-                where: {
-                    userId,
-                },
-                data: {
-                    name: 'Удалённый пользователь',
-                },
-            });
-            await tx.listing.updateMany({
-                where: {
-                    ownerId: userId,
-                    deletedAt: null,
-                },
-                data: {
-                    status: client_1.ListingStatus.DELETED,
-                    deletedAt: now,
-                    publishedAt: null,
-                    moderatedBy: params.actorUserId,
-                    moderatedAt: now,
-                    rejectionReason: params.reason,
-                },
-            });
-            await tx.userSession.updateMany({
-                where: {
-                    userId,
-                    revokedAt: null,
-                },
-                data: {
-                    revokedAt: now,
-                },
-            });
-            await tx.user.update({
-                where: {
-                    id: userId,
-                },
-                data: {
-                    status: client_1.UserStatus.DELETED,
-                    deletedAt: now,
-                    blockedAt: now,
-                    blockReason: params.reason,
-                    phoneVerified: false,
-                    phone: null,
-                    email: deletedEmail,
-                    displayName: 'Удалённый пользователь',
-                    name: 'Удалённый пользователь',
-                    avatarUrl: null,
-                    photoUrl: null,
-                },
-            });
-            if (listingIds.length > 0) {
-                await tx.report.updateMany({
-                    where: {
-                        listingId: {
-                            in: listingIds,
-                        },
-                    },
-                    data: {
-                        listingOwnerId: null,
-                    },
-                });
-            }
-        });
+        await this.accountDeletion.deleteUser(userId, params);
     }
     async expirePromotionsByTime() {
         await this.prisma.promotion.updateMany({
@@ -2575,12 +2423,14 @@ let AdminService = class AdminService {
 };
 exports.AdminService = AdminService;
 exports.AdminService = AdminService = __decorate([
-    (0, common_1.Injectable)(),
+    (0, common_2.Injectable)(),
+    __param(6, (0, common_1.Optional)()),
+    __param(6, (0, common_1.Inject)(saved_search_alerts_service_1.SavedSearchAlertsService)),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         app_visits_service_1.AppVisitsService,
         notifications_service_1.NotificationsService,
         reviews_service_1.ReviewsService,
         storage_service_1.StorageService,
-        user_blocks_service_1.UserBlocksService])
+        user_blocks_service_1.UserBlocksService, Object, account_deletion_service_1.AccountDeletionService])
 ], AdminService);
 //# sourceMappingURL=admin.service.js.map

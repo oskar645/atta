@@ -2,7 +2,13 @@ import 'dart:async';
 
 import 'package:atta/src/features/auth/auth_gate.dart';
 import 'package:atta/src/features/auth/login_screen.dart';
+import 'package:atta/src/features/home/main_shell.dart';
+import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
+import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/presence_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -17,9 +23,12 @@ void main() {
     await tester.pumpWidget(
       Provider<AuthService>.value(
         value: auth,
-        child: const MaterialApp(
+        child: MaterialApp(
           home: AuthGate(
-            bootstrapTimeout: Duration(milliseconds: 1),
+            bootstrapTimeout: const Duration(milliseconds: 1),
+            unauthenticatedBuilder: (_) => const Scaffold(
+              body: Text('GUEST_HOME'),
+            ),
           ),
         ),
       ),
@@ -111,16 +120,19 @@ void main() {
     expect(find.byType(LoginScreen), findsNothing);
   });
 
-  testWidgets('unauthenticated fallback opens registration mode first',
-      (tester) async {
+  testWidgets('unauthenticated fallback opens guest MainShell', (tester) async {
     final auth = _FakeAuthService();
 
     await tester.pumpWidget(
-      Provider<AuthService>.value(
-        value: auth,
-        child: const MaterialApp(
+      _withMainShellProviders(
+        auth: auth,
+        child: MaterialApp(
           home: AuthGate(
-            bootstrapTimeout: Duration(milliseconds: 1),
+            bootstrapTimeout: const Duration(milliseconds: 1),
+            unauthenticatedBuilder: (_) => MainShell(
+              guestMode: true,
+              pageBuilder: (index, controller) => Text('page:$index'),
+            ),
           ),
         ),
       ),
@@ -129,9 +141,9 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.byType(LoginScreen), findsOneWidget);
-    expect(find.text('Регистрация'), findsOneWidget);
-    expect(find.text('Уже есть аккаунт? Войти'), findsOneWidget);
+    final shell = tester.widget<MainShell>(find.byType(MainShell));
+    expect(shell.guestMode, isTrue);
+    expect(find.byType(LoginScreen), findsNothing);
     expect(find.byKey(const ValueKey('login-phone-field')), findsNothing);
   });
 
@@ -155,12 +167,35 @@ void main() {
     );
 
     expect(find.text('Регистрация'), findsOneWidget);
-    await tester.tap(find.text('Уже есть аккаунт? Войти'));
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(TextButton).last);
     await tester.pumpAndSettle();
 
     expect(find.text('Вход'), findsOneWidget);
     expect(find.byKey(const ValueKey('login-phone-field')), findsOneWidget);
   });
+}
+
+Widget _withMainShellProviders({
+  required AuthService auth,
+  required Widget child,
+}) {
+  return MultiProvider(
+    providers: [
+      Provider<AuthService>.value(value: auth),
+      Provider<ChatService>.value(value: _FakeChatService()),
+      Provider<AdminService>.value(value: _FakeAdminService()),
+      Provider<NotificationsService>.value(
+        value: _FakeNotificationsService(),
+      ),
+      Provider<PresenceService>.value(value: _FakePresenceService()),
+      ChangeNotifierProvider<MainShellController>(
+        create: (_) => MainShellController(),
+      ),
+    ],
+    child: child,
+  );
 }
 
 class _FakeAuthService extends AuthService {
@@ -181,6 +216,37 @@ class _FakeAuthService extends AuthService {
   Future<void> ensureInitialized() async {
     ensureInitializedCalls += 1;
   }
+}
+
+class _FakeChatService extends ChatService {
+  @override
+  Stream<int> streamUnreadTotal(String uid) => Stream<int>.value(0);
+}
+
+class _FakeAdminService extends AdminService {
+  @override
+  Stream<bool> streamIsAdmin(String uid) => Stream<bool>.value(false);
+
+  @override
+  Stream<bool> streamNeedsAttention({bool refreshOnListen = false}) =>
+      Stream<bool>.value(false);
+}
+
+class _FakeNotificationsService extends NotificationsService {
+  @override
+  Stream<int> streamUnreadSavedSearchCount(String userId) =>
+      Stream<int>.value(0);
+}
+
+class _FakePresenceService extends PresenceService {
+  @override
+  Future<void> setOnline({
+    required String uid,
+    required bool isOnline,
+  }) async {}
+
+  @override
+  Future<void> heartbeat(String uid) async {}
 }
 
 class _HangingAuthService extends AuthService {

@@ -1,3 +1,4 @@
+import { AccountDeletionService } from '../auth/account-deletion.service';
 import {
   ConnectedSocket,
   MessageBody,
@@ -8,7 +9,7 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 
@@ -25,7 +26,7 @@ import { ChatsService } from './chats.service';
     credentials: true,
   },
 })
-export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
   @WebSocketServer()
   server!: Server;
 
@@ -36,7 +37,28 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly chatsService: ChatsService,
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
+    private readonly accountDeletion: AccountDeletionService,
   ) {}
+
+  private unsubscribeDeletion?: () => void;
+
+  onModuleInit() {
+    this.unsubscribeDeletion = this.accountDeletion.onDeleted((userId) => {
+      this.server?.in(`user:${userId}`).disconnectSockets(true);
+      this.server?.emit('presence.changed', { userId, isOnline: false, lastSeen: null });
+    });
+  }
+
+  onModuleDestroy() { this.unsubscribeDeletion?.(); }
+
+  private async requireActiveSocket(client: Socket) {
+    try {
+      return await this.authenticate(client);
+    } catch (error) {
+      client.disconnect(true);
+      throw error;
+    }
+  }
 
   private async authenticate(client: Socket) {
     const rawAuth = client.handshake.auth?.['token'];
@@ -63,11 +85,14 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
       throw new WsException('Access token is invalid or expired');
     }
 
+    if (payload.type !== 'access') throw new WsException('Access token type is invalid');
+
     const session = await this.prisma.userSession.findFirst({
       where: {
         id: payload.sessionId,
         userId: payload.sub,
         revokedAt: null,
+        user: { deletedAt: null, status: { not: 'DELETED' } },
       },
       select: {
         userId: true,
@@ -148,6 +173,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: { chatId: string },
     @ConnectedSocket() client: Socket,
   ) {
+    await this.requireActiveSocket(client);
     const userId = (client.data.userId ?? '').toString();
     await this.chatsService.getChat(
       {
@@ -167,10 +193,11 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('chat.leave')
-  handleLeave(
+  async handleLeave(
     @MessageBody() payload: { chatId: string },
     @ConnectedSocket() client: Socket,
   ) {
+    await this.requireActiveSocket(client);
     client.leave(`chat:${payload.chatId}`);
     return {
       event: 'chat.leave',
@@ -184,6 +211,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: SendChatMessageDto,
     @ConnectedSocket() client: Socket,
   ) {
+    await this.requireActiveSocket(client);
     const userId = (client.data.userId ?? '').toString();
     if (!payload.chatId) {
       throw new WsException('chatId is required');
@@ -215,6 +243,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: { messageId: string },
     @ConnectedSocket() client: Socket,
   ) {
+    await this.requireActiveSocket(client);
     const result = await this.chatsService.markMessageDelivered(
       {
         userId: (client.data.userId ?? '').toString(),
@@ -233,6 +262,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: { messageId: string },
     @ConnectedSocket() client: Socket,
   ) {
+    await this.requireActiveSocket(client);
     const result = await this.chatsService.markMessageRead(
       {
         userId: (client.data.userId ?? '').toString(),
@@ -248,6 +278,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('presence.ping')
   async handlePing(@ConnectedSocket() client: Socket) {
+    await this.requireActiveSocket(client);
     const presence = await this.presenceService.touchHeartbeat(
       (client.data.userId ?? '').toString(),
     );
@@ -260,6 +291,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() payload: { isOnline: boolean },
     @ConnectedSocket() client: Socket,
   ) {
+    await this.requireActiveSocket(client);
     const next = await this.presenceService.setPresence(
       (client.data.userId ?? '').toString(),
       payload.isOnline,

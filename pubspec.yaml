@@ -1,7 +1,7 @@
 name: atta
 description: ATTA MVP - classifieds app
 publish_to: 'none'
-version: 1.0.19+23
+version: 1.0.20+24
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -41,6 +41,7 @@ dependencies:
   http_parser: ^4.1.2
   socket_io_client: ^3.1.2
   connectivity_plus: ^6.1.4
+  web: ^1.1.1
 
   app_badge_plus: ^1.2.9
   app_links: ^7.0.0

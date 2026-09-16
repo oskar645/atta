@@ -15,6 +15,24 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
+  test('logout stops old heartbeat and A cannot set B offline', () async {
+    final socket = _FakeChatSocketService()..connected = true;
+    final service = PresenceService(socketService: socket);
+    await service.setOnline(uid: 'A', isOnline: true);
+    await service.heartbeat('A');
+    expect(socket.pingCalls, 1);
+    await service.resetSession();
+    await service.heartbeat('A');
+    expect(socket.pingCalls, 1);
+    await service.setOnline(uid: 'B', isOnline: true);
+    await service.heartbeat('A');
+    await service.setOnline(uid: 'A', isOnline: false);
+    expect(socket.lastSetPresence, true);
+    await service.heartbeat('B');
+    expect(socket.pingCalls, 2);
+    await service.resetSession();
+  });
+
   test('streamIsOnline loads presence from Timeweb endpoint', () async {
     final service = PresenceService(
       socketService: _FakeChatSocketService(),

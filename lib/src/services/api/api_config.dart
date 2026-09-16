@@ -1,9 +1,24 @@
+import 'package:atta/src/services/api/runtime_origin.dart' as runtime_origin;
+
 class ApiConfig {
   static const String publicWebUrl = 'https://attamarket.online';
   static const String publicWebHost = 'attamarket.online';
   static const String publicWebAltHost = 'www.attamarket.online';
-  static const String baseUrl = publicWebUrl;
-  static const String websocketUrl = 'wss://attamarket.online';
+  static String get baseUrl {
+    final origin = runtime_origin.currentOrigin().trim();
+    return origin.isEmpty ? publicWebUrl : origin;
+  }
+
+  static String get websocketUrl {
+    final origin = runtime_origin.currentOrigin().trim();
+    if (origin.isEmpty) {
+      return 'wss://attamarket.online';
+    }
+    final uri = Uri.parse(origin);
+    final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
+    return uri.replace(scheme: scheme).toString();
+  }
+
   static const String legacyBackendHost = '5.42.125.179';
   static const bool enablePhoneAuth = true;
   static const bool enableEmailSignup = false;
@@ -54,7 +69,9 @@ class ApiConfig {
       return trimmed;
     }
 
-    return publicWebUri
+    final currentOrigin = runtime_origin.currentOrigin().trim();
+    final targetBaseUri = currentOrigin.isEmpty ? publicWebUri : baseUri;
+    return targetBaseUri
         .replace(
           path: parsed.path,
           query: parsed.hasQuery ? parsed.query : null,

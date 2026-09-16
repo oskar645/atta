@@ -25,4 +25,14 @@ export class UpdateProfileDto {
   @IsString()
   @MaxLength(40)
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  verificationCheckId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  verification_check_id?: string;
 }

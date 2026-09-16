@@ -96,30 +96,54 @@ class MediaPreviewBox extends StatelessWidget {
         ),
         child: debugImageProvider != null
             ? _coverImage(debugImageProvider!)
-            : CachedNetworkImage(
-                imageUrl: resolvedUrl,
-                httpHeaders: authToken.isEmpty
-                    ? null
-                    : <String, String>{
-                        'Authorization': 'Bearer $authToken',
-                      },
-                imageBuilder: (_, imageProvider) => _coverImage(imageProvider),
-                fit: BoxFit.cover,
-                alignment: Alignment.center,
-                placeholder: (_, __) => _fallback(
-                  context,
-                  placeholderLabel ?? 'Загрузка фото...',
-                  icon,
-                ),
-                errorWidget: (_, __, ___) {
-                  if (kDebugMode) {
-                    debugPrint(
-                      'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
-                    );
-                  }
-                  return _fallback(context, errorLabel, errorIcon);
-                },
-              ),
+            : kIsWeb && authToken.isEmpty
+                ? Image.network(
+                    resolvedUrl,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return _fallback(
+                        context,
+                        placeholderLabel ?? 'Загрузка фото...',
+                        icon,
+                      );
+                    },
+                    errorBuilder: (_, __, ___) {
+                      if (kDebugMode) {
+                        debugPrint(
+                          'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
+                        );
+                      }
+                      return _fallback(context, errorLabel, errorIcon);
+                    },
+                  )
+                : CachedNetworkImage(
+                    imageUrl: resolvedUrl,
+                    httpHeaders: authToken.isEmpty
+                        ? null
+                        : <String, String>{
+                            'Authorization': 'Bearer $authToken',
+                          },
+                    imageBuilder: (_, imageProvider) =>
+                        _coverImage(imageProvider),
+                    fit: BoxFit.cover,
+                    alignment: Alignment.center,
+                    placeholder: (_, __) => _fallback(
+                      context,
+                      placeholderLabel ?? 'Загрузка фото...',
+                      icon,
+                    ),
+                    errorWidget: (_, __, ___) {
+                      if (kDebugMode) {
+                        debugPrint(
+                          'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
+                        );
+                      }
+                      return _fallback(context, errorLabel, errorIcon);
+                    },
+                  ),
       ),
     );
   }

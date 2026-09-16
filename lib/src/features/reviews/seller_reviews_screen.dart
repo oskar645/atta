@@ -1,3 +1,4 @@
+import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
@@ -67,7 +68,12 @@ class _SellerReviewsScreenState extends State<SellerReviewsScreen> {
 
   Future<void> _openAddReview() async {
     final me = context.read<AuthService>().currentUser;
-    if (me == null) return;
+    if (me == null) {
+      final authenticated = await promptGuestAuth(context);
+      if (!authenticated || !mounted) return;
+      await _openAddReview();
+      return;
+    }
 
     if (me.uid == widget.sellerId) {
       ScaffoldMessenger.of(context).showSnackBar(
