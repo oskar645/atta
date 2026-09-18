@@ -147,6 +147,58 @@ void main() {
     expect(find.byKey(const ValueKey('login-phone-field')), findsNothing);
   });
 
+  testWidgets(
+      'authenticated profile logout confirm opens guest home immediately',
+      (tester) async {
+    final auth = _MutableAuthService(
+      const AuthUser(uid: 'user-1', displayName: 'Old User'),
+    );
+    final shellController = MainShellController(initialIndex: 4);
+
+    await tester.pumpWidget(
+      _withMainShellProviders(
+        auth: auth,
+        shellController: shellController,
+        child: MaterialApp(
+          home: AuthGate(
+            bootstrapTimeout: const Duration(milliseconds: 1),
+            authenticatedBuilder: (_) => MainShell(
+              pageBuilder: (index, controller) {
+                if (index == 4) {
+                  return _LogoutProfileProbe(auth: auth);
+                }
+                return Text('auth-page:$index');
+              },
+            ),
+            unauthenticatedBuilder: (_) => MainShell(
+              key: const ValueKey('guest-main-shell'),
+              guestMode: true,
+              pageBuilder: (index, controller) => Text('guest-page:$index'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Old User'), findsOneWidget);
+
+    await tester.tap(find.text('Выйти'));
+    await tester.pumpAndSettle();
+    expect(find.text('Выйти из аккаунта?'), findsOneWidget);
+
+    await tester.tap(find.text('Да'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(auth.signOutCalls, 1);
+    expect(shellController.selectedIndex, 0);
+    expect(find.text('guest-page:0'), findsOneWidget);
+    expect(find.text('Old User'), findsNothing);
+  });
+
   testWidgets('default LoginScreen opens login mode', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
@@ -179,6 +231,7 @@ void main() {
 
 Widget _withMainShellProviders({
   required AuthService auth,
+  MainShellController? shellController,
   required Widget child,
 }) {
   return MultiProvider(
@@ -190,12 +243,56 @@ Widget _withMainShellProviders({
         value: _FakeNotificationsService(),
       ),
       Provider<PresenceService>.value(value: _FakePresenceService()),
-      ChangeNotifierProvider<MainShellController>(
-        create: (_) => MainShellController(),
+      ChangeNotifierProvider<MainShellController>.value(
+        value: shellController ?? MainShellController(),
       ),
     ],
     child: child,
   );
+}
+
+class _LogoutProfileProbe extends StatelessWidget {
+  const _LogoutProfileProbe({required this.auth});
+
+  final AuthService auth;
+
+  Future<void> _confirmLogout(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Выйти из аккаунта?'),
+        content: const Text('Вы уверены, что хотите выйти?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Нет'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Да'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await auth.signOut();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        children: [
+          const Text('Old User'),
+          FilledButton(
+            onPressed: () => _confirmLogout(context),
+            child: const Text('Выйти'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _FakeAuthService extends AuthService {
@@ -215,6 +312,28 @@ class _FakeAuthService extends AuthService {
   @override
   Future<void> ensureInitialized() async {
     ensureInitializedCalls += 1;
+  }
+}
+
+class _MutableAuthService extends _FakeAuthService {
+  _MutableAuthService(this._user);
+
+  AuthUser? _user;
+  int signOutCalls = 0;
+
+  @override
+  bool get isAuthenticated => _user != null;
+
+  @override
+  AuthUser? get currentUser => _user;
+
+  @override
+  Future<void> signOut() async {
+    signOutCalls += 1;
+    _user = null;
+    _authEvents.add(
+      const AuthSessionEvent(type: AuthSessionEventType.signedOut),
+    );
   }
 }
 

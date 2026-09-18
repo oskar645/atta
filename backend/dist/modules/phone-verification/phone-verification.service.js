@@ -25,6 +25,7 @@ const DEV_CALL_TO_PHONE = '+7 999 000-00-00';
 const SMS_SOURCE_UNIQUE_WINDOW_MS = 15 * 60 * 1000;
 const SMS_DEVICE_UNIQUE_PHONE_LIMIT = 50;
 const SMS_IP_UNIQUE_PHONE_LIMIT = 100;
+const SMS_RU_REQUEST_TIMEOUT_MS = 10_000;
 let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificationService {
     constructor(prisma, rateLimitService) {
         this.prisma = prisma;
@@ -406,12 +407,16 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             url.searchParams.set(key, value);
         }
         let response;
+        const timeoutSignal = typeof AbortSignal.timeout === 'function'
+            ? AbortSignal.timeout(SMS_RU_REQUEST_TIMEOUT_MS)
+            : undefined;
         try {
-            response = await fetch(url);
+            response = await fetch(url, { signal: timeoutSignal });
         }
         catch (error) {
             this.logger.error(`Unable to reach SMS.ru verification provider for ${path}`, error instanceof Error ? error.stack : undefined);
-            throw this.createSafeCallcheckException(common_1.HttpStatus.SERVICE_UNAVAILABLE, 'SMS_RU_UNREACHABLE', 'SMS.ru unavailable');
+            const isTimeout = error instanceof DOMException && error.name === 'TimeoutError';
+            throw this.createSafeCallcheckException(common_1.HttpStatus.SERVICE_UNAVAILABLE, isTimeout ? 'SMS_RU_TIMEOUT' : 'SMS_RU_UNREACHABLE', isTimeout ? 'SMS.ru request timed out' : 'SMS.ru unavailable');
         }
         const rawBody = await response.text();
         let body = {};

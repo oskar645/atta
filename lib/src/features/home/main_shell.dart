@@ -78,6 +78,7 @@ class _MainShellState extends State<MainShell> {
       _shellController?.removeListener(_handleExternalTabSelection);
       _shellController = nextController;
       _i = nextController.selectedIndex;
+      _visitedTabs.add(_i);
       _shellController?.addListener(_handleExternalTabSelection);
     }
   }

@@ -365,6 +365,33 @@ void main() {
     expect(service.currentUser?.uid, 'user-1');
   });
 
+  for (final statusCode in [502, 504]) {
+    test('refreshSession keeps cached session on $statusCode refresh error',
+        () async {
+      final authApi = _FakeAuthApi()
+        ..refreshError = ApiException(
+          'Сервер временно недоступен',
+          statusCode: statusCode,
+        );
+      final service = BackendAuthService(
+        authApi: authApi,
+        usersApi: _FakeUsersApi(),
+        tokenStorage: TokenStorage(),
+      );
+
+      await service.signIn(
+        email: 'user@example.com',
+        password: 'secret',
+      );
+
+      final refreshed = await service.refreshSession();
+
+      expect(refreshed, isTrue);
+      expect(service.currentUser, isNotNull);
+      expect(service.currentUser?.uid, 'user-1');
+    });
+  }
+
   test('restoreSessionOnResume refreshes expired access token without logout',
       () async {
     final authApi = _FakeAuthApi();

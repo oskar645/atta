@@ -222,6 +222,29 @@ test('phone/start SMS.ru error returns code SMS_RU_CALLCHECK_FAILED', async () =
   );
 });
 
+test('phone/start SMS.ru timeout returns safe temporary error', async () => {
+  (env as { SMS_RU_CALLCHECK_ENABLED: boolean }).SMS_RU_CALLCHECK_ENABLED = true;
+  (env as { SMS_RU_API_ID: string }).SMS_RU_API_ID = 'present';
+  globalThis.fetch = (async () => {
+    throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+  }) as typeof fetch;
+  const service = createService(null);
+
+  await assert.rejects(
+    service.startCallVerification('79281234567', 'signup'),
+    (error: unknown) => {
+      assert.ok(error instanceof HttpException);
+      assert.equal(error.getStatus(), 503);
+      assert.deepEqual(error.getResponse(), {
+        message: 'Подтверждение телефона временно недоступно',
+        code: 'SMS_RU_TIMEOUT',
+        details: 'SMS.ru request timed out',
+      });
+      return true;
+    },
+  );
+});
+
 test('phone/start missing call_phone returns safe error', async () => {
   (env as { SMS_RU_CALLCHECK_ENABLED: boolean }).SMS_RU_CALLCHECK_ENABLED = true;
   (env as { SMS_RU_API_ID: string }).SMS_RU_API_ID = 'present';

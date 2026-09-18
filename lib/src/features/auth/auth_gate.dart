@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/main_shell_controller.dart';
 import 'blocked_account_screen.dart';
 import '../home/main_shell.dart';
 
@@ -45,6 +46,9 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _initializeAuth() async {
     final auth = context.read<AuthService>();
     _sub ??= auth.onAuthStateChange.listen((state) {
+      if (state.type == AuthSessionEventType.signedOut && mounted) {
+        Provider.of<MainShellController?>(context, listen: false)?.selectTab(0);
+      }
       if (mounted) {
         setState(() {
           _initError = null;
@@ -91,7 +95,10 @@ class _AuthGateState extends State<AuthGate> {
       final authenticatedBuilder = widget.authenticatedBuilder;
       return authenticatedBuilder != null
           ? authenticatedBuilder(context)
-          : const MainShell();
+          : MainShell(
+              key:
+                  ValueKey('authenticated-main-shell-${auth.currentUser?.uid}'),
+            );
     }
 
     if (!_ready) {
@@ -133,7 +140,10 @@ class _AuthGateState extends State<AuthGate> {
     if (unauthenticatedBuilder != null) {
       return unauthenticatedBuilder(context);
     }
-    return const MainShell(guestMode: true);
+    return const MainShell(
+      key: ValueKey('guest-main-shell'),
+      guestMode: true,
+    );
   }
 }
 

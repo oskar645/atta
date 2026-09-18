@@ -66,7 +66,7 @@ void main() {
   );
 
   testWidgets(
-    'pending deep link from current runtime opens after login and clears pending id',
+    'listing deep link from current runtime opens for guest and clears pending id',
     (tester) async {
       final deepLinks = _FakeDeepLinkService();
       final listings = _FakeListingsService();
@@ -83,18 +83,16 @@ void main() {
           navigatorObserver: observer,
         ),
       );
+      await tester.pump();
 
       deepLinks.emitListing('listing-42');
       await tester.pump();
-      expect(deepLinks.pendingListingId, 'listing-42');
-      expect(listings.getListingByIdCalls, isEmpty);
-
-      auth.setSignedInUser(const AuthUser(uid: 'user-1'));
-      await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(seconds: 3));
 
+      expect(deepLinks.pendingListingId, isNull);
       expect(listings.getListingByIdCalls, ['listing-42']);
-      expect(deepLinks.clearedListingIds, ['listing-42']);
+      expect(deepLinks.clearedListingIds, isEmpty);
       expect(observer.pushCount, 1);
     },
   );

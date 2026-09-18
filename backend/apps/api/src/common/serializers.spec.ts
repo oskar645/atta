@@ -68,6 +68,61 @@ test('listing serialization hides equal, increased and expired price states', ()
   }
 });
 
+test('public listing serialization hides owner normalized phone when phone is hidden', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '79281234567',
+      phoneHidden: true,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79281234567',
+      },
+    }) as any,
+  );
+
+  assert.equal(serialized.phone, null);
+  const owner = serialized.owner as any;
+  assert.equal('normalized_phone' in owner, false);
+  assert.equal('normalizedPhone' in owner, false);
+});
+
+test('public listing serialization keeps owner normalized phone when phone is visible', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '79281234567',
+      phoneHidden: false,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79281234567',
+      },
+    }) as any,
+  );
+
+  assert.equal(serialized.phone, '79281234567');
+  const owner = serialized.owner as any;
+  assert.equal(owner.normalized_phone, '79281234567');
+  assert.equal(owner.normalizedPhone, '79281234567');
+});
+
+test('private listing serialization keeps owner normalized phone when phone is hidden', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '79281234567',
+      phoneHidden: true,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79281234567',
+      },
+    }) as any,
+    { includePrivateContact: true },
+  );
+
+  assert.equal(serialized.phone, '79281234567');
+  const owner = serialized.owner as any;
+  assert.equal(owner.normalized_phone, '79281234567');
+  assert.equal(owner.normalizedPhone, '79281234567');
+});
+
 function listingFixture(overrides: Record<string, unknown>) {
   const now = new Date();
   return {

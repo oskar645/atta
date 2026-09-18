@@ -67,11 +67,14 @@ void main() {
   });
 
   test('privacy text includes data and communications sections', () {
-    expect(attaPrivacyText, contains('3. КАТЕГОРИИ ДАННЫХ'));
-    expect(attaPrivacyText, contains('5. ПУБЛИЧНЫЕ ДАННЫЕ'));
-    expect(attaPrivacyText, contains('7. СООБЩЕНИЯ И ПОДДЕРЖКА'));
-    expect(attaPrivacyText, contains('8. МОДЕРАЦИЯ'));
-    expect(attaPrivacyText, contains('14. ПРАВА ПОЛЬЗОВАТЕЛЯ'));
+    expect(
+      attaPrivacyText,
+      contains('4. КАТЕГОРИИ И ПЕРЕЧЕНЬ ОБРАБАТЫВАЕМЫХ ДАННЫХ'),
+    );
+    expect(attaPrivacyText, contains('6. ПУБЛИЧНЫЕ ДАННЫЕ'));
+    expect(attaPrivacyText, contains('9. СООБЩЕНИЯ И ПОДДЕРЖКА'));
+    expect(attaPrivacyText, contains('10. МОДЕРАЦИЯ'));
+    expect(attaPrivacyText, contains('17. ПРАВА ПОЛЬЗОВАТЕЛЯ'));
   });
 
   testWidgets('registration has two required consent checkboxes',

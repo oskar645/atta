@@ -256,6 +256,13 @@ const serializeListing = (listing, options) => {
     const publicPhone = listing.phoneHidden && options?.includePrivateContact !== true
         ? null
         : normalizedPhone;
+    const owner = listing.owner ? (0, exports.serializeUser)(listing.owner) : null;
+    if (owner &&
+        listing.phoneHidden &&
+        options?.includePrivateContact !== true) {
+        delete owner.normalized_phone;
+        delete owner.normalizedPhone;
+    }
     return {
         phone: publicPhone,
         ...(() => {
@@ -345,7 +352,7 @@ const serializeListing = (listing, options) => {
         created_at: listing.createdAt.toISOString(),
         updated_at: listing.updatedAt.toISOString(),
         owner: listing.owner
-            ? (0, exports.serializeUser)(listing.owner)
+            ? owner
             : {
                 id: listing.ownerId,
                 display_name: listing.ownerName,

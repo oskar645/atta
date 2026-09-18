@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -18,21 +18,134 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="Атта Маркет">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ATTA — Атта Маркет: сервис объявлений с поиском, категориями, избранным, чатами и публичными страницами объявлений.">
+  <link rel="canonical" href="https://attamarket.online/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="ATTA — Атта Маркет">
+  <meta property="og:title" content="ATTA — Атта Маркет">
+  <meta property="og:description" content="Сервис объявлений ATTA Market с поиском, категориями, избранным, чатами и публичными страницами объявлений.">
+  <meta property="og:url" content="https://attamarket.online/">
+  <meta property="og:locale" content="ru_RU">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="Атта Маркет">
+  <meta name="apple-mobile-web-app-title" content="ATTA">
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>Атта Маркет</title>
+  <title>ATTA — Атта Маркет</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+    }
+
+    body {
+      background: #f8f8f6;
+      color: #202124;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #atta-bootstrap-state {
+      align-items: center;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 100%;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+
+    #atta-bootstrap-state.hidden {
+      display: none;
+    }
+
+    .atta-bootstrap-brand {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .atta-bootstrap-message {
+      color: #5f6368;
+      font-size: 15px;
+      line-height: 1.4;
+      max-width: 320px;
+    }
+
+    #atta-bootstrap-retry {
+      background: #202124;
+      border: 0;
+      border-radius: 8px;
+      color: #ffffff;
+      cursor: pointer;
+      display: none;
+      font: inherit;
+      font-weight: 600;
+      min-height: 44px;
+      padding: 0 18px;
+    }
+
+    #atta-bootstrap-state.error #atta-bootstrap-retry {
+      display: inline-flex;
+      align-items: center;
+    }
+  </style>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebSite",
+          "@id": "https://attamarket.online/#website",
+          "url": "https://attamarket.online/",
+          "name": "ATTA — Атта Маркет",
+          "alternateName": ["ATTA Market", "Atta Market", "Атта", "Атта Маркет", "АТТА Маркет"],
+          "inLanguage": "ru-RU"
+        },
+        {
+          "@type": "Organization",
+          "@id": "https://attamarket.online/#organization",
+          "name": "ATTA",
+          "alternateName": ["ATTA Market", "Atta Market", "Атта", "Атта Маркет", "АТТА Маркет"],
+          "url": "https://attamarket.online/"
+        }
+      ]
+    }
+  </script>
 </head>
 <body>
+  <div id="atta-bootstrap-state" aria-live="polite">
+    <div class="atta-bootstrap-brand">ATTA</div>
+    <div class="atta-bootstrap-message" id="atta-bootstrap-message">Загружаем приложение...</div>
+    <button id="atta-bootstrap-retry" type="button">Повторить</button>
+  </div>
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var state = document.getElementById('atta-bootstrap-state');
+      if (state) state.classList.add('hidden');
+    });
+    window.attaShowBootstrapError = function () {
+      var state = document.getElementById('atta-bootstrap-state');
+      var message = document.getElementById('atta-bootstrap-message');
+      if (state) state.classList.add('error');
+      if (message) message.textContent = 'Не удалось запустить приложение.';
+    };
+    document.addEventListener('DOMContentLoaded', function () {
+      var retry = document.getElementById('atta-bootstrap-retry');
+      if (retry) retry.addEventListener('click', function () {
+        window.location.reload();
+      });
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

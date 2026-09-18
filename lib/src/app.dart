@@ -277,6 +277,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   late final ListingHistoryService _listingHistory;
   late final ListingsService _listings;
   late final ProfileService _profile;
+  MainShellController? _mainShellController;
   SavedSearchService? _savedSearches;
   late final ReviewsService _reviews;
   late final WalletService _walletService;
@@ -311,6 +312,8 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     _listingHistory = context.read<ListingHistoryService>();
     _listings = context.read<ListingsService>();
     _profile = context.read<ProfileService>();
+    _mainShellController =
+        Provider.of<MainShellController?>(context, listen: false);
     _savedSearches = Provider.of<SavedSearchService?>(context, listen: false);
     _reviews = context.read<ReviewsService>();
     _walletService = context.read<WalletService>();
@@ -328,6 +331,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       final didChangeUser = _activeUid != null && _activeUid != uid;
       if (uid == null || uid.isEmpty) {
         _activeUid = null;
+        _mainShellController?.selectTab(0);
         _walletService.resetSession();
         _notifications.resetSession();
         final pushCleanup =
@@ -427,11 +431,6 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       case AttaDeepLinkType.listing:
         final listingId = deepLink.listingId ?? '';
         if (listingId.isEmpty) return;
-        if (!_auth.isAuthenticated) {
-          _consumePendingListingAfterAuth = true;
-          await _deepLinks.savePendingListingId(listingId);
-          return;
-        }
         await _openListingFromDeepLink(
           listingId,
           clearPendingOnSuccess: true,

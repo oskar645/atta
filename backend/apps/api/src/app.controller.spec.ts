@@ -1,7 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
-
 import { AppController } from './app.controller';
 
 test('app landing page contains metadata and manual store fallback', () => {
@@ -55,6 +53,14 @@ test('listing fallback renders cancelable store fallback', async () => {
         findFirst: async () => ({
           id: 'listing-1',
           title: 'Lada Vesta NG',
+          description: 'Семейный седан в отличном состоянии',
+          category: 'Авто',
+          subcategory: 'Легковые автомобили',
+          price: BigInt(1200000),
+          city: 'Махачкала',
+          updatedAt: new Date('2026-09-01T10:00:00.000Z'),
+          publishedAt: new Date('2026-08-20T10:00:00.000Z'),
+          photos: [{ publicUrl: '/media/object?category=listings&key=photo.jpg' }],
         }),
       },
     } as any,
@@ -65,31 +71,33 @@ test('listing fallback renders cancelable store fallback', async () => {
   const html = await controller.getListingLandingPage('listing-1');
 
   assert.match(html, /Lada Vesta NG/);
-  assert.match(html, /Откройте объявление в приложении ATTA/);
-  assert.match(html, /https:\/\/apps\.apple\.com\/app\/id6762604298/);
-  assert.match(
-    html,
-    /https:\/\/play\.google\.com\/store\/apps\/details\?id=online\.attomarket\.atta/,
-  );
-  assert.doesNotMatch(html, /http-equiv="refresh"/);
-  assert.match(html, /if \(!\/android\/i\.test\(ua\)\) return;/);
-  assert.match(html, /visibilitychange/);
-  assert.match(html, /pagehide/);
-  assert.match(html, /clearTimeout/);
-  assert.match(html, /if \(document\.hidden\) stopFallback\(\)/);
-  assert.match(html, /window\.location\.replace/);
-  assert.doesNotMatch(html, /appStoreUrl/);
-  assert.doesNotMatch(html, /isIos/);
-  assert.doesNotMatch(html, /atta:\/\//);
+  assert.match(html, /<base href="\/">/);
+  assert.match(html, /<link rel="canonical" href="https:\/\/attamarket\.online\/listing\/listing-1"/);
+  assert.match(html, /<meta property="og:title" content="Lada Vesta NG"/);
+  assert.match(html, /<meta property="og:description" content="Семейный седан/);
+  assert.match(html, /<meta property="og:image" content="https:\/\/attamarket\.online\/media\/object\?category=listings&amp;key=photo\.jpg"/);
+  assert.match(html, /<h1>Lada Vesta NG<\/h1>/);
+  assert.match(html, /1\s200\s000 ₽/);
+  assert.match(html, /Махачкала/);
+  assert.match(html, /flutter_bootstrap\.js/);
+  assert.doesNotMatch(html, /phone/);
 });
 
-test('ios listing page keeps App Store as manual button without timer redirect', async () => {
+test('listing SEO escapes title and description', async () => {
   const controller = new AppController(
     {
       listing: {
         findFirst: async () => ({
           id: 'listing-1',
-          title: 'Lada Vesta NG',
+          title: '<script>alert(1)</script>',
+          description: 'Описание "опасное" & <b>html</b>',
+          category: 'Авто',
+          subcategory: 'Легковые автомобили',
+          price: BigInt(100),
+          city: 'Город',
+          updatedAt: new Date('2026-09-01T10:00:00.000Z'),
+          publishedAt: null,
+          photos: [],
         }),
       },
     } as any,
@@ -98,46 +106,14 @@ test('ios listing page keeps App Store as manual button without timer redirect',
   );
 
   const html = await controller.getListingLandingPage('listing-1');
-  const redirects = runListingScriptRedirects(
-    html,
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
-  );
 
-  assert.deepEqual(redirects, []);
-  assert.doesNotMatch(html, /appStoreUrl/);
-  assert.doesNotMatch(html, /isIos/);
-  assert.match(
-    html,
-    /<a class="button" href="https:\/\/apps\.apple\.com\/app\/id6762604298">Скачать ATTA в App Store<\/a>/,
-  );
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /Описание &quot;опасное&quot; &amp; &lt;b&gt;html&lt;\/b&gt;/);
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
 });
 
-test('android listing page keeps timed Google Play fallback', async () => {
-  const controller = new AppController(
-    {
-      listing: {
-        findFirst: async () => ({
-          id: 'listing-1',
-          title: 'Lada Vesta NG',
-        }),
-      },
-    } as any,
-    {} as any,
-    {} as any,
-  );
-
-  const html = await controller.getListingLandingPage('listing-1');
-  const redirects = runListingScriptRedirects(
-    html,
-    'Mozilla/5.0 (Linux; Android 14; Pixel 8)',
-  );
-
-  assert.deepEqual(redirects, [
-    'https://play.google.com/store/apps/details?id=online.attomarket.atta',
-  ]);
-});
-
-test('missing listing fallback renders unavailable state without auto redirect', async () => {
+test('missing listing returns not indexable 404 page', async () => {
+  const response = { statusCode: 200, status(code: number) { this.statusCode = code; } };
   const controller = new AppController(
     {
       listing: {
@@ -148,18 +124,37 @@ test('missing listing fallback renders unavailable state without auto redirect',
     {} as any,
   );
 
-  const html = await controller.getListingLandingPage('missing-listing');
+  const html = await controller.getListingLandingPage('missing-listing', response);
 
-  assert.match(html, /Объявление недоступно/);
-  assert.match(
-    html,
-    /https:\/\/play\.google\.com\/store\/apps\/details\?id=online\.attomarket\.atta/,
+  assert.equal(response.statusCode, 404);
+  assert.match(html, /noindex/);
+  assert.doesNotMatch(html, /flutter_bootstrap\.js/);
+});
+
+test('sitemap contains public listings and valid xml content', async () => {
+  const controller = new AppController(
+    {
+      listing: {
+        findMany: async () => [
+          {
+            id: 'listing-1',
+            updatedAt: new Date('2026-09-01T10:00:00.000Z'),
+            publishedAt: new Date('2026-08-20T10:00:00.000Z'),
+          },
+        ],
+      },
+    } as any,
+    {} as any,
+    {} as any,
   );
-  assert.doesNotMatch(html, /http-equiv="refresh"/);
-  assert.match(html, /visibilitychange/);
-  assert.match(html, /pagehide/);
-  assert.match(html, /clearTimeout/);
-  assert.match(html, /window\.location\.replace/);
+
+  const xml = await controller.getSitemap();
+
+  assert.match(xml, /^<\?xml version="1.0" encoding="UTF-8"\?>/);
+  assert.match(xml, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0\.9">/);
+  assert.match(xml, /<url>\s*<loc>https:\/\/attamarket\.online\/<\/loc>\s*<\/url>/);
+  assert.match(xml, /https:\/\/attamarket\.online\/listing\/listing-1/);
+  assert.match(xml, /<lastmod>2026-09-01T10:00:00.000Z<\/lastmod>/);
 });
 
 test('android asset links uses configured package and fingerprints', () => {
@@ -189,35 +184,3 @@ test('android asset links uses configured package and fingerprints', () => {
     }
   }
 });
-
-function runListingScriptRedirects(html: string, userAgent: string) {
-  const scriptMatch = html.match(/<script>\s*([\s\S]*?)\s*<\/script>/);
-  assert.ok(scriptMatch, 'listing page script is present');
-  const redirects: string[] = [];
-  const context = {
-    navigator: {
-      userAgent,
-      vendor: '',
-    },
-    document: {
-      hidden: false,
-      addEventListener: () => undefined,
-    },
-    window: {
-      addEventListener: () => undefined,
-      location: {
-        replace: (url: string) => {
-          redirects.push(url);
-        },
-      },
-    },
-    setTimeout: (callback: () => void) => {
-      callback();
-      return 1;
-    },
-    clearTimeout: () => undefined,
-  };
-
-  vm.runInNewContext(scriptMatch[1], context);
-  return redirects;
-}

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 
 import 'package:atta/src/app.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
@@ -10,6 +11,7 @@ Future<void> main() async {
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      usePathUrlStrategy();
       FlutterError.onError = (details) {
         FlutterError.presentError(details);
       };

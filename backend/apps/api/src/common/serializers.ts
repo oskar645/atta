@@ -381,6 +381,15 @@ export const serializeListing = (
   const publicPhone = listing.phoneHidden && options?.includePrivateContact !== true
     ? null
     : normalizedPhone;
+  const owner = listing.owner ? serializeUser(listing.owner) : null;
+  if (
+    owner &&
+    listing.phoneHidden &&
+    options?.includePrivateContact !== true
+  ) {
+    delete (owner as Partial<SerializedUser>).normalized_phone;
+    delete (owner as Partial<SerializedUser>).normalizedPhone;
+  }
 
   return {
   phone: publicPhone,
@@ -484,7 +493,7 @@ export const serializeListing = (
   created_at: listing.createdAt.toISOString(),
   updated_at: listing.updatedAt.toISOString(),
   owner: listing.owner
-    ? serializeUser(listing.owner)
+    ? owner
     : {
         id: listing.ownerId,
         display_name: listing.ownerName,

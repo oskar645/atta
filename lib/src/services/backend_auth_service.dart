@@ -457,6 +457,7 @@ class BackendAuthService {
           error.code == 'SMS_RU_CALLCHECK_DISABLED' ||
           error.code == 'SMS_RU_API_ID_MISSING' ||
           error.code == 'SMS_RU_UNREACHABLE' ||
+          error.code == 'SMS_RU_TIMEOUT' ||
           error.code == 'SMS_RU_INVALID_RESPONSE' ||
           error.code == 'SMS_RU_HTTP_ERROR') {
         return 'Подтверждение телефона временно недоступно. Попробуйте позже.';

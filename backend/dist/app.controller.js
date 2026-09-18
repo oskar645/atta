@@ -125,64 +125,128 @@ let AppController = AppController_1 = class AppController {
             },
         });
     }
-    async getListingLandingPage(listingId) {
+    async getListingLandingPage(listingId, res) {
         const normalizedListingId = listingId.trim();
         if (!normalizedListingId) {
-            return this.renderListingLandingPage({
-                listingId: '',
-                title: 'ATTA',
-                description: 'Откройте объявление в приложении ATTA',
-                available: false,
-            });
+            res?.status(common_1.HttpStatus.NOT_FOUND);
+            return this.renderNotFoundPage();
         }
         const listing = await this.prisma.listing.findFirst({
             where: {
                 id: normalizedListingId,
+                status: 'APPROVED',
+                archivedAt: null,
                 deletedAt: null,
+                owner: {
+                    status: 'ACTIVE',
+                    deletedAt: null,
+                },
             },
             select: {
                 id: true,
                 title: true,
+                description: true,
+                category: true,
+                subcategory: true,
+                price: true,
+                city: true,
+                updatedAt: true,
+                publishedAt: true,
+                photos: {
+                    orderBy: { sortOrder: 'asc' },
+                    select: { publicUrl: true },
+                    take: 1,
+                },
             },
         });
         if (!listing) {
-            return this.renderListingLandingPage({
-                listingId: normalizedListingId,
-                title: 'ATTA',
-                description: 'Объявление недоступно',
-                available: false,
-            });
+            res?.status(common_1.HttpStatus.NOT_FOUND);
+            return this.renderNotFoundPage();
         }
-        return this.renderListingLandingPage({
-            listingId: normalizedListingId,
-            title: listing.title.trim() || 'ATTA',
-            description: 'Откройте объявление в приложении ATTA',
-            available: true,
-        });
+        return this.renderListingSeoPage(listing);
     }
-    renderListingLandingPage(params) {
-        const normalizedListingId = params.listingId.trim();
-        const pageUrl = normalizedListingId
-            ? `https://attamarket.online/listing/${encodeURIComponent(normalizedListingId)}`
-            : 'https://attamarket.online/listing';
+    async getSitemap() {
+        const listings = await this.prisma.listing.findMany({
+            where: {
+                status: 'APPROVED',
+                archivedAt: null,
+                deletedAt: null,
+                owner: {
+                    status: 'ACTIVE',
+                    deletedAt: null,
+                },
+            },
+            select: {
+                id: true,
+                updatedAt: true,
+                publishedAt: true,
+            },
+            orderBy: [
+                { publishedAt: 'desc' },
+                { updatedAt: 'desc' },
+            ],
+            take: 45000,
+        });
+        const urls = [
+            { loc: 'https://attamarket.online/' },
+            { loc: 'https://attamarket.online/privacy' },
+            ...listings.map((listing) => ({
+                loc: `https://attamarket.online/listing/${encodeURIComponent(listing.id)}`,
+                lastmod: (listing.updatedAt ?? listing.publishedAt)?.toISOString(),
+            })),
+        ];
+        return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
+            .map((url) => `  <url>\n    <loc>${this.escapeXml(url.loc)}</loc>${url.lastmod ? `\n    <lastmod>${this.escapeXml(url.lastmod)}</lastmod>` : ''}\n  </url>`)
+            .join('\n')}\n</urlset>\n`;
+    }
+    renderListingSeoPage(listing) {
+        const pageUrl = `https://attamarket.online/listing/${encodeURIComponent(listing.id)}`;
+        const title = this.truncateText(listing.title.trim() || 'Объявление ATTA', 90);
+        const description = this.truncateText(listing.description.trim() || `${title} на ATTA — Атта Маркет`, 220);
+        const imageUrl = this.safeAbsoluteUrl(listing.photos[0]?.publicUrl);
+        const price = this.formatPrice(listing.price);
+        const jsonLd = this.safeJsonLd({
+            '@context': 'https://schema.org',
+            '@type': 'ItemPage',
+            '@id': `${pageUrl}#webpage`,
+            url: pageUrl,
+            name: title,
+            description,
+            inLanguage: 'ru-RU',
+            dateModified: listing.updatedAt.toISOString(),
+            datePublished: listing.publishedAt?.toISOString(),
+            primaryImageOfPage: imageUrl ? { '@type': 'ImageObject', url: imageUrl } : undefined,
+            breadcrumb: {
+                '@type': 'BreadcrumbList',
+                itemListElement: [
+                    { '@type': 'ListItem', position: 1, name: 'ATTA', item: 'https://attamarket.online/' },
+                    { '@type': 'ListItem', position: 2, name: title, item: pageUrl },
+                ],
+            },
+        });
         return `<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
+    <base href="/">
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${this.escapeHtml(params.title)}</title>
-    <meta name="description" content="${this.escapeHtml(params.description)}" />
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content="${this.escapeHtml(params.title)}" />
-    <meta property="og:description" content="${this.escapeHtml(params.description)}" />
-    <meta property="og:image" content="${AppController_1.appOgImageUrl}" />
+    <title>${this.escapeHtml(title)}</title>
+    <meta name="description" content="${this.escapeHtml(description)}" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="ATTA — Атта Маркет" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:title" content="${this.escapeHtml(title)}" />
+    <meta property="og:description" content="${this.escapeHtml(description)}" />
     <meta property="og:url" content="${pageUrl}" />
+    ${imageUrl ? `<meta property="og:image" content="${this.escapeHtml(imageUrl)}" />` : ''}
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${this.escapeHtml(params.title)}" />
-    <meta name="twitter:description" content="${this.escapeHtml(params.description)}" />
-    <meta name="twitter:image" content="${AppController_1.appOgImageUrl}" />
+    <meta name="twitter:title" content="${this.escapeHtml(title)}" />
+    <meta name="twitter:description" content="${this.escapeHtml(description)}" />
+    ${imageUrl ? `<meta name="twitter:image" content="${this.escapeHtml(imageUrl)}" />` : ''}
     <link rel="canonical" href="${pageUrl}" />
-    ${this.renderSmartFallbackScript()}
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="favicon.png"/>
+    <script type="application/ld+json">${jsonLd}</script>
     <style>
       body {
         margin: 0;
@@ -238,15 +302,20 @@ let AppController = AppController_1 = class AppController {
   </head>
   <body>
     <main>
-      <section class="card">
-        <h1>ATTA</h1>
-        <p>${this.escapeHtml(params.description)}</p>
-        <p>${params.available ? 'Если приложение не установлено, скачайте ATTA из магазина.' : 'Если приложение не установлено, выберите магазин вручную.'}</p>
-        ${this.renderStoreButtons({ appStoreLabel: 'Скачать ATTA в App Store' })}
-      </section>
+      <article class="card">
+        <h1>${this.escapeHtml(title)}</h1>
+        ${imageUrl ? `<img src="${this.escapeHtml(imageUrl)}" alt="${this.escapeHtml(title)}" loading="eager" />` : ''}
+        ${price ? `<p class="price">${this.escapeHtml(price)}</p>` : ''}
+        ${listing.city.trim() ? `<p>${this.escapeHtml(listing.city.trim())}</p>` : ''}
+        <p>${this.escapeHtml(description)}</p>
+      </article>
     </main>
+    <script src="flutter_bootstrap.js" async></script>
   </body>
 </html>`;
+    }
+    renderNotFoundPage() {
+        return `<!doctype html><html lang="ru"><head><meta charset="utf-8" /><meta name="robots" content="noindex" /><title>Объявление не найдено</title></head><body><h1>Объявление не найдено</h1></body></html>`;
     }
     renderInviteLandingScript(ref) {
         const normalizedRef = (ref ?? '').trim();
@@ -377,6 +446,42 @@ let AppController = AppController_1 = class AppController {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
+    escapeXml(value) {
+        return this.escapeHtml(value);
+    }
+    truncateText(value, maxLength) {
+        const normalized = value.replace(/\s+/g, ' ').trim();
+        if (normalized.length <= maxLength) {
+            return normalized;
+        }
+        return `${normalized.slice(0, maxLength - 1).trim()}…`;
+    }
+    formatPrice(value) {
+        const amount = typeof value === 'bigint' ? Number(value) : Number(value ?? 0);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return null;
+        }
+        return `${new Intl.NumberFormat('ru-RU').format(amount)} ₽`;
+    }
+    safeAbsoluteUrl(value) {
+        const raw = value?.trim();
+        if (!raw) {
+            return null;
+        }
+        try {
+            const url = new URL(raw, 'https://attamarket.online');
+            if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+                return null;
+            }
+            return url.toString();
+        }
+        catch {
+            return null;
+        }
+    }
+    safeJsonLd(value) {
+        return JSON.stringify(value, (_key, nestedValue) => nestedValue === undefined ? undefined : nestedValue).replace(/</g, '\\u003c');
+    }
     escapeJavaScriptString(value) {
         return value
             .replace(/\\/g, '\\\\')
@@ -463,10 +568,18 @@ __decorate([
     (0, common_1.Get)('listing/:listingId'),
     (0, common_1.Header)('Content-Type', 'text/html; charset=utf-8'),
     __param(0, (0, common_1.Param)('listingId')),
+    __param(1, (0, common_1.Res)({ passthrough: true })),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], AppController.prototype, "getListingLandingPage", null);
+__decorate([
+    (0, common_1.Get)('sitemap.xml'),
+    (0, common_1.Header)('Content-Type', 'application/xml; charset=utf-8'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], AppController.prototype, "getSitemap", null);
 exports.AppController = AppController = AppController_1 = __decorate([
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
