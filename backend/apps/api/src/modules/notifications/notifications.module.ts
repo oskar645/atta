@@ -3,6 +3,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { ApnsModule } from '../apns/apns.module';
 import { AuthModule } from '../auth/auth.module';
 import { ChatsModule } from '../chats/chats.module';
+import { FcmModule } from '../fcm/fcm.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { UserBlocksModule } from '../user-blocks/user-blocks.module';
 import {
@@ -12,7 +13,7 @@ import {
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [ApnsModule, AuthModule, PrismaModule, forwardRef(() => ChatsModule), UserBlocksModule],
+  imports: [ApnsModule, AuthModule, PrismaModule, FcmModule, forwardRef(() => ChatsModule), UserBlocksModule],
   controllers: [NotificationsController, AdminNotificationsController],
   providers: [NotificationsService],
   exports: [NotificationsService],

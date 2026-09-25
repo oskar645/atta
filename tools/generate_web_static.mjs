@@ -47,8 +47,8 @@ ${privacyBody}
 </html>
 `;
 
-fs.mkdirSync('build/web/privacy', { recursive: true });
-fs.writeFileSync('build/web/privacy/index.html', privacyHtml);
+fs.mkdirSync('web/privacy', { recursive: true });
+fs.writeFileSync('web/privacy/index.html', privacyHtml);
 
 fs.writeFileSync(
   'build/web/robots.txt',
@@ -78,4 +78,4 @@ fs.writeFileSync(
 `,
 );
 
-console.log('Generated build/web/privacy/index.html, robots.txt, sitemap.xml');
+console.log('Generated web/privacy/index.html, build/web/robots.txt, build/web/sitemap.xml');

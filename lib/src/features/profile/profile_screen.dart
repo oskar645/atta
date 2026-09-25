@@ -283,61 +283,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
   }
 
-  Future<void> _editPhone(
-      BuildContext context, String uid, String currentPhone) async {
-    final ctrl =
-        TextEditingController(text: formatRuPhoneForField(currentPhone));
-    final profile = context.read<ProfileService>();
-
-    final res = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Номер телефона'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.phone,
-          textInputAction: TextInputAction.done,
-          inputFormatters: const [
-            RuPhoneInputFormatter(),
-          ],
-          decoration: const InputDecoration(
-            hintText: '928 888-86-45',
-            prefixText: '+7 ',
-          ),
-          onSubmitted: (_) => Navigator.pop(context, ctrl.text),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Отмена')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, ctrl.text),
-              child: const Text('Сохранить')),
-        ],
-      ),
-    );
-
-    final phone = (res ?? '').trim();
-    if (phone.isEmpty) return;
-    final normalizedPhone = normalizeRuPhoneForApi(phone);
-    if (normalizedPhone.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Введите номер телефона полностью')),
-        );
-      }
-      return;
-    }
-
-    await profile.updateProfile(uid, {'phone': normalizedPhone});
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Номер телефона сохранен')));
-    }
-  }
-
 // ✅ UNIVERSAL: pick -> readAsBytes -> uploadBinary
   Future<void> _pickAndUploadAvatar(BuildContext context, String uid) async {
     final picker = ImagePicker();
@@ -607,35 +552,33 @@ class _ProfileScreenState extends State<ProfileScreen>
                               ),
                             ),
                             const SizedBox(height: 6),
-                            InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () => _editPhone(context, user.uid, phone),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 2),
-                                child: Wrap(
-                                  spacing: 10,
-                                  runSpacing: 6,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text(
-                                      phoneDisplay.isEmpty
-                                          ? 'Добавить телефон'
-                                          : phoneDisplay,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          color: Theme.of(context)
-                                              .colorScheme
-                                              .outline),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Wrap(
+                                spacing: 10,
+                                runSpacing: 6,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Text(
+                                    phoneDisplay.isEmpty
+                                        ? 'Телефон не указан'
+                                        : phoneDisplay,
+                                    key: const ValueKey(
+                                      'profile-phone-display',
                                     ),
-                                    if (sellerLevel != null)
-                                      SellerLevelBadge(
-                                        level: sellerLevel,
-                                        size: SellerLevelBadgeSize.large,
-                                      ),
-                                  ],
-                                ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .outline),
+                                  ),
+                                  if (sellerLevel != null)
+                                    SellerLevelBadge(
+                                      level: sellerLevel,
+                                      size: SellerLevelBadgeSize.large,
+                                    ),
+                                ],
                               ),
                             ),
                             const SizedBox(height: 4),

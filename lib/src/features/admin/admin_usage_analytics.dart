@@ -146,29 +146,34 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
             key: ValueKey('analytics-${block.primaryMetric}'),
             onTap: () => setState(() => _selected = block),
             child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: const EdgeInsets.all(14),
+              child: Row(
                 children: [
-                  Row(children: [
-                    Icon(block.icon, color: theme.colorScheme.primary),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: Text(block.title,
-                            style: theme.textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700))),
-                    const Icon(Icons.chevron_right, size: 20),
-                  ]),
-                  const SizedBox(height: 14),
-                  Text(value(block.primaryMetric),
-                      style: theme.textTheme.headlineMedium
-                          ?.copyWith(fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 4),
-                  Text(
-                      isEmpty(block)
-                          ? 'Нет активности за период'
-                          : block.metrics[block.primaryMetric]!,
-                      style: theme.textTheme.bodySmall),
+                  Icon(block.icon, color: theme.colorScheme.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      block.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        value(block.primaryMetric),
+                        maxLines: 1,
+                        style: theme.textTheme.titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.chevron_right, size: 20),
                 ],
               ),
             ),

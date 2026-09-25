@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const apns_module_1 = require("../apns/apns.module");
 const auth_module_1 = require("../auth/auth.module");
 const chats_module_1 = require("../chats/chats.module");
+const fcm_module_1 = require("../fcm/fcm.module");
 const prisma_module_1 = require("../prisma/prisma.module");
 const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const notifications_controller_1 = require("./notifications.controller");
@@ -20,7 +21,7 @@ let NotificationsModule = class NotificationsModule {
 exports.NotificationsModule = NotificationsModule;
 exports.NotificationsModule = NotificationsModule = __decorate([
     (0, common_1.Module)({
-        imports: [apns_module_1.ApnsModule, auth_module_1.AuthModule, prisma_module_1.PrismaModule, (0, common_1.forwardRef)(() => chats_module_1.ChatsModule), user_blocks_module_1.UserBlocksModule],
+        imports: [apns_module_1.ApnsModule, auth_module_1.AuthModule, prisma_module_1.PrismaModule, fcm_module_1.FcmModule, (0, common_1.forwardRef)(() => chats_module_1.ChatsModule), user_blocks_module_1.UserBlocksModule],
         controllers: [notifications_controller_1.NotificationsController, notifications_controller_1.AdminNotificationsController],
         providers: [notifications_service_1.NotificationsService],
         exports: [notifications_service_1.NotificationsService],

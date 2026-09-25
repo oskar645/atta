@@ -48,6 +48,9 @@ dependencies:
   app_badge_plus: ^1.2.9
   app_links: ^7.0.0
   flutter_secure_storage: ^10.3.1
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
+  flutter_local_notifications: ^22.3.1
 
 dev_dependencies:
   flutter_test:

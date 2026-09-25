@@ -33,6 +33,20 @@ Map<String, dynamic> data(int n) => {
       }
     };
 
+Map<String, dynamic> summaryData(int value) => {
+      'periods': {
+        for (final period in ['today', 'yesterday', 'week', 'month', 'all'])
+          period: {
+            'guests': value,
+            'guestOpens': value,
+            'registeredOpens': value,
+            'totalOpens': value,
+            'messages': value,
+            'activeChats': value,
+          },
+      },
+    };
+
 void main() {
   for (final width in [320.0, 768.0, 1440.0]) {
     testWidgets(
@@ -52,7 +66,12 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Открытия объявлений'), findsOneWidget);
       expect(find.text('Сообщения'), findsOneWidget);
-      expect(find.text('Уникальных гостей'), findsOneWidget);
+      expect(find.text('Гости'), findsOneWidget);
+      expect(find.byIcon(Icons.chevron_right), findsNWidgets(3));
+      for (final key in ['guests', 'totalOpens', 'messages']) {
+        final size = tester.getSize(find.byKey(ValueKey('analytics-$key')));
+        expect(size.height, lessThan(90));
+      }
       for (final label in [
         'Вчера',
         '7 дней',
@@ -85,6 +104,47 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   }
+
+  for (final value in [0, 1, 99, 9999]) {
+    testWidgets(
+        'compact summaries align values right and vertically at 320px for $value',
+        (tester) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: AdminUsageAnalytics(load: () async => summaryData(value)),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      for (final entry in {
+        'guests': 'Гости',
+        'totalOpens': 'Открытия объявлений',
+        'messages': 'Сообщения',
+      }.entries) {
+        final card = find.byKey(ValueKey('analytics-${entry.key}'));
+        final title =
+            find.descendant(of: card, matching: find.text(entry.value));
+        final number = find.descendant(of: card, matching: find.text('$value'));
+        final cardRect = tester.getRect(card);
+        final titleRect = tester.getRect(title);
+        final numberRect = tester.getRect(number);
+
+        expect(numberRect.left, greaterThan(titleRect.left));
+        expect(numberRect.center.dy, closeTo(cardRect.center.dy, 1));
+        expect(cardRect.height, lessThan(90));
+      }
+      expect(find.byIcon(Icons.chevron_right), findsNWidgets(3));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('details use each API period without recomputing metrics',
       (tester) async {
     final response = data(0);

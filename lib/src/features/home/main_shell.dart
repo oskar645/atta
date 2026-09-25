@@ -25,6 +25,14 @@ void _debugMyListingsMainShellLog(String message) {
   }());
 }
 
+bool _coldStartVpnBannerClaimed = false;
+
+bool _claimColdStartVpnBanner() {
+  if (_coldStartVpnBannerClaimed) return false;
+  _coldStartVpnBannerClaimed = true;
+  return true;
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({
     super.key,
@@ -51,6 +59,7 @@ class _MainShellState extends State<MainShell> {
   String? _presenceUid;
   late final Set<int> _visitedTabs = <int>{0, widget.initialIndex};
   bool _didCheckWebPromo = false;
+  late final bool _showColdStartVpnBanner = _claimColdStartVpnBanner();
 
   static const _inactive = Color(0xFF8E95A3);
   static const _search = Colors.blue;
@@ -189,7 +198,10 @@ class _MainShellState extends State<MainShell> {
     }
     switch (index) {
       case 0:
-        return HomeScreen(controller: _homeTabController);
+        return HomeScreen(
+          controller: _homeTabController,
+          showColdStartVpnBanner: _showColdStartVpnBanner && _i == 0,
+        );
       case 1:
         return const FavoritesScreen();
       case 2:

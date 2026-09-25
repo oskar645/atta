@@ -36,6 +36,7 @@ import 'package:atta/src/widgets/listing_price_row.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/add_listing_icon_button.dart';
+import 'package:atta/src/widgets/cold_start_vpn_banner.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:atta/src/features/showcase/showcase_all_screen.dart';
 import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
@@ -58,10 +59,12 @@ class HomeTabController {
 
 class HomeScreen extends StatefulWidget {
   final HomeTabController? controller;
+  final bool showColdStartVpnBanner;
 
   const HomeScreen({
     super.key,
     this.controller,
+    this.showColdStartVpnBanner = false,
   });
 
   @override
@@ -741,107 +744,123 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           const AddListingIconButton(),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Container(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: Column(
-              children: [
-                _CategoryRow(selected: _category, onSelect: _selectCategory),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                  child: TextField(
-                    controller: _searchCtrl,
-                    onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: IconButton(
-                        tooltip: 'Фильтры',
-                        onPressed: _openFilters,
-                        icon: const Icon(Icons.tune),
-                      ),
-                      hintText: hint,
-                      isDense: true,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide:
-                            BorderSide(color: Theme.of(context).dividerColor),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 1.6,
-                        ),
-                      ),
-                    ),
-                    onChanged: (v) {
-                      setState(() => _search = v.trim());
-                      _persistFilters();
-                      unawaited(_reloadFeed(reset: true));
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _handleRefresh,
-              edgeOffset: 8,
-              child: Builder(
-                builder: (context) {
-                  if (_isInitialLoading && _feedItems.isEmpty) {
-                    return const SkeletonListingGrid(
-                      physics: AlwaysScrollableScrollPhysics(),
-                    );
-                  }
-
-                  if (_feedError != null && _feedItems.isEmpty) {
-                    return ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        Padding(
-                          padding: EdgeInsets.only(top: 120),
-                          child: Center(
-                            child: Text(
-                              'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
-                              textAlign: TextAlign.center,
+          Column(
+            children: [
+              Container(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: Column(
+                  children: [
+                    _CategoryRow(
+                        selected: _category, onSelect: _selectCategory),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                      child: TextField(
+                        controller: _searchCtrl,
+                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: IconButton(
+                            tooltip: 'Фильтры',
+                            onPressed: _openFilters,
+                            icon: const Icon(Icons.tune),
+                          ),
+                          hintText: hint,
+                          isDense: true,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(
+                                color: Theme.of(context).dividerColor),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(
+                              color: Theme.of(context).colorScheme.primary,
+                              width: 1.6,
                             ),
                           ),
                         ),
-                      ],
-                    );
-                  }
+                        onChanged: (v) {
+                          setState(() => _search = v.trim());
+                          _persistFilters();
+                          unawaited(_reloadFeed(reset: true));
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  edgeOffset: 8,
+                  child: Builder(
+                    builder: (context) {
+                      if (_isInitialLoading && _feedItems.isEmpty) {
+                        return const SkeletonListingGrid(
+                          physics: AlwaysScrollableScrollPhysics(),
+                        );
+                      }
 
-                  return StreamBuilder<FeedAd?>(
-                    stream: feedAds.streamActiveAd(),
-                    builder: (context, adSnap) {
-                      return _HomeFeedView(
-                        key: _feedKey,
-                        items: _feedItems,
-                        ad: adSnap.data,
-                        showcaseItems: _showcaseItems,
-                        vipItems: _vipItems,
-                        vipHasMore: _vipHasMore,
-                        vipInitialIndex: _vipHomeRotationOffset,
-                        showcaseLoading:
-                            _showcaseLoading && !_showcaseLoadedOnce,
-                        history: history,
-                        reviews: reviews,
-                        favs: favs,
-                        userId: user?.uid ?? '',
-                        isLoadingMore: _isLoadingMore,
-                        hasMore: _hasMore,
-                        onLoadMore: _loadMoreFeed,
-                        onLoadMoreVip: _loadMoreVipShowcase,
+                      if (_feedError != null && _feedItems.isEmpty) {
+                        return ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          children: const [
+                            Padding(
+                              padding: EdgeInsets.only(top: 120),
+                              child: Center(
+                                child: Text(
+                                  'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+
+                      return StreamBuilder<FeedAd?>(
+                        stream: feedAds.streamActiveAd(),
+                        builder: (context, adSnap) {
+                          return _HomeFeedView(
+                            key: _feedKey,
+                            items: _feedItems,
+                            ad: adSnap.data,
+                            showcaseItems: _showcaseItems,
+                            vipItems: _vipItems,
+                            vipHasMore: _vipHasMore,
+                            vipInitialIndex: _vipHomeRotationOffset,
+                            showcaseLoading:
+                                _showcaseLoading && !_showcaseLoadedOnce,
+                            history: history,
+                            reviews: reviews,
+                            favs: favs,
+                            userId: user?.uid ?? '',
+                            isLoadingMore: _isLoadingMore,
+                            hasMore: _hasMore,
+                            onLoadMore: _loadMoreFeed,
+                            onLoadMoreVip: _loadMoreVipShowcase,
+                          );
+                        },
                       );
                     },
-                  );
-                },
+                  ),
+                ),
+              ),
+            ],
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
+              bottom: false,
+              child: ColdStartVpnBanner(
+                show: widget.showColdStartVpnBanner,
               ),
             ),
           ),

@@ -1,10 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { DevicePlatform, NotificationScope, NotificationType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { ApnsService } from '../apns/apns.service';
 import { ChatsGateway } from '../chats/chats.gateway';
+import { FcmService } from '../fcm/fcm.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const excludedInAppNotificationTypes = [NotificationType.CHAT_MESSAGE];
@@ -17,6 +18,7 @@ export class NotificationsService {
     private readonly apnsService: ApnsService,
     private readonly prisma: PrismaService,
     private readonly chatsGateway: ChatsGateway,
+    @Optional() private readonly fcmService?: FcmService,
   ) {}
 
   private toType(type?: string) {
@@ -582,12 +584,13 @@ export class NotificationsService {
     const devices = await this.prisma.userDevice.findMany({
       where: {
         isActive: true,
-        platform: DevicePlatform.IOS,
+        platform: { in: [DevicePlatform.IOS, DevicePlatform.ANDROID] },
         session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
         userId: true,
         deviceToken: true,
+        platform: true,
       },
       take: 5000,
     });
@@ -604,19 +607,20 @@ export class NotificationsService {
       where: {
         userId: normalizedUserId,
         isActive: true,
-        platform: DevicePlatform.IOS,
+        platform: { in: [DevicePlatform.IOS, DevicePlatform.ANDROID] },
         session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
         userId: true,
         deviceToken: true,
+        platform: true,
       },
     });
     await this.sendPushToDevices(devices, notification);
   }
 
   private async sendPushToDevices(
-    devices: Array<{ userId: string; deviceToken: string }>,
+    devices: Array<{ userId: string; deviceToken: string; platform: DevicePlatform }>,
     notification: Record<string, unknown>,
   ) {
     const title = `${notification['title'] ?? ''}`.trim() || 'ATTA';
@@ -638,13 +642,32 @@ export class NotificationsService {
             badge = this.canonicalBadgeCount(device.userId);
             badges.set(device.userId, badge);
           }
+          const absoluteBadge = await badge;
+          if (device.platform === DevicePlatform.ANDROID) {
+            const fcmResult = await this.fcmService?.send({
+              token: device.deviceToken,
+              title,
+              body,
+              notificationCount: absoluteBadge,
+              data: {
+                actionType: `${payload.actionType}`,
+                recipientId: device.userId,
+                notification: JSON.stringify(notification),
+                badge: `${absoluteBadge}`,
+              },
+            });
+            if (fcmResult?.staleToken) {
+              await this.deactivateDevice(device);
+            }
+            return;
+          }
           result = await this.apnsService.send({
-            token: device.deviceToken,
-            title,
-            body,
-            payload: { ...payload, recipientId: device.userId },
-            badge: await badge,
-          });
+              token: device.deviceToken,
+              title,
+              body,
+              payload: { ...payload, recipientId: device.userId },
+              badge: absoluteBadge,
+            });
         } catch (error) {
           if (!unexpectedPushFailureLogged) {
             this.logger.warn(
@@ -661,18 +684,17 @@ export class NotificationsService {
             result.reason === 'Unregistered' ||
             result.reason === 'DeviceTokenNotForTopic')
         ) {
-          await this.prisma.userDevice.updateMany({
-            where: {
-              deviceToken: device.deviceToken,
-              userId: device.userId,
-            },
-            data: {
-              isActive: false,
-            },
-          });
+          await this.deactivateDevice(device);
         }
       }),
     );
+  }
+
+  private async deactivateDevice(device: { userId: string; deviceToken: string }) {
+    await this.prisma.userDevice.updateMany({
+      where: { deviceToken: device.deviceToken, userId: device.userId },
+      data: { isActive: false },
+    });
   }
 
 }

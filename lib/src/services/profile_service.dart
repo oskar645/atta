@@ -235,6 +235,8 @@ class ProfileService {
       if (data['display_name'] != null) 'display_name': data['display_name'],
       if (data['name'] != null) 'name': data['name'],
       if (data['phone'] != null) 'phone': data['phone'],
+      if (data['verificationCheckId'] != null)
+        'verificationCheckId': data['verificationCheckId'],
       if (data['avatar_url'] != null) 'avatar_url': data['avatar_url'],
       if (data['photo_url'] != null) 'photo_url': data['photo_url'],
     };

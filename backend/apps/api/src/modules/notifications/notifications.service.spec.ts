@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { NotificationScope, NotificationType } from '@prisma/client';
+import { DevicePlatform, NotificationScope, NotificationType } from '@prisma/client';
 
 import { NotificationsService } from './notifications.service';
 
@@ -282,6 +282,55 @@ test('chat message push sends absolute APNs badge count', async () => {
     pushes.map((push) => push['badge']),
     [9, 9],
   );
+});
+
+test('chat message push routes Android token to FCM with absolute badge', async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  const service = new NotificationsService(
+    { send: async () => assert.fail('APNs must not receive Android token') } as never,
+    {
+      userNotification: { count: async () => 1 },
+      chat: {
+        aggregate: async ({ where }: any) => ({
+          _sum: where.buyerId
+            ? { unreadForBuyer: 2 }
+            : { unreadForSeller: 0 },
+        }),
+      },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
+      userDevice: {
+        findMany: async () => [
+          {
+            userId: 'user-1',
+            deviceToken: 'android-token-1',
+            platform: DevicePlatform.ANDROID,
+          },
+        ],
+      },
+    } as never,
+    { emitNotificationNew: () => undefined } as never,
+    {
+      send: async (push: Record<string, unknown>) => {
+        pushes.push(push);
+        return { sent: true };
+      },
+    } as never,
+  );
+
+  await service.sendChatMessagePush({
+    recipientId: 'user-1',
+    message: {
+      id: 'message-1',
+      chatId: 'chat-1',
+      senderId: 'user-2',
+      text: 'Привет',
+    },
+    chat: { id: 'chat-1' },
+  });
+
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0]['notificationCount'], 3);
+  assert.equal((pushes[0]['data'] as Record<string, string>)['badge'], '3');
 });
 
 test('createSystemNotification keeps in-app notification when APNs send throws', async () => {

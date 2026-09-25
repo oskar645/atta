@@ -839,16 +839,6 @@ class _DashboardTab extends StatelessWidget {
 
           final stats = Map<String, dynamic>.from(
               (snap.data!['stats'] as Map?) ?? const {});
-          final dailyRoot = Map<String, dynamic>.from(
-              (snap.data!['daily'] as Map?) ?? const {});
-          final daily = ((dailyRoot['listings'] as List?) ?? const <dynamic>[])
-              .whereType<Map>()
-              .map((row) => Map<String, dynamic>.from(row))
-              .toList();
-          final listingsSeries = daily
-              .map((e) => ((e['listings_new'] as num?) ?? 0).toInt())
-              .toList();
-
           Widget card(
             String title,
             String value,
@@ -896,42 +886,6 @@ class _DashboardTab extends StatelessWidget {
                       ),
                     ],
                   ),
-                ),
-              ),
-            );
-          }
-
-          Widget chartCard({
-            required String title,
-            required List<int> values,
-          }) {
-            return Card(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (values.isEmpty)
-                      Text(
-                        'Нет данных',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.outline,
-                        ),
-                      )
-                    else
-                      MiniLineChart(
-                        values: values,
-                        height: 140,
-                      ),
-                  ],
                 ),
               ),
             );
@@ -1045,11 +999,6 @@ class _DashboardTab extends StatelessWidget {
               card('Жалоб (open)', '${read('reportsOpen')}', Icons.report),
               card('Рекламы active', '${read('activeAds')}',
                   Icons.ad_units_outlined),
-              const SizedBox(height: 8),
-              chartCard(
-                title: 'Новые объявления за 14 дней',
-                values: listingsSeries,
-              ),
             ],
           );
         },
@@ -1090,8 +1039,6 @@ class _DashboardTab extends StatelessWidget {
         final online = counts[7];
 
         // серии для графика
-        final listingsSeries =
-            daily.map((e) => (e['listings_new'] ?? 0) as int).toList();
         final ticketsSeries =
             daily.map((e) => (e['tickets_new'] ?? 0) as int).toList();
         final reportsSeries =
@@ -1203,10 +1150,6 @@ class _DashboardTab extends StatelessWidget {
             card('Тикетов поддержки', '$tickets', Icons.support_agent),
             card('Жалоб (open)', '$reports', Icons.report),
             const SizedBox(height: 8),
-            chartCard(
-              title: 'Новые объявления за 14 дней',
-              values: listingsSeries,
-            ),
             chartCard(
               title: 'Новые тикеты поддержки за 14 дней',
               values: ticketsSeries,

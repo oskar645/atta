@@ -5,7 +5,6 @@ import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
-import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -18,7 +17,8 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
+  String _savedName = '';
+  bool _nameChanged = false;
   bool _saving = false;
   bool _deletingAccount = false;
   bool _loadingMarketingConsent = true;
@@ -31,6 +31,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (currentUser != null) {
       _nameCtrl.text = (currentUser.displayName ?? '').trim();
     }
+    _savedName = _nameCtrl.text.trim();
+    _nameCtrl.addListener(_handleNameChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final auth = context.read<AuthService>();
       final profile = context.read<ProfileService>();
@@ -40,14 +42,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           (data['display_name'] ?? data['displayName'] ?? data['name'] ?? '')
               .toString()
               .trim();
-      final loadedPhone = (data['phone'] ?? '').toString().trim();
-
-      _nameCtrl.text = loadedName.isNotEmpty ? loadedName : _nameCtrl.text;
-      _phoneCtrl.text = formatRuPhoneForField(
-        loadedPhone.isNotEmpty ? loadedPhone : _phoneCtrl.text,
-      );
+      final resolvedName = loadedName.isNotEmpty ? loadedName : _nameCtrl.text;
+      _savedName = resolvedName.trim();
+      _nameCtrl.text = resolvedName;
       if (mounted) {
-        setState(() {});
+        setState(() => _nameChanged = false);
       }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -68,9 +67,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _nameCtrl.removeListener(_handleNameChanged);
     _nameCtrl.dispose();
-    _phoneCtrl.dispose();
     super.dispose();
+  }
+
+  void _handleNameChanged() {
+    final changed = _nameCtrl.text.trim() != _savedName;
+    if (changed == _nameChanged || !mounted) return;
+    setState(() => _nameChanged = changed);
   }
 
   OutlineInputBorder _fieldBorder(BuildContext context) {
@@ -89,18 +94,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final uid = currentUser.uid;
 
     final name = _nameCtrl.text.trim();
-    final phone = _phoneCtrl.text.trim();
-    final normalizedPhone = phone.isEmpty ? '' : normalizeRuPhoneForApi(phone);
 
     if (name.isEmpty) {
       showAppSnack(context, 'Введите имя', isError: true);
       return;
     }
-    if (phone.isNotEmpty && normalizedPhone.isEmpty) {
-      showAppSnack(context, 'Введите номер телефона полностью', isError: true);
-      return;
-    }
-
     setState(() => _saving = true);
     try {
       await auth.updateAuthMetadata(displayName: name);
@@ -108,10 +106,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await profile.updateProfile(uid, {
         'display_name': name,
         'name': name,
-        'phone': normalizedPhone,
       });
 
       if (!mounted) return;
+      setState(() {
+        _savedName = name;
+        _nameChanged = false;
+      });
       showAppSnack(context, 'Сохранено');
     } catch (e) {
       if (!mounted) return;
@@ -199,7 +200,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _sectionTitle(String text) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
       child: Text(
         text,
         style: TextStyle(
@@ -221,7 +222,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     VoidCallback? onTap,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
       child: Material(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(18),
@@ -243,6 +244,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final border = _fieldBorder(context);
     final user = context.watch<AuthService>().currentUser!;
+    final recoveryEmail = (user.email ?? '').trim();
+    final hasRecoveryEmail = recoveryEmail.isNotEmpty &&
+        !recoveryEmail.endsWith('@phone.atta.local');
     final securityComplete = user.phoneVerified && user.emailVerified;
     final securityColor = securityComplete
         ? Colors.green.shade700
@@ -258,41 +262,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _sectionTitle('Профиль'),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _nameCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Имя',
-                    border: border,
-                    enabledBorder: border,
-                    focusedBorder: border,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _phoneCtrl,
-                  keyboardType: TextInputType.phone,
-                  inputFormatters: const [
-                    RuPhoneInputFormatter(),
-                  ],
-                  decoration: InputDecoration(
-                    labelText: 'Телефон',
-                    prefixText: '+7 ',
-                    border: border,
-                    enabledBorder: border,
-                    focusedBorder: border,
-                  ),
-                ),
-              ],
+            child: TextField(
+              controller: _nameCtrl,
+              decoration: InputDecoration(
+                labelText: 'Имя',
+                border: border,
+                enabledBorder: border,
+                focusedBorder: border,
+              ),
             ),
           ),
-          const SizedBox(height: 12),
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: FilledButton(
-              onPressed: _saving ? null : _save,
-              child: Text(_saving ? 'Сохраняем...' : 'Сохранить изменения'),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                height: 42,
+                child: FilledButton(
+                  key: const ValueKey('save-name'),
+                  onPressed: _nameChanged && !_saving ? _save : null,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                  ),
+                  child: Text(_saving ? 'Сохраняем...' : 'Сохранить'),
+                ),
+              ),
             ),
           ),
           _sectionTitle('Аккаунт'),
@@ -301,9 +295,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: securityColor,
             title: 'Безопасность',
             titleColor: securityColor,
-            subtitle: securityComplete
-                ? 'Телефон и резервный email подтверждены'
-                : 'Подключите резервный email',
+            subtitle: !hasRecoveryEmail
+                ? 'Добавьте email для восстановления доступа'
+                : user.emailVerified
+                    ? 'Email для восстановления доступа подключён'
+                    : 'Подтвердите email для восстановления доступа',
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -319,12 +315,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const Icon(Icons.chevron_right),
               ],
             ),
-            onTap: () {
-              Navigator.of(context).push(
+            onTap: () async {
+              await Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => const SecurityScreen(),
                 ),
               );
+              if (mounted) setState(() {});
             },
           ),
           _tile(
@@ -337,10 +334,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _sectionTitle('Приложение'),
           SwitchListTile(
             secondary: const Icon(Icons.campaign_outlined),
-            title: const Text(
-                'Получать новости, акции и рекламные предложения ATTA'),
+            title: const Text('Рекламные уведомления'),
             subtitle: const Text(
-              'Реклама и предложения ATTA. Сервисные уведомления остаются отдельно.',
+              'Акции, новости и предложения ATTA',
             ),
             value: _marketingConsent,
             onChanged: _loadingMarketingConsent ? null : _setMarketingConsent,
