@@ -16,6 +16,10 @@ import { buildReferralCode } from './referral-code';
 type SerializedUser = {
   id: string;
   email: string | null;
+  email_verified: boolean;
+  emailVerified: boolean;
+  email_verified_at: string | null;
+  emailVerifiedAt: string | null;
   phone: string | null;
   normalized_phone: string | null;
   normalizedPhone: string | null;
@@ -233,6 +237,7 @@ export const serializeUser = (
     User,
     | 'id'
     | 'email'
+    | 'emailVerifiedAt'
     | 'phone'
     | 'phoneVerified'
     | 'displayName'
@@ -289,6 +294,10 @@ export const serializeUser = (
     phone_verified: user.phoneVerified,
     phoneVerified: user.phoneVerified,
     isPhoneVerified: user.phoneVerified,
+    email_verified: user.emailVerifiedAt != null,
+    emailVerified: user.emailVerifiedAt != null,
+    email_verified_at: toIsoString(user.emailVerifiedAt),
+    emailVerifiedAt: toIsoString(user.emailVerifiedAt),
     is_admin: isAdmin,
     isAdmin,
     role,
@@ -382,6 +391,16 @@ export const serializeListing = (
     ? null
     : normalizedPhone;
   const owner = listing.owner ? serializeUser(listing.owner) : null;
+  const ownerSellerLevel =
+    listing.owner && 'sellerLevel' in listing.owner
+      ? (listing.owner.sellerLevel as unknown)
+      : listing.owner && 'seller_level' in listing.owner
+        ? (listing.owner.seller_level as unknown)
+        : null;
+  if (owner) {
+    (owner as Record<string, unknown>).seller_level = ownerSellerLevel;
+    (owner as Record<string, unknown>).sellerLevel = ownerSellerLevel;
+  }
   if (
     owner &&
     listing.phoneHidden &&
@@ -436,6 +455,8 @@ export const serializeListing = (
   owner_id: listing.ownerId,
   owner_email: listing.ownerEmail,
   owner_name: listing.ownerName,
+  seller_level: ownerSellerLevel,
+  sellerLevel: ownerSellerLevel,
   title: listing.title,
   description: listing.description,
   category: listing.category,

@@ -13,6 +13,7 @@ exports.UsersService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
+const seller_level_1 = require("../../common/seller-level");
 const phone_1 = require("../../common/phone");
 const env_1 = require("../../config/env");
 const prisma_service_1 = require("../prisma/prisma.service");
@@ -73,8 +74,9 @@ let UsersService = class UsersService {
                 throw new common_1.NotFoundException('Current user was not found');
             }
         }
+        const sellerLevel = await this.getSellerLevel(user.id);
         return {
-            user: (0, serializers_1.serializeUser)(user, { includePrivate: true }),
+            user: this.withSellerLevel((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerLevel),
             admin_profile: (0, serializers_1.serializeAdminProfile)(user.adminProfile),
             is_admin: user.adminProfile?.isAdmin === true,
             isAdmin: user.adminProfile?.isAdmin === true,
@@ -142,8 +144,9 @@ let UsersService = class UsersService {
                 adminProfile: true,
             },
         });
+        const sellerLevel = await this.getSellerLevel(user.id);
         return {
-            user: (0, serializers_1.serializeUser)(user, { includePrivate: true }),
+            user: this.withSellerLevel((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerLevel),
             admin_profile: (0, serializers_1.serializeAdminProfile)(user.adminProfile),
             is_admin: user.adminProfile?.isAdmin === true,
             isAdmin: user.adminProfile?.isAdmin === true,
@@ -158,8 +161,9 @@ let UsersService = class UsersService {
         if (!user) {
             throw new common_1.NotFoundException('Seller not found');
         }
+        const sellerLevel = await this.getSellerLevel(user.id);
         return {
-            user: (0, serializers_1.serializeUser)(user),
+            user: this.withSellerLevel((0, serializers_1.serializeUser)(user), sellerLevel),
         };
     }
     async getAdminUsersList(authUser) {
@@ -218,13 +222,49 @@ let UsersService = class UsersService {
                 adminProfile: true,
             },
         });
+        const sellerLevel = await this.getSellerLevel(user.id);
         return {
-            user: (0, serializers_1.serializeUser)(user, { includePrivate: true }),
+            user: this.withSellerLevel((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerLevel),
             avatar_url: uploaded.url,
             photo_url: uploaded.url,
             admin_profile: (0, serializers_1.serializeAdminProfile)(user.adminProfile),
             is_admin: user.adminProfile?.isAdmin === true,
             isAdmin: user.adminProfile?.isAdmin === true,
+        };
+    }
+    async getSellerLevel(userId) {
+        const [activeListingsCount, reviews] = await Promise.all([
+            this.prisma.listing.count({
+                where: {
+                    ownerId: userId,
+                    status: client_1.ListingStatus.APPROVED,
+                    publishedAt: {
+                        not: null,
+                    },
+                    deletedAt: null,
+                },
+            }),
+            this.prisma.review.findMany({
+                where: {
+                    sellerId: userId,
+                    reviewerId: { not: userId },
+                    deletedAt: null,
+                },
+                select: {
+                    id: true,
+                    reviewerId: true,
+                    rating: true,
+                    createdAt: true,
+                },
+            }),
+        ]);
+        return (0, seller_level_1.sellerLevelFromMetrics)(activeListingsCount, reviews, userId);
+    }
+    withSellerLevel(user, sellerLevel) {
+        return {
+            ...user,
+            seller_level: sellerLevel,
+            sellerLevel,
         };
     }
     async assertConfirmedPhoneChangeVerification(phone, rawCheckId) {

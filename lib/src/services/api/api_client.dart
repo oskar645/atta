@@ -122,6 +122,7 @@ class ApiClient {
     Object? body,
     bool authorized = false,
     bool sendAuthIfAvailable = false,
+    Duration? timeout,
   }) {
     return _send(
       'POST',
@@ -129,8 +130,22 @@ class ApiClient {
       body: body,
       authorized: authorized,
       sendAuthIfAvailable: sendAuthIfAvailable,
+      timeout: timeout,
     );
   }
+
+  Future<dynamic> getWithHeaders(
+    String path, {
+    required Map<String, String> headers,
+  }) =>
+      _send('GET', path, extraHeaders: headers);
+
+  Future<dynamic> postWithHeaders(
+    String path, {
+    required Map<String, String> headers,
+    Object? body,
+  }) =>
+      _send('POST', path, extraHeaders: headers, body: body);
 
   Future<dynamic> patch(
     String path, {
@@ -275,6 +290,8 @@ class ApiClient {
     bool allowAuthRetry = true,
     int networkRetryAttempt = 0,
     String? requestId,
+    Map<String, String>? extraHeaders,
+    Duration? timeout,
   }) async {
     final generation = _generation;
     final id = requestId ?? 'private-${++_requestSequence}';
@@ -307,6 +324,7 @@ class ApiClient {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
       };
+      if (extraHeaders != null) headers.addAll(extraHeaders);
 
       if (authorized || sendAuthIfAvailable) {
         final token = await _tokenStorage.readAccessToken();
@@ -326,7 +344,7 @@ class ApiClient {
         uri,
         headers,
         body,
-      ).timeout(ApiConfig.requestTimeout);
+      ).timeout(timeout ?? ApiConfig.requestTimeout);
 
       if (isPrivate) _checkGeneration(generation);
       _logResponse(method, uri, response.statusCode, requestId: id);
@@ -351,6 +369,8 @@ class ApiClient {
             allowAuthRetry: false,
             networkRetryAttempt: networkRetryAttempt,
             requestId: id,
+            extraHeaders: extraHeaders,
+            timeout: timeout,
           );
         }
       }
@@ -383,6 +403,8 @@ class ApiClient {
           allowAuthRetry: allowAuthRetry,
           networkRetryAttempt: networkRetryAttempt + 1,
           requestId: id,
+          extraHeaders: extraHeaders,
+          timeout: timeout,
         );
       }
       throw ApiException(kNetworkVpnHintMessage,
@@ -402,6 +424,8 @@ class ApiClient {
           allowAuthRetry: allowAuthRetry,
           networkRetryAttempt: networkRetryAttempt + 1,
           requestId: id,
+          extraHeaders: extraHeaders,
+          timeout: timeout,
         );
       }
       throw ApiException(kNetworkVpnHintMessage,
@@ -421,6 +445,8 @@ class ApiClient {
           allowAuthRetry: allowAuthRetry,
           networkRetryAttempt: networkRetryAttempt + 1,
           requestId: id,
+          extraHeaders: extraHeaders,
+          timeout: timeout,
         );
       }
       throw ApiException(kNetworkVpnHintMessage,
@@ -500,7 +526,20 @@ class ApiClient {
       statusCode: response.statusCode,
       code: errorMap?['code']?.toString(),
       details: errorMap ?? rawBody,
+      retryAfter: _retryAfter(response.headers['retry-after']),
     );
+  }
+
+  Duration? _retryAfter(String? value) {
+    if (value == null) return null;
+    final seconds = int.tryParse(value.trim());
+    if (seconds != null) return Duration(seconds: seconds < 0 ? 0 : seconds);
+    try {
+      final delay = parseHttpDate(value).difference(DateTime.now().toUtc());
+      return delay.isNegative ? Duration.zero : delay;
+    } on FormatException {
+      return null;
+    }
   }
 
   void _logRequest(

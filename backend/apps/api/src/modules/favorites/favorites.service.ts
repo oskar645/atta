@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 
 import { serializeFavorite, serializeListing } from '../../common/serializers';
+import { attachSellerLevels, getSellerLevels } from '../../common/seller-level';
 import { AuthenticatedUser } from '../auth/auth.types';
 import {
   canViewListing,
@@ -74,9 +75,15 @@ export class FavoritesService {
           },
           include: listingInclude,
         });
+    const visibleListings = listings.filter((listing) =>
+      canViewListing(listing, authUser),
+    );
+    const levels = await getSellerLevels(
+      this.prisma,
+      visibleListings.map((listing) => listing.ownerId),
+    );
     const visibleListingsById = new Map(
-      listings
-        .filter((listing) => canViewListing(listing, authUser))
+      attachSellerLevels(visibleListings, levels)
         .map((listing) => [listing.id, serializeListing(listing)]),
     );
 

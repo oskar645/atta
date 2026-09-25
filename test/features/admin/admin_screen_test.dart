@@ -31,7 +31,9 @@ void main() {
               value: _FakeSavedSearchService(),
             ),
           ],
-          child: const MaterialApp(home: AdminScreen()),
+          child: const MaterialApp(
+            home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+          ),
         ),
       );
 
@@ -66,7 +68,9 @@ void main() {
               value: _FakeSavedSearchService(),
             ),
           ],
-          child: const MaterialApp(home: AdminScreen()),
+          child: const MaterialApp(
+            home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+          ),
         ),
       );
 
@@ -114,7 +118,9 @@ void main() {
               value: _FakeSavedSearchService(),
             ),
           ],
-          child: const MaterialApp(home: AdminScreen()),
+          child: const MaterialApp(
+            home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+          ),
         ),
       );
 
@@ -148,7 +154,9 @@ void main() {
               value: _FakeSavedSearchService(),
             ),
           ],
-          child: const MaterialApp(home: AdminScreen()),
+          child: const MaterialApp(
+            home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+          ),
         ),
       );
 
@@ -169,7 +177,9 @@ void main() {
               value: _FakeSavedSearchService(),
             ),
           ],
-          child: const MaterialApp(home: AdminScreen()),
+          child: const MaterialApp(
+            home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -199,7 +209,9 @@ void main() {
               value: _FakeSavedSearchService(),
             ),
           ],
-          child: const MaterialApp(home: AdminScreen()),
+          child: const MaterialApp(
+            home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+          ),
         ),
       );
 
@@ -242,7 +254,9 @@ void main() {
             value: _FakeSavedSearchService(),
           ),
         ],
-        child: const MaterialApp(home: AdminScreen()),
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
       ),
     );
 
@@ -274,7 +288,9 @@ void main() {
             value: _FakeSavedSearchService(),
           ),
         ],
-        child: const MaterialApp(home: AdminScreen()),
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
       ),
     );
 
@@ -310,7 +326,9 @@ void main() {
             value: _FakeSavedSearchService(),
           ),
         ],
-        child: const MaterialApp(home: AdminScreen()),
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
       ),
     );
 
@@ -351,6 +369,10 @@ void main() {
     );
   });
 }
+
+Future<Map<String, dynamic>> _loadUsageAnalytics() async => <String, dynamic>{
+      'periods': <String, dynamic>{},
+    };
 
 class _FakeAuthService extends AuthService {
   @override

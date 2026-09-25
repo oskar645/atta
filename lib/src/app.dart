@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:atta/src/services/usage_analytics_service.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
@@ -53,6 +54,14 @@ const List<LocalizationsDelegate<dynamic>> attaLocalizationsDelegates =
   GlobalWidgetsLocalizations.delegate,
   GlobalCupertinoLocalizations.delegate,
 ];
+
+@visibleForTesting
+bool shouldGenerateListingRouteForPlatform({
+  required bool isWeb,
+  required TargetPlatform platform,
+}) {
+  return isWeb || platform != TargetPlatform.android;
+}
 
 class AttaApp extends StatelessWidget {
   const AttaApp({super.key});
@@ -140,6 +149,15 @@ class AttaApp extends StatelessWidget {
             onGenerateRoute: (settings) {
               final uri = Uri.tryParse(settings.name ?? '');
               if (uri != null &&
+                  (uri.path == '/privacy' || uri.path == '/privacy/')) {
+                return MaterialPageRoute<void>(
+                  settings: settings,
+                  builder: (_) => const LegalDocumentScreen(
+                    kind: LegalDocumentKind.privacy,
+                  ),
+                );
+              }
+              if (uri != null &&
                   uri.pathSegments.length == 2 &&
                   uri.pathSegments.first == 'legal') {
                 final kind = switch (uri.pathSegments[1]) {
@@ -162,7 +180,11 @@ class AttaApp extends StatelessWidget {
                   uri.pathSegments.length == 2 &&
                   uri.pathSegments.first == 'listing') {
                 final listingId = uri.pathSegments[1].trim();
-                if (listingId.isNotEmpty) {
+                if (listingId.isNotEmpty &&
+                    shouldGenerateListingRouteForPlatform(
+                      isWeb: kIsWeb,
+                      platform: defaultTargetPlatform,
+                    )) {
                   return MaterialPageRoute<void>(
                     settings: settings,
                     builder: (_) => ListingDetailScreen(listingId: listingId),
@@ -348,6 +370,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
         final historyCleanup = _listingHistory.resetSession();
         _reviews.resetSession();
         final badgeCleanup = _badge.clear();
+        _runSoftStartupTask(_markAppOpened);
         await Future.wait([
           pushCleanup,
           presenceCleanup,
@@ -636,6 +659,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
 
   Future<void> _markAppOpened() async {
     if (_auth.currentUser == null) {
+      await UsageAnalyticsService.instance.guestActivity();
       return;
     }
     final now = DateTime.now();
@@ -731,6 +755,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       if (!mounted) return;
       final uid = restoredUser?.uid ?? _auth.currentUser?.uid;
       if (uid == null || uid.isEmpty) {
+        _runSoftStartupTask(_markAppOpened);
         return;
       }
       _runSoftStartupTask(() => _recoverRealtimeAfterResume(uid));

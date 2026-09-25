@@ -1,7 +1,7 @@
 name: atta
 description: ATTA MVP - classifieds app
 publish_to: 'none'
-version: 1.0.20+24
+version: 1.0.21+25
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -64,6 +64,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/branding/
+    - assets/seller_levels/
 
 flutter_launcher_icons:
   android: true

@@ -8,6 +8,7 @@ import {
 import {
   PhoneVerificationPurpose,
   PhoneVerificationStatus,
+  ListingStatus,
   UserStatus,
 } from '@prisma/client';
 
@@ -15,6 +16,7 @@ import {
   serializeAdminProfile,
   serializeUser,
 } from '../../common/serializers';
+import { sellerLevelFromMetrics, SellerLevel } from '../../common/seller-level';
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
 import { parseAdminPhoneNumbers } from '../../config/env';
 import { AuthenticatedUser } from '../auth/auth.types';
@@ -83,8 +85,10 @@ export class UsersService {
       }
     }
 
+    const sellerLevel = await this.getSellerLevel(user.id);
+
     return {
-      user: serializeUser(user, { includePrivate: true }),
+      user: this.withSellerLevel(serializeUser(user, { includePrivate: true }), sellerLevel),
       admin_profile: serializeAdminProfile(user.adminProfile),
       is_admin: user.adminProfile?.isAdmin === true,
       isAdmin: user.adminProfile?.isAdmin === true,
@@ -162,8 +166,10 @@ export class UsersService {
       },
     });
 
+    const sellerLevel = await this.getSellerLevel(user.id);
+
     return {
-      user: serializeUser(user, { includePrivate: true }),
+      user: this.withSellerLevel(serializeUser(user, { includePrivate: true }), sellerLevel),
       admin_profile: serializeAdminProfile(user.adminProfile),
       is_admin: user.adminProfile?.isAdmin === true,
       isAdmin: user.adminProfile?.isAdmin === true,
@@ -181,8 +187,10 @@ export class UsersService {
       throw new NotFoundException('Seller not found');
     }
 
+    const sellerLevel = await this.getSellerLevel(user.id);
+
     return {
-      user: serializeUser(user),
+      user: this.withSellerLevel(serializeUser(user), sellerLevel),
     };
   }
 
@@ -253,13 +261,55 @@ export class UsersService {
       },
     });
 
+    const sellerLevel = await this.getSellerLevel(user.id);
+
     return {
-      user: serializeUser(user, { includePrivate: true }),
+      user: this.withSellerLevel(serializeUser(user, { includePrivate: true }), sellerLevel),
       avatar_url: uploaded.url,
       photo_url: uploaded.url,
       admin_profile: serializeAdminProfile(user.adminProfile),
       is_admin: user.adminProfile?.isAdmin === true,
       isAdmin: user.adminProfile?.isAdmin === true,
+    };
+  }
+
+  private async getSellerLevel(userId: string) {
+    const [activeListingsCount, reviews] = await Promise.all([
+      this.prisma.listing.count({
+        where: {
+          ownerId: userId,
+          status: ListingStatus.APPROVED,
+          publishedAt: {
+            not: null,
+          },
+          deletedAt: null,
+        },
+      }),
+      this.prisma.review.findMany({
+        where: {
+          sellerId: userId,
+          reviewerId: { not: userId },
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          reviewerId: true,
+          rating: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+    return sellerLevelFromMetrics(activeListingsCount, reviews, userId);
+  }
+
+  private withSellerLevel<T extends Record<string, unknown>>(
+    user: T,
+    sellerLevel: SellerLevel | null,
+  ) {
+    return {
+      ...user,
+      seller_level: sellerLevel,
+      sellerLevel,
     };
   }
 

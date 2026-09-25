@@ -3,12 +3,14 @@ class ApiException implements Exception {
   final int? statusCode;
   final String? code;
   final Object? details;
+  final Duration? retryAfter;
 
   const ApiException(
     this.message, {
     this.statusCode,
     this.code,
     this.details,
+    this.retryAfter,
   });
 
   bool get isUnauthorized => statusCode == 401;

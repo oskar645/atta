@@ -85,6 +85,12 @@ const envSchema = zod_1.z.object({
     RESTORE_CREDENTIALS_RP_ID: zod_1.z.string().min(1).default('attamarket.online'),
     RESTORE_CREDENTIALS_RP_NAME: zod_1.z.string().min(1).default('ATTA'),
     RESTORE_CREDENTIALS_ANDROID_ORIGINS: zod_1.z.string().optional().default(''),
+    SMTP_HOST: zod_1.z.string().optional().default('smtp.timeweb.ru'),
+    SMTP_PORT: zod_1.z.coerce.number().int().positive().optional().default(465),
+    SMTP_SECURE: zod_1.z.string().optional().default('true').transform((value) => value === 'true'),
+    SMTP_USER: zod_1.z.string().optional().default('atta@attamarket.online'),
+    SMTP_PASS: zod_1.z.string().optional().default(''),
+    SMTP_FROM: zod_1.z.string().optional().default('ATTA <atta@attamarket.online>'),
 });
 const parsedEnv = envSchema.safeParse(process.env);
 if (!parsedEnv.success) {

@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Optional,
   NotFoundException,
 } from '@nestjs/common';
+import { AnalyticsSignal } from '../usage-analytics/analytics-signal';
 import { ChatMessageType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
@@ -142,6 +144,7 @@ export class ChatsService {
     private readonly userBlocksService: UserBlocksService = {
       assertNotBlocked: async () => undefined,
     } as unknown as UserBlocksService,
+    @Optional() private readonly analyticsSignal?: AnalyticsSignal,
   ) {}
 
   private async ensureChatParticipant(chatId: string, userId: string) {
@@ -628,6 +631,7 @@ export class ChatsService {
       };
     });
 
+    this.analyticsSignal?.changed();
     return {
       chat: await this.serializeChat(result.chat, authUser.userId),
       recipientChat: await this.serializeChat(result.chat, recipientId),
@@ -922,6 +926,7 @@ export class ChatsService {
       };
     });
 
+    this.analyticsSignal?.changed();
     return {
       source: 'timeweb',
       chat: await this.serializeChat(result.chat, authUser.userId),

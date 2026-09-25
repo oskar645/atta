@@ -182,6 +182,10 @@ const serializeUser = (user, options) => {
         phone_verified: user.phoneVerified,
         phoneVerified: user.phoneVerified,
         isPhoneVerified: user.phoneVerified,
+        email_verified: user.emailVerifiedAt != null,
+        emailVerified: user.emailVerifiedAt != null,
+        email_verified_at: (0, exports.toIsoString)(user.emailVerifiedAt),
+        emailVerifiedAt: (0, exports.toIsoString)(user.emailVerifiedAt),
         is_admin: isAdmin,
         isAdmin,
         role,
@@ -257,6 +261,15 @@ const serializeListing = (listing, options) => {
         ? null
         : normalizedPhone;
     const owner = listing.owner ? (0, exports.serializeUser)(listing.owner) : null;
+    const ownerSellerLevel = listing.owner && 'sellerLevel' in listing.owner
+        ? listing.owner.sellerLevel
+        : listing.owner && 'seller_level' in listing.owner
+            ? listing.owner.seller_level
+            : null;
+    if (owner) {
+        owner.seller_level = ownerSellerLevel;
+        owner.sellerLevel = ownerSellerLevel;
+    }
     if (owner &&
         listing.phoneHidden &&
         options?.includePrivateContact !== true) {
@@ -300,6 +313,8 @@ const serializeListing = (listing, options) => {
         owner_id: listing.ownerId,
         owner_email: listing.ownerEmail,
         owner_name: listing.ownerName,
+        seller_level: ownerSellerLevel,
+        sellerLevel: ownerSellerLevel,
         title: listing.title,
         description: listing.description,
         category: listing.category,

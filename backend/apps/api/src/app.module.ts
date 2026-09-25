@@ -1,3 +1,4 @@
+import { UsageAnalyticsModule } from './modules/usage-analytics/usage-analytics.module';
 import { Module } from '@nestjs/common';
 
 import { AppController } from './app.controller';
@@ -32,6 +33,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
 @Module({
   imports: [
     PrismaModule,
+    UsageAnalyticsModule,
     RateLimitModule,
     RedisModule,
     S3Module,

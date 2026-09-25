@@ -42,7 +42,9 @@ test('favorites list keeps compatible fields and embeds visible listings', async
           listingFixture('listing-1'),
           listingFixture('listing-2'),
         ],
+        groupBy: async () => [],
       },
+      review: { findMany: async () => [] },
     } as any,
   );
 
@@ -81,7 +83,9 @@ test('favorites list fetches page listings in one batch and preserves order', as
             listingFixture('listing-3'),
           ];
         },
+        groupBy: async () => [],
       },
+      review: { findMany: async () => [] },
     } as any,
   );
 
@@ -121,7 +125,9 @@ test('favorites list does not embed hidden listings for non-owner users', async 
             ownerId: 'owner-1',
           }),
         ],
+        groupBy: async () => [],
       },
+      review: { findMany: async () => [] },
     } as any,
   );
 
@@ -150,7 +156,9 @@ test('favorites list embeds owner/admin accessible non-public listings', async (
             ownerId: 'user-1',
           }),
         ],
+        groupBy: async () => [],
       },
+      review: { findMany: async () => [] },
     } as any,
   );
 
@@ -172,7 +180,9 @@ test('favorites list pagination cursor contract is unchanged', async () => {
       },
       listing: {
         findMany: async () => [listingFixture('listing-3')],
+        groupBy: async () => [],
       },
+      review: { findMany: async () => [] },
     } as any,
   );
 

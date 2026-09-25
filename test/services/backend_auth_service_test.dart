@@ -38,6 +38,60 @@ void main() {
     expect(service.currentUser?.displayName, 'ATTA User');
   });
 
+  test('AuthUser.fromJson derives verified status from emailVerifiedAt', () {
+    final user = AuthUser.fromJson(<String, dynamic>{
+      'id': 'user-1',
+      'email': 'member@example.com',
+      'email_verified_at': '2026-09-24T10:00:00.000Z',
+    });
+
+    expect(user.emailVerified, isTrue);
+    expect(user.emailVerifiedAt, DateTime.utc(2026, 9, 24, 10));
+  });
+
+  test('/auth/me verification status is parsed and survives cached reload',
+      () async {
+    final api = _FakeAuthApi()
+      ..meResponse = <String, dynamic>{
+        'user': <String, dynamic>{
+          'id': 'user-1',
+          'email': 'member@example.com',
+          'emailVerified': true,
+          'emailVerifiedAt': '2026-09-24T10:00:00.000Z',
+        },
+      };
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'user-1', emailVerified: false),
+    );
+    final service = BackendAuthService(
+      authApi: api,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: storage,
+    );
+
+    await service.ensureInitialized();
+    final events = <AuthSessionEventType>[];
+    final subscription =
+        service.onAuthStateChange.listen((event) => events.add(event.type));
+    await service.revalidateCurrentUser();
+    await Future<void>.delayed(Duration.zero);
+    expect(service.currentUser?.emailVerified, isTrue);
+    expect(events, contains(AuthSessionEventType.userUpdated));
+
+    final restarted = BackendAuthService(
+      authApi: api,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: storage,
+    );
+    await restarted.ensureInitialized();
+    expect(restarted.currentUser?.emailVerified, isTrue);
+    expect(restarted.currentUser?.emailVerifiedAt, isNotNull);
+    await subscription.cancel();
+  });
+
   test('signOut clears Timeweb session without requiring legacy session',
       () async {
     final authApi = _FakeAuthApi();

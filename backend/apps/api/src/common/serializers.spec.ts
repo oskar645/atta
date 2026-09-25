@@ -3,7 +3,21 @@ import assert from 'node:assert/strict';
 
 import { ListingStatus, UserStatus } from '@prisma/client';
 
-import { normalizeStoredMediaUrl, serializeListing } from './serializers';
+import { normalizeStoredMediaUrl, serializeListing, serializeUser } from './serializers';
+
+test('private user response exposes recovery-email verification status', () => {
+  const verifiedAt = new Date('2026-09-24T10:00:00.000Z');
+  const serialized = serializeUser({
+    ...listingFixture({}).owner,
+    emailVerifiedAt: verifiedAt,
+  } as any, { includePrivate: true }) as any;
+
+  assert.equal(serialized.email, 'owner@example.com');
+  assert.equal(serialized.emailVerified, true);
+  assert.equal(serialized.email_verified, true);
+  assert.equal(serialized.emailVerifiedAt, verifiedAt.toISOString());
+  assert.equal(serialized.email_verified_at, verifiedAt.toISOString());
+});
 
 test('support media urls normalize to protected support proxy', () => {
   assert.equal(

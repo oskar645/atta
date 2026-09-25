@@ -24,7 +24,7 @@ const adminUser = {
 
 const moscowNow = () => new Date(Date.now() + 3 * 60 * 60 * 1000);
 
-test('moderation list uses pending filter without deleted or archived items', async () => {
+test('moderation list hydrates only the database-selected eligible page', async () => {
   let capturedWhere: Record<string, unknown> | undefined;
 
   const service = new AdminService(
@@ -43,7 +43,7 @@ test('moderation list uses pending filter without deleted or archived items', as
       feedAd: { count: async () => 0 },
       promotion: { aggregate: async () => ({ _sum: { price: 0 } }) },
       walletTransaction: { aggregate: async () => ({ _sum: { amount: 0 } }) },
-      $queryRaw: async () => [],
+      $queryRaw: async (sql: { text: string }) => sql.text.includes('count(*)') ? [{ count: BigInt(0) }] : [],
     } as any,
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
@@ -60,14 +60,10 @@ test('moderation list uses pending filter without deleted or archived items', as
 
   await service.listListings('pending');
 
-  assert.equal(capturedWhere?.deletedAt, null);
-  assert.equal(capturedWhere?.archivedAt, null);
-  assert.equal(capturedWhere?.status, ListingStatus.PENDING);
-  assert.deepEqual(capturedWhere?.photos, { some: {} });
-  assert.deepEqual(capturedWhere?.price, { gt: BigInt(0) });
+  assert.deepEqual(capturedWhere, { id: { in: [] } });
 });
 
-test('moderation list excludes incomplete legacy pending records defensively', async () => {
+test('moderation list preserves eligible database page and total', async () => {
   const createdAt = new Date('2026-07-01T10:00:00.000Z');
   const baseListing = {
     id: 'listing-valid',
@@ -125,16 +121,7 @@ test('moderation list excludes incomplete legacy pending records defensively', a
   const service = new AdminService(
     {
       listing: {
-        findMany: async () => [
-          baseListing,
-          {
-            ...baseListing,
-            id: 'listing-broken',
-            title: LISTING_DRAFT_TITLE_PLACEHOLDER,
-            price: BigInt(0),
-            photos: [],
-          },
-        ],
+        findMany: async () => [baseListing],
         count: async () => 1,
       },
       user: { count: async () => 0 },
@@ -144,7 +131,7 @@ test('moderation list excludes incomplete legacy pending records defensively', a
       feedAd: { count: async () => 0 },
       promotion: { aggregate: async () => ({ _sum: { price: 0 } }) },
       walletTransaction: { aggregate: async () => ({ _sum: { amount: 0 } }) },
-      $queryRaw: async () => [],
+      $queryRaw: async (sql: { text: string }) => sql.text.includes('count(*)') ? [{ count: BigInt(1) }] : [{ id: baseListing.id }],
     } as any,
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
@@ -161,6 +148,8 @@ test('moderation list excludes incomplete legacy pending records defensively', a
 
   const response = await service.getModerationQueue();
 
+  assert.equal(response.total, 1);
+  assert.equal(response.pendingModeration, 1);
   assert.deepEqual(
     response.items.map((item: { id: string }) => item.id),
     ['listing-valid'],
@@ -245,6 +234,7 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
       },
       $queryRaw: async () => [
         {
+          count: BigInt(0),
           total_amount_rub: '0',
           total_points: BigInt(0),
           purchases_count: BigInt(0),

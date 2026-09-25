@@ -265,8 +265,7 @@ let ReviewsService = class ReviewsService {
             throw new common_1.NotFoundException('Review not found');
         }
         const isAllowed = authUser.role === 'admin' ||
-            authUser.userId === review.reviewerId ||
-            authUser.userId === review.sellerId;
+            authUser.userId === review.reviewerId;
         if (!isAllowed) {
             throw new common_1.ForbiddenException('No access to delete review');
         }

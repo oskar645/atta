@@ -1,4 +1,4 @@
-import 'package:atta/src/features/auth/login_screen.dart';
+import 'package:atta/src/features/auth/passwordless_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 Future<bool> promptGuestAuth(BuildContext context) async {
-  final create = await showModalBottomSheet<bool>(
+  final enter = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     isDismissible: true,
@@ -16,12 +16,11 @@ Future<bool> promptGuestAuth(BuildContext context) async {
   );
 
   if (!context.mounted) return false;
-  if (create != null) {
+  if (enter == true) {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         settings: const RouteSettings(name: 'web-auth-prompt'),
-        builder: (_) => LoginScreen(
-          initialIsLogin: !create,
+        builder: (_) => const PasswordlessScreen(
           returnToPreviousAfterAuth: true,
         ),
       ),
@@ -45,8 +44,8 @@ class GuestAuthSheet extends StatelessWidget {
     'https://play.google.com/store/apps/details?id=online.attomarket.atta',
   );
 
-  void _openAuth(BuildContext context, {required bool create}) {
-    Navigator.of(context).pop(create);
+  void _openAuth(BuildContext context) {
+    Navigator.of(context).pop(true);
   }
 
   Future<void> _openStore(Uri uri) async {
@@ -70,68 +69,75 @@ class GuestAuthSheet extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 420),
             child: Padding(
               padding: EdgeInsets.fromLTRB(20, 0, 20, 20 + bottomInset),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: IconButton(
-                      tooltip: 'Закрыть',
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
+              child: LayoutBuilder(
+                builder: (context, constraints) => SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints:
+                        BoxConstraints(minHeight: constraints.maxHeight),
+                    child: IntrinsicHeight(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: IconButton(
+                              tooltip: 'Закрыть',
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(Icons.close),
+                            ),
+                          ),
+                          const Spacer(),
+                          SizedBox(
+                            height: 56,
+                            child: Image.asset(
+                              'assets/branding/atta_logo.png',
+                              fit: BoxFit.contain,
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            'Войдите, чтобы пользоваться всеми возможностями Атта',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: theme.colorScheme.onSurface,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          FilledButton(
+                            onPressed: () => _openAuth(context),
+                            child: const Text('Войти'),
+                          ),
+                          if (kIsWeb) ...[
+                            const SizedBox(height: 12),
+                            Divider(color: theme.colorScheme.outlineVariant),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 10,
+                              runSpacing: 8,
+                              children: [
+                                _StoreBadgeButton(
+                                  icon: Icons.apple,
+                                  label: 'App Store',
+                                  onPressed: () => _openStore(_appStoreUrl),
+                                ),
+                                _StoreBadgeButton(
+                                  icon: Icons.shop,
+                                  label: 'Google Play',
+                                  onPressed: () => _openStore(_googlePlayUrl),
+                                ),
+                              ],
+                            ),
+                          ],
+                          const Spacer(),
+                        ],
+                      ),
                     ),
                   ),
-                  const Spacer(),
-                  SizedBox(
-                    height: 56,
-                    child: Image.asset(
-                      'assets/branding/atta_logo.png',
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    'Создайте аккаунт, чтобы пользоваться всеми возможностями Атта',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  FilledButton(
-                    onPressed: () => _openAuth(context, create: true),
-                    child: const Text('Создать аккаунт'),
-                  ),
-                  TextButton(
-                    onPressed: () => _openAuth(context, create: false),
-                    child: const Text('Уже есть аккаунт? Войти'),
-                  ),
-                  if (kIsWeb) ...[
-                    const SizedBox(height: 12),
-                    Divider(color: theme.colorScheme.outlineVariant),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 10,
-                      runSpacing: 8,
-                      children: [
-                        _StoreBadgeButton(
-                          icon: Icons.apple,
-                          label: 'App Store',
-                          onPressed: () => _openStore(_appStoreUrl),
-                        ),
-                        _StoreBadgeButton(
-                          icon: Icons.shop,
-                          label: 'Google Play',
-                          onPressed: () => _openStore(_googlePlayUrl),
-                        ),
-                      ],
-                    ),
-                  ],
-                  const Spacer(),
-                ],
+                ),
               ),
             ),
           ),

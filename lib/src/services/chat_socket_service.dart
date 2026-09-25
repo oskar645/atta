@@ -254,6 +254,8 @@ class ChatSocketService {
           event.authGeneration == _tokenStorage.sessionGeneration));
   Stream<PresenceSnapshot> get presenceUpdates => _presence.stream;
   Stream<bool> get connectionChanges => _connected.stream;
+  void subscribeAnalytics() => _socket?.emit('analytics.subscribe');
+
   bool get isConnected => _socket?.connected == true;
   bool get canSendPresenceHeartbeat => isConnected;
   bool get isConnecting => _connectCompleter != null || _connecting;
@@ -604,6 +606,7 @@ class ChatSocketService {
       });
 
       for (final eventName in const [
+        'analytics_updated',
         'message.new',
         'message.sent',
         'message.delivered',

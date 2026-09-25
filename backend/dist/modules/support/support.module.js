@@ -21,7 +21,7 @@ exports.SupportModule = SupportModule;
 exports.SupportModule = SupportModule = __decorate([
     (0, common_1.Module)({
         imports: [auth_module_1.AuthModule, prisma_module_1.PrismaModule, notifications_module_1.NotificationsModule, storage_module_1.StorageModule, user_blocks_module_1.UserBlocksModule],
-        controllers: [support_controller_1.SupportController, support_controller_1.AdminSupportController],
+        controllers: [support_controller_1.SupportController, support_controller_1.PublicSupportController, support_controller_1.AdminSupportController],
         providers: [support_service_1.SupportService],
         exports: [support_service_1.SupportService],
     })

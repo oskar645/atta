@@ -662,3 +662,47 @@ test('chat key lookup requires exact key and participant permission', async () =
   await assert.rejects(() => service.getChatImageAccessByKey({ userId: 'stranger-1' } as any, 'chats/chat-1/photo.jpg'),
     { message: 'Chat image not found' });
 });
+
+test('analytics invalidates once after commit; REST/socket resend and delivery do not create a second message', async () => {
+  let stored: ReturnType<typeof createMessage> | null = null;
+  let committed = false;
+  let invalidations = 0;
+  const prisma = {
+    chat: { findUnique: async () => createChat(), aggregate: chatAggregate() },
+    chatMessage: { findFirst: async () => stored },
+    $transaction: async (callback: (tx: any) => Promise<unknown>) => {
+      const result = await callback({
+        chatMessage: { create: async () => { stored = createMessage(); return stored; } },
+        chat: { update: async () => {}, findUniqueOrThrow: async () => createChat() },
+      });
+      committed = true;
+      return result;
+    },
+  };
+  const service = new ChatsService(prisma as never,
+    { getPresenceMap: async () => new Map() } as never,
+    { buildProtectedChatUrl: () => '' } as never,
+    { assertNotBlocked: async () => {} } as never,
+    { changed: () => { assert.equal(committed, true); invalidations++; } } as never);
+  const auth = { userId: 'seller-1', role: 'user' } as never;
+  const first = await service.sendMessage(auth, 'chat-1', { text: 'hello', clientMessageId: 'opening-1' });
+  const replay = await service.sendMessage(auth, 'chat-1', { text: 'hello', clientMessageId: 'opening-1' });
+  assert.equal(first.created, true);
+  assert.equal(replay.created, false);
+  assert.equal(first.message.id, replay.message.id);
+  assert.equal(invalidations, 1);
+});
+
+
+test('repeated delivery acknowledgement does not invalidate analytics', async () => {
+  let invalidations = 0;
+  const service = new ChatsService({ chatMessage: {
+    findUnique: async () => createMessage(),
+    update: async ({ data }: any) => ({ ...createMessage(), ...data }),
+  } } as never, {} as never, {} as never, undefined,
+  { changed: () => invalidations++ } as never);
+  const auth = { userId: 'buyer-1', role: 'user' } as never;
+  await service.markMessageDelivered(auth, 'message-1');
+  await service.markMessageDelivered(auth, 'message-1');
+  assert.equal(invalidations, 0);
+});

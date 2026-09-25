@@ -33,6 +33,12 @@ test('getMe does not crash if wallet has issue', async () => {
           adminProfile: null,
         }),
       },
+      listing: {
+        count: async () => 15,
+      },
+      review: {
+        findMany: async () => [],
+      },
     } as never,
     {} as never,
     {
@@ -124,6 +130,12 @@ test('updateMe allows changed phone with confirmed verification', async () => {
           status: PhoneVerificationStatus.CONFIRMED,
           expiresAt: new Date(Date.now() + 60_000),
         }),
+      },
+      listing: {
+        count: async () => 30,
+      },
+      review: {
+        findMany: async () => [],
       },
     } as never,
     {} as never,
@@ -223,6 +235,12 @@ test('avatar upload uses selected storage provider flow', async () => {
           deletedAt: null,
           adminProfile: null,
         }),
+      },
+      listing: {
+        count: async () => 50,
+      },
+      review: {
+        findMany: async () => [],
       },
     } as never,
     {

@@ -5,16 +5,13 @@ import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 
-import 'privacy_screen.dart';
-import 'terms_screen.dart';
-import 'legal_document_screen.dart';
+import 'registration_consents.dart';
 
 enum _AuthMethod { phone, email }
 
@@ -459,31 +456,6 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
-  void _openTerms() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const TermsScreen()),
-    );
-  }
-
-  void _openPrivacy() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const PrivacyScreen()),
-    );
-  }
-
-  void _openPersonalDataConsent() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => const LegalDocumentScreen(
-          kind: LegalDocumentKind.personalDataConsent,
-        ),
-      ),
-    );
-  }
-
   Widget _buildWelcomeCard(ThemeData theme) {
     return Container(
       padding: const EdgeInsets.all(18),
@@ -579,128 +551,14 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _buildLegalBlock(ThemeData theme) {
-    return _buildConsentBlock(
-      theme,
-      key: const ValueKey('registration-legal-consent-block'),
-      value: _hasAcceptedLegal,
-      onChanged: (value) {
-        setState(() {
-          _hasAcceptedLegal = value ?? false;
-        });
-      },
-      children: [
-        const TextSpan(text: 'Я принимаю '),
-        TextSpan(
-          text: 'Пользовательское соглашение',
-          style: _legalLinkStyle(theme),
-          recognizer: TapGestureRecognizer()..onTap = _openTerms,
-        ),
-        const TextSpan(text: ' и ознакомился(ась) с '),
-        TextSpan(
-          text: 'Политикой конфиденциальности',
-          style: _legalLinkStyle(theme),
-          recognizer: TapGestureRecognizer()..onTap = _openPrivacy,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPersonalDataConsentBlock(ThemeData theme) {
-    return _buildConsentBlock(
-      theme,
-      key: const ValueKey('registration-personal-data-consent-block'),
-      value: _hasAcceptedPersonalData,
-      onChanged: (value) {
-        setState(() {
-          _hasAcceptedPersonalData = value ?? false;
-        });
-      },
-      children: [
-        const TextSpan(text: 'Я даю '),
-        TextSpan(
-          text: 'согласие на обработку персональных данных',
-          style: _legalLinkStyle(theme),
-          recognizer: TapGestureRecognizer()..onTap = _openPersonalDataConsent,
-        ),
-      ],
-    );
-  }
-
-  TextStyle _legalLinkStyle(ThemeData theme) => TextStyle(
-        color: theme.colorScheme.primary,
-        fontWeight: FontWeight.w700,
-        fontSize: _legalLinkFontSize(context),
+  Widget _buildLegalBlock(ThemeData theme) => RegistrationConsents(
+        acceptedLegal: _hasAcceptedLegal,
+        acceptedPersonalData: _hasAcceptedPersonalData,
+        loading: _loading,
+        onLegalChanged: (value) => setState(() => _hasAcceptedLegal = value),
+        onPersonalDataChanged: (value) =>
+            setState(() => _hasAcceptedPersonalData = value),
       );
-
-  double _legalBaseFontSize(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    if (kIsWeb && width >= 720) return 11.5;
-    if (width < 340) return 11;
-    return 11.2;
-  }
-
-  double _legalLinkFontSize(BuildContext context) =>
-      _legalBaseFontSize(context) + 0.6;
-
-  Widget _buildConsentBlock(
-    ThemeData theme, {
-    Key? key,
-    required bool value,
-    required ValueChanged<bool?> onChanged,
-    required List<InlineSpan> children,
-  }) {
-    final baseFontSize = _legalBaseFontSize(context);
-    return Container(
-      key: key,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 30,
-              height: 30,
-              child: Checkbox(
-                value: value,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-                onChanged: _loading ? null : onChanged,
-              ),
-            ),
-            const SizedBox(width: 5),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 5),
-                child: MediaQuery(
-                  data: MediaQuery.of(context).copyWith(
-                    textScaler: MediaQuery.textScalerOf(context)
-                        .clamp(maxScaleFactor: 1.12),
-                  ),
-                  child: RichText(
-                    overflow: TextOverflow.visible,
-                    text: TextSpan(
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface,
-                        fontSize: baseFontSize,
-                        height: 1.24,
-                      ),
-                      children: children,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildPhonePrefixField() {
     return _buildPhoneField(
@@ -823,7 +681,6 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 16),
             _buildLegalBlock(theme),
             const SizedBox(height: 8),
-            _buildPersonalDataConsentBlock(theme),
             const SizedBox(height: 14),
             FilledButton(
               onPressed: _canContinuePhoneRegistration
@@ -867,7 +724,6 @@ class _LoginScreenState extends State<LoginScreen> {
             const SizedBox(height: 16),
             _buildLegalBlock(theme),
             const SizedBox(height: 8),
-            _buildPersonalDataConsentBlock(theme),
             const SizedBox(height: 14),
             FilledButton(
               onPressed: _loading ? null : _submitEmailRegistration,

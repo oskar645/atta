@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:async';
 
 import 'package:atta/src/features/auth/auth_gate.dart';
@@ -15,6 +16,8 @@ import 'package:provider/provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
 
   testWidgets('/auth/me is not retriggered by build loop in AuthGate',
       (tester) async {

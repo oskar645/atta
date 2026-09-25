@@ -7,6 +7,32 @@ class SupportApi {
 
   final ApiClient _client;
 
+  Future<Map<String, dynamic>> createPublicAccessTicket(
+          {required String oldPhone,
+          String name = '',
+          String contactEmail = '',
+          required String text}) async =>
+      Map<String, dynamic>.from(
+          await _client.post('/support/public/tickets', body: {
+        'oldPhone': oldPhone,
+        if (name.trim().isNotEmpty) 'name': name.trim(),
+        if (contactEmail.trim().isNotEmpty) 'contactEmail': contactEmail.trim(),
+        'text': text.trim()
+      }) as Map);
+
+  Future<Map<String, dynamic>> getPublicAccessTicket(
+          String ticketId, String token) async =>
+      Map<String, dynamic>.from(await _client.getWithHeaders(
+          '/support/public/tickets/$ticketId',
+          headers: {'x-support-token': token}) as Map);
+
+  Future<Map<String, dynamic>> sendPublicAccessMessage(
+          String ticketId, String token, String text) async =>
+      Map<String, dynamic>.from(await _client.postWithHeaders(
+          '/support/public/tickets/$ticketId/messages',
+          headers: {'x-support-token': token},
+          body: {'text': text.trim()}) as Map);
+
   Future<Map<String, dynamic>> listMyTickets() async {
     final response = await _client.get('/support/tickets', authorized: true);
     return Map<String, dynamic>.from(response as Map);

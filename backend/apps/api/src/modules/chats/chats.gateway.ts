@@ -9,10 +9,13 @@ import {
   WebSocketServer,
   WsException,
 } from '@nestjs/websockets';
-import { Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Logger, OnModuleInit, OnModuleDestroy, Optional } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 
+import { AnalyticsSignal } from '../usage-analytics/analytics-signal';
+import { normalizeRussianPhone } from '../../common/phone';
+import { parseAdminPhoneNumbers } from '../../config/env';
 import { env, parseCorsOrigins } from '../../config/env';
 import { AuthTokenPayload } from '../auth/auth.types';
 import { PresenceService } from '../presence/presence.service';
@@ -38,18 +41,61 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
     private readonly accountDeletion: AccountDeletionService,
+    @Optional() private readonly analyticsSignal?: AnalyticsSignal,
   ) {}
 
   private unsubscribeDeletion?: () => void;
 
+  private unsubscribeAnalytics?: () => void;
+  private analyticsTimer?: ReturnType<typeof setTimeout>;
+
+  private async isAnalyticsAdmin(client: Socket) {
+    const auth = await this.authenticate(client);
+    const user = await this.prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { phone: true, adminProfile: { select: { isAdmin: true } } },
+    });
+    return !!user && (user.adminProfile?.isAdmin === true ||
+      parseAdminPhoneNumbers().includes(normalizeRussianPhone(user.phone ?? '') ?? ''));
+  }
+
+  @SubscribeMessage('analytics.subscribe')
+  async subscribeAnalytics(@ConnectedSocket() client: Socket) {
+    if (!await this.isAnalyticsAdmin(client)) throw new WsException('Admin access required');
+    await client.join('admin:analytics');
+    return { subscribed: true };
+  }
+
+  private async notifyAnalyticsAdmins() {
+    // Recheck sessions and admin membership: revocation must also affect existing tabs.
+    for (const client of this.server?.sockets?.sockets?.values() ?? []) {
+      if (!client.rooms.has('admin:analytics')) continue;
+      try {
+        if (await this.isAnalyticsAdmin(client)) client.emit('analytics_updated', {});
+        else await client.leave('admin:analytics');
+      } catch { await client.leave('admin:analytics'); }
+    }
+  }
+
   onModuleInit() {
+    this.unsubscribeAnalytics = this.analyticsSignal?.subscribe(() => {
+      if (this.analyticsTimer) return;
+      this.analyticsTimer = setTimeout(() => {
+        this.analyticsTimer = undefined;
+        void this.notifyAnalyticsAdmins().catch(() => undefined);
+      }, 500);
+    });
     this.unsubscribeDeletion = this.accountDeletion.onDeleted((userId) => {
       this.server?.in(`user:${userId}`).disconnectSockets(true);
       this.server?.emit('presence.changed', { userId, isOnline: false, lastSeen: null });
     });
   }
 
-  onModuleDestroy() { this.unsubscribeDeletion?.(); }
+  onModuleDestroy() {
+    this.unsubscribeDeletion?.();
+    this.unsubscribeAnalytics?.();
+    if (this.analyticsTimer) clearTimeout(this.analyticsTimer);
+  }
 
   private async requireActiveSocket(client: Socket) {
     try {

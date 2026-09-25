@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:atta/src/services/usage_analytics_service.dart';
 
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/models/listing.dart';
@@ -23,6 +24,28 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets(
+      'one real opening survives rebuild; reopen gets fresh event; admin navigation excluded',
+      (tester) async {
+    final analytics = _FakeUsageAnalytics();
+    await tester.pumpWidget(_buildTestApp(analytics: analytics));
+    await tester.pumpAndSettle();
+    expect(analytics.events.length, 1);
+    await tester.pumpWidget(
+        _buildTestApp(analytics: analytics, platform: TargetPlatform.iOS));
+    await tester.pumpAndSettle();
+    expect(analytics.events.length, 1);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(_buildTestApp(analytics: analytics));
+    await tester.pumpAndSettle();
+    expect(analytics.events.toSet().length, 2);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+        _buildTestApp(analytics: analytics, trackUsageAnalytics: false));
+    await tester.pumpAndSettle();
+    expect(analytics.events.length, 2);
+  });
 
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -565,9 +588,13 @@ Widget _buildTestApp({
   ProfileService? profileService,
   FavoritesService? favoritesService,
   TargetPlatform? platform,
+  UsageAnalyticsService? analytics,
+  bool trackUsageAnalytics = true,
 }) {
   return MultiProvider(
     providers: [
+      Provider<UsageAnalyticsService>.value(
+          value: analytics ?? _FakeUsageAnalytics()),
       Provider<AuthService>.value(value: _FakeAuthService()),
       Provider<AdminService>.value(value: _FakeAdminService()),
       Provider<ListingsService>.value(
@@ -593,7 +620,8 @@ Widget _buildTestApp({
     ],
     child: MaterialApp(
       theme: platform == null ? null : ThemeData(platform: platform),
-      home: const ListingDetailScreen(listingId: 'listing-1'),
+      home: ListingDetailScreen(
+          listingId: 'listing-1', trackUsageAnalytics: trackUsageAnalytics),
     ),
   );
 }
@@ -888,5 +916,13 @@ class _FakeWalletService extends WalletService {
       daysUntilNextAccrual: 0,
       secondsUntilNextAccrual: 0,
     );
+  }
+}
+
+class _FakeUsageAnalytics extends UsageAnalyticsService {
+  final events = <String>[];
+  @override
+  Future<void> listingOpen(String listingId, String eventId) async {
+    events.add(eventId);
   }
 }

@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FavoritesService = void 0;
 const common_1 = require("@nestjs/common");
 const serializers_1 = require("../../common/serializers");
+const seller_level_1 = require("../../common/seller-level");
 const listings_service_1 = require("../listings/listings.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const pageLimit = (value) => Math.max(1, Math.min(Number.isFinite(value ?? NaN) ? value : 50, 100));
@@ -66,8 +67,9 @@ let FavoritesService = class FavoritesService {
                 },
                 include: listings_service_1.listingInclude,
             });
-        const visibleListingsById = new Map(listings
-            .filter((listing) => (0, listings_service_1.canViewListing)(listing, authUser))
+        const visibleListings = listings.filter((listing) => (0, listings_service_1.canViewListing)(listing, authUser));
+        const levels = await (0, seller_level_1.getSellerLevels)(this.prisma, visibleListings.map((listing) => listing.ownerId));
+        const visibleListingsById = new Map((0, seller_level_1.attachSellerLevels)(visibleListings, levels)
             .map((listing) => [listing.id, (0, serializers_1.serializeListing)(listing)]));
         return {
             items: pageItems.map((favorite) => {

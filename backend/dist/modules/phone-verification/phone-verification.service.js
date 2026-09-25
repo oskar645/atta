@@ -52,7 +52,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 : 'Phone is available',
         };
     }
-    async startCallVerification(phone, purpose, source) {
+    async startCallVerification(phone, purpose, source, passwordless) {
         const normalizedPhone = this.normalizeRussianPhone(phone);
         this.validatePhoneFormat(normalizedPhone);
         await this.rateLimitPlaceholder(normalizedPhone);
@@ -62,6 +62,8 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
         if (this.useFakeProvider()) {
             const checkId = `fake-${(0, crypto_2.randomUUID)()}`;
             await this.storeVerificationAttempt({
+                id: passwordless?.id,
+                metadata: passwordless?.metadata,
                 phone: normalizedPhone,
                 purpose,
                 checkId,
@@ -98,6 +100,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             throw this.createSafeCallcheckException(common_1.HttpStatus.SERVICE_UNAVAILABLE, 'SMS_RU_CALL_PHONE_MISSING', 'Отсутствует номер для подтверждающего звонка');
         }
         await this.storeVerificationAttempt({
+            id: passwordless?.id,
             phone: normalizedPhone,
             purpose,
             checkId,
@@ -105,7 +108,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             status: client_1.PhoneVerificationStatus.PENDING,
             providerStatusCode: this.pickStatusCode(response),
             providerStatusText: this.pickStatusText(response),
-            metadata: response,
+            metadata: { ...response, ...passwordless?.metadata },
         });
         return {
             status: 'ok',
@@ -124,11 +127,13 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             message: 'Позвоните на указанный номер для подтверждения',
         };
     }
-    async checkCallVerification(phone, checkId, purpose) {
+    async checkCallVerification(phone, checkId, purpose, passwordless) {
+        const prisma = passwordless?.tx ?? this.prisma;
         const normalizedPhone = this.normalizeRussianPhone(phone);
         this.validatePhoneFormat(normalizedPhone);
-        const verification = await this.prisma.phoneVerification.findFirst({
+        const verification = await prisma.phoneVerification.findFirst({
             where: {
+                id: passwordless?.id,
                 phone: normalizedPhone,
                 purpose: this.mapPurpose(purpose),
                 checkId: checkId.trim(),
@@ -140,20 +145,12 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
         if (!verification) {
             throw new common_1.BadRequestException('Phone verification session was not found');
         }
-        if (verification.status === client_1.PhoneVerificationStatus.CONFIRMED) {
-            return {
-                status: 'confirmed',
-                message: 'Phone verified',
-            };
-        }
-        if (verification.status === client_1.PhoneVerificationStatus.FAILED) {
-            return {
-                status: 'failed',
-                message: 'Не удалось подтвердить звонок. Попробуйте ещё раз позже.',
-            };
+        const metadata = verification.metadata;
+        if (metadata?.passwordless && !passwordless) {
+            throw new common_1.BadRequestException('Use passwordless challenge');
         }
         if (verification.expiresAt.getTime() <= Date.now()) {
-            await this.prisma.phoneVerification.update({
+            await prisma.phoneVerification.update({
                 where: {
                     id: verification.id,
                 },
@@ -167,8 +164,20 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 message: 'Phone verification has expired',
             };
         }
-        if (verification.attempts >= verification.maxAttempts) {
-            await this.prisma.phoneVerification.update({
+        if (verification.status === client_1.PhoneVerificationStatus.CONFIRMED) {
+            return {
+                status: 'confirmed',
+                message: 'Phone verified',
+            };
+        }
+        if (verification.status === client_1.PhoneVerificationStatus.FAILED) {
+            return {
+                status: 'failed',
+                message: 'Не удалось подтвердить звонок. Попробуйте ещё раз позже.',
+            };
+        }
+        if (!passwordless && verification.attempts >= verification.maxAttempts) {
+            await prisma.phoneVerification.update({
                 where: {
                     id: verification.id,
                 },
@@ -188,7 +197,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 attempts: nextAttemptCount,
                 providerStatusCode: '100',
                 providerStatusText: 'Fake verification confirmed',
-            });
+            }, passwordless?.tx);
             return {
                 status: 'confirmed',
                 message: 'Номер подтвержден',
@@ -203,6 +212,11 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             check_id: checkId.trim(),
         });
         this.assertSmsRuSuccess('/callcheck/status', response);
+        // SMS.ru documents only 400/401/402 for CallCheck. An unexpected
+        // response is not evidence that a passwordless challenge has failed.
+        if (passwordless && !['400', '401', '402'].includes(`${response.check_status ?? response.call_status ?? ''}`.trim())) {
+            throw this.createSafeCallcheckException(common_1.HttpStatus.SERVICE_UNAVAILABLE, 'SMS_RU_INVALID_RESPONSE', 'Unexpected CallCheck status');
+        }
         const resolvedStatus = this.resolveSmsRuCheckStatus(response);
         const nextStatus = resolvedStatus === 'confirmed'
             ? client_1.PhoneVerificationStatus.CONFIRMED
@@ -216,15 +230,15 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 attempts: nextAttemptCount,
                 providerStatusCode: this.pickStatusCode(response),
                 providerStatusText: this.pickStatusText(response),
-                metadata: response,
-            });
+                metadata: metadata?.passwordless ? { ...metadata, providerResponse: response } : response,
+            }, passwordless?.tx);
             return {
                 status: 'confirmed',
                 message: 'Номер подтвержден',
             };
         }
         if (resolvedStatus === 'expired' || resolvedStatus === 'failed') {
-            await this.prisma.phoneVerification.update({
+            await prisma.phoneVerification.update({
                 where: {
                     id: verification.id,
                 },
@@ -233,7 +247,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                     status: nextStatus,
                     providerStatusCode: this.pickStatusCode(response),
                     providerStatusText: this.pickStatusText(response),
-                    metadata: response,
+                    metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response),
                 },
             });
             return {
@@ -243,7 +257,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                     : 'Не удалось подтвердить звонок. Попробуйте ещё раз позже.',
             };
         }
-        await this.prisma.phoneVerification.update({
+        await prisma.phoneVerification.update({
             where: {
                 id: verification.id,
             },
@@ -252,7 +266,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 status: nextStatus,
                 providerStatusCode: this.pickStatusCode(response),
                 providerStatusText: this.pickStatusText(response),
-                metadata: response,
+                metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response),
             },
         });
         return {
@@ -298,6 +312,7 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
     async storeVerificationAttempt(params) {
         return this.prisma.phoneVerification.create({
             data: {
+                id: params.id,
                 phone: params.phone,
                 purpose: this.mapPurpose(params.purpose),
                 provider: client_1.PhoneVerificationProvider.SMS_RU,
@@ -312,8 +327,8 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
             },
         });
     }
-    async markVerificationConfirmed(verificationId, params) {
-        return this.prisma.phoneVerification.update({
+    async markVerificationConfirmed(verificationId, params, tx) {
+        return (tx ?? this.prisma).phoneVerification.update({
             where: {
                 id: verificationId,
             },

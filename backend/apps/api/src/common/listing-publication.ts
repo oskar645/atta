@@ -243,3 +243,28 @@ export const listingPublicationReadyWhere = (): Prisma.ListingWhereInput => ({
     some: {},
   },
 });
+
+// SQL is required here to match String.trim() for legacy, unnormalised rows.
+// Alias `l` is the listings table. Keep publication writes and public feed unchanged.
+export const listingModerationReadySql = (): Prisma.Sql => {
+  const whitespace = '\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
+  const trim = (column: Prisma.Sql) => Prisma.sql`btrim(${column}, ${whitespace})`;
+  const category = trim(Prisma.sql`l.category`);
+  const subcategory = trim(Prisma.sql`l.subcategory`);
+  const categoryRules = [
+    Prisma.sql`${category} IN (${Prisma.join([...categoriesWithoutStrictSubcategories])})`,
+    ...[...categoriesWithKnownSubcategories].map(([name, children]) =>
+      Prisma.sql`(${category} = ${name} AND ${subcategory} IN (${Prisma.join([...children])}))`,
+    ),
+  ];
+  return Prisma.sql`
+    l.status = 'PENDING'::"ListingStatus"
+    AND l.deleted_at IS NULL AND l.archived_at IS NULL
+    AND ${trim(Prisma.sql`l.title`)} NOT IN ('', ${LISTING_DRAFT_TITLE_PLACEHOLDER})
+    AND ${trim(Prisma.sql`l.description`)} <> ''
+    AND (${Prisma.join(categoryRules, ' OR ')})
+    AND l.price > 0
+    AND ${trim(Prisma.sql`l.city`)} <> ''
+    AND EXISTS (SELECT 1 FROM listing_photos p WHERE p.listing_id = l.id)
+  `;
+};

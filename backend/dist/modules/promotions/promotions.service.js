@@ -608,8 +608,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                 walletReasonFallbackApplied: walletReason !== plan.walletReason,
             }, tx, `promotion_raise:${idempotencyKey}`);
             const now = new Date();
-            const promotion = await this.createBumpPromotion(tx, listingId, authUser.userId, plan.costBonus, now);
-            await tx.listingRaiseCampaign.create({
+            const campaign = await tx.listingRaiseCampaign.create({
                 data: {
                     listingId,
                     userId: authUser.userId,
@@ -626,6 +625,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                     idempotencyKey,
                 },
             });
+            const promotion = await this.createBumpPromotion(tx, listingId, authUser.userId, plan.costBonus, now, campaign.id);
             return {
                 promotion,
                 updatedWallet,
@@ -700,7 +700,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                 });
                 return true;
             }
-            await this.createBumpPromotion(tx, campaign.listingId, campaign.userId, campaign.pricePerRaise, campaign.nextRaiseAt);
+            await this.createBumpPromotion(tx, campaign.listingId, campaign.userId, campaign.pricePerRaise, campaign.nextRaiseAt, campaign.id);
             const completedRaises = campaign.completedRaises + 1;
             const hasMore = completedRaises < campaign.purchasedRaises;
             await tx.listingRaiseCampaign.update({
@@ -722,9 +722,10 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             return true;
         });
     }
-    async createBumpPromotion(tx, listingId, userId, costBonus, startsAt) {
+    async createBumpPromotion(tx, listingId, userId, costBonus, startsAt, raiseCampaignId) {
         return tx.promotion.create({
             data: {
+                raiseCampaignId,
                 listingId,
                 userId,
                 type: client_1.PromotionType.BUMP,

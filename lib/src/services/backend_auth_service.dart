@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:atta/src/services/auth/pending_passwordless_storage.dart';
+
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/auth_api.dart';
 import 'package:atta/src/services/api/users_api.dart';
@@ -76,6 +78,19 @@ class BackendAuthService {
   Stream<AuthSessionEvent> get onAuthStateChange => _events.stream;
   AuthUser? get currentUser => _currentUser;
   bool get isSignedIn => _currentUser != null;
+
+  Future<Map<String, dynamic>> completeAccountRecovery(
+      {required String token,
+      required String phone,
+      required String checkId}) async {
+    final response =
+        await _authApi.completeRecoveryPhone(token, phone, checkId);
+    if (response['auth'] is Map) {
+      await _consumeAuthPayload(response,
+          generation: _beginAuthSessionChange());
+    }
+    return response;
+  }
 
   Future<void> ensureInitialized() {
     return _initialization ??= _restoreSession().catchError((error) {
@@ -157,6 +172,68 @@ class BackendAuthService {
       return;
     }
     _debugAuthLog('Auth refresh failed');
+  }
+
+  Future<Map<String, dynamic>> startPasswordless(
+          {required String phone,
+          String referralCode = '',
+          String referralId = ''}) =>
+      _authApi.startPasswordless(
+          phone: phone, referralCode: referralCode, referralId: referralId);
+
+  Future<Map<String, dynamic>> checkPasswordless({
+    required String challenge,
+    required bool Function() isActive,
+  }) async {
+    final generation = _authGeneration;
+    final response = await _authApi.checkPasswordless(challenge: challenge);
+    if (response['auth'] is Map &&
+        isActive() &&
+        _isCurrentAuthGeneration(generation)) {
+      _validatePasswordlessAuthPayload(response);
+      await _consumeAuthPayload(response,
+          generation: _beginAuthSessionChange());
+      if (isSignedIn) await PendingPasswordlessStorage().clear();
+    }
+    return response;
+  }
+
+  Future<void> completePasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+    required bool Function() isActive,
+  }) async {
+    final generation = _authGeneration;
+    final response = await _authApi.completePasswordless(
+      registrationToken: registrationToken,
+      displayName: displayName,
+      acceptedLegal: acceptedLegal,
+      acceptedPersonalData: acceptedPersonalData,
+    );
+    if (isActive() && _isCurrentAuthGeneration(generation)) {
+      _validatePasswordlessAuthPayload(response);
+      await _consumeAuthPayload(response,
+          generation: _beginAuthSessionChange());
+      if (isSignedIn) await PendingPasswordlessStorage().clear();
+    }
+  }
+
+  void _validatePasswordlessAuthPayload(Map<String, dynamic> response) {
+    final auth = response['auth'];
+    final user = response['user'];
+    bool hasText(dynamic value) => value is String && value.trim().isNotEmpty;
+    if (auth is! Map ||
+        user is! Map ||
+        !hasText(auth['access_token']) ||
+        !hasText(auth['refresh_token']) ||
+        !hasText(user['id'])) {
+      throw const ApiException(
+        'Не удалось завершить вход. Попробуйте ещё раз.',
+        code: 'invalid_passwordless_response',
+      );
+    }
   }
 
   Future<AuthUser> signIn({
@@ -847,8 +924,9 @@ class BackendAuthService {
         expectedUserId != responseUserId) {
       return _currentUser ?? _staleAuthResult();
     }
+    final previousUser = _currentUser;
     final user = _mergeUser(
-      _currentUser,
+      previousUser,
       parsedUser,
       preferServerAdmin: _hasExplicitAdminFlag(rawUser, response),
     );
@@ -869,7 +947,28 @@ class BackendAuthService {
               ));
     }
 
+    if (_userChanged(previousUser, user)) {
+      _events
+          .add(const AuthSessionEvent(type: AuthSessionEventType.userUpdated));
+    }
+
     return user;
+  }
+
+  bool _userChanged(AuthUser? previous, AuthUser next) {
+    return previous == null ||
+        previous.uid != next.uid ||
+        previous.email != next.email ||
+        previous.emailVerified != next.emailVerified ||
+        previous.emailVerifiedAt != next.emailVerifiedAt ||
+        previous.displayName != next.displayName ||
+        previous.phone != next.phone ||
+        previous.phoneVerified != next.phoneVerified ||
+        previous.photoUrl != next.photoUrl ||
+        previous.referralCode != next.referralCode ||
+        previous.isAdmin != next.isAdmin ||
+        previous.blockStatus?.id != next.blockStatus?.id ||
+        previous.blockStatus?.status != next.blockStatus?.status;
   }
 
   AuthUser _parseUser(Map<dynamic, dynamic> raw) {
@@ -878,6 +977,12 @@ class BackendAuthService {
       if (text == null || text.isEmpty) return null;
       return text;
     }
+
+    final emailVerifiedAtRaw =
+        pick(raw['emailVerifiedAt']) ?? pick(raw['email_verified_at']);
+    final emailVerifiedAt = emailVerifiedAtRaw == null
+        ? null
+        : DateTime.tryParse(emailVerifiedAtRaw);
 
     return AuthUser(
       uid: pick(raw['id']) ?? '',
@@ -891,6 +996,11 @@ class BackendAuthService {
       phoneVerified: raw['phoneVerified'] == true ||
           raw['phone_verified'] == true ||
           raw['isPhoneVerified'] == true,
+      emailVerified: raw['emailVerified'] == true ||
+          raw['email_verified'] == true ||
+          raw['isEmailVerified'] == true ||
+          emailVerifiedAt != null,
+      emailVerifiedAt: emailVerifiedAt,
       photoUrl: _cacheBustedAvatarUrl(
         _normalizeAvatarUrl(
           pick(raw['avatar_url']) ??
@@ -978,6 +1088,8 @@ class BackendAuthService {
       displayName: _pickPreferred(next.displayName, previous.displayName),
       phone: _pickPreferred(next.phone, previous.phone),
       phoneVerified: next.phoneVerified || previous.phoneVerified,
+      emailVerified: next.emailVerified || previous.emailVerified,
+      emailVerifiedAt: next.emailVerifiedAt ?? previous.emailVerifiedAt,
       photoUrl: _pickPreferred(next.photoUrl, previous.photoUrl),
       referralCode: _pickPreferred(next.referralCode, previous.referralCode),
       blockStatus: next.blockStatus,

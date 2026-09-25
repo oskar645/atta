@@ -46,7 +46,59 @@ class AuthService {
   AuthUser? get currentUser => _backend.currentUser;
   bool get isAuthenticated => _backend.isSignedIn;
 
+  Future<Map<String, dynamic>> startRecoveryEmail(String email) =>
+      AuthApi(_apiClient).startRecoveryEmail(email);
+  Future<Map<String, dynamic>> verifyRecoveryEmail(
+      String challengeId, String code) async {
+    final result =
+        await AuthApi(_apiClient).verifyRecoveryEmail(challengeId, code);
+    await _backend.revalidateCurrentUser();
+    return result;
+  }
+
+  Future<Map<String, dynamic>> startAccountRecovery(String email) =>
+      AuthApi(_apiClient).startAccountRecovery(email);
+  Future<Map<String, dynamic>> verifyAccountRecoveryEmail(
+          String challengeId, String code) =>
+      AuthApi(_apiClient).verifyAccountRecoveryEmail(challengeId, code);
+  Future<Map<String, dynamic>> startRecoveryPhone(String token, String phone) =>
+      AuthApi(_apiClient).startRecoveryPhone(token, phone);
+  Future<Map<String, dynamic>> completeRecoveryPhone(
+          String token, String phone, String checkId) =>
+      _backend.completeAccountRecovery(
+          token: token, phone: phone, checkId: checkId);
+
   Future<void> ensureInitialized() => _backend.ensureInitialized();
+
+  Future<Map<String, dynamic>> startPasswordless(
+      {required String phone}) async {
+    final links = DeepLinkService();
+    final referralCode = await links.readPendingInviteReferrerId() ?? '';
+    final referralId = await links.readPendingInviteReferralId() ?? '';
+    return _backend.startPasswordless(
+        phone: phone, referralCode: referralCode, referralId: referralId);
+  }
+
+  Future<Map<String, dynamic>> checkPasswordless({
+    required String challenge,
+    required bool Function() isActive,
+  }) =>
+      _backend.checkPasswordless(challenge: challenge, isActive: isActive);
+
+  Future<void> completePasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+    required bool Function() isActive,
+  }) =>
+      _backend.completePasswordless(
+        registrationToken: registrationToken,
+        displayName: displayName,
+        acceptedLegal: acceptedLegal,
+        acceptedPersonalData: acceptedPersonalData,
+        isActive: isActive,
+      );
 
   Future<AuthUser> signIn({
     required String email,

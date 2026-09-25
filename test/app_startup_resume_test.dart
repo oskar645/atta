@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:async';
 
 import 'package:atta/src/app.dart';
@@ -29,6 +30,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUp(() => FlutterSecureStorage.setMockInitialValues({}));
+
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     debugDeepLinkListingScreenBuilder = null;
@@ -36,6 +39,31 @@ void main() {
 
   tearDown(() {
     debugDeepLinkListingScreenBuilder = null;
+  });
+
+  test('Android native listing initial route is left for DeepLinkService push',
+      () {
+    expect(
+      shouldGenerateListingRouteForPlatform(
+        isWeb: false,
+        platform: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldGenerateListingRouteForPlatform(
+        isWeb: false,
+        platform: TargetPlatform.iOS,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldGenerateListingRouteForPlatform(
+        isWeb: true,
+        platform: TargetPlatform.android,
+      ),
+      isTrue,
+    );
   });
 
   testWidgets(

@@ -24,10 +24,40 @@ import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { ListAdminSupportTicketsDto } from './dto/list-admin-support-tickets.dto';
 import { SendSupportMessageDto } from './dto/send-support-message.dto';
 import { SupportService } from './support.service';
+import { CreatePublicSupportTicketDto, PublicSupportMessageDto } from './dto/public-support.dto';
 
 const memoryImageUpload = FileInterceptor('file', {
   storage: require('multer').memoryStorage(),
 });
+
+@Controller('support/public')
+export class PublicSupportController {
+  constructor(private readonly supportService: SupportService, private readonly rateLimitService: RateLimitService) {}
+
+  @Post('tickets')
+  async create(@Req() req: any, @Body() body: CreatePublicSupportTicketDto) {
+    await this.rateLimitService.consumeOrThrow(`support:public:create:${req?.ip ?? 'unknown'}`, { limit: 3, windowMs: 60 * 60_000 });
+    return this.supportService.createPublicAccessTicket(body);
+  }
+
+  @Get('tickets/:id')
+  async get(@Req() req: any, @Param('id', new ParseUUIDPipe()) id: string) {
+    const token = this.token(req);
+    await this.rateLimitService.consumeOrThrow(`support:public:read:${id}:${req?.ip ?? 'unknown'}`, { limit: 60, windowMs: 60_000 });
+    return this.supportService.getPublicTicket(id, token);
+  }
+
+  @Post('tickets/:id/messages')
+  async send(@Req() req: any, @Param('id', new ParseUUIDPipe()) id: string, @Body() body: PublicSupportMessageDto) {
+    const token = this.token(req);
+    await this.rateLimitService.consumeOrThrow(`support:public:send:${id}:${req?.ip ?? 'unknown'}`, { limit: 8, windowMs: 60_000 });
+    return this.supportService.sendPublicMessage(id, token, body.text);
+  }
+
+  private token(req: any) {
+    return req?.headers?.['x-support-token']?.toString().trim() ?? '';
+  }
+}
 
 @Controller('support')
 @UseGuards(JwtAuthGuard)

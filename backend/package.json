@@ -17,6 +17,7 @@
     "pm2:stop": "pm2 delete atta-backend",
     "pm2:logs": "pm2 logs atta-backend",
     "admin": "ts-node apps/api/src/scripts/grant-admin.ts",
+    "smtp:test": "ts-node apps/api/src/scripts/test-smtp.ts",
     "admin:grant-test-bonus": "ts-node apps/api/src/scripts/grant-admin-test-bonus.ts",
     "bonus:admins:test": "ts-node apps/api/src/scripts/grant-admin-test-bonus.ts",
     "wallet:admin-bonus": "ts-node apps/api/src/scripts/grant-admin-test-bonus.ts",
@@ -54,6 +55,7 @@
     "class-validator": "^0.14.1",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",
+    "nodemailer": "^10.0.10",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.0",
@@ -63,6 +65,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.7.4",
+    "@types/nodemailer": "^8.0.2",
     "prisma": "^5.18.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",

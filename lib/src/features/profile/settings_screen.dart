@@ -1,7 +1,6 @@
 import 'package:atta/src/features/notifications/notifications_screen.dart';
-import 'package:atta/src/features/auth/legal_document_screen.dart';
 import 'package:atta/src/features/profile/about_app_screen.dart';
-import 'package:atta/src/features/profile/change_password_screen.dart';
+import 'package:atta/src/features/profile/security_screen.dart';
 import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
@@ -20,7 +19,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
-  final _emailCtrl = TextEditingController();
   bool _saving = false;
   bool _deletingAccount = false;
   bool _loadingMarketingConsent = true;
@@ -32,16 +30,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final currentUser = context.read<AuthService>().currentUser;
     if (currentUser != null) {
       _nameCtrl.text = (currentUser.displayName ?? '').trim();
-      _emailCtrl.text = _visibleEmail(currentUser.email);
     }
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final auth = context.read<AuthService>();
       final profile = context.read<ProfileService>();
       final uid = auth.currentUser!.uid;
       final data = await profile.getProfile(uid);
-      final authEmail = _visibleEmail(auth.currentUser?.email);
-      final profileEmail = _visibleEmail((data['email'] ?? '').toString());
-
       final loadedName =
           (data['display_name'] ?? data['displayName'] ?? data['name'] ?? '')
               .toString()
@@ -52,10 +46,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _phoneCtrl.text = formatRuPhoneForField(
         loadedPhone.isNotEmpty ? loadedPhone : _phoneCtrl.text,
       );
-      _emailCtrl.text = profileEmail.isNotEmpty
-          ? profileEmail
-          : (_emailCtrl.text.isNotEmpty ? _emailCtrl.text : authEmail);
-
       if (mounted) {
         setState(() {});
       }
@@ -80,21 +70,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void dispose() {
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
-    _emailCtrl.dispose();
     super.dispose();
-  }
-
-  String _visibleEmail(String? value) {
-    final email = (value ?? '').trim();
-    if (email.isEmpty) return '';
-    if (email.endsWith('@phone.atta.local')) return '';
-    return email;
-  }
-
-  bool _looksLikeEmail(String value) {
-    final text = value.trim();
-    if (text.isEmpty) return true;
-    return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(text);
   }
 
   OutlineInputBorder _fieldBorder(BuildContext context) {
@@ -115,15 +91,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final name = _nameCtrl.text.trim();
     final phone = _phoneCtrl.text.trim();
     final normalizedPhone = phone.isEmpty ? '' : normalizeRuPhoneForApi(phone);
-    final email = _emailCtrl.text.trim().toLowerCase();
-    final currentEmail = _visibleEmail(currentUser.email);
 
     if (name.isEmpty) {
       showAppSnack(context, 'Введите имя', isError: true);
-      return;
-    }
-    if (!_looksLikeEmail(email)) {
-      showAppSnack(context, 'Введите корректный email', isError: true);
       return;
     }
     if (phone.isNotEmpty && normalizedPhone.isEmpty) {
@@ -133,19 +103,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _saving = true);
     try {
-      if (!auth.useTimewebBackend &&
-          email.isNotEmpty &&
-          email != currentEmail) {
-        await auth.linkEmailToCurrentUser(email: email);
-      }
-
       await auth.updateAuthMetadata(displayName: name);
 
       await profile.updateProfile(uid, {
         'display_name': name,
         'name': name,
         'phone': normalizedPhone,
-        if (email.isNotEmpty) 'email': email,
       });
 
       if (!mounted) return;
@@ -253,6 +216,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required String title,
     String? subtitle,
     Color? iconColor,
+    Color? titleColor,
+    Widget? trailing,
     VoidCallback? onTap,
   }) {
     return Padding(
@@ -265,9 +230,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             borderRadius: BorderRadius.circular(18),
           ),
           leading: Icon(icon, color: iconColor),
-          title: Text(title),
+          title: Text(title, style: TextStyle(color: titleColor)),
           subtitle: subtitle == null ? null : Text(subtitle),
-          trailing: const Icon(Icons.chevron_right),
+          trailing: trailing ?? const Icon(Icons.chevron_right),
           onTap: onTap,
         ),
       ),
@@ -277,8 +242,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final border = _fieldBorder(context);
-    final email = _emailCtrl.text.trim();
-    final useTimewebBackend = context.read<AuthService>().useTimewebBackend;
+    final user = context.watch<AuthService>().currentUser!;
+    final securityComplete = user.phoneVerified && user.emailVerified;
+    final securityColor = securityComplete
+        ? Colors.green.shade700
+        : Theme.of(context).colorScheme.error;
 
     return Scaffold(
       appBar: AppBar(
@@ -316,24 +284,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     focusedBorder: border,
                   ),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _emailCtrl,
-                  enabled: !useTimewebBackend,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
-                    labelText: 'Email',
-                    hintText: useTimewebBackend
-                        ? 'Email временно недоступен'
-                        : 'name@example.com',
-                    helperText: useTimewebBackend
-                        ? 'Email auth disabled temporarily until Timeweb email verification flow is ready.'
-                        : null,
-                    border: border,
-                    enabledBorder: border,
-                    focusedBorder: border,
-                  ),
-                ),
               ],
             ),
           ),
@@ -346,29 +296,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           _sectionTitle('Аккаунт'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              email.isEmpty
-                  ? (useTimewebBackend
-                      ? 'В Timeweb-режиме email временно скрыт и не используется для входа.'
-                      : 'Добавьте email, чтобы он был привязан к вашему аккаунту и его можно было использовать для входа.')
-                  : 'Текущий email привязан к вашему аккаунту и сохраняется в профиле.',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.outline,
-                height: 1.4,
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
           _tile(
-            icon: Icons.lock_outline,
-            title: 'Сменить пароль',
-            subtitle: 'Изменить текущий пароль',
+            icon: Icons.shield_outlined,
+            iconColor: securityColor,
+            title: 'Безопасность',
+            titleColor: securityColor,
+            subtitle: securityComplete
+                ? 'Телефон и резервный email подтверждены'
+                : 'Подключите резервный email',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: securityColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.chevron_right),
+              ],
+            ),
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => const ChangePasswordScreen(),
+                  builder: (_) => const SecurityScreen(),
                 ),
               );
             },
@@ -390,18 +344,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             value: _marketingConsent,
             onChanged: _loadingMarketingConsent ? null : _setMarketingConsent,
-          ),
-          _tile(
-            icon: Icons.gavel_outlined,
-            title: 'Правовая информация',
-            subtitle: 'Соглашение, политика и согласия',
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const _LegalInfoScreen(),
-                ),
-              );
-            },
           ),
           _tile(
             icon: Icons.notifications_none,
@@ -438,64 +380,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               );
             },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LegalInfoScreen extends StatelessWidget {
-  const _LegalInfoScreen();
-
-  Widget _tile(
-    BuildContext context, {
-    required String title,
-    required LegalDocumentKind kind,
-  }) {
-    return ListTile(
-      title: Text(title),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: () {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => LegalDocumentScreen(kind: kind),
-          ),
-        );
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Правовая информация')),
-      body: ListView(
-        children: [
-          _tile(
-            context,
-            title: 'Пользовательское соглашение',
-            kind: LegalDocumentKind.terms,
-          ),
-          _tile(
-            context,
-            title: 'Политика конфиденциальности',
-            kind: LegalDocumentKind.privacy,
-          ),
-          _tile(
-            context,
-            title: 'Согласие на обработку персональных данных',
-            kind: LegalDocumentKind.personalDataConsent,
-          ),
-          _tile(
-            context,
-            title: 'Маркетинговое согласие',
-            kind: LegalDocumentKind.marketingConsent,
-          ),
-          _tile(
-            context,
-            title: 'Согласие на распространение персональных данных',
-            kind: LegalDocumentKind.publicDataConsent,
           ),
         ],
       ),

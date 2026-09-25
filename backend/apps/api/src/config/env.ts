@@ -87,6 +87,12 @@ const envSchema = z.object({
   RESTORE_CREDENTIALS_RP_ID: z.string().min(1).default('attamarket.online'),
   RESTORE_CREDENTIALS_RP_NAME: z.string().min(1).default('ATTA'),
   RESTORE_CREDENTIALS_ANDROID_ORIGINS: z.string().optional().default(''),
+  SMTP_HOST: z.string().optional().default('smtp.timeweb.ru'),
+  SMTP_PORT: z.coerce.number().int().positive().optional().default(465),
+  SMTP_SECURE: z.string().optional().default('true').transform((value) => value === 'true'),
+  SMTP_USER: z.string().optional().default('atta@attamarket.online'),
+  SMTP_PASS: z.string().optional().default(''),
+  SMTP_FROM: z.string().optional().default('ATTA <atta@attamarket.online>'),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

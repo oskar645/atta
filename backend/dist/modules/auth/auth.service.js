@@ -25,7 +25,7 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
 const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const wallet_service_1 = require("../wallet/wallet.service");
-const LEGAL_DOCUMENT_VERSION = '2026-09-12';
+const legal_document_version_1 = require("./legal-document-version");
 let AuthService = class AuthService {
     constructor(prisma, jwtService, storageService, walletService, userBlocksService, accountDeletion) {
         this.prisma = prisma;
@@ -191,6 +191,52 @@ let AuthService = class AuthService {
         });
         return this.buildAuthResponse(userWithAdmin, session.auth);
     }
+    // Called only after the passwordless service locks and validates its capability.
+    // Reuses the existing consent, wallet, admin and session implementation in one transaction.
+    async authenticatePasswordless(phone, tx, registration) {
+        const now = new Date();
+        const identity = await tx.blockedIdentity.findFirst({
+            where: { normalizedPhone: phone, liftedAt: null,
+                OR: [{ permanent: true }, { bannedUntil: { gt: now } }] },
+        });
+        if (identity)
+            throw this.createUnauthorizedError('PHONE_BLOCKED', 'Этот номер заблокирован');
+        // Serialize changes to an existing account with deletion/status updates.
+        await tx.$queryRaw `SELECT id FROM users WHERE phone = ${phone} FOR UPDATE`;
+        let user = await tx.user.findUnique({ where: { phone }, include: { adminProfile: true } });
+        if (user) {
+            const block = await this.userBlocksService.getActiveBlock(user.id, tx);
+            user = await tx.user.findUniqueOrThrow({ where: { id: user.id }, include: { adminProfile: true } });
+            if (user.deletedAt || user.status !== client_1.UserStatus.ACTIVE || block) {
+                throw this.createUnauthorizedError('ACCOUNT_BLOCKED', 'Аккаунт недоступен');
+            }
+            user = await tx.user.update({ where: { id: user.id },
+                data: { lastLoginAt: now }, include: { adminProfile: true } });
+        }
+        else {
+            if (!registration)
+                return null;
+            this.assertRequiredSignupConsents(registration);
+            const displayName = registration.displayName.trim();
+            if (!displayName)
+                throw new common_1.BadRequestException('Display name is required');
+            user = await tx.user.create({
+                data: { id: (0, crypto_1.randomUUID)(), phone, phoneVerified: true, displayName, name: displayName,
+                    passwordHash: await (0, bcryptjs_1.hash)((0, crypto_1.randomBytes)(32).toString('base64url'), 10) },
+                include: { adminProfile: true },
+            });
+            await this.recordSignupConsents(user.id, registration, tx);
+            await this.walletService.ensureWalletAndBonuses(user.id, tx);
+            await this.applyReferralBonusIfEligible({
+                newUser: user, normalizedPhone: phone,
+                referralCode: registration.referralCode ?? '', referralId: registration.referralId ?? '',
+                verificationId: registration.verificationId, tx,
+            });
+        }
+        const userWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
+        const session = await this.createSession(userWithAdmin, tx);
+        return this.buildAuthResponse(userWithAdmin, session.auth);
+    }
     async getMarketingConsent(authUser) {
         const consent = await this.prisma.userConsent.findFirst({
             where: {
@@ -203,7 +249,7 @@ let AuthService = class AuthService {
         });
         return {
             accepted: Boolean(consent?.acceptedAt && !consent?.withdrawnAt),
-            documentVersion: consent?.documentVersion ?? LEGAL_DOCUMENT_VERSION,
+            documentVersion: consent?.documentVersion ?? legal_document_version_1.LEGAL_DOCUMENT_VERSION,
             acceptedAt: consent?.acceptedAt ?? null,
             withdrawnAt: consent?.withdrawnAt ?? null,
         };
@@ -221,7 +267,7 @@ let AuthService = class AuthService {
             data: {
                 userId: authUser.userId,
                 consentType: 'MARKETING_MESSAGES',
-                documentVersion: LEGAL_DOCUMENT_VERSION,
+                documentVersion: legal_document_version_1.LEGAL_DOCUMENT_VERSION,
                 acceptedAt: accepted ? now : null,
                 withdrawnAt: accepted ? null : now,
                 platform,
@@ -255,7 +301,7 @@ let AuthService = class AuthService {
                 {
                     userId,
                     consentType: 'TERMS_ACCEPTANCE',
-                    documentVersion: LEGAL_DOCUMENT_VERSION,
+                    documentVersion: legal_document_version_1.LEGAL_DOCUMENT_VERSION,
                     acceptedAt,
                     platform,
                     technicalInfo,
@@ -263,7 +309,7 @@ let AuthService = class AuthService {
                 {
                     userId,
                     consentType: 'PERSONAL_DATA_PROCESSING',
-                    documentVersion: LEGAL_DOCUMENT_VERSION,
+                    documentVersion: legal_document_version_1.LEGAL_DOCUMENT_VERSION,
                     acceptedAt,
                     platform,
                     technicalInfo,
@@ -273,7 +319,7 @@ let AuthService = class AuthService {
                         {
                             userId,
                             consentType: 'MARKETING_MESSAGES',
-                            documentVersion: LEGAL_DOCUMENT_VERSION,
+                            documentVersion: legal_document_version_1.LEGAL_DOCUMENT_VERSION,
                             acceptedAt,
                             platform,
                             technicalInfo,
@@ -521,9 +567,38 @@ let AuthService = class AuthService {
         await this.ensureWalletBootstrapSafely(userWithAdmin.id);
         return this.buildAuthResponse(userWithAdmin, session.auth);
     }
+    async completeAccountRecovery(grantId, tokenHash, phone) {
+        return this.prisma.$transaction(async (tx) => {
+            const grants = await tx.$queryRaw(client_1.Prisma.sql `
+        SELECT id, user_id, expires_at FROM account_recovery_grants
+        WHERE id = ${grantId}::uuid AND token_hash = ${tokenHash}
+          AND consumed_at IS NULL
+        FOR UPDATE
+      `);
+            const grant = grants[0];
+            if (!grant || grant.expires_at.getTime() <= Date.now()) {
+                throw new common_1.BadRequestException('Сессия восстановления недействительна или истекла');
+            }
+            const occupied = await tx.user.findFirst({ where: { phone, id: { not: grant.user_id }, deletedAt: null }, select: { id: true } });
+            if (occupied)
+                throw new common_1.ConflictException('Этот номер уже используется');
+            const user = await tx.user.update({
+                where: { id: grant.user_id },
+                data: { phone, phoneVerified: true, lastLoginAt: new Date() },
+                include: { adminProfile: true },
+            });
+            const recoveredAt = new Date();
+            await tx.userSession.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: recoveredAt } });
+            await tx.restoreCredential.updateMany({ where: { userId: user.id, revokedAt: null }, data: { revokedAt: recoveredAt } });
+            await tx.accountRecoveryGrant.update({ where: { id: grantId }, data: { consumedAt: recoveredAt } });
+            const session = await this.createSession(user, tx);
+            return this.buildAuthResponse(user, session.auth);
+        });
+    }
     async findActiveUserByIdOrThrow(userId) {
-        const user = await this.findActiveUserById(userId);
+        let user = await this.findActiveUserById(userId);
         const activeBlock = await this.userBlocksService.getActiveBlock(user.id);
+        user = await this.findActiveUserById(userId);
         if (activeBlock || user.status !== client_1.UserStatus.ACTIVE) {
             throw this.createUnauthorizedError('ACCOUNT_BLOCKED', 'Аккаунт заблокирован');
         }
@@ -792,7 +867,7 @@ let AuthService = class AuthService {
                 createdAt: 'desc',
             },
         });
-        if (!verification) {
+        if (!verification || verification.metadata?.passwordless) {
             throw new common_1.BadRequestException('Phone verification is not confirmed');
         }
         if (verification.expiresAt.getTime() <= Date.now()) {
@@ -818,7 +893,7 @@ let AuthService = class AuthService {
         const priorSignupForPhone = await prisma.phoneVerification.findFirst({
             where: {
                 phone: params.normalizedPhone,
-                purpose: client_1.PhoneVerificationPurpose.SIGNUP,
+                purpose: { in: [client_1.PhoneVerificationPurpose.SIGNUP, client_1.PhoneVerificationPurpose.LOGIN] },
                 status: client_1.PhoneVerificationStatus.CONFIRMED,
                 createdUserId: {
                     not: null,

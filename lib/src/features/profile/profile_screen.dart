@@ -17,6 +17,7 @@ import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/utils/share_texts.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
@@ -544,6 +545,7 @@ class _ProfileScreenState extends State<ProfileScreen>
           final phoneDisplay = phone.isEmpty ? '' : formatRussianPhone(phone);
           final phoneVerified =
               data['phoneVerified'] == true || data['phone_verified'] == true;
+          final sellerLevel = SellerLevelBadge.levelFromRow(data);
 
           final avatar = _currentAvatarUrl(profile, user, data);
 
@@ -611,14 +613,28 @@ class _ProfileScreenState extends State<ProfileScreen>
                               child: Padding(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 2),
-                                child: Text(
-                                  phoneDisplay.isEmpty
-                                      ? 'Добавить телефон'
-                                      : phoneDisplay,
-                                  style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .outline),
+                                child: Wrap(
+                                  spacing: 10,
+                                  runSpacing: 6,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Text(
+                                      phoneDisplay.isEmpty
+                                          ? 'Добавить телефон'
+                                          : phoneDisplay,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .outline),
+                                    ),
+                                    if (sellerLevel != null)
+                                      SellerLevelBadge(
+                                        level: sellerLevel,
+                                        size: SellerLevelBadgeSize.large,
+                                      ),
+                                  ],
                                 ),
                               ),
                             ),

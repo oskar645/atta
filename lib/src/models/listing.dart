@@ -169,6 +169,7 @@ class Listing {
   final String ownerId;
   final String ownerEmail;
   final String ownerName;
+  final String? sellerLevel;
 
   final String title;
   final String description;
@@ -223,6 +224,7 @@ class Listing {
     required this.ownerId,
     required this.ownerEmail,
     required this.ownerName,
+    this.sellerLevel,
     required this.title,
     required this.description,
     required this.category,
@@ -490,6 +492,13 @@ class Listing {
 
     final city = (row['city'] ?? '').toString();
     final promotions = _parseJson(row['promotions']);
+    final owner = _parseJson(row['owner']);
+    final sellerLevel = _nullableTrimmedString(
+      row['sellerLevel'] ??
+          row['seller_level'] ??
+          owner['sellerLevel'] ??
+          owner['seller_level'],
+    );
 
 // Если есть колонка location (jsonb) — используем её.
 // Иначе парсим данные из city.
@@ -501,6 +510,7 @@ class Listing {
       ownerId: (row['owner_id'] ?? '').toString(),
       ownerEmail: (row['owner_email'] ?? '').toString(),
       ownerName: (row['owner_name'] ?? '').toString(),
+      sellerLevel: sellerLevel,
       title: (row['title'] ?? '').toString(),
       description: (row['description'] ?? '').toString(),
       category: (row['category'] ?? '').toString(),
@@ -575,6 +585,8 @@ class Listing {
       'owner_id': ownerId,
       'owner_email': ownerEmail,
       'owner_name': ownerName,
+      'seller_level': sellerLevel,
+      'sellerLevel': sellerLevel,
       'title': title,
       'description': description,
       'category': category,

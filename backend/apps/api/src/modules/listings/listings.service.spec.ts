@@ -193,12 +193,15 @@ function createService(overrides?: {
   findUnique?: () => Promise<unknown>;
   update?: (args: Record<string, unknown>) => Promise<unknown>;
   findMany?: (args?: Record<string, unknown>) => Promise<unknown>;
+  count?: (args?: Record<string, unknown>) => Promise<number>;
+  groupBy?: (args?: Record<string, unknown>) => Promise<unknown[]>;
   findFavorites?: (args?: Record<string, unknown>) => Promise<unknown>;
   findListingView?: (args?: Record<string, unknown>) => Promise<unknown>;
   createListingView?: (args: Record<string, unknown>) => Promise<unknown>;
   findPromotions?: (args?: Record<string, unknown>) => Promise<unknown>;
   queryRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
   executeRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+  findReviews?: (args?: Record<string, unknown>) => Promise<unknown[]>;
 }) {
   const prisma = {
     user: {
@@ -273,6 +276,8 @@ function createService(overrides?: {
         })),
       findUnique: overrides?.findUnique ?? (async () => null),
       findMany: overrides?.findMany ?? (async () => []),
+      count: overrides?.count ?? (async () => 0),
+      groupBy: overrides?.groupBy ?? (async () => []),
       update:
         overrides?.update ??
         (async (args: Record<string, unknown>) => ({
@@ -312,6 +317,9 @@ function createService(overrides?: {
           promotions: [],
           ...args,
         })),
+    },
+    review: {
+      findMany: overrides?.findReviews ?? (async () => []),
     },
     listingPhoto: {
       deleteMany: async () => ({}),
@@ -3564,6 +3572,7 @@ test('listing photo upload uses selected storage provider flow', async () => {
   const service = new ListingsService(
     {
       listing: {
+        count: async () => 0,
         findUnique: async () => ({
           id: 'listing-1',
           ownerId: ownerUser.userId,
@@ -4201,6 +4210,42 @@ test('owner listing response keeps hidden contact phone for private flow', async
   assert.equal(response.listing.phone, '79281234567');
 });
 
+test('listing detail response includes seller level from owner active listings', async () => {
+  const listing = {
+    ...createApprovedListing('listing-with-seller-level', '2026-06-19T10:00:00.000Z'),
+    photos: [listingPhoto()],
+    owner: listingOwner(),
+  };
+  const service = createService({
+    findUnique: async () => listing,
+    findReviews: async () => Array.from({ length: 15 }, (_, index) => ({
+      id: `review-${index}`,
+      reviewerId: `reviewer-${index}`,
+      rating: 5,
+      createdAt: new Date('2026-06-19T10:00:00.000Z'),
+    })),
+    count: async (args) => {
+      assert.deepEqual(args?.where, {
+        ownerId: ownerUser.userId,
+        status: ListingStatus.APPROVED,
+        publishedAt: {
+          not: null,
+        },
+        deletedAt: null,
+      });
+      return 30;
+    },
+  });
+
+  const response = await service.findOne('listing-with-seller-level');
+  const owner = response.listing.owner as Record<string, unknown>;
+
+  assert.equal(response.listing.seller_level, 'silver');
+  assert.equal(response.listing.sellerLevel, 'silver');
+  assert.equal(owner.seller_level, 'silver');
+  assert.equal(owner.sellerLevel, 'silver');
+});
+
 test('public owner listing query does not expose non-public statuses', async () => {
   let findManyCalled = false;
   const service = createService({
@@ -4268,6 +4313,7 @@ test('delete last photo is rejected for publishable listing statuses', async () 
   const service = new ListingsService(
     {
       listing: {
+        count: async () => 0,
         findUnique: async () => ({
           id: 'listing-1',
           ownerId: ownerUser.userId,
@@ -4280,6 +4326,9 @@ test('delete last photo is rejected for publishable listing statuses', async () 
             },
           ],
         }),
+      },
+      review: {
+        findMany: async () => [],
       },
     } as never,
     { deleteStoredFile: async () => undefined } as never,
@@ -4371,6 +4420,7 @@ test('listing serialization normalizes duplicated bucket prefix in S3 photo url'
   const service = new ListingsService(
     {
       listing: {
+        count: async () => 0,
         findUnique: async () => ({
           id: 'listing-1',
           ownerId: ownerUser.userId,
@@ -4422,6 +4472,9 @@ test('listing serialization normalizes duplicated bucket prefix in S3 photo url'
             },
           ],
         }),
+      },
+      review: {
+        findMany: async () => [],
       },
     } as never,
     {} as never,

@@ -85,6 +85,7 @@ function fixture() {
     const check = () => { if (failTable === table) throw new Error('injected DB failure'); };
     prisma[table] = {
       findMany: async (args: any) => structuredClone(find(args)),
+      count: async (args: any = {}) => find(args).length,
       findUnique: async (args: any) => structuredClone(find(args)[0] ?? null),
       findFirst: async (args: any) => { const row = find(args)[0]; return row ? structuredClone({ ...row, ...(table === 'userSession' ? { user: rows.user.find(u => u.id === row.userId) } : {}) }) : null; },
       create: async ({ data }: any) => { check(); const row = table === 'user' ? { ...user(data.id), ...data } : { ...data }; rows[table].push(row); return structuredClone(row); },

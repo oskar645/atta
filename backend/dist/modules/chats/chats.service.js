@@ -8,9 +8,13 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ChatsService = void 0;
 const common_1 = require("@nestjs/common");
+const analytics_signal_1 = require("../usage-analytics/analytics-signal");
 const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
 const presence_service_1 = require("../presence/presence.service");
@@ -118,11 +122,12 @@ const compareChatsForList = (a, b) => {
 let ChatsService = class ChatsService {
     constructor(prisma, presenceService, storageService, userBlocksService = {
         assertNotBlocked: async () => undefined,
-    }) {
+    }, analyticsSignal) {
         this.prisma = prisma;
         this.presenceService = presenceService;
         this.storageService = storageService;
         this.userBlocksService = userBlocksService;
+        this.analyticsSignal = analyticsSignal;
     }
     async ensureChatParticipant(chatId, userId) {
         const chat = await this.prisma.chat.findUnique({
@@ -516,6 +521,7 @@ let ChatsService = class ChatsService {
                 message,
             };
         });
+        this.analyticsSignal?.changed();
         return {
             chat: await this.serializeChat(result.chat, authUser.userId),
             recipientChat: await this.serializeChat(result.chat, recipientId),
@@ -776,6 +782,7 @@ let ChatsService = class ChatsService {
                 message,
             };
         });
+        this.analyticsSignal?.changed();
         return {
             source: 'timeweb',
             chat: await this.serializeChat(result.chat, authUser.userId),
@@ -992,9 +999,11 @@ let ChatsService = class ChatsService {
 exports.ChatsService = ChatsService;
 exports.ChatsService = ChatsService = __decorate([
     (0, common_1.Injectable)(),
+    __param(4, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         presence_service_1.PresenceService,
         storage_service_1.StorageService,
-        user_blocks_service_1.UserBlocksService])
+        user_blocks_service_1.UserBlocksService,
+        analytics_signal_1.AnalyticsSignal])
 ], ChatsService);
 //# sourceMappingURL=chats.service.js.map

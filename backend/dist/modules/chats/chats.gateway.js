@@ -19,27 +19,75 @@ const websockets_1 = require("@nestjs/websockets");
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const socket_io_1 = require("socket.io");
+const analytics_signal_1 = require("../usage-analytics/analytics-signal");
+const phone_1 = require("../../common/phone");
 const env_1 = require("../../config/env");
+const env_2 = require("../../config/env");
 const presence_service_1 = require("../presence/presence.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const send_chat_message_dto_1 = require("./dto/send-chat-message.dto");
 const chats_service_1 = require("./chats.service");
 let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
-    constructor(presenceService, chatsService, jwtService, prisma, accountDeletion) {
+    constructor(presenceService, chatsService, jwtService, prisma, accountDeletion, analyticsSignal) {
         this.presenceService = presenceService;
         this.chatsService = chatsService;
         this.jwtService = jwtService;
         this.prisma = prisma;
         this.accountDeletion = accountDeletion;
+        this.analyticsSignal = analyticsSignal;
         this.logger = new common_1.Logger(ChatsGateway_1.name);
     }
+    async isAnalyticsAdmin(client) {
+        const auth = await this.authenticate(client);
+        const user = await this.prisma.user.findUnique({
+            where: { id: auth.userId },
+            select: { phone: true, adminProfile: { select: { isAdmin: true } } },
+        });
+        return !!user && (user.adminProfile?.isAdmin === true ||
+            (0, env_1.parseAdminPhoneNumbers)().includes((0, phone_1.normalizeRussianPhone)(user.phone ?? '') ?? ''));
+    }
+    async subscribeAnalytics(client) {
+        if (!await this.isAnalyticsAdmin(client))
+            throw new websockets_1.WsException('Admin access required');
+        await client.join('admin:analytics');
+        return { subscribed: true };
+    }
+    async notifyAnalyticsAdmins() {
+        // Recheck sessions and admin membership: revocation must also affect existing tabs.
+        for (const client of this.server?.sockets?.sockets?.values() ?? []) {
+            if (!client.rooms.has('admin:analytics'))
+                continue;
+            try {
+                if (await this.isAnalyticsAdmin(client))
+                    client.emit('analytics_updated', {});
+                else
+                    await client.leave('admin:analytics');
+            }
+            catch {
+                await client.leave('admin:analytics');
+            }
+        }
+    }
     onModuleInit() {
+        this.unsubscribeAnalytics = this.analyticsSignal?.subscribe(() => {
+            if (this.analyticsTimer)
+                return;
+            this.analyticsTimer = setTimeout(() => {
+                this.analyticsTimer = undefined;
+                void this.notifyAnalyticsAdmins().catch(() => undefined);
+            }, 500);
+        });
         this.unsubscribeDeletion = this.accountDeletion.onDeleted((userId) => {
             this.server?.in(`user:${userId}`).disconnectSockets(true);
             this.server?.emit('presence.changed', { userId, isOnline: false, lastSeen: null });
         });
     }
-    onModuleDestroy() { this.unsubscribeDeletion?.(); }
+    onModuleDestroy() {
+        this.unsubscribeDeletion?.();
+        this.unsubscribeAnalytics?.();
+        if (this.analyticsTimer)
+            clearTimeout(this.analyticsTimer);
+    }
     async requireActiveSocket(client) {
         try {
             return await this.authenticate(client);
@@ -65,7 +113,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         let payload;
         try {
             payload = await this.jwtService.verifyAsync(token, {
-                secret: env_1.env.JWT_ACCESS_SECRET,
+                secret: env_2.env.JWT_ACCESS_SECRET,
             });
         }
         catch {
@@ -348,6 +396,13 @@ __decorate([
     __metadata("design:type", socket_io_1.Server)
 ], ChatsGateway.prototype, "server", void 0);
 __decorate([
+    (0, websockets_1.SubscribeMessage)('analytics.subscribe'),
+    __param(0, (0, websockets_1.ConnectedSocket)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [socket_io_1.Socket]),
+    __metadata("design:returntype", Promise)
+], ChatsGateway.prototype, "subscribeAnalytics", null);
+__decorate([
     (0, websockets_1.SubscribeMessage)('chat.join'),
     __param(0, (0, websockets_1.MessageBody)()),
     __param(1, (0, websockets_1.ConnectedSocket)()),
@@ -406,14 +461,16 @@ __decorate([
 exports.ChatsGateway = ChatsGateway = ChatsGateway_1 = __decorate([
     (0, websockets_1.WebSocketGateway)({
         cors: {
-            origin: (0, env_1.parseCorsOrigins)(),
+            origin: (0, env_2.parseCorsOrigins)(),
             credentials: true,
         },
     }),
+    __param(5, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [presence_service_1.PresenceService,
         chats_service_1.ChatsService,
         jwt_1.JwtService,
         prisma_service_1.PrismaService,
-        account_deletion_service_1.AccountDeletionService])
+        account_deletion_service_1.AccountDeletionService,
+        analytics_signal_1.AnalyticsSignal])
 ], ChatsGateway);
 //# sourceMappingURL=chats.gateway.js.map

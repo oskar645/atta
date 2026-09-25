@@ -76,6 +76,7 @@ export class PhoneVerificationService {
     phone: string,
     purpose: VerificationPurpose,
     source?: VerificationSource,
+    passwordless?: { id: string; metadata: Prisma.InputJsonObject },
   ) {
     const normalizedPhone = this.normalizeRussianPhone(phone);
     this.validatePhoneFormat(normalizedPhone);
@@ -88,6 +89,8 @@ export class PhoneVerificationService {
     if (this.useFakeProvider()) {
       const checkId = `fake-${randomUUID()}`;
       await this.storeVerificationAttempt({
+        id: passwordless?.id,
+        metadata: passwordless?.metadata,
         phone: normalizedPhone,
         purpose,
         checkId,
@@ -142,6 +145,7 @@ export class PhoneVerificationService {
     }
 
     await this.storeVerificationAttempt({
+      id: passwordless?.id,
       phone: normalizedPhone,
       purpose,
       checkId,
@@ -149,7 +153,7 @@ export class PhoneVerificationService {
       status: PhoneVerificationStatus.PENDING,
       providerStatusCode: this.pickStatusCode(response),
       providerStatusText: this.pickStatusText(response),
-      metadata: response,
+      metadata: { ...response, ...passwordless?.metadata },
     });
 
     return {
@@ -174,12 +178,15 @@ export class PhoneVerificationService {
     phone: string,
     checkId: string,
     purpose: VerificationPurpose,
+    passwordless?: { tx: Prisma.TransactionClient; id: string },
   ) {
+    const prisma = passwordless?.tx ?? this.prisma;
     const normalizedPhone = this.normalizeRussianPhone(phone);
     this.validatePhoneFormat(normalizedPhone);
 
-    const verification = await this.prisma.phoneVerification.findFirst({
+    const verification = await prisma.phoneVerification.findFirst({
       where: {
+        id: passwordless?.id,
         phone: normalizedPhone,
         purpose: this.mapPurpose(purpose),
         checkId: checkId.trim(),
@@ -191,6 +198,28 @@ export class PhoneVerificationService {
 
     if (!verification) {
       throw new BadRequestException('Phone verification session was not found');
+    }
+
+    const metadata = verification.metadata as Prisma.JsonObject;
+    if (metadata?.passwordless && !passwordless) {
+      throw new BadRequestException('Use passwordless challenge');
+    }
+
+    if (verification.expiresAt.getTime() <= Date.now()) {
+      await prisma.phoneVerification.update({
+        where: {
+          id: verification.id,
+        },
+        data: {
+          status: PhoneVerificationStatus.EXPIRED,
+          providerStatusText: 'Verification expired',
+        },
+      });
+
+      return {
+        status: 'expired',
+        message: 'Phone verification has expired',
+      };
     }
 
     if (verification.status === PhoneVerificationStatus.CONFIRMED) {
@@ -207,25 +236,8 @@ export class PhoneVerificationService {
       };
     }
 
-    if (verification.expiresAt.getTime() <= Date.now()) {
-      await this.prisma.phoneVerification.update({
-        where: {
-          id: verification.id,
-        },
-        data: {
-          status: PhoneVerificationStatus.EXPIRED,
-          providerStatusText: 'Verification expired',
-        },
-      });
-
-      return {
-        status: 'expired',
-        message: 'Phone verification has expired',
-      };
-    }
-
-    if (verification.attempts >= verification.maxAttempts) {
-      await this.prisma.phoneVerification.update({
+    if (!passwordless && verification.attempts >= verification.maxAttempts) {
+      await prisma.phoneVerification.update({
         where: {
           id: verification.id,
         },
@@ -247,7 +259,7 @@ export class PhoneVerificationService {
         attempts: nextAttemptCount,
         providerStatusCode: '100',
         providerStatusText: 'Fake verification confirmed',
-      });
+      }, passwordless?.tx);
 
       return {
         status: 'confirmed',
@@ -270,6 +282,17 @@ export class PhoneVerificationService {
 
     this.assertSmsRuSuccess('/callcheck/status', response);
 
+    // SMS.ru documents only 400/401/402 for CallCheck. An unexpected
+    // response is not evidence that a passwordless challenge has failed.
+    if (passwordless && !['400', '401', '402'].includes(
+      `${response.check_status ?? response.call_status ?? ''}`.trim(),
+    )) {
+      throw this.createSafeCallcheckException(
+        HttpStatus.SERVICE_UNAVAILABLE, 'SMS_RU_INVALID_RESPONSE',
+        'Unexpected CallCheck status',
+      );
+    }
+
     const resolvedStatus = this.resolveSmsRuCheckStatus(response);
     const nextStatus =
       resolvedStatus === 'confirmed'
@@ -285,8 +308,8 @@ export class PhoneVerificationService {
         attempts: nextAttemptCount,
         providerStatusCode: this.pickStatusCode(response),
         providerStatusText: this.pickStatusText(response),
-        metadata: response,
-      });
+        metadata: metadata?.passwordless ? { ...metadata, providerResponse: response } : response,
+      }, passwordless?.tx);
 
       return {
         status: 'confirmed',
@@ -295,7 +318,7 @@ export class PhoneVerificationService {
     }
 
     if (resolvedStatus === 'expired' || resolvedStatus === 'failed') {
-      await this.prisma.phoneVerification.update({
+      await prisma.phoneVerification.update({
         where: {
           id: verification.id,
         },
@@ -304,7 +327,7 @@ export class PhoneVerificationService {
           status: nextStatus,
           providerStatusCode: this.pickStatusCode(response),
           providerStatusText: this.pickStatusText(response),
-          metadata: response as Prisma.InputJsonValue,
+          metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response) as Prisma.InputJsonValue,
         },
       });
 
@@ -317,7 +340,7 @@ export class PhoneVerificationService {
       };
     }
 
-    await this.prisma.phoneVerification.update({
+    await prisma.phoneVerification.update({
       where: {
         id: verification.id,
       },
@@ -326,7 +349,7 @@ export class PhoneVerificationService {
         status: nextStatus,
         providerStatusCode: this.pickStatusCode(response),
         providerStatusText: this.pickStatusText(response),
-        metadata: response as Prisma.InputJsonValue,
+        metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response) as Prisma.InputJsonValue,
       },
     });
 
@@ -388,6 +411,7 @@ export class PhoneVerificationService {
   }
 
   async storeVerificationAttempt(params: {
+    id?: string;
     phone: string;
     purpose: VerificationPurpose;
     checkId: string;
@@ -399,6 +423,7 @@ export class PhoneVerificationService {
   }) {
     return this.prisma.phoneVerification.create({
       data: {
+        id: params.id,
         phone: params.phone,
         purpose: this.mapPurpose(params.purpose),
         provider: PhoneVerificationProvider.SMS_RU,
@@ -422,8 +447,9 @@ export class PhoneVerificationService {
       providerStatusText?: string | null;
       metadata?: SmsRuResponse;
     },
+    tx?: Prisma.TransactionClient,
   ) {
-    return this.prisma.phoneVerification.update({
+    return (tx ?? this.prisma).phoneVerification.update({
       where: {
         id: verificationId,
       },

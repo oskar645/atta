@@ -30,6 +30,11 @@ import {
   listingStatusToResponse,
   serializeListing,
 } from '../../common/serializers';
+import {
+  attachSellerLevels,
+  getSellerLevels,
+  sellerLevelFromMetrics,
+} from '../../common/seller-level';
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -774,8 +779,10 @@ export class ListingsService {
             ).toString('base64url')
           : null;
 
+      const levels = await getSellerLevels(this.prisma, pageItems.map((listing) => listing.ownerId));
+      const enrichedItems = attachSellerLevels(pageItems, levels);
       return {
-        items: pageItems.map((listing) => serializeListing(listing)),
+        items: enrichedItems.map((listing) => serializeListing(listing)),
         nextCursor,
         hasMore,
         allowed_statuses: LISTING_STATUSES,
@@ -808,8 +815,10 @@ export class ListingsService {
         ? encodeFeedCursor(pageItems[pageItems.length - 1]!)
         : null;
 
+    const levels = await getSellerLevels(this.prisma, pageItems.map((listing) => listing.ownerId));
+    const enrichedItems = attachSellerLevels(pageItems, levels);
     return {
-      items: pageItems.map((listing) => serializeListing(listing)),
+      items: enrichedItems.map((listing) => serializeListing(listing)),
       nextCursor,
       hasMore,
       allowed_statuses: LISTING_STATUSES,
@@ -907,8 +916,16 @@ export class ListingsService {
         ? encodeVipListingsCursor(pageItems[pageItems.length - 1]!)
         : null;
 
+    const levels = await getSellerLevels(
+      this.prisma,
+      pageItems.map((promotion) => promotion.listing.ownerId),
+    );
+    const enrichedItems = attachSellerLevels(
+      pageItems.map((promotion) => promotion.listing),
+      levels,
+    );
     return {
-      items: pageItems.map((promotion) => serializeListing(promotion.listing)),
+      items: enrichedItems.map((listing) => serializeListing(listing)),
       nextCursor,
       hasMore,
     };
@@ -1303,13 +1320,54 @@ export class ListingsService {
       throw new NotFoundException('Listing not found');
     }
 
+    const sellerLevel = await this.getSellerLevel(listing.ownerId);
+    const listingWithSellerLevel = {
+      ...listing,
+      owner: listing.owner
+        ? {
+            ...listing.owner,
+            seller_level: sellerLevel,
+            sellerLevel,
+          }
+        : listing.owner,
+    };
+
     return {
-      listing: serializeListing(listing, {
+      listing: serializeListing(listingWithSellerLevel, {
         includePrivateContact:
           authUser?.role === 'admin' || authUser?.userId === listing.ownerId,
       }),
       ...this.promotionsService.enrichListing(listing, authUser),
     };
+  }
+
+  private async getSellerLevel(ownerId: string) {
+    const [activeListingsCount, reviews] = await Promise.all([
+      this.prisma.listing.count({
+        where: {
+          ownerId,
+          status: ListingStatus.APPROVED,
+          publishedAt: {
+            not: null,
+          },
+          deletedAt: null,
+        },
+      }),
+      this.prisma.review.findMany({
+        where: {
+          sellerId: ownerId,
+          reviewerId: { not: ownerId },
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          reviewerId: true,
+          rating: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+    return sellerLevelFromMetrics(activeListingsCount, reviews, ownerId);
   }
 
   async update(id: string, authUser: AuthenticatedUser, dto: UpdateListingDto) {
@@ -1768,8 +1826,10 @@ export class ListingsService {
       );
     }
 
+    const levels = await getSellerLevels(this.prisma, pageItems.map((listing) => listing.ownerId));
+    const enrichedItems = attachSellerLevels(pageItems, levels);
     return {
-      items: pageItems.map((listing) =>
+      items: enrichedItems.map((listing) =>
         serializeListing(listing, {
           includePrivateContact: true,
           favoriteCount: favoriteCountByListingId.get(listing.id) ?? 0,

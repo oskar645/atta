@@ -767,15 +767,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         );
 
         const now = new Date();
-        const promotion = await this.createBumpPromotion(
-          tx,
-          listingId,
-          authUser.userId,
-          plan.costBonus,
-          now,
-        );
-
-        await tx.listingRaiseCampaign.create({
+        const campaign = await tx.listingRaiseCampaign.create({
           data: {
             listingId,
             userId: authUser.userId,
@@ -794,6 +786,14 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
             idempotencyKey,
           },
         });
+        const promotion = await this.createBumpPromotion(
+          tx,
+          listingId,
+          authUser.userId,
+          plan.costBonus,
+          now,
+          campaign.id,
+        );
 
         return {
           promotion,
@@ -886,6 +886,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         campaign.userId,
         campaign.pricePerRaise,
         campaign.nextRaiseAt,
+        campaign.id,
       );
 
       const completedRaises = campaign.completedRaises + 1;
@@ -917,9 +918,11 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     costBonus: number,
     startsAt: Date,
+    raiseCampaignId: string,
   ) {
     return tx.promotion.create({
       data: {
+        raiseCampaignId,
         listingId,
         userId,
         type: PromotionType.BUMP,

@@ -1,4 +1,5 @@
 import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/services/api/api_exception.dart';
 import 'package:flutter/foundation.dart';
 
 String _currentConsentPlatform() {
@@ -17,6 +18,105 @@ class AuthApi {
   const AuthApi(this._client);
 
   final ApiClient _client;
+
+  Future<Map<String, dynamic>> startRecoveryEmail(String email) async {
+    final body = {'email': email.trim()};
+    try {
+      return Map<String, dynamic>.from(await _client.post(
+        '/auth/recovery-email/start',
+        authorized: true,
+        body: body,
+        timeout: const Duration(seconds: 45),
+      ) as Map);
+    } on ApiException catch (error) {
+      if (!error.isTimeout && !error.isNetworkError) rethrow;
+      // Delivery state is ambiguous after a transport failure. The endpoint is
+      // idempotent during its cooldown, so this retry retrieves the same
+      // challenge and never sends a duplicate email.
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      return Map<String, dynamic>.from(await _client.post(
+        '/auth/recovery-email/start',
+        authorized: true,
+        body: body,
+        timeout: const Duration(seconds: 45),
+      ) as Map);
+    }
+  }
+
+  Future<Map<String, dynamic>> verifyRecoveryEmail(
+          String challengeId, String code) async =>
+      Map<String, dynamic>.from(await _client.post(
+          '/auth/recovery-email/verify',
+          authorized: true,
+          body: {'challengeId': challengeId, 'code': code.trim()}) as Map);
+
+  Future<Map<String, dynamic>> startAccountRecovery(String email) async =>
+      Map<String, dynamic>.from(await _client.post(
+          '/auth/account-recovery/start',
+          body: {'email': email.trim()}) as Map);
+
+  Future<Map<String, dynamic>> verifyAccountRecoveryEmail(
+          String challengeId, String code) async =>
+      Map<String, dynamic>.from(await _client.post(
+          '/auth/account-recovery/verify-email',
+          body: {'challengeId': challengeId, 'code': code.trim()}) as Map);
+
+  Future<Map<String, dynamic>> startRecoveryPhone(
+          String token, String phone) async =>
+      Map<String, dynamic>.from(await _client.post(
+          '/auth/account-recovery/phone/start',
+          body: {'recoveryToken': token, 'phone': phone}) as Map);
+
+  Future<Map<String, dynamic>> completeRecoveryPhone(
+          String token, String phone, String checkId) async =>
+      Map<String, dynamic>.from(await _client
+          .post('/auth/account-recovery/phone/complete', body: {
+        'recoveryToken': token,
+        'phone': phone,
+        'verificationCheckId': checkId
+      }) as Map);
+
+  Future<Map<String, dynamic>> startPasswordless(
+      {required String phone,
+      String referralCode = '',
+      String referralId = ''}) async {
+    final response = await _client.post(
+      '/auth/passwordless/start',
+      body: {
+        'phone': phone,
+        if (referralCode.trim().isNotEmpty) 'referralCode': referralCode.trim(),
+        if (referralId.trim().isNotEmpty) 'referralId': referralId.trim(),
+      },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> checkPasswordless({
+    required String challenge,
+  }) async {
+    final response = await _client.post(
+      '/auth/passwordless/check',
+      body: {'challenge': challenge},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> completePasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+  }) async {
+    final response = await _client.post('/auth/passwordless/complete', body: {
+      'registrationToken': registrationToken,
+      'displayName': displayName.trim(),
+      'acceptedLegal': acceptedLegal,
+      'acceptedPersonalData': acceptedPersonalData,
+      if (_currentConsentPlatform().isNotEmpty)
+        'platform': _currentConsentPlatform(),
+    });
+    return Map<String, dynamic>.from(response as Map);
+  }
 
   Future<Map<String, dynamic>> login({
     required String email,

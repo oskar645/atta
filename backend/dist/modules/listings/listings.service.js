@@ -21,6 +21,7 @@ const listing_search_1 = require("../../common/listing-search");
 const listing_publication_1 = require("../../common/listing-publication");
 Object.defineProperty(exports, "LISTING_PUBLICATION_NOT_READY", { enumerable: true, get: function () { return listing_publication_1.LISTING_PUBLICATION_NOT_READY; } });
 const serializers_1 = require("../../common/serializers");
+const seller_level_1 = require("../../common/seller-level");
 const phone_1 = require("../../common/phone");
 const prisma_service_1 = require("../prisma/prisma.service");
 const promotions_service_1 = require("../promotions/promotions.service");
@@ -582,8 +583,10 @@ let ListingsService = class ListingsService {
                     ...(feedMode === VIP_INTERLEAVE_FEED_MODE ? { bumpRotation } : {}),
                 })).toString('base64url')
                 : null;
+            const levels = await (0, seller_level_1.getSellerLevels)(this.prisma, pageItems.map((listing) => listing.ownerId));
+            const enrichedItems = (0, seller_level_1.attachSellerLevels)(pageItems, levels);
             return {
-                items: pageItems.map((listing) => (0, serializers_1.serializeListing)(listing)),
+                items: enrichedItems.map((listing) => (0, serializers_1.serializeListing)(listing)),
                 nextCursor,
                 hasMore,
                 allowed_statuses: exports.LISTING_STATUSES,
@@ -612,8 +615,10 @@ let ListingsService = class ListingsService {
         const nextCursor = hasMore && pageItems.length > 0
             ? encodeFeedCursor(pageItems[pageItems.length - 1])
             : null;
+        const levels = await (0, seller_level_1.getSellerLevels)(this.prisma, pageItems.map((listing) => listing.ownerId));
+        const enrichedItems = (0, seller_level_1.attachSellerLevels)(pageItems, levels);
         return {
-            items: pageItems.map((listing) => (0, serializers_1.serializeListing)(listing)),
+            items: enrichedItems.map((listing) => (0, serializers_1.serializeListing)(listing)),
             nextCursor,
             hasMore,
             allowed_statuses: exports.LISTING_STATUSES,
@@ -698,8 +703,10 @@ let ListingsService = class ListingsService {
         const nextCursor = hasMore && pageItems.length > 0
             ? encodeVipListingsCursor(pageItems[pageItems.length - 1])
             : null;
+        const levels = await (0, seller_level_1.getSellerLevels)(this.prisma, pageItems.map((promotion) => promotion.listing.ownerId));
+        const enrichedItems = (0, seller_level_1.attachSellerLevels)(pageItems.map((promotion) => promotion.listing), levels);
         return {
-            items: pageItems.map((promotion) => (0, serializers_1.serializeListing)(promotion.listing)),
+            items: enrichedItems.map((listing) => (0, serializers_1.serializeListing)(listing)),
             nextCursor,
             hasMore,
         };
@@ -1042,12 +1049,51 @@ let ListingsService = class ListingsService {
         if (!(0, exports.canViewListing)(listing, authUser)) {
             throw new common_2.NotFoundException('Listing not found');
         }
+        const sellerLevel = await this.getSellerLevel(listing.ownerId);
+        const listingWithSellerLevel = {
+            ...listing,
+            owner: listing.owner
+                ? {
+                    ...listing.owner,
+                    seller_level: sellerLevel,
+                    sellerLevel,
+                }
+                : listing.owner,
+        };
         return {
-            listing: (0, serializers_1.serializeListing)(listing, {
+            listing: (0, serializers_1.serializeListing)(listingWithSellerLevel, {
                 includePrivateContact: authUser?.role === 'admin' || authUser?.userId === listing.ownerId,
             }),
             ...this.promotionsService.enrichListing(listing, authUser),
         };
+    }
+    async getSellerLevel(ownerId) {
+        const [activeListingsCount, reviews] = await Promise.all([
+            this.prisma.listing.count({
+                where: {
+                    ownerId,
+                    status: client_1.ListingStatus.APPROVED,
+                    publishedAt: {
+                        not: null,
+                    },
+                    deletedAt: null,
+                },
+            }),
+            this.prisma.review.findMany({
+                where: {
+                    sellerId: ownerId,
+                    reviewerId: { not: ownerId },
+                    deletedAt: null,
+                },
+                select: {
+                    id: true,
+                    reviewerId: true,
+                    rating: true,
+                    createdAt: true,
+                },
+            }),
+        ]);
+        return (0, seller_level_1.sellerLevelFromMetrics)(activeListingsCount, reviews, ownerId);
     }
     async update(id, authUser, dto) {
         await this.userBlocksService.assertNotBlocked(authUser.userId);
@@ -1410,8 +1456,10 @@ let ListingsService = class ListingsService {
         for (const favorite of favorites) {
             favoriteCountByListingId.set(favorite.listingId, (favoriteCountByListingId.get(favorite.listingId) ?? 0) + 1);
         }
+        const levels = await (0, seller_level_1.getSellerLevels)(this.prisma, pageItems.map((listing) => listing.ownerId));
+        const enrichedItems = (0, seller_level_1.attachSellerLevels)(pageItems, levels);
         return {
-            items: pageItems.map((listing) => (0, serializers_1.serializeListing)(listing, {
+            items: enrichedItems.map((listing) => (0, serializers_1.serializeListing)(listing, {
                 includePrivateContact: true,
                 favoriteCount: favoriteCountByListingId.get(listing.id) ?? 0,
             })),

@@ -199,13 +199,7 @@ let AdminService = class AdminService {
                     status: client_1.ListingStatus.APPROVED,
                 },
             }),
-            this.prisma.listing.count({
-                where: {
-                    deletedAt: null,
-                    archivedAt: null,
-                    status: client_1.ListingStatus.PENDING,
-                },
-            }),
+            this.countModerationReady(),
             this.prisma.listing.count({
                 where: {
                     deletedAt: null,
@@ -970,6 +964,25 @@ let AdminService = class AdminService {
             user_id: id,
         };
     }
+    async countModerationReady() {
+        const [row] = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      SELECT count(*) AS count FROM listings l WHERE ${(0, listing_publication_1.listingModerationReadySql)()}
+    `);
+        return Number(row.count);
+    }
+    moderationReadyPageIds(cursor, take) {
+        const decoded = this.decodeAdminCursor(cursor);
+        const date = decoded?.createdAt ? new Date(decoded.createdAt) : null;
+        // Prisma stores created_at as UTC timestamp without time zone.
+        const after = date && !Number.isNaN(date.getTime()) && decoded?.id
+            ? client_1.Prisma.sql `AND (l.created_at < ${date.toISOString()}::timestamp OR (l.created_at = ${date.toISOString()}::timestamp AND l.id < ${decoded.id}::uuid))`
+            : client_1.Prisma.empty;
+        return this.prisma.$queryRaw(client_1.Prisma.sql `
+      SELECT l.id FROM listings l
+      WHERE ${(0, listing_publication_1.listingModerationReadySql)()} ${after}
+      ORDER BY l.created_at DESC, l.id DESC LIMIT ${take}
+    `);
+    }
     async getModerationQueue(query = {}) {
         if (typeof query === 'string') {
             return this.listListings(query);
@@ -982,16 +995,21 @@ let AdminService = class AdminService {
         const cursor = typeof query === 'string' ? undefined : query.cursor;
         const normalizedStatus = (status ?? '').trim().toLowerCase();
         const isPending = normalizedStatus === 'pending' || normalizedStatus.length === 0;
-        const where = {
-            deletedAt: null,
-            ...(isPending ? { archivedAt: null } : {}),
-            ...this.dateIdCursorWhere('createdAt', cursor),
-            ...(normalizedStatus == 'all' || normalizedStatus.length === 0
-                ? {}
-                : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),
-            ...(isPending ? (0, listing_publication_1.listingPublicationReadyWhere)() : {}),
-        };
-        const [items, total, pendingModeration] = await Promise.all([
+        const pendingModeration = await this.countModerationReady();
+        // Select eligible IDs in the database before pagination; hydrate only this page.
+        const pendingIds = isPending
+            ? await this.moderationReadyPageIds(cursor, limit + 1)
+            : undefined;
+        const where = isPending
+            ? { id: { in: pendingIds.map((row) => row.id) } }
+            : {
+                deletedAt: null,
+                ...this.dateIdCursorWhere('createdAt', cursor),
+                ...(normalizedStatus === 'all'
+                    ? {}
+                    : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),
+            };
+        const [items, total] = await Promise.all([
             this.prisma.listing.findMany({
                 where,
                 include: {
@@ -1018,15 +1036,7 @@ let AdminService = class AdminService {
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 take: limit + 1,
             }),
-            this.prisma.listing.count({ where }),
-            this.prisma.listing.count({
-                where: {
-                    deletedAt: null,
-                    archivedAt: null,
-                    status: client_1.ListingStatus.PENDING,
-                    ...(0, listing_publication_1.listingPublicationReadyWhere)(),
-                },
-            }),
+            isPending ? pendingModeration : this.prisma.listing.count({ where }),
         ]);
         const page = this.pageInfo(items, limit, (listing) => ({
             createdAt: listing.createdAt.toISOString(),
@@ -1034,9 +1044,7 @@ let AdminService = class AdminService {
         }));
         return {
             source: 'timeweb',
-            items: page.items
-                .filter((listing) => !isPending || (0, listing_publication_1.isListingReadyForPublication)(listing))
-                .map((listing) => this.serializeAdminListing(listing)),
+            items: page.items.map((listing) => this.serializeAdminListing(listing)),
             total,
             pendingModeration,
             pending_moderation: pendingModeration,
@@ -1393,21 +1401,39 @@ let AdminService = class AdminService {
         };
     }
     async cancelPromotion(id, authUser) {
-        const promotion = await this.prisma.promotion.findUnique({
-            where: {
-                id,
-            },
-        });
-        if (!promotion) {
-            throw new common_2.NotFoundException('Promotion not found');
-        }
-        const updated = await this.prisma.promotion.update({
-            where: {
-                id,
-            },
-            data: {
-                status: client_1.PromotionStatus.CANCELLED,
-            },
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const promotion = await tx.promotion.findUnique({ where: { id } });
+            if (!promotion) {
+                throw new common_2.NotFoundException('Promotion not found');
+            }
+            if (promotion.type === client_1.PromotionType.BUMP && promotion.raiseCampaignId) {
+                // The worker locks this same row before raising. Wait for an in-flight
+                // raise, then stop the campaign before cancellation can commit.
+                // Lock the campaign before updating Promotion, as the worker does.
+                await tx.$queryRaw `
+          SELECT "id" FROM "listing_raise_campaigns"
+          WHERE "id" = ${promotion.raiseCampaignId}::uuid
+          FOR UPDATE
+        `;
+                await tx.listingRaiseCampaign.updateMany({
+                    where: {
+                        id: promotion.raiseCampaignId,
+                        status: client_1.ListingRaiseCampaignStatus.ACTIVE,
+                    },
+                    data: {
+                        status: client_1.ListingRaiseCampaignStatus.CANCELLED,
+                        nextRaiseAt: null,
+                        cancelReason: 'admin_cancelled_promotion',
+                    },
+                });
+            }
+            if (promotion.status === client_1.PromotionStatus.CANCELLED) {
+                return promotion;
+            }
+            return tx.promotion.update({
+                where: { id },
+                data: { status: client_1.PromotionStatus.CANCELLED },
+            });
         });
         return {
             source: 'timeweb',

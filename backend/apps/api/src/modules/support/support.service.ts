@@ -8,7 +8,10 @@ import {
   Prisma,
   SupportSenderType,
   SupportTicketStatus,
+  SupportTicketCategory,
 } from '@prisma/client';
+import { createHash, randomBytes } from 'crypto';
+import { CreatePublicSupportTicketDto } from './dto/public-support.dto';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -139,7 +142,10 @@ export class SupportService {
 
   private serializeTicket(ticket: {
     id: string;
-    userId: string;
+    userId: string | null;
+    category?: SupportTicketCategory;
+    contactPhone?: string | null;
+    contactEmail?: string | null;
     name: string;
     subject: string;
     status: SupportTicketStatus;
@@ -155,6 +161,9 @@ export class SupportService {
       id: ticket.id,
       uid: ticket.userId,
       user_id: ticket.userId,
+      category: (ticket.category ?? SupportTicketCategory.GENERAL).toLowerCase(),
+      contact_phone: ticket.contactPhone ?? null,
+      contact_email: ticket.contactEmail ?? null,
       name: ticket.name,
       subject: ticket.subject,
       status: ticket.status.toLowerCase(),
@@ -245,6 +254,7 @@ export class SupportService {
     const cursorId = decoded?.id;
     const items = await this.prisma.supportTicket.findMany({
       where: {
+        ...(query.category ? { category: query.category } : {}),
         ...(cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
           ? {
               OR: [
@@ -774,7 +784,7 @@ export class SupportService {
       },
     });
 
-    await this.notificationsService.createSystemNotification({
+    if (ticket.userId) await this.notificationsService.createSystemNotification({
       userId: ticket.userId,
       title: 'Ответ поддержки',
       body: this.notificationPreview(message.text),
@@ -793,6 +803,58 @@ export class SupportService {
       item: this.serializeMessage(message),
     };
   }
+
+  async createPublicAccessTicket(params: CreatePublicSupportTicketDto) {
+    const token = randomBytes(32).toString('base64url');
+    const text = this.plainText(params.text, 2000);
+    const name = this.plainText(params.name || 'Пользователь', 120);
+    const phone = this.plainText(params.oldPhone, 32);
+    const email = params.contactEmail?.trim().toLowerCase() || null;
+    const ticket = await this.prisma.supportTicket.create({
+      data: {
+        userId: null,
+        category: SupportTicketCategory.ACCESS_RECOVERY,
+        publicTokenHash: this.publicTokenHash(token),
+        contactPhone: phone,
+        contactEmail: email,
+        name,
+        subject: 'Восстановление доступа',
+        status: SupportTicketStatus.OPEN,
+        lastMessage: text,
+        unreadForAdmin: true,
+        messages: { create: { sender: SupportSenderType.USER, text } },
+      },
+      include: { messages: { orderBy: { createdAt: 'desc' } } },
+    });
+    return { source: 'timeweb', publicToken: token, ticket: this.serializeTicket(ticket), items: ticket.messages.map((item) => this.serializeMessage(item)) };
+  }
+
+  async getPublicTicket(ticketId: string, token: string) {
+    const ticket = await this.findPublicTicket(ticketId, token, true);
+    return { source: 'timeweb', ticket: this.serializeTicket(ticket), items: ticket.messages.map((item: any) => this.serializeMessage(item)) };
+  }
+
+  async sendPublicMessage(ticketId: string, token: string, rawText: string) {
+    const ticket = await this.findPublicTicket(ticketId, token, false);
+    if (ticket.status === SupportTicketStatus.CLOSED) throw new BadRequestException('Обращение закрыто');
+    const text = this.plainText(rawText, 2000);
+    const message = await this.prisma.supportMessage.create({ data: { ticketId, sender: SupportSenderType.USER, text } });
+    await this.prisma.supportTicket.update({ where: { id: ticketId }, data: { lastMessage: text, unreadForAdmin: true, unreadForUser: false, status: SupportTicketStatus.OPEN } });
+    return { source: 'timeweb', item: this.serializeMessage(message) };
+  }
+
+  private async findPublicTicket(ticketId: string, token: string, includeMessages: boolean): Promise<any> {
+    const hash = this.publicTokenHash(token);
+    const ticket = await this.prisma.supportTicket.findFirst({
+      where: { id: ticketId, category: SupportTicketCategory.ACCESS_RECOVERY, publicTokenHash: hash },
+      ...(includeMessages ? { include: { messages: { orderBy: { createdAt: 'desc' as const } } } } : {}),
+    });
+    if (!ticket) throw new NotFoundException('Support ticket not found');
+    return ticket;
+  }
+
+  private publicTokenHash(token: string) { return createHash('sha256').update(token).digest('hex'); }
+  private plainText(value: string, max: number) { return value.replace(/<[^>]*>/g, '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim().slice(0, max); }
 
   async closeTicketForUser(authUser: AuthenticatedUser, ticketId: string) {
     const ticket = await this.prisma.supportTicket.findFirst({

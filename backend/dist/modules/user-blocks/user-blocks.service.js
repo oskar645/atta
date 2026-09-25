@@ -40,12 +40,14 @@ let UserBlocksService = class UserBlocksService {
             updated_at: block.updatedAt.toISOString(),
         };
     }
-    async getActiveBlock(userId) {
+    async getActiveBlock(userId, tx) {
+        const prisma = tx ?? this.prisma;
         const now = new Date();
-        await this.prisma.userBlock.updateMany({
+        const expired = await prisma.userBlock.updateMany({
             where: {
                 userId,
                 status: client_1.UserBlockStatus.ACTIVE,
+                type: 'TEMPORARY',
                 endsAt: {
                     not: null,
                     lte: now,
@@ -55,7 +57,7 @@ let UserBlocksService = class UserBlocksService {
                 status: client_1.UserBlockStatus.EXPIRED,
             },
         });
-        await this.prisma.blockedIdentity.updateMany({
+        await prisma.blockedIdentity.updateMany({
             where: {
                 liftedAt: null,
                 permanent: false,
@@ -68,18 +70,18 @@ let UserBlocksService = class UserBlocksService {
                 liftedAt: now,
             },
         });
-        const block = await this.prisma.userBlock.findFirst({
+        const block = await prisma.userBlock.findFirst({
             where: {
                 userId,
                 status: client_1.UserBlockStatus.ACTIVE,
-                OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+                OR: [{ type: 'PERMANENT' }, { endsAt: null }, { endsAt: { gt: now } }],
             },
             orderBy: {
                 startsAt: 'desc',
             },
         });
-        if (!block) {
-            await this.prisma.user.updateMany({
+        if (!block && expired.count > 0) {
+            await prisma.user.updateMany({
                 where: {
                     id: userId,
                     status: client_1.UserStatus.BLOCKED,

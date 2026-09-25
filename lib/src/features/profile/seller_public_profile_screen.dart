@@ -18,6 +18,7 @@ import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -81,7 +82,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     await Future.wait<void>(<Future<void>>[
       currentListingsKey.currentState?.refresh() ?? Future<void>.value(),
       reviews.refreshSellerReviews(widget.sellerId).then((_) {}),
-      profile.getProfile(widget.sellerId).then((_) {}),
+      profile.getProfile(widget.sellerId, forceRefresh: true).then((_) {}),
     ]);
     if (mounted) {
       setState(() {});
@@ -267,6 +268,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
           final isAdminUser = widget.initialIsAdmin ||
               userRow['is_admin'] == true ||
               userRow['isAdmin'] == true;
+          final sellerLevel = SellerLevelBadge.levelFromRow(userRow);
 
           final canCall = phone.isNotEmpty && !isMe;
           final canWrite = myUid.isNotEmpty && !isMe;
@@ -323,7 +325,6 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     ),
                                   ),
                                 ),
-                                AdminCopyUserIdButton(userId: widget.sellerId),
                               ],
                             ),
                             const SizedBox(height: 6),
@@ -337,28 +338,36 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     (rating['avg'] as num?)?.toDouble() ?? 0.0;
                                 final cnt =
                                     (rating['count'] as num?)?.toInt() ?? 0;
-                                return Row(
+                                return Wrap(
+                                  spacing: 12,
+                                  runSpacing: 6,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
                                   children: [
-                                    const Icon(
-                                      Icons.star,
-                                      size: 18,
-                                      color: Colors.amber,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      avg.toStringAsFixed(1),
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      '($cnt)',
-                                      style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline,
-                                      ),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star,
+                                          size: 18,
+                                          color: Colors.amber,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          avg.toStringAsFixed(1),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          '($cnt)',
+                                          style: TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .outline,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 );
@@ -404,6 +413,20 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                             ],
                           ],
                         ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AdminCopyUserIdButton(userId: widget.sellerId),
+                          if (sellerLevel != null) ...[
+                            const SizedBox(height: 4),
+                            SellerLevelBadge(
+                              level: sellerLevel,
+                              size: SellerLevelBadgeSize.compact,
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),

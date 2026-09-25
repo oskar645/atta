@@ -400,6 +400,7 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                                   Navigator.of(context).push(
                                     MaterialPageRoute(
                                       builder: (_) => ListingDetailScreen(
+                                        trackUsageAnalytics: false,
                                         listingId: listingId,
                                       ),
                                     ),

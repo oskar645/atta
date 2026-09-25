@@ -6,6 +6,8 @@ import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
 import 'blocked_account_screen.dart';
+import 'passwordless_screen.dart';
+import 'package:atta/src/services/auth/pending_passwordless_storage.dart';
 import '../home/main_shell.dart';
 
 class AuthGate extends StatefulWidget {
@@ -29,6 +31,7 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   StreamSubscription<AuthSessionEvent>? _sub;
   bool _ready = false;
+  bool _pendingResumeChecked = false;
   String? _initError;
 
   @override
@@ -58,6 +61,17 @@ class _AuthGateState extends State<AuthGate> {
 
     try {
       await auth.ensureInitialized().timeout(widget.bootstrapTimeout);
+      if (mounted && !auth.isAuthenticated && !_pendingResumeChecked) {
+        final pending = await PendingPasswordlessStorage().read();
+        if (mounted && !auth.isAuthenticated) {
+          _pendingResumeChecked = true;
+          if (pending != null) {
+            unawaited(Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const PasswordlessScreen(),
+            )));
+          }
+        }
+      }
     } on TimeoutException {
       if (!mounted) return;
       if (!auth.isAuthenticated) {

@@ -1,5 +1,23 @@
 # ATTA Backend
 
+## SMTP (optional at startup)
+
+Recovery-email endpoints require these variables. When they are absent the API still starts, while email sending returns a controlled `503 EMAIL_UNAVAILABLE` response.
+
+```env
+SMTP_HOST=smtp.timeweb.ru
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=atta@attamarket.online
+SMTP_PASS=
+SMTP_FROM="ATTA <atta@attamarket.online>"
+```
+
+`SMTP_PASS` передаётся только через environment. Для безопасной локальной проверки
+используйте `npm run smtp:test`: скрипт сначала выполняет SMTP/TLS/auth verify, затем
+отправляет ровно одно письмо на адрес из `SMTP_TEST_TO`. Он не использует базу данных
+и не выводит пароль или полный адрес получателя.
+
 Это отдельный backend skeleton для проекта ATTA.
 
 Важно:

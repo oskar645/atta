@@ -12,7 +12,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AdminSupportController = exports.SupportController = void 0;
+exports.AdminSupportController = exports.SupportController = exports.PublicSupportController = void 0;
 const common_1 = require("@nestjs/common");
 const platform_express_1 = require("@nestjs/platform-express");
 const admin_guard_1 = require("../auth/admin.guard");
@@ -23,9 +23,63 @@ const create_support_ticket_dto_1 = require("./dto/create-support-ticket.dto");
 const list_admin_support_tickets_dto_1 = require("./dto/list-admin-support-tickets.dto");
 const send_support_message_dto_1 = require("./dto/send-support-message.dto");
 const support_service_1 = require("./support.service");
+const public_support_dto_1 = require("./dto/public-support.dto");
 const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
     storage: require('multer').memoryStorage(),
 });
+let PublicSupportController = class PublicSupportController {
+    constructor(supportService, rateLimitService) {
+        this.supportService = supportService;
+        this.rateLimitService = rateLimitService;
+    }
+    async create(req, body) {
+        await this.rateLimitService.consumeOrThrow(`support:public:create:${req?.ip ?? 'unknown'}`, { limit: 3, windowMs: 60 * 60_000 });
+        return this.supportService.createPublicAccessTicket(body);
+    }
+    async get(req, id) {
+        const token = this.token(req);
+        await this.rateLimitService.consumeOrThrow(`support:public:read:${id}:${req?.ip ?? 'unknown'}`, { limit: 60, windowMs: 60_000 });
+        return this.supportService.getPublicTicket(id, token);
+    }
+    async send(req, id, body) {
+        const token = this.token(req);
+        await this.rateLimitService.consumeOrThrow(`support:public:send:${id}:${req?.ip ?? 'unknown'}`, { limit: 8, windowMs: 60_000 });
+        return this.supportService.sendPublicMessage(id, token, body.text);
+    }
+    token(req) {
+        return req?.headers?.['x-support-token']?.toString().trim() ?? '';
+    }
+};
+exports.PublicSupportController = PublicSupportController;
+__decorate([
+    (0, common_1.Post)('tickets'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, public_support_dto_1.CreatePublicSupportTicketDto]),
+    __metadata("design:returntype", Promise)
+], PublicSupportController.prototype, "create", null);
+__decorate([
+    (0, common_1.Get)('tickets/:id'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], PublicSupportController.prototype, "get", null);
+__decorate([
+    (0, common_1.Post)('tickets/:id/messages'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, public_support_dto_1.PublicSupportMessageDto]),
+    __metadata("design:returntype", Promise)
+], PublicSupportController.prototype, "send", null);
+exports.PublicSupportController = PublicSupportController = __decorate([
+    (0, common_1.Controller)('support/public'),
+    __metadata("design:paramtypes", [support_service_1.SupportService, rate_limit_service_1.RateLimitService])
+], PublicSupportController);
 let SupportController = class SupportController {
     constructor(supportService, rateLimitService) {
         this.supportService = supportService;

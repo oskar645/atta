@@ -258,6 +258,77 @@ void main() {
     expect(await storage.readAccessToken(), 'b');
     expect(await storage.readRefreshToken(), 'b');
   });
+
+  test('seed without sellerLevel is followed by fresh backend bronze',
+      () async {
+    final users = _SellerLevelUsersApi(<Map<String, dynamic>>[
+      {
+        'user': {'id': 'seller-1', 'sellerLevel': 'bronze'}
+      },
+    ]);
+    final service = ProfileService(usersApi: users);
+
+    final rows = await service.streamProfile(
+      'seller-1',
+      seed: {'id': 'seller-1', 'display_name': 'Seller'},
+    ).toList();
+
+    expect(rows.first['sellerLevel'], isNull);
+    expect(rows.last['sellerLevel'], 'bronze');
+    expect(users.calls, 1);
+  });
+
+  test('force refresh replaces stale cached bronze with backend null',
+      () async {
+    final users = _SellerLevelUsersApi(<Map<String, dynamic>>[
+      {
+        'user': {'id': 'seller-1', 'sellerLevel': null}
+      },
+    ]);
+    final service = ProfileService(usersApi: users);
+    service
+        .seedProfile('seller-1', {'id': 'seller-1', 'sellerLevel': 'bronze'});
+
+    final refreshed = await service.getProfile('seller-1', forceRefresh: true);
+
+    expect(refreshed.containsKey('sellerLevel'), isTrue);
+    expect(refreshed['sellerLevel'], isNull);
+  });
+
+  test('force refresh replaces stale null with backend silver', () async {
+    final users = _SellerLevelUsersApi(<Map<String, dynamic>>[
+      {
+        'user': {'id': 'seller-1', 'seller_level': 'silver'}
+      },
+    ]);
+    final service = ProfileService(usersApi: users);
+    service.seedProfile('seller-1', {'id': 'seller-1', 'sellerLevel': null});
+
+    final refreshed = await service.getProfile('seller-1', forceRefresh: true);
+
+    expect(refreshed['seller_level'], 'silver');
+  });
+
+  test('force refresh bypasses fresh profile TTL', () async {
+    final users = _SellerLevelUsersApi(<Map<String, dynamic>>[
+      {
+        'user': {'id': 'seller-1', 'sellerLevel': 'bronze'}
+      },
+      {
+        'user': {'id': 'seller-1', 'sellerLevel': 'gold'}
+      },
+    ]);
+    final service = ProfileService(usersApi: users);
+
+    expect((await service.getProfile('seller-1'))['sellerLevel'], 'bronze');
+    expect((await service.getProfile('seller-1'))['sellerLevel'], 'bronze');
+    expect(users.calls, 1);
+    expect(
+      (await service.getProfile('seller-1', forceRefresh: true))['sellerLevel'],
+      'gold',
+    );
+    expect(users.calls, 2);
+  });
 }
 
 class _FakeMediaApi extends MediaApi {
@@ -380,5 +451,21 @@ class _DelayedProfileUsersApi extends _FakeUsersApi {
   Future<Map<String, dynamic>> me() {
     started.complete();
     return pending.future;
+  }
+}
+
+class _SellerLevelUsersApi extends UsersApi {
+  _SellerLevelUsersApi(this.responses)
+      : super(ApiClient(tokenStorage: TokenStorage()));
+
+  final List<Map<String, dynamic>> responses;
+  int calls = 0;
+
+  @override
+  Future<Map<String, dynamic>> publicProfile(String userId) async {
+    final response =
+        responses[calls < responses.length ? calls : responses.length - 1];
+    calls += 1;
+    return response;
   }
 }

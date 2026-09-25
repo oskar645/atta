@@ -274,7 +274,8 @@ class _ReportCard extends StatelessWidget {
       try {
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
-            builder: (_) => ListingDetailScreen(listingId: listingId),
+            builder: (_) => ListingDetailScreen(
+                trackUsageAnalytics: false, listingId: listingId),
           ),
         );
       } catch (_) {

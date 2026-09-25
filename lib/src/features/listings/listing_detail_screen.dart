@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'package:uuid/uuid.dart';
+import 'package:atta/src/services/usage_analytics_service.dart';
 
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
@@ -38,6 +40,7 @@ import 'package:atta/src/widgets/listing_card.dart';
 import 'package:atta/src/widgets/listing_price_row.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -50,12 +53,14 @@ import 'package:atta/src/services/network_resilience.dart';
 class ListingDetailScreen extends StatefulWidget {
   final String listingId;
   final bool openReviewsOnStart;
+  final bool trackUsageAnalytics;
   final String initialReviewId;
 
   const ListingDetailScreen({
     super.key,
     required this.listingId,
     this.openReviewsOnStart = false,
+    this.trackUsageAnalytics = true,
     this.initialReviewId = '',
   });
 
@@ -67,6 +72,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
   final ScrollController _scrollController = ScrollController();
 
   bool _viewCounted = false;
+  final String _analyticsOpenId = const Uuid().v4();
+  bool _analyticsRecorded = false;
   bool _loginRedirectScheduled = false;
   bool _openedInitialReviews = false;
   bool _shareInFlight = false;
@@ -909,6 +916,16 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
             final canContact = (status == 'approved') || isOwner || isAdmin;
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted &&
+                  widget.trackUsageAnalytics &&
+                  !_analyticsRecorded) {
+                _analyticsRecorded = true;
+                final analytics = Provider.of<UsageAnalyticsService?>(context,
+                        listen: false) ??
+                    UsageAnalyticsService.instance;
+                unawaited(
+                    analytics.listingOpen(widget.listingId, _analyticsOpenId));
+              }
               if (_viewCounted) return;
               if (status != 'approved') return;
               _viewCounted = true;
@@ -1584,6 +1601,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     sellerId: listing.ownerId,
                     initialSellerName: sellerName,
                     initialSellerAvatar: sellerAvatar,
+                    initialSellerLevel: listing.sellerLevel,
                     phone: listing.phone,
                     phoneHidden: listing.phoneHidden,
                     presence: presence,
@@ -1592,6 +1610,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                   ),
                   const SizedBox(height: 12),
                   _SimilarListingsSection(
+                    trackUsageAnalytics: widget.trackUsageAnalytics,
                     baseListing: listing,
                     currentUserId: myUid,
                     listingsSvc: listingsSvc,
@@ -1845,6 +1864,7 @@ class _SellerInfoSection extends StatefulWidget {
     required this.sellerId,
     required this.initialSellerName,
     required this.initialSellerAvatar,
+    required this.initialSellerLevel,
     required this.phone,
     required this.phoneHidden,
     required this.presence,
@@ -1855,6 +1875,7 @@ class _SellerInfoSection extends StatefulWidget {
   final String sellerId;
   final String initialSellerName;
   final String initialSellerAvatar;
+  final String? initialSellerLevel;
   final String phone;
   final bool phoneHidden;
   final PresenceService presence;
@@ -1869,6 +1890,7 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
   Map<String, dynamic> _profile = const <String, dynamic>{};
   Object? _error;
   bool _isLoading = false;
+  bool _profileLoaded = false;
 
   @override
   void initState() {
@@ -1888,6 +1910,7 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
       if (!mounted) return;
       setState(() {
         _profile = profile;
+        _profileLoaded = true;
         _isLoading = false;
       });
     } catch (error) {
@@ -1914,6 +1937,14 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
         (row['avatar_url'] ?? row['photo_url'] ?? '').toString().trim();
     if (avatar.isNotEmpty) return avatar;
     return widget.initialSellerAvatar.trim();
+  }
+
+  String? get _sellerLevel {
+    if (_profileLoaded) return SellerLevelBadge.levelFromRow(_profile);
+    return SellerLevelBadge.levelFromRow(_profile) ??
+        SellerLevelBadge.levelFromRow({
+          'sellerLevel': widget.initialSellerLevel,
+        });
   }
 
   @override
@@ -2016,7 +2047,6 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
                                   const TextStyle(fontWeight: FontWeight.w800),
                             ),
                           ),
-                          AdminCopyUserIdButton(userId: widget.sellerId),
                         ],
                       ),
                       const SizedBox(height: 6),
@@ -2030,6 +2060,20 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
                       ),
                     ],
                   ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AdminCopyUserIdButton(userId: widget.sellerId),
+                    if (_sellerLevel != null) ...[
+                      const SizedBox(height: 4),
+                      SellerLevelBadge(
+                        level: _sellerLevel,
+                        size: SellerLevelBadgeSize.compact,
+                      ),
+                    ],
+                  ],
                 ),
                 Icon(
                   Icons.chevron_right,
@@ -2053,6 +2097,7 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
 }
 
 class _SimilarListingsSection extends StatefulWidget {
+  final bool trackUsageAnalytics;
   final Listing baseListing;
   final String currentUserId;
   final ListingsService listingsSvc;
@@ -2063,6 +2108,7 @@ class _SimilarListingsSection extends StatefulWidget {
   final TargetPlatform platform;
 
   const _SimilarListingsSection({
+    required this.trackUsageAnalytics,
     required this.baseListing,
     required this.currentUserId,
     required this.listingsSvc,
@@ -2333,7 +2379,9 @@ class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
                   },
                   onOpen: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => ListingDetailScreen(listingId: item.id),
+                      builder: (_) => ListingDetailScreen(
+                          listingId: item.id,
+                          trackUsageAnalytics: widget.trackUsageAnalytics),
                     ),
                   ),
                 ),

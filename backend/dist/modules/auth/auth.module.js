@@ -22,6 +22,12 @@ const jwt_auth_guard_1 = require("./jwt-auth.guard");
 const optional_jwt_auth_guard_1 = require("./optional-jwt-auth.guard");
 const restore_credentials_service_1 = require("./restore-credentials.service");
 const redis_module_1 = require("../redis/redis.module");
+const phone_verification_module_1 = require("../phone-verification/phone-verification.module");
+const passwordless_controller_1 = require("./passwordless.controller");
+const passwordless_service_1 = require("./passwordless.service");
+const email_module_1 = require("../email/email.module");
+const account_recovery_controller_1 = require("./account-recovery.controller");
+const account_recovery_service_1 = require("./account-recovery.service");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -33,13 +39,17 @@ exports.AuthModule = AuthModule = __decorate([
             wallet_module_1.WalletModule,
             user_blocks_module_1.UserBlocksModule,
             redis_module_1.RedisModule,
+            phone_verification_module_1.PhoneVerificationModule,
+            email_module_1.EmailModule,
             jwt_1.JwtModule.register({
                 secret: env_1.env.JWT_ACCESS_SECRET,
             }),
         ],
-        controllers: [auth_controller_1.AuthController],
+        controllers: [auth_controller_1.AuthController, passwordless_controller_1.PasswordlessController, account_recovery_controller_1.RecoveryEmailController, account_recovery_controller_1.AccountRecoveryController],
         providers: [
             auth_service_1.AuthService,
+            passwordless_service_1.PasswordlessService,
+            account_recovery_service_1.AccountRecoveryService,
             account_deletion_service_1.AccountDeletionService,
             restore_credentials_service_1.RestoreCredentialsService,
             jwt_auth_guard_1.JwtAuthGuard,

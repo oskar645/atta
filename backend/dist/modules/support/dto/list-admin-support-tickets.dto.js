@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ListAdminSupportTicketsDto = void 0;
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
+const client_1 = require("@prisma/client");
 class ListAdminSupportTicketsDto {
 }
 exports.ListAdminSupportTicketsDto = ListAdminSupportTicketsDto;
@@ -28,4 +29,9 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], ListAdminSupportTicketsDto.prototype, "cursor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsEnum)(client_1.SupportTicketCategory),
+    __metadata("design:type", String)
+], ListAdminSupportTicketsDto.prototype, "category", void 0);
 //# sourceMappingURL=list-admin-support-tickets.dto.js.map

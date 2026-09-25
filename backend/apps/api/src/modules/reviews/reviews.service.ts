@@ -347,8 +347,7 @@ export class ReviewsService {
 
     const isAllowed =
         authUser.role === 'admin' ||
-        authUser.userId === review.reviewerId ||
-        authUser.userId === review.sellerId;
+        authUser.userId === review.reviewerId;
     if (!isAllowed) {
       throw new ForbiddenException('No access to delete review');
     }

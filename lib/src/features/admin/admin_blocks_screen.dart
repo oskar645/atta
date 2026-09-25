@@ -271,7 +271,8 @@ class _AdminBlocksScreenState extends State<AdminBlocksScreen> {
     if (listingId.isEmpty) return;
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => ListingDetailScreen(listingId: listingId),
+        builder: (_) => ListingDetailScreen(
+            trackUsageAnalytics: false, listingId: listingId),
       ),
     );
   }

@@ -1,3 +1,4 @@
+import 'admin_usage_analytics.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -32,10 +33,12 @@ class AdminScreen extends StatefulWidget {
     super.key,
     this.initialTabIndex = 0,
     this.initialReportId = '',
+    this.usageAnalyticsLoad,
   });
 
   final int initialTabIndex;
   final String initialReportId;
+  final Future<Map<String, dynamic>> Function()? usageAnalyticsLoad;
 
   @override
   State<AdminScreen> createState() => _AdminScreenState();
@@ -233,7 +236,7 @@ class _AdminScreenState extends State<AdminScreen>
           body: TabBarView(
             controller: _tab,
             children: [
-              const _DashboardTab(),
+              _DashboardTab(usageAnalyticsLoad: widget.usageAnalyticsLoad),
               const _TimewebAdminListingsModerationTab(),
               const AdminSupportTab(),
               AdminReportsScreen(initialReportId: widget.initialReportId),
@@ -800,7 +803,9 @@ class _ModerationLoadingView extends StatelessWidget {
 // 0) ДАШБОРД
 // ----------------
 class _DashboardTab extends StatelessWidget {
-  const _DashboardTab();
+  const _DashboardTab({this.usageAnalyticsLoad});
+
+  final Future<Map<String, dynamic>> Function()? usageAnalyticsLoad;
 
   Future<int> _count(
     String table, {
@@ -961,6 +966,7 @@ class _DashboardTab extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(12),
             children: [
+              AdminUsageAnalytics(load: usageAnalyticsLoad),
               card(
                 'Пользователей',
                 '${read('users')}',

@@ -22,12 +22,11 @@ void main() {
 
     expect(find.byIcon(Icons.close), findsOneWidget);
     expect(
-      find.text(
-          'Создайте аккаунт, чтобы пользоваться всеми возможностями Атта'),
+      find.text('Войдите, чтобы пользоваться всеми возможностями Атта'),
       findsOneWidget,
     );
-    expect(find.text('Создать аккаунт'), findsOneWidget);
-    expect(find.text('Уже есть аккаунт? Войти'), findsOneWidget);
+    expect(find.text('Войти'), findsOneWidget);
+    expect(find.text('Уже есть аккаунт? Войти'), findsNothing);
     expect(find.text('ATTA'), findsNothing);
     expect(find.text('Atta'), findsNothing);
     expect(find.text('Атта Маркет'), findsNothing);

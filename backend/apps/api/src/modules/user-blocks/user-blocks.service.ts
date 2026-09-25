@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { UserBlockStatus, UserStatus } from '@prisma/client';
+import { Prisma, UserBlockStatus, UserStatus } from '@prisma/client';
 
 import { toIsoString } from '../../common/serializers';
 import { PrismaService } from '../prisma/prisma.service';
@@ -46,12 +46,14 @@ export class UserBlocksService {
     };
   }
 
-  async getActiveBlock(userId: string) {
+  async getActiveBlock(userId: string, tx?: Prisma.TransactionClient) {
+    const prisma = tx ?? this.prisma;
     const now = new Date();
-    await this.prisma.userBlock.updateMany({
+    const expired = await prisma.userBlock.updateMany({
       where: {
         userId,
         status: UserBlockStatus.ACTIVE,
+        type: 'TEMPORARY',
         endsAt: {
           not: null,
           lte: now,
@@ -61,7 +63,7 @@ export class UserBlocksService {
         status: UserBlockStatus.EXPIRED,
       },
     });
-    await this.prisma.blockedIdentity.updateMany({
+    await prisma.blockedIdentity.updateMany({
       where: {
         liftedAt: null,
         permanent: false,
@@ -75,19 +77,19 @@ export class UserBlocksService {
       },
     });
 
-    const block = await this.prisma.userBlock.findFirst({
+    const block = await prisma.userBlock.findFirst({
       where: {
         userId,
         status: UserBlockStatus.ACTIVE,
-        OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+        OR: [{ type: 'PERMANENT' }, { endsAt: null }, { endsAt: { gt: now } }],
       },
       orderBy: {
         startsAt: 'desc',
       },
     });
 
-    if (!block) {
-      await this.prisma.user.updateMany({
+    if (!block && expired.count > 0) {
+      await prisma.user.updateMany({
         where: {
           id: userId,
           status: UserStatus.BLOCKED,

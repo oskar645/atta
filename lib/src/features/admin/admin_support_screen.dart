@@ -264,6 +264,7 @@ class _AdminSupportTabState extends State<AdminSupportTab> {
             final name = _ticketDisplayName(data);
             final last = (data['last_message'] ?? '').toString();
             final unreadForAdmin = data['unread_for_admin'] == true;
+            final accessRecovery = data['category'] == 'access_recovery';
 
             return ListTile(
               shape: RoundedRectangleBorder(
@@ -277,7 +278,7 @@ class _AdminSupportTabState extends State<AdminSupportTab> {
                     : Theme.of(context).colorScheme.primary,
               ),
               title: Text(
-                name,
+                accessRecovery ? 'Восстановление доступа · $name' : name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -289,11 +290,12 @@ class _AdminSupportTabState extends State<AdminSupportTab> {
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(
-                    tooltip: 'Профиль пользователя',
-                    icon: const Icon(Icons.person_outline),
-                    onPressed: () => _openUserProfile(context, uid),
-                  ),
+                  if (uid.isNotEmpty)
+                    IconButton(
+                      tooltip: 'Профиль пользователя',
+                      icon: const Icon(Icons.person_outline),
+                      onPressed: () => _openUserProfile(context, uid),
+                    ),
                   const Icon(Icons.chevron_right),
                 ],
               ),
