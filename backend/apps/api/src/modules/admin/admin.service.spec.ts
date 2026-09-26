@@ -225,6 +225,7 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
       supportTicket: { count: async () => 0 },
       report: { count: async () => 0 },
       feedAd: { count: async () => 0 },
+      zeroResultSearch: { count: async () => 0 },
       walletTransaction: {
         aggregate: async (args: Record<string, unknown>) => {
           capturedWalletAggregateWhere =

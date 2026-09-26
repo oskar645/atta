@@ -24,6 +24,7 @@ const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
 const chats_gateway_1 = require("../chats/chats.gateway");
 const chats_service_1 = require("../chats/chats.service");
 const feed_ads_service_1 = require("../feed-ads/feed-ads.service");
+const top_banners_service_1 = require("../top-banners/top-banners.service");
 const listings_service_1 = require("../listings/listings.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
@@ -36,13 +37,14 @@ const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
 });
 // TODO: Video upload / 30 sec limit will be migrated later.
 let MediaController = MediaController_1 = class MediaController {
-    constructor(jwtService, prisma, rateLimitService, chatsGateway, chatsService, feedAdsService, listingsService, notificationsService, storageService, usersService) {
+    constructor(jwtService, prisma, rateLimitService, chatsGateway, chatsService, feedAdsService, topBannersService, listingsService, notificationsService, storageService, usersService) {
         this.jwtService = jwtService;
         this.prisma = prisma;
         this.rateLimitService = rateLimitService;
         this.chatsGateway = chatsGateway;
         this.chatsService = chatsService;
         this.feedAdsService = feedAdsService;
+        this.topBannersService = topBannersService;
         this.listingsService = listingsService;
         this.notificationsService = notificationsService;
         this.storageService = storageService;
@@ -171,6 +173,9 @@ let MediaController = MediaController_1 = class MediaController {
     }
     uploadFeedAdImage(authUser, feedAdId, file) {
         return this.feedAdsService.attachImage(authUser, feedAdId, this.requireImage(file, 5 * 1024 * 1024));
+    }
+    uploadTopBannerImage(authUser, topBannerId, file) {
+        return this.topBannersService.attachImage(authUser, topBannerId, this.requireImage(file, 5 * 1024 * 1024));
     }
     async uploadNotificationImage(authUser, file) {
         await this.rateLimitService.consumeOrThrow(`media:notification:${authUser.userId}`, {
@@ -445,6 +450,17 @@ __decorate([
 ], MediaController.prototype, "uploadFeedAdImage", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
+    (0, common_1.Post)('top-banners/:topBannerId/image'),
+    (0, common_1.UseInterceptors)(memoryImageUpload),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('topBannerId', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.UploadedFile)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", void 0)
+], MediaController.prototype, "uploadTopBannerImage", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
     (0, common_1.Post)('notifications/image'),
     (0, common_1.UseInterceptors)(memoryImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
@@ -470,6 +486,7 @@ exports.MediaController = MediaController = MediaController_1 = __decorate([
         chats_gateway_1.ChatsGateway,
         chats_service_1.ChatsService,
         feed_ads_service_1.FeedAdsService,
+        top_banners_service_1.TopBannersService,
         listings_service_1.ListingsService,
         notifications_service_1.NotificationsService,
         storage_service_1.StorageService,

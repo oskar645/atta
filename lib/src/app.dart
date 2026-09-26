@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 import 'package:atta/src/features/auth/auth_gate.dart';
 import 'package:atta/src/features/auth/legal_document_screen.dart';
@@ -19,6 +20,7 @@ import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/feed_ads_service.dart';
+import 'package:atta/src/services/top_banners_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
@@ -96,6 +98,16 @@ class AttaApp extends StatelessWidget {
         Provider<FollowService>(create: (_) => FollowService()),
         Provider<FavoritesService>(create: (_) => FavoritesService()),
         Provider<FeedAdsService>(create: (_) => FeedAdsService()),
+        Provider<TopBannersService>(
+          lazy: false,
+          create: (_) {
+            final service = TopBannersService();
+            // Start the non-blocking request as soon as the app service graph
+            // exists, before auth and secondary Home bootstrap work.
+            unawaited(service.selectForColdStart());
+            return service;
+          },
+        ),
         ChangeNotifierProvider(create: (_) => ListingHistoryService()),
         Provider<ProfileService>(create: (_) => ProfileService()),
         Provider<WalletService>(create: (_) => WalletService()),
@@ -193,9 +205,12 @@ class AttaApp extends StatelessWidget {
               }
               return null;
             },
-            builder: (context, child) => AppKeyboardDismissOnTap(
-              child:
-                  WebAppWidthLimiter(child: child ?? const SizedBox.shrink()),
+            builder: (context, child) => TopBannerStartupPreloader(
+              child: AppKeyboardDismissOnTap(
+                child: WebAppWidthLimiter(
+                  child: child ?? const SizedBox.shrink(),
+                ),
+              ),
             ),
             navigatorObservers: [attaRouteObserver],
             home: const SessionPresenceBinder(child: AuthGate()),
@@ -204,6 +219,42 @@ class AttaApp extends StatelessWidget {
       ),
     );
   }
+}
+
+class TopBannerStartupPreloader extends StatefulWidget {
+  const TopBannerStartupPreloader({
+    super.key,
+    required this.child,
+  });
+
+  final Widget child;
+
+  @override
+  State<TopBannerStartupPreloader> createState() =>
+      _TopBannerStartupPreloaderState();
+}
+
+class _TopBannerStartupPreloaderState extends State<TopBannerStartupPreloader> {
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    final service = context.read<TopBannersService>();
+    unawaited(
+      service.prepareForDisplay(
+        (imageUrl) => precacheImage(
+          CachedNetworkImageProvider(imageUrl),
+          context,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class WebAppWidthLimiter extends StatelessWidget {

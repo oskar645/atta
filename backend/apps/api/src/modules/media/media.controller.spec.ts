@@ -17,6 +17,7 @@ function createController() {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
   );
 }
 
@@ -47,6 +48,7 @@ test('public object proxy rejects private chat, support and reports media', asyn
     },
   };
   const controller = new MediaController(
+    {} as any,
     {} as any,
     {} as any,
     {} as any,
@@ -94,6 +96,7 @@ test('public object proxy still allows listing media', async () => {
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
     storage as any,
     {} as any,
   );
@@ -123,6 +126,7 @@ test('support media proxy rejects users outside the ticket', async () => {
         findFirst: async () => null,
       },
     } as any,
+    {} as any,
     {} as any,
     {} as any,
     {} as any,
@@ -174,6 +178,7 @@ test('support media proxy allows ticket owner and stays private-cacheable', asyn
     {} as any,
     {} as any,
     {} as any,
+    {} as any,
     {
       readStoredFile: async (...args: unknown[]) => {
         readArgs = args;
@@ -218,6 +223,7 @@ test('support media proxy allows admin without ticket membership lookup', async 
         },
       },
     } as any,
+    {} as any,
     {} as any,
     {} as any,
     {} as any,
@@ -297,7 +303,7 @@ test('support proxy rejects namespace manipulation even for admin', async () => 
 test('deleted account scoped avatar is inaccessible while S3 cleanup is pending', async () => {
   const controller = new MediaController({} as never, {
     user: { findUnique: async () => ({ status: 'DELETED', deletedAt: new Date() }) },
-  } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+  } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
   { readStoredFile: async () => { throw new Error('must not read deleted avatar'); } } as never, {} as never);
   await assert.rejects(controller.getPublicObject('avatars', 'avatars/11111111-1111-4111-8111-111111111111/image.jpg', {}), /Файл не найден/);
 });
@@ -306,7 +312,7 @@ test('active account scoped avatar remains public', async () => {
   let sent = false;
   const controller = new MediaController({} as never, {
     user: { findUnique: async () => ({ status: 'ACTIVE', deletedAt: null }) },
-  } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+  } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
   { readStoredFile: async () => Buffer.from('avatar') } as never, {} as never);
   await controller.getPublicObject('avatars', 'avatars/22222222-2222-4222-8222-222222222222/image.jpg', {
     setHeader: () => {}, send: () => { sent = true; },

@@ -13,6 +13,36 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> zeroResultSearches(
+      {String period = 'month',
+      String search = '',
+      int limit = 30,
+      String? cursor}) async {
+    final response = await client.get('/admin/analytics/zero-result-searches',
+        authorized: true,
+        queryParameters: {
+          'period': period,
+          if (search.trim().isNotEmpty) 'search': search.trim(),
+          'limit': limit,
+          if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+        });
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> popularCategories(
+      {String period = 'month'}) async {
+    final response = await client.get('/admin/analytics/popular-categories',
+        authorized: true, queryParameters: {'period': period});
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> zeroViewListings(
+      {String period = 'all', String sort = 'oldest'}) async {
+    final response = await client.get('/admin/analytics/zero-view-listings',
+        authorized: true, queryParameters: {'period': period, 'sort': sort});
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> users({
     int? limit,
     String? cursor,
@@ -165,15 +195,43 @@ class AdminApi {
     String? status,
     int? limit,
     String? cursor,
+  }) =>
+      listingsFiltered(status: status, limit: limit, cursor: cursor);
+
+  Future<Map<String, dynamic>> listingsFiltered({
+    String? status,
+    String? period,
+    String? search,
+    int? limit,
+    String? cursor,
   }) async {
     final response = await client.get(
       '/admin/listings',
       queryParameters: {
         if (status != null && status.trim().isNotEmpty) 'status': status,
+        if (period != null && period.trim().isNotEmpty) 'period': period,
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         if (limit != null) 'limit': '$limit',
         if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       },
       authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> deletedUsers({
+    String? period,
+    int? limit,
+    String? cursor,
+  }) async {
+    final response = await client.get(
+      '/admin/users/deleted',
+      authorized: true,
+      queryParameters: {
+        if (period != null && period.trim().isNotEmpty) 'period': period,
+        if (limit != null) 'limit': '$limit',
+        if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      },
     );
     return Map<String, dynamic>.from(response as Map);
   }

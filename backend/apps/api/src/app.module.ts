@@ -29,6 +29,7 @@ import { UserFollowsModule } from './modules/user-follows/user-follows.module';
 import { SavedSearchesModule } from './modules/saved-searches/saved-searches.module';
 import { ViewedListingsModule } from './modules/viewed-listings/viewed-listings.module';
 import { WalletModule } from './modules/wallet/wallet.module';
+import { TopBannersModule } from './modules/top-banners/top-banners.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
     PresenceModule,
     NotificationsModule,
     FeedAdsModule,
+    TopBannersModule,
     AdminModule,
     ReportsModule,
     ReviewsModule,

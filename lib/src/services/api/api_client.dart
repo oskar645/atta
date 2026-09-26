@@ -274,6 +274,9 @@ class ApiClient {
     } on TimeoutException catch (error) {
       throw ApiException(kNetworkVpnHintMessage,
           code: 'timeout', details: error);
+    } on HandshakeException catch (error) {
+      throw ApiException(kNetworkVpnHintMessage,
+          code: 'network', details: error);
     } on http.ClientException catch (error) {
       throw ApiException(kNetworkVpnHintMessage,
           code: 'network', details: error);
@@ -409,6 +412,27 @@ class ApiClient {
       }
       throw ApiException(kNetworkVpnHintMessage,
           code: 'timeout', details: error);
+    } on HandshakeException catch (error) {
+      if (_shouldRetryNetwork(method) &&
+          networkRetryAttempt < _networkRetryDelays.length) {
+        await Future<void>.delayed(_networkRetryDelays[networkRetryAttempt]);
+        if (isPrivate) _checkGeneration(generation);
+        return _send(
+          method,
+          path,
+          queryParameters: queryParameters,
+          body: body,
+          authorized: authorized,
+          sendAuthIfAvailable: sendAuthIfAvailable,
+          allowAuthRetry: allowAuthRetry,
+          networkRetryAttempt: networkRetryAttempt + 1,
+          requestId: id,
+          extraHeaders: extraHeaders,
+          timeout: timeout,
+        );
+      }
+      throw ApiException(kNetworkVpnHintMessage,
+          code: 'network', details: error);
     } on SocketException catch (error) {
       if (_shouldRetryNetwork(method) &&
           networkRetryAttempt < _networkRetryDelays.length) {

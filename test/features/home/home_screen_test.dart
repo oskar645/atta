@@ -10,6 +10,7 @@ import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/models/showcase_item.dart';
 import 'package:atta/src/models/feed_ad.dart';
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/models/top_banner.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/feed_ads_service.dart';
@@ -18,6 +19,7 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/showcase_service.dart';
+import 'package:atta/src/services/top_banners_service.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 import 'package:flutter/material.dart';
@@ -2035,6 +2037,7 @@ Widget _buildHomeTestApp({
         value: favorites ?? _FakeFavoritesService(),
       ),
       Provider<FeedAdsService>.value(value: feedAds ?? _FakeFeedAdsService()),
+      Provider<TopBannersService>.value(value: _NoTopBannersService()),
       Provider<ShowcaseService>.value(
           value: showcase ?? _FakeShowcaseService()),
       Provider<ReviewsService>.value(value: _FakeReviewsService()),
@@ -2048,6 +2051,17 @@ Widget _buildHomeTestApp({
       home: const HomeScreen(),
     ),
   );
+}
+
+class _NoTopBannersService extends TopBannersService {
+  @override
+  Future<TopBanner?> selectForColdStart() async => null;
+
+  @override
+  Future<TopBanner?> prepareForDisplay(
+    Future<void> Function(String imageUrl) preload,
+  ) async =>
+      null;
 }
 
 Widget _buildVipScreenTestApp({

@@ -2,17 +2,20 @@ import 'dart:io';
 
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/utils/media_url.dart';
+import 'package:atta/src/features/listings/desktop_web_photo_navigation.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 class PhotoViewerScreen extends StatefulWidget {
   final List<String> photoUrls;
   final int initialIndex;
+  final bool? desktopWebNavigationOverride;
 
   const PhotoViewerScreen({
     super.key,
     required this.photoUrls,
     this.initialIndex = 0,
+    this.desktopWebNavigationOverride,
   });
 
   @override
@@ -45,36 +48,49 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
         foregroundColor: Colors.white,
         title: Text('${_page + 1}/${widget.photoUrls.length}'),
       ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: widget.photoUrls.length,
-        onPageChanged: (index) => setState(() => _page = index),
-        itemBuilder: (_, i) {
-          final rawUrl = widget.photoUrls[i];
-          final url = resolvePublicMediaUrl(rawUrl);
-          final localPath = url.startsWith('file://')
-              ? url.replaceFirst('file://', '')
-              : (rawUrl.startsWith('/') ? rawUrl : null);
-          return InteractiveViewer(
-            minScale: 1,
-            maxScale: 4,
-            child: Center(
-              child: localPath != null
-                  ? Image.file(
-                      File(localPath),
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Center(
-                        child: Icon(
-                          Icons.broken_image_outlined,
-                          color: Colors.white70,
-                          size: 52,
+      body: DesktopWebPhotoNavigation(
+        currentIndex: _page,
+        photoCount: widget.photoUrls.length,
+        enabledOverride: widget.desktopWebNavigationOverride,
+        onPrevious: () => _controller.previousPage(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        ),
+        onNext: () => _controller.nextPage(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+        ),
+        child: PageView.builder(
+          controller: _controller,
+          itemCount: widget.photoUrls.length,
+          onPageChanged: (index) => setState(() => _page = index),
+          itemBuilder: (_, i) {
+            final rawUrl = widget.photoUrls[i];
+            final url = resolvePublicMediaUrl(rawUrl);
+            final localPath = url.startsWith('file://')
+                ? url.replaceFirst('file://', '')
+                : (rawUrl.startsWith('/') ? rawUrl : null);
+            return InteractiveViewer(
+              minScale: 1,
+              maxScale: 4,
+              child: Center(
+                child: localPath != null
+                    ? Image.file(
+                        File(localPath),
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.white70,
+                            size: 52,
+                          ),
                         ),
-                      ),
-                    )
-                  : _networkPhoto(url),
-            ),
-          );
-        },
+                      )
+                    : _networkPhoto(url),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

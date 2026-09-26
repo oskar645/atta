@@ -124,6 +124,109 @@ let AdminService = class AdminService {
             return fallback;
         return Math.min(Math.max(Math.trunc(parsed), 1), max);
     }
+    analyticsStart(period = 'month', now = new Date()) {
+        const bounds = moscowCalendarBounds(now);
+        if (period === 'today')
+            return bounds.dayStart;
+        if (period === '7d')
+            return new Date(now.getTime() - 7 * 86400000);
+        if (period === 'month')
+            return bounds.monthStart;
+        return null;
+    }
+    async getZeroResultSearches(query) {
+        const from = this.analyticsStart(query.period);
+        const contains = query.search?.normalize('NFKC').trim().toLocaleLowerCase('ru-RU') ?? '';
+        const limit = this.pageLimit(query.limit, 30);
+        let cursor = null;
+        if (query.cursor) {
+            try {
+                const parsed = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8'));
+                const date = new Date(String(parsed.lastSearchedAt ?? ''));
+                if (Number.isInteger(parsed.count) && Number(parsed.count) > 0 && !Number.isNaN(date.getTime()) && typeof parsed.normalizedQuery === 'string') {
+                    cursor = { count: Number(parsed.count), lastSearchedAt: date, normalizedQuery: parsed.normalizedQuery };
+                }
+            }
+            catch { /* Invalid cursors simply start from the first page. */ }
+        }
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      WITH grouped AS (
+        SELECT
+          "normalized_query",
+          (array_agg("query" ORDER BY "created_at" DESC, "id" DESC))[1] AS "query",
+          count(*)::bigint AS "count",
+          max("created_at") AS "last_searched_at"
+        FROM "zero_result_searches"
+        WHERE 1 = 1
+          ${from ? client_1.Prisma.sql `AND "created_at" >= ${from}` : client_1.Prisma.empty}
+          ${contains ? client_1.Prisma.sql `AND "normalized_query" ILIKE ${`%${contains}%`}` : client_1.Prisma.empty}
+        GROUP BY "normalized_query"
+      )
+      SELECT "query", "normalized_query", "count", "last_searched_at"
+      FROM grouped
+      WHERE 1 = 1
+        ${cursor ? client_1.Prisma.sql `AND (
+          "count" < ${cursor.count} OR
+          ("count" = ${cursor.count} AND "last_searched_at" < ${cursor.lastSearchedAt}) OR
+          ("count" = ${cursor.count} AND "last_searched_at" = ${cursor.lastSearchedAt} AND "normalized_query" > ${cursor.normalizedQuery})
+        )` : client_1.Prisma.empty}
+      ORDER BY "count" DESC, "last_searched_at" DESC, "normalized_query" ASC
+      LIMIT ${limit + 1}
+    `);
+        const hasMore = rows.length > limit;
+        const page = rows.slice(0, limit);
+        const last = page.at(-1);
+        return {
+            items: page.map((row) => ({
+                query: row.query,
+                normalized_query: row.normalized_query,
+                count: Number(row.count),
+                last_searched_at: row.last_searched_at.toISOString(),
+            })),
+            has_more: hasMore,
+            next_cursor: hasMore && last ? Buffer.from(JSON.stringify({
+                count: Number(last.count),
+                lastSearchedAt: last.last_searched_at.toISOString(),
+                normalizedQuery: last.normalized_query,
+            })).toString('base64url') : null,
+        };
+    }
+    async getPopularCategories(query) {
+        const from = this.analyticsStart(query.period);
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      SELECT l."category", count(*)::bigint AS "views"
+      FROM "listing_views" v
+      JOIN "listings" l ON l."id" = v."listing_id"
+      WHERE l."deleted_at" IS NULL
+        ${from ? client_1.Prisma.sql `AND v."viewed_at" >= ${from}` : client_1.Prisma.empty}
+      GROUP BY l."category"
+      ORDER BY "views" DESC
+      LIMIT 200
+    `);
+        const items = rows.map((row) => ({ category: row.category, views: Number(row.views) }));
+        return { total: items.length, metric: 'views', items };
+    }
+    async getZeroViewListings(query) {
+        const from = this.analyticsStart(query.period);
+        const where = {
+            deletedAt: null,
+            viewCount: 0,
+            ...(from ? { createdAt: { gte: from } } : {}),
+        };
+        const [total, rows] = await Promise.all([
+            this.prisma.listing.count({ where }),
+            this.prisma.listing.findMany({
+                where,
+                include: { photos: { orderBy: { sortOrder: 'asc' }, take: 1 } },
+                orderBy: { createdAt: query.sort === 'newest' ? 'desc' : 'asc' },
+                take: 200,
+            }),
+        ]);
+        return {
+            total,
+            items: rows.map((item) => (0, serializers_1.serializeListing)(item)),
+        };
+    }
     encodeAdminCursor(value) {
         return Buffer.from(JSON.stringify(value)).toString('base64url');
     }
@@ -172,7 +275,10 @@ let AdminService = class AdminService {
         const days30 = new Date(now.getTime() - 30 * 86400000);
         const days14 = new Date(now.getTime() - 14 * 86400000);
         const onlineCutoff = new Date(now.getTime() - 2 * 60000);
-        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth] = await Promise.all([
+        const deletedUsers = await this.prisma.user.count({
+            where: { status: client_1.UserStatus.DELETED, deletedAt: { not: null } },
+        });
+        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth, zeroResultSearches, zeroViewListings] = await Promise.all([
             this.prisma.user.count({
                 where: {
                     deletedAt: null,
@@ -259,6 +365,12 @@ let AdminService = class AdminService {
                 from: monthStart.toISOString(),
                 to: now.toISOString(),
             }),
+            this.prisma.zeroResultSearch.count({
+                where: { createdAt: { gte: monthStart } },
+            }),
+            this.prisma.listing.count({
+                where: { deletedAt: null, viewCount: 0 },
+            }),
         ]);
         const dailyMap = new Map();
         for (let index = 13; index >= 0; index -= 1) {
@@ -278,6 +390,7 @@ let AdminService = class AdminService {
             source: 'timeweb',
             stats: {
                 users,
+                deletedUsers,
                 onlineUsers,
                 todayVisits,
                 listings,
@@ -292,6 +405,8 @@ let AdminService = class AdminService {
                 newListings14d,
                 spentPoints30d: spentPoints30d._sum.amount ?? 0,
                 pointsPurchasesMonth,
+                zeroResultSearches,
+                zeroViewListings,
             },
             daily: {
                 listings: listingsDaily,
@@ -344,6 +459,60 @@ let AdminService = class AdminService {
             hasMore: page.hasMore,
             limit,
         };
+    }
+    async listDeletedUsers(query = {}) {
+        const limit = this.pageLimit(query.limit, 50);
+        const period = query.period ?? 'all';
+        const dateRange = this.adminPeriodRange(period);
+        const where = {
+            status: client_1.UserStatus.DELETED,
+            deletedAt: {
+                not: null,
+                ...(dateRange ? { gte: dateRange } : {}),
+            },
+            ...this.dateIdCursorWhere('deletedAt', query.cursor),
+        };
+        const [rows, total] = await Promise.all([
+            this.prisma.user.findMany({
+                where,
+                orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
+                take: limit + 1,
+                select: { id: true, displayName: true, name: true, phone: true, deletedAt: true },
+            }),
+            this.prisma.user.count({ where: {
+                    status: client_1.UserStatus.DELETED,
+                    deletedAt: { not: null, ...(dateRange ? { gte: dateRange } : {}) },
+                } }),
+        ]);
+        const page = this.pageInfo(rows, limit, (user) => ({
+            deletedAt: user.deletedAt.toISOString(),
+            id: user.id,
+        }));
+        return {
+            source: 'timeweb',
+            items: page.items.map((user) => ({
+                id: user.id,
+                display_name: user.displayName.trim() || user.name.trim() || 'Удалённый пользователь',
+                phone: user.phone?.trim() || null,
+                deleted_at: user.deletedAt.toISOString(),
+            })),
+            total,
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            limit,
+        };
+    }
+    adminPeriodRange(period, now = new Date()) {
+        if (period === 'all')
+            return null;
+        const bounds = moscowCalendarBounds(now);
+        if (period === 'today')
+            return bounds.dayStart;
+        if (period === 'month')
+            return bounds.monthStart;
+        if (period === '7d')
+            return new Date(now.getTime() - 7 * 86400000);
+        return null;
     }
     async getUserRegistrationStats(query = {}) {
         const now = new Date();
@@ -993,6 +1162,8 @@ let AdminService = class AdminService {
         const status = typeof query === 'string' ? query : query.status;
         const limit = this.pageLimit(typeof query === 'string' ? undefined : query.limit, 100);
         const cursor = typeof query === 'string' ? undefined : query.cursor;
+        const period = typeof query === 'string' ? 'all' : query.period ?? 'all';
+        const search = typeof query === 'string' ? '' : query.search?.trim() ?? '';
         const normalizedStatus = (status ?? '').trim().toLowerCase();
         const isPending = normalizedStatus === 'pending' || normalizedStatus.length === 0;
         const pendingModeration = await this.countModerationReady();
@@ -1000,15 +1171,42 @@ let AdminService = class AdminService {
         const pendingIds = isPending
             ? await this.moderationReadyPageIds(cursor, limit + 1)
             : undefined;
-        const where = isPending
-            ? { id: { in: pendingIds.map((row) => row.id) } }
+        const eventField = normalizedStatus === 'approved' ? 'publishedAt'
+            : normalizedStatus === 'rejected' ? 'moderatedAt'
+                : normalizedStatus === 'sold' || normalizedStatus === 'archived' ? 'archivedAt'
+                    : normalizedStatus === 'deleted' ? 'deletedAt' : 'createdAt';
+        const since = this.adminPeriodRange(period);
+        const periodWhere = since ? { [eventField]: { gte: since } } : {};
+        const searchWhere = search ? {
+            OR: [
+                { title: { contains: search, mode: 'insensitive' } },
+                { owner: { is: { displayName: { contains: search, mode: 'insensitive' } } } },
+                { owner: { is: { name: { contains: search, mode: 'insensitive' } } } },
+            ],
+        } : {};
+        const baseWhere = isPending
+            ? { id: { in: pendingIds.map((row) => row.id) }, ...periodWhere, ...searchWhere }
             : {
-                deletedAt: null,
-                ...this.dateIdCursorWhere('createdAt', cursor),
+                ...(normalizedStatus === 'deleted' ? { deletedAt: { not: null } } : { deletedAt: null }),
+                ...periodWhere,
+                ...searchWhere,
                 ...(normalizedStatus === 'all'
                     ? {}
                     : { status: (0, serializers_1.listingStatusFromInput)(normalizedStatus) }),
             };
+        const where = {
+            ...baseWhere,
+            ...(!isPending ? this.dateIdCursorWhere('createdAt', cursor) : {}),
+        };
+        const countWhere = isPending
+            ? {
+                status: client_1.ListingStatus.PENDING,
+                deletedAt: null,
+                archivedAt: null,
+                ...periodWhere,
+                ...searchWhere,
+            }
+            : baseWhere;
         const [items, total] = await Promise.all([
             this.prisma.listing.findMany({
                 where,
@@ -1036,7 +1234,9 @@ let AdminService = class AdminService {
                 orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
                 take: limit + 1,
             }),
-            isPending ? pendingModeration : this.prisma.listing.count({ where }),
+            isPending && period === 'all' && search.length === 0
+                ? pendingModeration
+                : this.prisma.listing.count({ where: countWhere }),
         ]);
         const page = this.pageInfo(items, limit, (listing) => ({
             createdAt: listing.createdAt.toISOString(),

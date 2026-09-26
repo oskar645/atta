@@ -1,11 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DevicePlatform, NotificationScope, NotificationType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { ApnsService } from '../apns/apns.service';
 import { ChatsGateway } from '../chats/chats.gateway';
-import { FcmService } from '../fcm/fcm.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const excludedInAppNotificationTypes = [NotificationType.CHAT_MESSAGE];
@@ -18,7 +17,6 @@ export class NotificationsService {
     private readonly apnsService: ApnsService,
     private readonly prisma: PrismaService,
     private readonly chatsGateway: ChatsGateway,
-    @Optional() private readonly fcmService?: FcmService,
   ) {}
 
   private toType(type?: string) {
@@ -584,7 +582,7 @@ export class NotificationsService {
     const devices = await this.prisma.userDevice.findMany({
       where: {
         isActive: true,
-        platform: { in: [DevicePlatform.IOS, DevicePlatform.ANDROID] },
+        platform: DevicePlatform.IOS,
         session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
@@ -607,7 +605,7 @@ export class NotificationsService {
       where: {
         userId: normalizedUserId,
         isActive: true,
-        platform: { in: [DevicePlatform.IOS, DevicePlatform.ANDROID] },
+        platform: DevicePlatform.IOS,
         session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
@@ -643,24 +641,6 @@ export class NotificationsService {
             badges.set(device.userId, badge);
           }
           const absoluteBadge = await badge;
-          if (device.platform === DevicePlatform.ANDROID) {
-            const fcmResult = await this.fcmService?.send({
-              token: device.deviceToken,
-              title,
-              body,
-              notificationCount: absoluteBadge,
-              data: {
-                actionType: `${payload.actionType}`,
-                recipientId: device.userId,
-                notification: JSON.stringify(notification),
-                badge: `${absoluteBadge}`,
-              },
-            });
-            if (fcmResult?.staleToken) {
-              await this.deactivateDevice(device);
-            }
-            return;
-          }
           result = await this.apnsService.send({
               token: device.deviceToken,
               title,

@@ -26,10 +26,6 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="false">
 
-        <meta-data
-            android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="atta_notifications" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true"

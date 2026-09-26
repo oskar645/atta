@@ -53,8 +53,11 @@ class AdminService {
   final Map<String, AdminSectionSnapshot> _sectionSnapshots =
       <String, AdminSectionSnapshot>{};
   Future<void>? _seenMarkersLoadInFlight;
+  Future<void>? _attentionRefreshInFlight;
+  DateTime? _lastAttentionNetworkFailureAt;
 
   static const Duration _defaultCacheTtl = Duration(seconds: 15);
+  static const Duration _attentionErrorCooldown = Duration(seconds: 5);
   bool _sessionActive = true;
 
   void activateSession() {
@@ -79,6 +82,8 @@ class AdminService {
     _lastAdminResolvedUser = null;
     _lastAdminResolvedAt = null;
     _lastAttentionRefreshAt = null;
+    _attentionRefreshInFlight = null;
+    _lastAttentionNetworkFailureAt = null;
     _activeAdminUid = null;
     _seenMarkers = <String, String>{};
     _sectionSnapshots.clear();
@@ -105,7 +110,6 @@ class AdminService {
     return _streamSectionBadgeCount(
       moderationSection,
       _moderationBadgeController,
-      refreshOnListen: true,
     );
   }
 
@@ -116,7 +120,6 @@ class AdminService {
     return _streamSectionBadgeCount(
       reportsSection,
       _reportsBadgeController,
-      refreshOnListen: true,
     );
   }
 
@@ -127,11 +130,10 @@ class AdminService {
     return _streamSectionBadgeCount(
       supportSection,
       _supportBadgeController,
-      refreshOnListen: true,
     );
   }
 
-  Stream<bool> streamNeedsAttention({bool refreshOnListen = true}) {
+  Stream<bool> streamNeedsAttention({bool refreshOnListen = false}) {
     if (!_sessionActive) {
       return Stream<bool>.value(false);
     }
@@ -151,6 +153,22 @@ class AdminService {
   }
 
   Future<void> refreshAdminAttention({bool force = false}) async {
+    final existing = _attentionRefreshInFlight;
+    if (existing != null) {
+      return existing;
+    }
+    final future = _refreshAdminAttentionInternal(force: force);
+    _attentionRefreshInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_attentionRefreshInFlight, future)) {
+        _attentionRefreshInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _refreshAdminAttentionInternal({required bool force}) async {
     if (!_sessionActive) {
       return;
     }
@@ -163,6 +181,13 @@ class AdminService {
       return;
     }
     await _ensureSeenMarkersLoaded();
+    final now = DateTime.now();
+    if (_lastAttentionNetworkFailureAt != null &&
+        now.difference(_lastAttentionNetworkFailureAt!) <
+            _attentionErrorCooldown) {
+      _emitSectionBadgeCounts();
+      return;
+    }
     if (!force &&
         _lastAttentionRefreshAt != null &&
         DateTime.now().difference(_lastAttentionRefreshAt!) <
@@ -180,6 +205,15 @@ class AdminService {
       _updateSnapshotFromResponse(reportsSection, results[1]);
       _updateSnapshotFromResponse(supportSection, results[2]);
       _lastAttentionRefreshAt = DateTime.now();
+      _lastAttentionNetworkFailureAt = null;
+      _emitSectionBadgeCounts();
+    } on ApiException catch (error) {
+      if (error.isNetworkError ||
+          error.isTimeout ||
+          error.isServerUnavailable) {
+        _lastAttentionNetworkFailureAt = DateTime.now();
+      }
+      _debugSource('Admin attention refresh skipped: $error');
       _emitSectionBadgeCounts();
     } catch (error) {
       _debugSource('Admin attention refresh skipped: $error');
@@ -201,6 +235,18 @@ class AdminService {
   Future<Map<String, dynamic>> dashboardStats({bool forceRefresh = false}) =>
       _cached('dashboardStats', _api.dashboardStats,
           forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> zeroResultSearches(
+          {String period = 'month',
+          String search = '',
+          int limit = 30,
+          String? cursor}) =>
+      _api.zeroResultSearches(
+          period: period, search: search, limit: limit, cursor: cursor);
+  Future<Map<String, dynamic>> popularCategories({String period = 'month'}) =>
+      _api.popularCategories(period: period);
+  Future<Map<String, dynamic>> zeroViewListings(
+          {String period = 'all', String sort = 'oldest'}) =>
+      _api.zeroViewListings(period: period, sort: sort);
   Future<int> pendingModerationCount({bool forceRefresh = false}) async {
     final stats = await dashboardStats(forceRefresh: forceRefresh);
     final nestedStats = stats['stats'];
@@ -290,6 +336,28 @@ class AdminService {
       forceRefresh: forceRefresh,
     );
   }
+
+  Future<Map<String, dynamic>> filteredListings({
+    String? status,
+    String? period,
+    String? search,
+    int? limit,
+    String? cursor,
+  }) =>
+      _api.listingsFiltered(
+        status: status,
+        period: period,
+        search: search,
+        limit: limit,
+        cursor: cursor,
+      );
+
+  Future<Map<String, dynamic>> deletedUsers({
+    String? period,
+    int? limit,
+    String? cursor,
+  }) =>
+      _api.deletedUsers(period: period, limit: limit, cursor: cursor);
 
   Future<Map<String, dynamic>> reports({
     bool forceRefresh = false,
@@ -888,13 +956,13 @@ class AdminService {
     }
     final now = DateTime.now();
     final entry = _cache[key];
+    if (entry?.inFlight != null) {
+      return entry!.inFlight!;
+    }
     if (!forceRefresh && entry != null) {
       if (entry.value != null &&
           now.difference(entry.updatedAt) < _defaultCacheTtl) {
         return entry.value!;
-      }
-      if (entry.inFlight != null) {
-        return entry.inFlight!;
       }
     }
 

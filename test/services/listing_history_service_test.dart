@@ -29,6 +29,8 @@ void main() {
       api: api,
     );
     await Future<void>.delayed(Duration.zero);
+    expect(api.listCalls, 0);
+    await service.activateSession();
 
     await service.markViewed('local-1');
     expect(service.viewedIdsNewestFirst, contains('local-1'));
@@ -38,6 +40,8 @@ void main() {
       api: api,
     );
     await Future<void>.delayed(Duration.zero);
+    expect(api.listCalls, 1);
+    await restored.activateSession();
 
     expect(restored.viewedIdsNewestFirst.first, 'local-1');
     expect(restored.viewedIdsNewestFirst, contains('server-1'));
@@ -62,6 +66,7 @@ void main() {
       api: api,
     );
     await Future<void>.delayed(Duration.zero);
+    await firstUser.activateSession();
     await firstUser.markViewed('local-user-1');
 
     await storage.saveSession(
@@ -74,6 +79,7 @@ void main() {
       api: api,
     );
     await Future<void>.delayed(Duration.zero);
+    await secondUser.activateSession();
 
     expect(secondUser.viewedIdsNewestFirst, contains('server-user-2'));
     expect(secondUser.viewedIdsNewestFirst, isNot(contains('local-user-1')));
@@ -96,14 +102,41 @@ void main() {
       tokenStorage: storage,
       api: api,
     );
-    await Future<void>.delayed(Duration.zero);
-    final initialCalls = api.listCalls;
+    final calls = await Future.wait<void>(<Future<void>>[
+      service.activateSession(),
+      service.activateSession(),
+    ]);
+
+    expect(calls, hasLength(2));
+    expect(api.listCalls, 1);
+    await service.activateSession();
+    expect(api.listCalls, 1);
+  });
+
+  test('viewed tab uses synced service cache with cursor pagination', () async {
+    final storage = TokenStorage();
+    await storage.saveSession(
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+      currentUser: const AuthUser(uid: 'user-1'),
+    );
+    final api = _FakeViewedListingsApi(
+      listedIds: const <String>['server-1', 'server-2', 'server-3'],
+    );
+    final service = ListingHistoryService(tokenStorage: storage, api: api);
 
     await service.activateSession();
-    await service.activateSession();
-    await service.activateSession();
+    final first = await service.getViewedListingsPage(limit: 2);
+    final second = await service.getViewedListingsPage(
+      limit: 2,
+      cursor: first.nextCursor,
+    );
 
-    expect(api.listCalls, initialCalls);
+    expect(first.ids, hasLength(2));
+    expect(first.hasMore, isTrue);
+    expect(second.ids, hasLength(1));
+    expect(second.hasMore, isFalse);
+    expect(api.listCalls, 1);
   });
 }
 

@@ -82,6 +82,7 @@ test('account recovery uses absolute timestamps in every PostgreSQL timezone', {
         const newPhone = nextPhone();
         const call = await recovery.startPhone(grantResponse.recoveryToken, newPhone);
         const result = await recovery.completePhone(grantResponse.recoveryToken, newPhone, call.checkId!);
+        assert.ok('user' in result && 'auth' in result);
         assert.equal(result.user.id, user.id);
         assert.equal(await db.user.count({ where: { id: user.id } }), 1);
         assert.equal((await db.accountRecoveryGrant.findUniqueOrThrow({ where: { id: grant.id } })).consumedAt instanceof Date, true);

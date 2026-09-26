@@ -46,6 +46,7 @@ import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
+import { RecordSearchAttemptDto } from './dto/record-search-attempt.dto';
 
 export { normalizeOemPartNumber } from '../../common/listing-search';
 
@@ -495,6 +496,28 @@ export class ListingsService {
     } as unknown as UserBlocksService,
     @Optional() private readonly savedSearchAlerts?: SavedSearchAlertsService,
   ) {}
+
+  async recordSearchAttempt(dto: RecordSearchAttemptDto) {
+    const query = dto.query.normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 240);
+    const normalizedQuery = query
+      .toLocaleLowerCase('ru-RU')
+      .replace(/[ё]/g, 'е')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+    if (query.length < 2 || !normalizedQuery || dto.resultCount > 0 || dto.hasRestrictiveFilters) {
+      await this.prisma.zeroResultSearch.deleteMany({
+        where: { attemptId: dto.attemptId },
+      });
+      return { recorded: false };
+    }
+    await this.prisma.zeroResultSearch.upsert({
+      where: { attemptId: dto.attemptId },
+      create: { attemptId: dto.attemptId, query, normalizedQuery },
+      update: { query, normalizedQuery, createdAt: new Date() },
+    });
+    return { recorded: true };
+  }
 
   async create(authUser: AuthenticatedUser, dto: CreateListingDto) {
     await this.userBlocksService.assertNotBlocked(authUser.userId);

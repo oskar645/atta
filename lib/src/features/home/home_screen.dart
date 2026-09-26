@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
+
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:atta/src/app.dart';
@@ -16,17 +18,20 @@ import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/listings/vip_showcase_screen.dart';
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/models/feed_ad.dart';
+import 'package:atta/src/models/top_banner.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/showcase_item.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/feed_ads_service.dart';
+import 'package:atta/src/services/top_banners_service.dart';
 import 'package:atta/src/services/home_filters_session.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
+import 'package:atta/src/services/search_attempt_analytics.dart';
 import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
@@ -38,8 +43,35 @@ import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/add_listing_icon_button.dart';
 import 'package:atta/src/widgets/cold_start_vpn_banner.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/top_banner_header.dart';
 import 'package:atta/src/features/showcase/showcase_all_screen.dart';
 import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
+
+bool _hasRestrictiveSearchFilters(ListingFeedFilters f) =>
+    (f.category.trim().isNotEmpty && f.category != 'Все') ||
+    (f.subcategory.trim().isNotEmpty && f.subcategory != 'Все') ||
+    f.priceFrom != null ||
+    f.priceTo != null ||
+    f.location.trim().isNotEmpty ||
+    f.radiusKm != null ||
+    f.autoBrand.trim().isNotEmpty ||
+    f.autoModel.trim().isNotEmpty ||
+    f.autoCondition.trim().isNotEmpty ||
+    f.autoYearFrom != null ||
+    f.autoYearTo != null ||
+    f.autoMileageFrom != null ||
+    f.autoMileageTo != null ||
+    f.autoTransmission.trim().isNotEmpty ||
+    f.autoDrive.trim().isNotEmpty ||
+    f.autoBodyType.trim().isNotEmpty ||
+    f.autoFuel.trim().isNotEmpty ||
+    f.autoColor.trim().isNotEmpty ||
+    f.autoEngineVolumeFrom != null ||
+    f.autoEngineVolumeTo != null ||
+    f.autoOwners != null ||
+    f.autoCleared != null ||
+    f.onlyUncrashed ||
+    f.onlyWithPhoto;
 
 class HomeTabController {
   VoidCallback? _scrollToTop;
@@ -131,6 +163,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   int _activeMainFeedVipRotationOffset = 0;
   int _bumpRotation = -1;
   late final ListingsService _bumpListings;
+  late final TopBannersService _topBanners;
+  late final Future<TopBanner?> _topBanner;
+  late final SearchAttemptAnalytics _searchAnalytics;
 
   void _promptLogin() {
     unawaited(promptGuestAuth(context));
@@ -144,6 +179,15 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   void initState() {
     super.initState();
     _bumpListings = context.read<ListingsService>();
+    _searchAnalytics =
+        SearchAttemptAnalytics(_bumpListings.recordSearchAttempt);
+    _topBanners = context.read<TopBannersService>();
+    _topBanner = _topBanners.prepareForDisplay(
+      (imageUrl) => precacheImage(
+        CachedNetworkImageProvider(imageUrl),
+        context,
+      ),
+    );
     _bumpListings.bumpPurchases.addListener(_onBumpPurchased);
     unawaited(_refreshShowcase());
     unawaited(_refreshVipShowcase());
@@ -169,6 +213,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     attaRouteObserver.unsubscribe(this);
     widget.controller?.detach();
     _searchCtrl.dispose();
+    _searchAnalytics.dispose();
     super.dispose();
   }
 
@@ -587,6 +632,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         bumpRotation: _bumpRotation,
       );
       if (!mounted || requestId != _feedRequestSerial) return;
+      if (reset) {
+        _searchAnalytics.resultReceived(
+          query: _search,
+          resultCount: page.items.length,
+          hasRestrictiveFilters:
+              _hasRestrictiveSearchFilters(_currentFeedFilters),
+        );
+      }
       setState(() {
         _feedItems = reset
             ? List<Listing>.from(page.items)
@@ -679,7 +732,16 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     return Scaffold(
       appBar: AppBar(
         centerTitle: false,
-        title: const _HomeBrandTitle(),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        flexibleSpace: FutureBuilder<TopBanner?>(
+          future: _topBanner,
+          builder: (context, snapshot) => TopBannerHeaderBackground(
+            banner: snapshot.data,
+            service: _topBanners,
+          ),
+        ),
+        title: const AbsorbPointer(child: _HomeBrandTitle()),
         actions: [
           StreamBuilder<int>(
             stream: user == null
@@ -738,10 +800,26 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                   ],
                 ),
               );
-              return icon;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: icon,
+                ),
+              );
             },
           ),
-          const AddListingIconButton(),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: DecoratedBox(
+              decoration:
+                  BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+              child: AddListingIconButton(),
+            ),
+          ),
         ],
       ),
       body: Stack(
@@ -785,6 +863,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                           ),
                         ),
                         onChanged: (v) {
+                          _searchAnalytics.queryChanged(v);
                           setState(() => _search = v.trim());
                           _persistFilters();
                           unawaited(_reloadFeed(reset: true));
@@ -967,6 +1046,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
   int _requestSerial = 0;
   int _bumpRotation = -1;
   late final ListingsService _bumpListings;
+  late final SearchAttemptAnalytics _searchAnalytics;
 
   void _onBumpPurchased() {
     unawaited(_reload(reset: true));
@@ -1008,6 +1088,8 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
   void initState() {
     super.initState();
     _bumpListings = context.read<ListingsService>();
+    _searchAnalytics =
+        SearchAttemptAnalytics(_bumpListings.recordSearchAttempt);
     _bumpListings.bumpPurchases.addListener(_onBumpPurchased);
     unawaited(_reload(reset: true));
   }
@@ -1016,6 +1098,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
   void dispose() {
     _bumpListings.bumpPurchases.removeListener(_onBumpPurchased);
     _searchCtrl.dispose();
+    _searchAnalytics.dispose();
     super.dispose();
   }
 
@@ -1061,6 +1144,13 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
         bumpRotation: _bumpRotation,
       );
       if (!mounted || requestId != _requestSerial) return;
+      if (reset) {
+        _searchAnalytics.resultReceived(
+          query: _search,
+          resultCount: page.items.length,
+          hasRestrictiveFilters: _hasRestrictiveSearchFilters(_feedFilters),
+        );
+      }
       setState(() {
         _items = reset
             ? List<Listing>.from(page.items)
@@ -1213,6 +1303,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
                       ),
                     ),
                     onChanged: (v) {
+                      _searchAnalytics.queryChanged(v);
                       setState(() => _search = v.trim());
                       unawaited(_reload(reset: true));
                     },

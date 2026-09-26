@@ -11,6 +11,8 @@ const listingStatuses = [
   'all',
 ] as const;
 
+const listingPeriods = ['today', '7d', 'month', 'all'] as const;
+
 export class ListAdminListingsDto {
   @IsOptional()
   @IsString()
@@ -27,4 +29,13 @@ export class ListAdminListingsDto {
   @IsOptional()
   @IsString()
   cursor?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(listingPeriods)
+  period?: (typeof listingPeriods)[number];
+
+  @IsOptional()
+  @IsString()
+  search?: string;
 }

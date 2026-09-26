@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/features/admin/admin_listings_screen.dart';
+import 'package:atta/src/features/admin/admin_deleted_users_screen.dart';
 import 'package:atta/src/features/admin/admin_online_users_screen.dart';
 import 'package:atta/src/features/admin/admin_points_purchases_screen.dart';
 import 'package:atta/src/features/admin/admin_promotions_screen.dart';
@@ -15,7 +16,8 @@ import 'package:atta/src/features/admin/admin_reports_screen.dart';
 import 'package:atta/src/features/admin/admin_today_visits_screen.dart';
 import 'package:atta/src/features/admin/admin_users_screen.dart';
 import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
-import 'package:atta/src/features/admin/admin_ads_tab.dart';
+import 'package:atta/src/features/admin/admin_marketplace_analytics_screens.dart';
+import 'package:atta/src/features/admin/admin_advertising_tab.dart';
 import 'package:atta/src/features/admin/admin_blocks_screen.dart';
 import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
@@ -240,7 +242,7 @@ class _AdminScreenState extends State<AdminScreen>
               const _TimewebAdminListingsModerationTab(),
               const AdminSupportTab(),
               AdminReportsScreen(initialReportId: widget.initialReportId),
-              const AdminAdsTab(),
+              const AdminAdvertisingTab(),
               const AdminPromotionsScreen(),
               const AdminWalletAnalyticsScreen(),
               const AdminBlocksScreen(),
@@ -999,6 +1001,42 @@ class _DashboardTab extends StatelessWidget {
               card('Жалоб (open)', '${read('reportsOpen')}', Icons.report),
               card('Рекламы active', '${read('activeAds')}',
                   Icons.ad_units_outlined),
+              card(
+                'Удалённые пользователи',
+                '${read('deletedUsers')}',
+                Icons.person_off_outlined,
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AdminDeletedUsersScreen(),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              card(
+                'Поиски без результата',
+                '${read('zeroResultSearches')}',
+                Icons.search_off,
+                subtitle: 'за этот месяц',
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const AdminZeroResultSearchesScreen(),
+                )),
+              ),
+              card(
+                'Популярные категории',
+                '›',
+                Icons.category_outlined,
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const AdminPopularCategoriesScreen(),
+                )),
+              ),
+              card(
+                'Без единого просмотра',
+                '${read('zeroViewListings')}',
+                Icons.visibility_off_outlined,
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const AdminZeroViewListingsScreen(),
+                )),
+              ),
             ],
           );
         },

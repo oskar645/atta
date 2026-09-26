@@ -27,6 +27,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ChatsGateway } from '../chats/chats.gateway';
 import { ChatsService } from '../chats/chats.service';
 import { FeedAdsService } from '../feed-ads/feed-ads.service';
+import { TopBannersService } from '../top-banners/top-banners.service';
 import { ListingsService } from '../listings/listings.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -53,6 +54,7 @@ export class MediaController {
     private readonly chatsGateway: ChatsGateway,
     private readonly chatsService: ChatsService,
     private readonly feedAdsService: FeedAdsService,
+    private readonly topBannersService: TopBannersService,
     private readonly listingsService: ListingsService,
     private readonly notificationsService: NotificationsService,
     private readonly storageService: StorageService,
@@ -294,6 +296,17 @@ export class MediaController {
       feedAdId,
       this.requireImage(file, 5 * 1024 * 1024),
     );
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('top-banners/:topBannerId/image')
+  @UseInterceptors(memoryImageUpload)
+  uploadTopBannerImage(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('topBannerId', new ParseUUIDPipe()) topBannerId: string,
+    @UploadedFile() file?: UploadedImageFile,
+  ) {
+    return this.topBannersService.attachImage(authUser, topBannerId, this.requireImage(file, 5 * 1024 * 1024));
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)

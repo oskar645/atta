@@ -221,6 +221,7 @@ test('existing listing, chat, report, support, media and promotion limits are pr
           {} as never,
           {} as never,
           {} as never,
+          {} as never,
         ).uploadAvatar(authUser as never, undefined),
     },
     {
@@ -230,6 +231,7 @@ test('existing listing, chat, report, support, media and promotion limits are pr
           {} as never,
           {} as never,
           rateLimit as never,
+          {} as never,
           {} as never,
           {} as never,
           {} as never,
@@ -253,6 +255,7 @@ test('existing listing, chat, report, support, media and promotion limits are pr
           {} as never,
           {} as never,
           {} as never,
+          {} as never,
         ).uploadChatImage(authUser as never, 'chat-1', undefined),
     },
     {
@@ -262,6 +265,7 @@ test('existing listing, chat, report, support, media and promotion limits are pr
           {} as never,
           {} as never,
           rateLimit as never,
+          {} as never,
           {} as never,
           {} as never,
           {} as never,

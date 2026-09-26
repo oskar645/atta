@@ -215,6 +215,19 @@ class ListingsService {
 
   Stream<void> get refreshes => _refreshController.stream;
 
+  Future<void> recordSearchAttempt({
+    required String attemptId,
+    required String query,
+    required int resultCount,
+    required bool hasRestrictiveFilters,
+  }) =>
+      _api.recordSearchAttempt(
+        attemptId: attemptId,
+        query: query,
+        resultCount: resultCount,
+        hasRestrictiveFilters: hasRestrictiveFilters,
+      );
+
   Stream<List<Listing>> streamListings({
     required String category,
     required String search,

@@ -37,6 +37,7 @@ const user_follows_module_1 = require("./modules/user-follows/user-follows.modul
 const saved_searches_module_1 = require("./modules/saved-searches/saved-searches.module");
 const viewed_listings_module_1 = require("./modules/viewed-listings/viewed-listings.module");
 const wallet_module_1 = require("./modules/wallet/wallet.module");
+const top_banners_module_1 = require("./modules/top-banners/top-banners.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -67,6 +68,7 @@ exports.AppModule = AppModule = __decorate([
             presence_module_1.PresenceModule,
             notifications_module_1.NotificationsModule,
             feed_ads_module_1.FeedAdsModule,
+            top_banners_module_1.TopBannersModule,
             admin_module_1.AdminModule,
             reports_module_1.ReportsModule,
             reviews_module_1.ReviewsModule,

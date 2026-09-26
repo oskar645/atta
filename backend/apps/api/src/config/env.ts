@@ -67,9 +67,6 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
-  FIREBASE_PROJECT_ID: z.string().optional().default(''),
-  FIREBASE_CLIENT_EMAIL: z.string().optional().default(''),
-  FIREBASE_PRIVATE_KEY: z.string().optional().default(''),
   ADMIN_PHONE_NUMBERS: z.string().optional().default(''),
   WALLET_TIME_ZONE: z.string().min(1).default('Europe/Moscow'),
   YOOKASSA_SHOP_ID: z.string().optional().default('1425242'),

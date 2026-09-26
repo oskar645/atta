@@ -96,6 +96,11 @@ enum FeedAdEventType {
   CLICK
 }
 
+enum TopBannerEventType {
+  IMPRESSION
+  CLICK
+}
+
 enum WalletTransactionType {
   ACCRUAL
   SPEND
@@ -216,6 +221,7 @@ model User {
   supportTickets SupportTicket[]
   supportReplies SupportMessage[]
   feedAdsCreated FeedAd[]            @relation("FeedAdCreatedBy")
+  topBannersCreated TopBanner[]       @relation("TopBannerCreatedBy")
   auditLogs      AuditLog[]          @relation("AuditActor")
   wallet         Wallet?
   walletTransactions WalletTransaction[]
@@ -559,6 +565,21 @@ model ListingView {
   @@map("listing_views")
 }
 
+/// Anonymous marketplace searches that returned no listings. Deliberately has
+/// no user/device relation: the admin feature only needs aggregate demand.
+model ZeroResultSearch {
+  id              String   @id @default(uuid()) @db.Uuid
+  attemptId       String   @unique @map("attempt_id") @db.Uuid
+  query           String
+  normalizedQuery String   @map("normalized_query")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([normalizedQuery, createdAt])
+  @@map("zero_result_searches")
+}
+
 model Favorite {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @map("user_id") @db.Uuid
@@ -833,6 +854,43 @@ model FeedAd {
   @@index([placement, isActive])
   @@index([expiresAt])
   @@map("feed_ads")
+}
+
+model TopBanner {
+  id              String           @id @default(uuid()) @db.Uuid
+  title           String
+  imageUrl        String           @map("image_url")
+  imageBucket     String           @default("feed-ads") @map("image_bucket")
+  imageKey        String?          @map("image_key")
+  targetUrl       String           @default("") @map("target_url")
+  enabled         Boolean          @default(false)
+  startAt         DateTime         @map("start_at")
+  endAt           DateTime         @map("end_at")
+  sortOrder       Int              @default(0) @map("sort_order")
+  impressionCount BigInt           @default(0) @map("impression_count")
+  clickCount      BigInt           @default(0) @map("click_count")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  createdById     String?          @map("created_by_id") @db.Uuid
+  createdBy       User?            @relation("TopBannerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  events          TopBannerEvent[]
+
+  @@index([enabled, startAt, endAt])
+  @@index([sortOrder])
+  @@map("top_banners")
+}
+
+model TopBannerEvent {
+  id        String             @id @default(uuid()) @db.Uuid
+  bannerId  String             @map("banner_id") @db.Uuid
+  type      TopBannerEventType
+  sessionId String             @map("session_id")
+  createdAt DateTime           @default(now()) @map("created_at")
+  banner    TopBanner          @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+
+  @@unique([bannerId, type, sessionId])
+  @@index([bannerId, type, createdAt])
+  @@map("top_banner_events")
 }
 
 model Wallet {

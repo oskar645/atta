@@ -29,7 +29,7 @@ class ListingHistoryService extends ChangeNotifier {
     ViewedListingsApi? api,
   })  : _storage = tokenStorage ?? _tokenStorage,
         _viewedListingsApi = api ?? _api {
-    unawaited(_load());
+    unawaited(_loadLocal());
   }
 
   bool get isLoaded => _loaded;
@@ -75,7 +75,7 @@ class ListingHistoryService extends ChangeNotifier {
         now.difference(_lastRemoteSyncAt!) < _remoteSyncCooldown) {
       return;
     }
-    final future = _load();
+    final future = _syncSession(uid);
     _activateSessionInFlight = future;
     try {
       await future;
@@ -92,6 +92,22 @@ class ListingHistoryService extends ChangeNotifier {
     int limit = 50,
     String? cursor,
   }) async {
+    final normalizedCursor = cursor?.trim() ?? '';
+    final cacheOffset = normalizedCursor.isEmpty
+        ? 0
+        : normalizedCursor.startsWith('cache:')
+            ? int.tryParse(normalizedCursor.substring('cache:'.length))
+            : null;
+    if (_lastSyncedUserId != null && cacheOffset != null) {
+      final ids = viewedIdsNewestFirst;
+      final start = cacheOffset.clamp(0, ids.length).toInt();
+      final end = (start + limit).clamp(start, ids.length).toInt();
+      return ViewedListingsPage(
+        ids: ids.sublist(start, end),
+        hasMore: end < ids.length,
+        nextCursor: end < ids.length ? 'cache:$end' : null,
+      );
+    }
     final response = await _viewedListingsApi.list(
       limit: limit,
       cursor: cursor,
@@ -105,9 +121,7 @@ class ListingHistoryService extends ChangeNotifier {
     );
   }
 
-  Future<void> _load() async {
-    final user = await _storage.readCurrentUser();
-    final uid = user?.uid.trim() ?? '';
+  Future<void> _syncSession(String uid) async {
     await _loadLocal(uid: uid);
     await _syncRemote(uid);
   }

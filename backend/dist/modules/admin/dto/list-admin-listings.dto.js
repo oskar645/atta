@@ -21,6 +21,7 @@ const listingStatuses = [
     'archived',
     'all',
 ];
+const listingPeriods = ['today', '7d', 'month', 'all'];
 class ListAdminListingsDto {
 }
 exports.ListAdminListingsDto = ListAdminListingsDto;
@@ -43,4 +44,15 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], ListAdminListingsDto.prototype, "cursor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsIn)(listingPeriods),
+    __metadata("design:type", Object)
+], ListAdminListingsDto.prototype, "period", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], ListAdminListingsDto.prototype, "search", void 0);
 //# sourceMappingURL=list-admin-listings.dto.js.map

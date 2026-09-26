@@ -50,7 +50,7 @@ Map<String, dynamic> summaryData(int value) => {
 void main() {
   for (final width in [320.0, 768.0, 1440.0]) {
     testWidgets(
-        'analytics renders without overflow at $width and supports manual refresh without socket',
+        'analytics renders compact cards without a global period at $width',
         (tester) async {
       tester.view.resetPhysicalSize();
       tester.view.physicalSize = Size(width, 1800);
@@ -67,21 +67,13 @@ void main() {
       expect(find.text('Открытия объявлений'), findsOneWidget);
       expect(find.text('Сообщения'), findsOneWidget);
       expect(find.text('Гости'), findsOneWidget);
-      expect(find.byIcon(Icons.chevron_right), findsNWidgets(3));
       for (final key in ['guests', 'totalOpens', 'messages']) {
         final size = tester.getSize(find.byKey(ValueKey('analytics-$key')));
         expect(size.height, lessThan(90));
       }
-      for (final label in [
-        'Вчера',
-        '7 дней',
-        'Месяц',
-        'Всё время',
-        'Сегодня'
-      ]) {
-        await tester.tap(find.text(label));
-        await tester.pump();
-      }
+      expect(find.text('Активность приложения'), findsNothing);
+      expect(find.byType(ChoiceChip), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
       for (final entry in {
         'guests': ['Уникальных гостей'],
         'totalOpens': ['Гости', 'Зарегистрированные', 'Всего'],
@@ -89,17 +81,17 @@ void main() {
       }.entries) {
         await tester.tap(find.byKey(ValueKey('analytics-${entry.key}')));
         await tester.pumpAndSettle();
+        expect(find.byType(AppBar), findsOneWidget);
+        expect(find.byIcon(Icons.arrow_back), findsOneWidget);
+        expect(find.byType(ChoiceChip), findsNWidgets(5));
         for (final metric in entry.value) {
           expect(find.text(metric), findsOneWidget);
         }
-        expect(find.text('Все показатели'), findsOneWidget);
         expect(tester.takeException(), isNull);
-        await tester.tap(find.text('Все показатели'));
+        await tester.tap(find.byIcon(Icons.arrow_back));
         await tester.pumpAndSettle();
       }
-      await tester.tap(find.byTooltip('Обновить аналитику'));
-      await tester.pumpAndSettle();
-      expect(calls, 2);
+      expect(calls, 1);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     });
@@ -136,11 +128,11 @@ void main() {
         final titleRect = tester.getRect(title);
         final numberRect = tester.getRect(number);
 
-        expect(numberRect.left, greaterThan(titleRect.left));
+        expect(numberRect.left, greaterThan(titleRect.right));
         expect(numberRect.center.dy, closeTo(cardRect.center.dy, 1));
+        expect(numberRect.right, closeTo(cardRect.right - 14, 1));
         expect(cardRect.height, lessThan(90));
       }
-      expect(find.byIcon(Icons.chevron_right), findsNWidgets(3));
       expect(tester.takeException(), isNull);
     });
   }
@@ -167,24 +159,61 @@ void main() {
       'messages': ['messages', 'activeChats'],
     }.entries) {
       await tester.tap(find.byKey(ValueKey('analytics-${block.key}')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       for (final period in {
         'today': 'Сегодня',
         'yesterday': 'Вчера',
         'week': '7 дней',
-        'month': 'Месяц',
+        'month': 'Этот месяц',
         'all': 'Всё время',
       }.entries) {
-        await tester.tap(find.text(period.value));
+        await tester.tap(find.widgetWithText(ChoiceChip, period.value).last);
         await tester.pump();
         for (final metric in block.value) {
-          expect(find.text('${periods[period.key][metric]}'), findsOneWidget);
+          expect(
+              find.text('${periods[period.key][metric]}').last, findsOneWidget);
         }
       }
-      await tester.tap(find.text('Все показатели'));
-      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_back));
+      await tester.pumpAndSettle();
     }
     await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('detail periods are independent and dashboard remains unfiltered',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: AdminUsageAnalytics(load: () async => data(7)),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('analytics-guests')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Сегодня'))
+          .selected,
+      isTrue,
+    );
+
+    await tester.tap(find.text('Этот месяц'));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ChoiceChip), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('analytics-messages')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Сегодня'))
+          .selected,
+      isTrue,
+    );
   });
 
   testWidgets(
@@ -196,9 +225,8 @@ void main() {
             body: SingleChildScrollView(
       child: AdminUsageAnalytics(load: () => pending.future),
     ))));
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('analytics-guests')));
-    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNWidgets(3));
     pending.completeError(StateError('offline'));
     await tester.pumpAndSettle();
     expect(find.text('Не удалось загрузить аналитику.'), findsOneWidget);
@@ -206,28 +234,16 @@ void main() {
     pending = Completer<Map<String, dynamic>>();
     await tester.tap(find.text('Повторить'));
     await tester.pump();
-    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     pending.complete(data(0));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('analytics-guests')));
     await tester.pumpAndSettle();
     expect(
         find.text('За выбранный период активности пока нет.'), findsOneWidget);
     expect(find.text('0'), findsOneWidget);
-    pending = Completer<Map<String, dynamic>>();
-    await tester.tap(find.byTooltip('Обновить аналитику'));
-    await tester.pump();
-    pending.completeError(StateError('offline'));
+    await tester.tap(find.byIcon(Icons.arrow_back));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Показаны последние загруженные данные'),
-        findsOneWidget);
-    expect(find.text('0'), findsOneWidget);
-    pending = Completer<Map<String, dynamic>>();
-    await tester.tap(find.text('Повторить'));
-    await tester.pump();
-    pending.complete(data(42));
-    await tester.pumpAndSettle();
-    expect(find.text('42'), findsOneWidget);
-    expect(find.text('Повторить'), findsNothing);
-    expect(find.text('За выбранный период активности пока нет.'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -245,8 +261,6 @@ void main() {
         )))));
     await tester.pumpAndSettle();
     expect(calls, 1);
-    await tester.tap(find.byKey(const ValueKey('analytics-guests')));
-    await tester.pump();
     for (var i = 0; i < 10; i++) {
       socket.updates.add(ChatSocketEvent('analytics_updated', {}));
     }

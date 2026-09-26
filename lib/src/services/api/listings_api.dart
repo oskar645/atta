@@ -15,6 +15,23 @@ class ListingsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<void> recordSearchAttempt({
+    required String attemptId,
+    required String query,
+    required int resultCount,
+    required bool hasRestrictiveFilters,
+  }) async {
+    await client.post(
+      '/listings/search-attempt',
+      body: {
+        'attemptId': attemptId,
+        'query': query,
+        'resultCount': resultCount,
+        'hasRestrictiveFilters': hasRestrictiveFilters,
+      },
+    );
+  }
+
   Future<Map<String, dynamic>> myListings({
     String? status,
     int? limit,

@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/auth_api.dart';
 import 'package:atta/src/services/api/admin_api.dart';
+import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth/auth_models.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,7 +90,8 @@ void main() {
     expect(api.supportCalls, 0);
   });
 
-  test('streamNeedsAttention refreshes admin attention on listen', () async {
+  test('admin streams replay state without refreshing on every listen',
+      () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(
       accessToken: 'access-token',
@@ -102,11 +106,53 @@ void main() {
     service.activateSession();
     service.bindAdminUser('admin-1');
 
-    final value = await service.streamNeedsAttention().firstWhere(
-          (value) => value,
-        );
+    await service.refreshAdminAttention();
+    final value = await service.streamNeedsAttention().first;
+    await service.streamNeedsAttention().first;
+    await service.streamPendingModerationCount().first;
 
     expect(value, isTrue);
+    expect(api.listingsCalls, 1);
+    expect(api.reportsCalls, 1);
+    expect(api.supportCalls, 1);
+  });
+
+  test('parallel forced attention refreshes share one request group', () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+    );
+    final gate = Completer<void>();
+    final api = _FakeAdminApi()..gate = gate;
+    final service = AdminService(api: api)..bindAdminUser('admin-1');
+
+    final first = service.refreshAdminAttention(force: true);
+    final second = service.refreshAdminAttention(force: true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.listingsCalls, 1);
+    expect(api.reportsCalls, 1);
+    expect(api.supportCalls, 1);
+    gate.complete();
+    await Future.wait<void>(<Future<void>>[first, second]);
+  });
+
+  test('network failure applies attention refresh cooldown', () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+    );
+    final api = _FakeAdminApi()
+      ..error = const ApiException('network', code: 'network');
+    final service = AdminService(api: api)..bindAdminUser('admin-1');
+
+    await service.refreshAdminAttention(force: true);
+    await service.refreshAdminAttention(force: true);
+
     expect(api.listingsCalls, 1);
     expect(api.reportsCalls, 1);
     expect(api.supportCalls, 1);
@@ -195,6 +241,8 @@ class _FakeAdminApi extends AdminApi {
   int listingsCalls = 0;
   int reportsCalls = 0;
   int supportCalls = 0;
+  Completer<void>? gate;
+  ApiException? error;
   final List<String> referralSearches = <String>[];
   List<Map<String, dynamic>> pendingItems = <Map<String, dynamic>>[
     <String, dynamic>{
@@ -216,6 +264,8 @@ class _FakeAdminApi extends AdminApi {
     String? cursor,
   }) async {
     listingsCalls += 1;
+    if (gate != null) await gate!.future;
+    if (error != null) throw error!;
     return <String, dynamic>{
       'items': pendingItems,
       'total': pendingItems.length,
@@ -226,12 +276,16 @@ class _FakeAdminApi extends AdminApi {
   @override
   Future<Map<String, dynamic>> reports({int? limit, String? cursor}) async {
     reportsCalls += 1;
+    if (gate != null) await gate!.future;
+    if (error != null) throw error!;
     return <String, dynamic>{'items': const <Map<String, dynamic>>[]};
   }
 
   @override
   Future<Map<String, dynamic>> support() async {
     supportCalls += 1;
+    if (gate != null) await gate!.future;
+    if (error != null) throw error!;
     return <String, dynamic>{'items': const <Map<String, dynamic>>[]};
   }
 

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:atta/src/services/api/notifications_api.dart';
@@ -7,24 +6,6 @@ import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/notification_navigation_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-
-const AndroidNotificationChannel attaNotificationChannel =
-    AndroidNotificationChannel(
-  'atta_notifications',
-  'Уведомления ATTA',
-  description: 'Сообщения и персональные уведомления ATTA',
-  importance: Importance.high,
-  playSound: true,
-  showBadge: true,
-);
-
-@pragma('vm:entry-point')
-Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-}
 
 class PushNotificationService {
   PushNotificationService({
@@ -48,13 +29,7 @@ class PushNotificationService {
   int _generation = 0;
   final MethodChannel _channel;
   final EventChannel _eventChannel;
-  final FlutterLocalNotificationsPlugin _localNotifications =
-      FlutterLocalNotificationsPlugin();
-
   StreamSubscription<dynamic>? _tapSub;
-  StreamSubscription<String>? _tokenRefreshSub;
-  StreamSubscription<RemoteMessage>? _fcmTapSub;
-  StreamSubscription<RemoteMessage>? _foregroundSub;
   String? _registeredToken;
   Future<void>? _bindInFlight;
 
@@ -92,25 +67,21 @@ class PushNotificationService {
     bool current() =>
         generation == _generation &&
         authGeneration == _tokenStorage.sessionGeneration;
-    final token = await (_isAndroid ? _requestAndroidToken() : _requestToken());
+    final token = await _requestToken();
     if (!current()) return;
     if (token == null || token.isEmpty) return;
     if (_registeredToken != token || _registeredUserId != userId) {
       await api.registerDevice(
         token: token,
-        platform: _isAndroid ? 'android' : 'ios',
+        platform: 'ios',
         locale: Platform.localeName,
       );
       if (!current()) return;
       _registeredToken = token;
       _registeredUserId = userId;
     }
-    if (_isAndroid) {
-      await _configureAndroidMessaging(api, userId, generation);
-    } else {
-      _listenForTaps();
-      await _consumeInitialNotification(generation);
-    }
+    _listenForTaps();
+    await _consumeInitialNotification(generation);
   }
 
   Future<void> unbind({NotificationsApi? api}) async {
@@ -125,12 +96,6 @@ class PushNotificationService {
     final nativeCleanup = _clearNativeState();
     final taps = _tapSub;
     _tapSub = null;
-    final tokenRefresh = _tokenRefreshSub;
-    _tokenRefreshSub = null;
-    final fcmTaps = _fcmTapSub;
-    _fcmTapSub = null;
-    final foreground = _foregroundSub;
-    _foregroundSub = null;
     // Server logout revokes the device's owning session. Never perform an
     // authorized DELETE with the next account's credentials.
     final user = await _tokenStorage.readCurrentUser();
@@ -143,15 +108,6 @@ class PushNotificationService {
       } catch (_) {}
     }
     await taps?.cancel();
-    await tokenRefresh?.cancel();
-    await fcmTaps?.cancel();
-    await foreground?.cancel();
-    if (_isAndroid) {
-      try {
-        await _localNotifications.cancelAll();
-        await FirebaseMessaging.instance.deleteToken();
-      } catch (_) {}
-    }
     await nativeCleanup;
   }
 
@@ -164,111 +120,7 @@ class PushNotificationService {
 
   Future<void> dispose() async {
     await _tapSub?.cancel();
-    await _tokenRefreshSub?.cancel();
-    await _fcmTapSub?.cancel();
-    await _foregroundSub?.cancel();
     _tapSub = null;
-  }
-
-  bool get _isAndroid => !kIsWeb && Platform.isAndroid;
-
-  Future<String?> _requestAndroidToken() async {
-    try {
-      final messaging = FirebaseMessaging.instance;
-      await messaging.requestPermission(alert: true, badge: true, sound: true);
-      return (await messaging.getToken())?.trim();
-    } catch (error) {
-      if (kDebugMode) debugPrint('FCM token request failed: $error');
-      return null;
-    }
-  }
-
-  Future<void> _configureAndroidMessaging(
-    NotificationsApi api,
-    String userId,
-    int generation,
-  ) async {
-    try {
-      const initialization = InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      );
-      await _localNotifications.initialize(
-        settings: initialization,
-        onDidReceiveNotificationResponse: (response) {
-          final payload = response.payload;
-          if (payload == null) return;
-          try {
-            unawaited(_handleTapPayload(
-              Map<String, dynamic>.from(jsonDecode(payload) as Map),
-            ));
-          } catch (_) {}
-        },
-      );
-      await _localNotifications
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(attaNotificationChannel);
-
-      _tokenRefreshSub ??= FirebaseMessaging.instance.onTokenRefresh.listen(
-        (token) async {
-          if (generation != _generation || _activeUserId != userId) return;
-          try {
-            await api.registerDevice(
-              token: token,
-              platform: 'android',
-              locale: Platform.localeName,
-            );
-            if (generation == _generation) {
-              _registeredToken = token;
-              _registeredUserId = userId;
-            }
-          } catch (_) {}
-        },
-      );
-      _fcmTapSub ??= FirebaseMessaging.onMessageOpenedApp.listen(
-        (message) => unawaited(_handleTapPayload(_payloadFromFcm(message))),
-      );
-      _foregroundSub ??= FirebaseMessaging.onMessage.listen((message) {
-        final notification = message.notification;
-        if (notification == null) return;
-        final notificationCount = int.tryParse(message.data['badge'] ?? '');
-        unawaited(_localNotifications.show(
-          id: message.messageId?.hashCode ?? message.hashCode,
-          title: notification.title,
-          body: notification.body,
-          notificationDetails: NotificationDetails(
-            android: AndroidNotificationDetails(
-              'atta_notifications',
-              'Уведомления ATTA',
-              channelDescription: 'Сообщения и персональные уведомления ATTA',
-              importance: Importance.high,
-              priority: Priority.high,
-              playSound: true,
-              number: notificationCount,
-            ),
-          ),
-          payload: jsonEncode(_payloadFromFcm(message)),
-        ));
-      });
-      final initial = await FirebaseMessaging.instance.getInitialMessage();
-      if (initial != null && generation == _generation) {
-        await _handleTapPayload(_payloadFromFcm(initial));
-      }
-    } catch (error) {
-      if (kDebugMode) debugPrint('FCM setup failed: $error');
-    }
-  }
-
-  Map<String, dynamic> _payloadFromFcm(RemoteMessage message) {
-    final data = Map<String, dynamic>.from(message.data);
-    final encoded = data['notification'];
-    if (encoded is String && encoded.isNotEmpty) {
-      try {
-        data['notification'] =
-            Map<String, dynamic>.from(jsonDecode(encoded) as Map);
-      } catch (_) {}
-    }
-    return data;
   }
 
   Future<String?> _requestToken() async {

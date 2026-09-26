@@ -13,11 +13,13 @@ import { ListAdminPromotionsDto } from './dto/list-admin-promotions.dto';
 import { ListAdminBlocksDto } from './dto/list-admin-blocks.dto';
 import { ListAdminWalletTransactionsDto } from './dto/list-admin-wallet-transactions.dto';
 import { ListAdminUsersDto } from './dto/list-admin-users.dto';
+import { ListDeletedUsersDto } from './dto/list-deleted-users.dto';
 import { ModerateListingDto } from './dto/moderate-listing.dto';
 import { ArchiveListingDto } from '../listings/dto/archive-listing.dto';
 import { BlockUserDto, UnblockUserDto, UpdateUserBlockDto } from './dto/block-user.dto';
 import { SendAdminSupportMessageDto } from './dto/send-admin-support-message.dto';
 import { SupportService } from '../support/support.service';
+import { AdminAnalyticsPeriodDto } from './dto/admin-marketplace-analytics.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -32,6 +34,21 @@ export class AdminController {
     return this.adminService.getDashboardStats();
   }
 
+  @Get('analytics/zero-result-searches')
+  getZeroResultSearches(@Query() query: AdminAnalyticsPeriodDto) {
+    return this.adminService.getZeroResultSearches(query);
+  }
+
+  @Get('analytics/popular-categories')
+  getPopularCategories(@Query() query: AdminAnalyticsPeriodDto) {
+    return this.adminService.getPopularCategories(query);
+  }
+
+  @Get('analytics/zero-view-listings')
+  getZeroViewListings(@Query() query: AdminAnalyticsPeriodDto) {
+    return this.adminService.getZeroViewListings(query);
+  }
+
   @Get('users')
   listUsers(@Query() query: ListAdminUsersDto) {
     return this.adminService.listUsers(query);
@@ -40,6 +57,11 @@ export class AdminController {
   @Get('users/registration-stats')
   getUserRegistrationStats(@Query() query: AdminRegistrationStatsDto) {
     return this.adminService.getUserRegistrationStats(query);
+  }
+
+  @Get('users/deleted')
+  listDeletedUsers(@Query() query: ListDeletedUsersDto) {
+    return this.adminService.listDeletedUsers(query);
   }
 
   @Get('online-users')

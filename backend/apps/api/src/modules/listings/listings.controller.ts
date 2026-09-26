@@ -20,6 +20,7 @@ import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
+import { RecordSearchAttemptDto } from './dto/record-search-attempt.dto';
 import { ListingsService } from './listings.service';
 
 @Controller('listings')
@@ -47,7 +48,7 @@ export class ListingsController {
   }
 
   @Get()
-  findAll(
+  async findAll(
     @Query('search') search?: string,
     @Query('category') category?: string,
     @Query('city') city?: string,
@@ -77,6 +78,11 @@ export class ListingsController {
       minPrice: minPrice == null ? undefined : Number(minPrice),
       maxPrice: maxPrice == null ? undefined : Number(maxPrice),
     });
+  }
+
+  @Post('search-attempt')
+  recordSearchAttempt(@Body() dto: RecordSearchAttemptDto) {
+    return this.listingsService.recordSearchAttempt(dto);
   }
 
   @Get('vip')

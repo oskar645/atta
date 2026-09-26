@@ -338,6 +338,27 @@ let ListingsService = class ListingsService {
         this.userBlocksService = userBlocksService;
         this.savedSearchAlerts = savedSearchAlerts;
     }
+    async recordSearchAttempt(dto) {
+        const query = dto.query.normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 240);
+        const normalizedQuery = query
+            .toLocaleLowerCase('ru-RU')
+            .replace(/[ё]/g, 'е')
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .trim()
+            .replace(/\s+/g, ' ');
+        if (query.length < 2 || !normalizedQuery || dto.resultCount > 0 || dto.hasRestrictiveFilters) {
+            await this.prisma.zeroResultSearch.deleteMany({
+                where: { attemptId: dto.attemptId },
+            });
+            return { recorded: false };
+        }
+        await this.prisma.zeroResultSearch.upsert({
+            where: { attemptId: dto.attemptId },
+            create: { attemptId: dto.attemptId, query, normalizedQuery },
+            update: { query, normalizedQuery, createdAt: new Date() },
+        });
+        return { recorded: true };
+    }
     async create(authUser, dto) {
         await this.userBlocksService.assertNotBlocked(authUser.userId);
         const owner = await this.prisma.user.findUnique({

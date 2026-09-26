@@ -18,6 +18,7 @@ const notifications_module_1 = require("../notifications/notifications.module");
 const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const users_module_1 = require("../users/users.module");
 const media_controller_1 = require("./media.controller");
+const top_banners_module_1 = require("../top-banners/top-banners.module");
 let MediaModule = class MediaModule {
 };
 exports.MediaModule = MediaModule;
@@ -27,6 +28,7 @@ exports.MediaModule = MediaModule = __decorate([
             auth_module_1.AuthModule,
             chats_module_1.ChatsModule,
             feed_ads_module_1.FeedAdsModule,
+            top_banners_module_1.TopBannersModule,
             listings_module_1.ListingsModule,
             notifications_module_1.NotificationsModule,
             prisma_module_1.PrismaModule,

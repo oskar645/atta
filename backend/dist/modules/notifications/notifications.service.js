@@ -8,9 +8,6 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
-var __param = (this && this.__param) || function (paramIndex, decorator) {
-    return function (target, key) { decorator(target, key, paramIndex); }
-};
 var NotificationsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationsService = void 0;
@@ -19,15 +16,13 @@ const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
 const apns_service_1 = require("../apns/apns.service");
 const chats_gateway_1 = require("../chats/chats.gateway");
-const fcm_service_1 = require("../fcm/fcm.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const excludedInAppNotificationTypes = [client_1.NotificationType.CHAT_MESSAGE];
 let NotificationsService = NotificationsService_1 = class NotificationsService {
-    constructor(apnsService, prisma, chatsGateway, fcmService) {
+    constructor(apnsService, prisma, chatsGateway) {
         this.apnsService = apnsService;
         this.prisma = prisma;
         this.chatsGateway = chatsGateway;
-        this.fcmService = fcmService;
         this.logger = new common_1.Logger(NotificationsService_1.name);
     }
     toType(type) {
@@ -481,7 +476,7 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         const devices = await this.prisma.userDevice.findMany({
             where: {
                 isActive: true,
-                platform: { in: [client_1.DevicePlatform.IOS, client_1.DevicePlatform.ANDROID] },
+                platform: client_1.DevicePlatform.IOS,
                 session: { revokedAt: null, expiresAt: { gt: new Date() } },
             },
             select: {
@@ -501,7 +496,7 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
             where: {
                 userId: normalizedUserId,
                 isActive: true,
-                platform: { in: [client_1.DevicePlatform.IOS, client_1.DevicePlatform.ANDROID] },
+                platform: client_1.DevicePlatform.IOS,
                 session: { revokedAt: null, expiresAt: { gt: new Date() } },
             },
             select: {
@@ -531,24 +526,6 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                     badges.set(device.userId, badge);
                 }
                 const absoluteBadge = await badge;
-                if (device.platform === client_1.DevicePlatform.ANDROID) {
-                    const fcmResult = await this.fcmService?.send({
-                        token: device.deviceToken,
-                        title,
-                        body,
-                        notificationCount: absoluteBadge,
-                        data: {
-                            actionType: `${payload.actionType}`,
-                            recipientId: device.userId,
-                            notification: JSON.stringify(notification),
-                            badge: `${absoluteBadge}`,
-                        },
-                    });
-                    if (fcmResult?.staleToken) {
-                        await this.deactivateDevice(device);
-                    }
-                    return;
-                }
                 result = await this.apnsService.send({
                     token: device.deviceToken,
                     title,
@@ -583,10 +560,8 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
 exports.NotificationsService = NotificationsService;
 exports.NotificationsService = NotificationsService = NotificationsService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __param(3, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [apns_service_1.ApnsService,
         prisma_service_1.PrismaService,
-        chats_gateway_1.ChatsGateway,
-        fcm_service_1.FcmService])
+        chats_gateway_1.ChatsGateway])
 ], NotificationsService);
 //# sourceMappingURL=notifications.service.js.map

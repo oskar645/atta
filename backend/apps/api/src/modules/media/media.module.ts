@@ -10,12 +10,14 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { UserBlocksModule } from '../user-blocks/user-blocks.module';
 import { UsersModule } from '../users/users.module';
 import { MediaController } from './media.controller';
+import { TopBannersModule } from '../top-banners/top-banners.module';
 
 @Module({
   imports: [
     AuthModule,
     ChatsModule,
     FeedAdsModule,
+    TopBannersModule,
     ListingsModule,
     NotificationsModule,
     PrismaModule,

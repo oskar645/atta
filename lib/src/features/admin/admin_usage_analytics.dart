@@ -17,7 +17,7 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
     'today': 'Сегодня',
     'yesterday': 'Вчера',
     'week': '7 дней',
-    'month': 'Месяц',
+    'month': 'Этот месяц',
     'all': 'Всё время',
   };
   static const _blocks = [
@@ -44,11 +44,10 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
         {'messages': 'Сообщений', 'activeChats': 'Активных диалогов'},
         'Сообщения из доступной истории чатов. Активный диалог — диалог с сообщениями за выбранный период.'),
   ];
-  String _period = 'today';
-  _AnalyticsBlock? _selected;
   Map<String, dynamic>? _data;
   bool _loading = false;
   bool _failed = false;
+  bool _automaticRefreshPaused = false;
   bool _dirty = false;
   Timer? _debounce;
   Timer? _poll;
@@ -60,7 +59,10 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _reload();
-    _poll = Timer.periodic(const Duration(seconds: 30), (_) => _reload());
+    _poll = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => _reload(automatic: true),
+    );
   }
 
   @override
@@ -85,11 +87,12 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
     // Coalesce bursts without starving refresh during continuous activity.
     _debounce ??= Timer(const Duration(milliseconds: 1200), () {
       _debounce = null;
-      _reload();
+      _reload(automatic: true);
     });
   }
 
-  Future<void> _reload() async {
+  Future<void> _reload({bool automatic = false}) async {
+    if (automatic && _automaticRefreshPaused) return;
     if (_loading) {
       _dirty = true;
       return;
@@ -102,10 +105,16 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
         setState(() {
           _data = data;
           _failed = false;
+          _automaticRefreshPaused = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _failed = true);
+      if (mounted) {
+        setState(() {
+          _failed = true;
+          _automaticRefreshPaused = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
       if (_dirty && mounted) {
@@ -117,7 +126,7 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _reload();
+    if (state == AppLifecycleState.resumed) _reload(automatic: true);
   }
 
   @override
@@ -133,18 +142,28 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
   @override
   Widget build(BuildContext context) {
     final periods = _data?['periods'] as Map?;
-    final values = periods?[_period] as Map?;
+    // Dashboard previews deliberately use one stable period. Detailed screens
+    // own their period selection and never mutate this summary.
+    final values = periods?['today'] as Map?;
     final theme = Theme.of(context);
-    final selected = _selected;
     String value(String key) => '${values?[key] ?? '—'}';
-    bool isEmpty(_AnalyticsBlock block) =>
-        values != null && block.metrics.keys.every((key) => values[key] == 0);
+
+    void openDetails(_AnalyticsBlock block) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _AnalyticsDetailsScreen(
+            block: block,
+            periods: periods,
+          ),
+        ),
+      );
+    }
 
     Widget summary(_AnalyticsBlock block) => Card(
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             key: ValueKey('analytics-${block.primaryMetric}'),
-            onTap: () => setState(() => _selected = block),
+            onTap: () => openDetails(block),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Row(
@@ -154,26 +173,37 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
                   Expanded(
                     child: Text(
                       block.title,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        value(block.primaryMetric),
-                        maxLines: 1,
-                        style: theme.textTheme.titleLarge
-                            ?.copyWith(fontWeight: FontWeight.w800),
+                  SizedBox(
+                    width: 72,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: _data == null && _loading
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  semanticsLabel: 'Загрузка аналитики',
+                                ),
+                              )
+                            : Text(
+                                value(block.primaryMetric),
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 18,
+                                ),
+                              ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.chevron_right, size: 20),
                 ],
               ),
             ),
@@ -181,40 +211,6 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
         );
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Text('Активность приложения', style: theme.textTheme.titleLarge),
-            IconButton(
-                tooltip: 'Обновить аналитику',
-                onPressed: _loading ? null : _reload,
-                icon: const Icon(Icons.refresh)),
-          ]),
-      if (selected != null) ...[
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: () => setState(() => _selected = null),
-            icon: const Icon(Icons.arrow_back),
-            label: const Text('Все показатели'),
-          ),
-        ),
-        Text(selected.title, style: theme.textTheme.titleLarge),
-        const SizedBox(height: 12),
-      ],
-      Wrap(spacing: 6, runSpacing: 4, children: [
-        for (final period in _periods.entries)
-          ChoiceChip(
-              label: Text(period.value),
-              selected: _period == period.key,
-              onSelected: (_) => setState(() => _period = period.key)),
-      ]),
-      const SizedBox(height: 12),
-      if (_loading) ...[
-        const LinearProgressIndicator(semanticsLabel: 'Загрузка аналитики'),
-        const SizedBox(height: 12),
-      ],
       if (_failed)
         Padding(
           padding: const EdgeInsets.only(bottom: 12),
@@ -224,59 +220,110 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
                 ? 'Не удалось загрузить аналитику.'
                 : 'Не удалось обновить аналитику. Показаны последние загруженные данные.'),
             TextButton.icon(
-              onPressed: _loading ? null : _reload,
+              onPressed: _loading ? null : () => _reload(),
               icon: const Icon(Icons.refresh),
               label: const Text('Повторить'),
             ),
           ]),
         ),
-      if (selected == null)
-        LayoutBuilder(builder: (context, constraints) {
-          final columns = constraints.maxWidth >= 900
-              ? 3
-              : constraints.maxWidth >= 600
-                  ? 2
-                  : 1;
-          final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
-          return Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final block in _blocks)
-              SizedBox(width: width, child: summary(block)),
-          ]);
-        })
-      else
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+      LayoutBuilder(builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 900
+            ? 3
+            : constraints.maxWidth >= 600
+                ? 2
+                : 1;
+        final width = (constraints.maxWidth - (columns - 1) * 8) / columns;
+        return Wrap(spacing: 8, runSpacing: 8, children: [
+          for (final block in _blocks)
+            SizedBox(width: width, child: summary(block)),
+        ]);
+      }),
+      const SizedBox(height: 12),
+    ]);
+  }
+}
+
+class _AnalyticsDetailsScreen extends StatefulWidget {
+  const _AnalyticsDetailsScreen({
+    required this.block,
+    required this.periods,
+  });
+
+  final _AnalyticsBlock block;
+  final Map? periods;
+
+  @override
+  State<_AnalyticsDetailsScreen> createState() =>
+      _AnalyticsDetailsScreenState();
+}
+
+class _AnalyticsDetailsScreenState extends State<_AnalyticsDetailsScreen> {
+  late String _period;
+
+  @override
+  void initState() {
+    super.initState();
+    _period = 'today';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final values = widget.periods?[_period] as Map?;
+    final isEmpty = values != null &&
+        widget.block.metrics.keys.every((key) => values[key] == 0);
+
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.block.title)),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Wrap(spacing: 6, runSpacing: 4, children: [
+            for (final period in _AdminUsageAnalyticsState._periods.entries)
+              ChoiceChip(
+                label: Text(period.value),
+                selected: _period == period.key,
+                onSelected: (_) {
+                  setState(() => _period = period.key);
+                },
+              ),
+          ]),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(selected.description, style: theme.textTheme.bodyMedium),
+                  Text(widget.block.description,
+                      style: theme.textTheme.bodyMedium),
                   const SizedBox(height: 16),
-                  for (final metric in selected.metrics.entries)
+                  for (final metric in widget.block.metrics.entries)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Wrap(
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 16,
-                        runSpacing: 4,
+                      child: Row(
                         children: [
-                          Text(metric.value,
-                              style: theme.textTheme.titleMedium),
-                          Text(value(metric.key),
+                          Expanded(
+                            child: Text(metric.value,
+                                style: theme.textTheme.titleMedium),
+                          ),
+                          const SizedBox(width: 16),
+                          Text('${values?[metric.key] ?? '—'}',
                               style: theme.textTheme.headlineSmall),
                         ],
                       ),
                     ),
-                  if (isEmpty(selected)) ...[
+                  if (isEmpty) ...[
                     const SizedBox(height: 12),
                     const Text('За выбранный период активности пока нет.'),
                   ],
-                ]),
+                ],
+              ),
+            ),
           ),
-        ),
-      const SizedBox(height: 12),
-    ]);
+        ],
+      ),
+    );
   }
 }
 

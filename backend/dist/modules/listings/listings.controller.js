@@ -22,6 +22,7 @@ const create_listing_dto_1 = require("./dto/create-listing.dto");
 const archive_listing_dto_1 = require("./dto/archive-listing.dto");
 const update_listing_dto_1 = require("./dto/update-listing.dto");
 const increment_listing_view_dto_1 = require("./dto/increment-listing-view.dto");
+const record_search_attempt_dto_1 = require("./dto/record-search-attempt.dto");
 const listings_service_1 = require("./listings.service");
 let ListingsController = class ListingsController {
     constructor(listingsService, rateLimitService) {
@@ -35,7 +36,7 @@ let ListingsController = class ListingsController {
         });
         return this.listingsService.create(authUser, dto);
     }
-    findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status, publicMode, feedMode, vipRotation, bumpRotation) {
+    async findAll(search, category, city, minPrice, maxPrice, limit, cursor, ownerId, status, publicMode, feedMode, vipRotation, bumpRotation) {
         return this.listingsService.findAll({
             search,
             category,
@@ -51,6 +52,9 @@ let ListingsController = class ListingsController {
             minPrice: minPrice == null ? undefined : Number(minPrice),
             maxPrice: maxPrice == null ? undefined : Number(maxPrice),
         });
+    }
+    recordSearchAttempt(dto) {
+        return this.listingsService.recordSearchAttempt(dto);
     }
     findVip(limit, cursor, category, search) {
         return this.listingsService.findVipListings({
@@ -117,8 +121,15 @@ __decorate([
     __param(12, (0, common_1.Query)('bumpRotation')),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String, String, String, String, String]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], ListingsController.prototype, "findAll", null);
+__decorate([
+    (0, common_1.Post)('search-attempt'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [record_search_attempt_dto_1.RecordSearchAttemptDto]),
+    __metadata("design:returntype", void 0)
+], ListingsController.prototype, "recordSearchAttempt", null);
 __decorate([
     (0, common_1.Get)('vip'),
     __param(0, (0, common_1.Query)('limit')),

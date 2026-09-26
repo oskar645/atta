@@ -1730,6 +1730,46 @@ void main() {
     expect(socket.connectCalls, 1);
   });
 
+  test('initial socket connection after inbox load does not reload chats',
+      () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(chats: <Map<String, dynamic>>[
+      _chatMap(id: 'chat-a', unreadCount: 1),
+    ]);
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.refreshInbox('user-1');
+    socket.addConnectionChange(true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.listChatsCalls, 1);
+  });
+
+  test('real socket reconnect still reloads chats', () async {
+    final socket = _FakeChatSocketService();
+    final api = _FakeChatsApi(chats: <Map<String, dynamic>>[
+      _chatMap(id: 'chat-a', unreadCount: 1),
+    ]);
+    final service = ChatService(
+      socketService: socket,
+      api: api,
+      mediaApi: _FakeMediaApi(),
+    );
+
+    await service.refreshInbox('user-1');
+    socket.addConnectionChange(true);
+    await Future<void>.delayed(Duration.zero);
+    socket.addConnectionChange(false);
+    socket.addConnectionChange(true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.listChatsCalls, 2);
+  });
+
   test('refreshInbox timeout is swallowed and keeps cached chats', () async {
     final api = _FakeChatsApi(
       chats: <Map<String, dynamic>>[

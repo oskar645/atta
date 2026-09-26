@@ -5,6 +5,7 @@ import 'package:atta/src/services/usage_analytics_service.dart';
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
+import 'package:atta/src/features/listings/desktop_web_photo_navigation.dart';
 import 'package:atta/src/features/listings/listing_archive_flow.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:atta/src/features/promotions/listing_stats_screen.dart';
@@ -2510,23 +2511,35 @@ class _PhotosState extends State<_Photos> {
         aspectRatio: 4 / 3,
         child: Stack(
           children: [
-            PageView.builder(
-              controller: _controller,
-              itemCount: photoUrls.length,
-              onPageChanged: (i) => setState(() => _page = i),
-              itemBuilder: (_, i) => GestureDetector(
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => PhotoViewerScreen(
-                          photoUrls: photoUrls, initialIndex: i),
-                    ),
-                  );
-                },
-                child: MediaPreviewBox(
-                  imageUrl: photoUrls[i],
-                  categoryHint: 'listings',
-                  borderRadius: 0,
+            DesktopWebPhotoNavigation(
+              currentIndex: _page,
+              photoCount: photoUrls.length,
+              onPrevious: () => _controller.previousPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              ),
+              onNext: () => _controller.nextPage(
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              ),
+              child: PageView.builder(
+                controller: _controller,
+                itemCount: photoUrls.length,
+                onPageChanged: (i) => setState(() => _page = i),
+                itemBuilder: (_, i) => GestureDetector(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => PhotoViewerScreen(
+                            photoUrls: photoUrls, initialIndex: i),
+                      ),
+                    );
+                  },
+                  child: MediaPreviewBox(
+                    imageUrl: photoUrls[i],
+                    categoryHint: 'listings',
+                    borderRadius: 0,
+                  ),
                 ),
               ),
             ),

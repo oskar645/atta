@@ -31,7 +31,21 @@ class ChatService {
     _socketSub = _socketService?.events.listen(_handleSocketEvent);
     _socketConnectionSub =
         _socketService?.connectionChanges.listen((connected) {
-      if (!connected) return;
+      if (!connected) {
+        return;
+      }
+      final isFirstConnection = !_hasSeenSocketConnection;
+      _hasSeenSocketConnection = true;
+      if (isFirstConnection &&
+          _lastSuccessfulChatsLoadAt != null &&
+          DateTime.now().difference(_lastSuccessfulChatsLoadAt!) <
+              _initialSocketSyncGrace) {
+        unawaited(_syncAfterSocketReconnect(
+          reason: 'socket.connected.initial',
+          refreshInbox: false,
+        ));
+        return;
+      }
       unawaited(_syncAfterSocketReconnect(reason: 'socket.connected'));
     });
   }
@@ -80,9 +94,12 @@ class ChatService {
   int _messageOrderSequence = 0;
   Future<void>? _ensureReadyInFlight;
   String? _ensureReadyUserId;
+  bool _hasSeenSocketConnection = false;
+  DateTime? _lastSuccessfulChatsLoadAt;
 
   static const Duration _markReadCooldown = Duration(seconds: 2);
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
+  static const Duration _initialSocketSyncGrace = Duration(seconds: 5);
   static const Duration _sendRetryBackoff = Duration(milliseconds: 250);
   static const int _chatPageSize = 30;
   static const int _messagePageSize = 30;
@@ -147,6 +164,8 @@ class ChatService {
     _authoritativeUnreadTotal = null;
     _ensureReadyInFlight = null;
     _ensureReadyUserId = null;
+    _hasSeenSocketConnection = false;
+    _lastSuccessfulChatsLoadAt = null;
     _chatsById.clear();
     _messagesByChat.clear();
     _messageOrderByKey.clear();
@@ -807,6 +826,7 @@ class ChatService {
           ? unreadTotal.toInt()
           : int.tryParse(unreadTotal?.toString() ?? '');
       _lastChatsLoadError = null;
+      _lastSuccessfulChatsLoadAt = DateTime.now();
       _emitChats();
       unawaited(_persistCachedState());
       _debugSource(
@@ -1057,12 +1077,17 @@ class ChatService {
     await refreshChats();
   }
 
-  Future<void> _syncAfterSocketReconnect({required String reason}) async {
+  Future<void> _syncAfterSocketReconnect({
+    required String reason,
+    bool refreshInbox = true,
+  }) async {
     final uid = _activeUserId?.trim() ?? '';
     if (uid.isEmpty) return;
     _debugSource('Chat socket sync start reason=$reason user=$uid');
     await _restoreCachedState(uid);
-    await refreshChats();
+    if (refreshInbox) {
+      await refreshChats();
+    }
     for (final chatId in _activeChatIds.toList()) {
       await _socketService?.joinChat(chatId, reason: 'chat.rejoinAfterSocket');
       await _refreshChat(chatId);

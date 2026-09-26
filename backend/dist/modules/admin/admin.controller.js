@@ -26,11 +26,13 @@ const list_admin_promotions_dto_1 = require("./dto/list-admin-promotions.dto");
 const list_admin_blocks_dto_1 = require("./dto/list-admin-blocks.dto");
 const list_admin_wallet_transactions_dto_1 = require("./dto/list-admin-wallet-transactions.dto");
 const list_admin_users_dto_1 = require("./dto/list-admin-users.dto");
+const list_deleted_users_dto_1 = require("./dto/list-deleted-users.dto");
 const moderate_listing_dto_1 = require("./dto/moderate-listing.dto");
 const archive_listing_dto_1 = require("../listings/dto/archive-listing.dto");
 const block_user_dto_1 = require("./dto/block-user.dto");
 const send_admin_support_message_dto_1 = require("./dto/send-admin-support-message.dto");
 const support_service_1 = require("../support/support.service");
+const admin_marketplace_analytics_dto_1 = require("./dto/admin-marketplace-analytics.dto");
 let AdminController = class AdminController {
     constructor(adminService, supportService) {
         this.adminService = adminService;
@@ -39,11 +41,23 @@ let AdminController = class AdminController {
     getDashboardStats() {
         return this.adminService.getDashboardStats();
     }
+    getZeroResultSearches(query) {
+        return this.adminService.getZeroResultSearches(query);
+    }
+    getPopularCategories(query) {
+        return this.adminService.getPopularCategories(query);
+    }
+    getZeroViewListings(query) {
+        return this.adminService.getZeroViewListings(query);
+    }
     listUsers(query) {
         return this.adminService.listUsers(query);
     }
     getUserRegistrationStats(query) {
         return this.adminService.getUserRegistrationStats(query);
+    }
+    listDeletedUsers(query) {
+        return this.adminService.listDeletedUsers(query);
     }
     listOnlineUsers() {
         return this.adminService.listOnlineUsers();
@@ -158,6 +172,27 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getDashboardStats", null);
 __decorate([
+    (0, common_1.Get)('analytics/zero-result-searches'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [admin_marketplace_analytics_dto_1.AdminAnalyticsPeriodDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getZeroResultSearches", null);
+__decorate([
+    (0, common_1.Get)('analytics/popular-categories'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [admin_marketplace_analytics_dto_1.AdminAnalyticsPeriodDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getPopularCategories", null);
+__decorate([
+    (0, common_1.Get)('analytics/zero-view-listings'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [admin_marketplace_analytics_dto_1.AdminAnalyticsPeriodDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getZeroViewListings", null);
+__decorate([
     (0, common_1.Get)('users'),
     __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
@@ -171,6 +206,13 @@ __decorate([
     __metadata("design:paramtypes", [admin_registration_stats_dto_1.AdminRegistrationStatsDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getUserRegistrationStats", null);
+__decorate([
+    (0, common_1.Get)('users/deleted'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_deleted_users_dto_1.ListDeletedUsersDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listDeletedUsers", null);
 __decorate([
     (0, common_1.Get)('online-users'),
     __metadata("design:type", Function),

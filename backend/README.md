@@ -87,9 +87,6 @@ cp .env.example .env
 - `APNS_TEAM_ID`
 - `APNS_BUNDLE_ID`
 - `APNS_PRIVATE_KEY_PATH`
-- `FIREBASE_PROJECT_ID`
-- `FIREBASE_CLIENT_EMAIL`
-- `FIREBASE_PRIVATE_KEY` (service-account private key with escaped `\\n`; never commit it)
 
 ## Phone verification через SMS.ru
 
