@@ -110,6 +110,40 @@ test('configured APNs sends push through http2 client', async () => {
   fs.unlinkSync(keyPath);
 });
 
+test('badge-only APNs push keeps zero and uses background headers', async () => {
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const keyPath = path.join(os.tmpdir(), `atta-apns-badge-${Date.now()}.p8`);
+  fs.writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }), 'utf8');
+  env.APNS_PRIVATE_KEY_PATH = keyPath;
+  let requestBody = '';
+  let pushType = '';
+  let priority = '';
+  setHttp2Connect((() => ({
+    on: () => undefined,
+    request: (headers: http2.OutgoingHttpHeaders) => {
+      pushType = `${headers['apns-push-type'] ?? ''}`;
+      priority = `${headers['apns-priority'] ?? ''}`;
+      const request = new EventEmitter() as EventEmitter & { setEncoding: () => void; end: (body: string) => void };
+      request.setEncoding = () => undefined;
+      request.end = (body: string) => {
+        requestBody = body;
+        request.emit('response', { ':status': 200 });
+        request.emit('end');
+      };
+      return request;
+    },
+    close: () => undefined,
+  })) as unknown as typeof http2.connect);
+
+  const result = await new ApnsService().sendBadge({ token: 'ios-token', badge: 0 });
+
+  assert.equal(result.sent, true);
+  assert.equal(pushType, 'background');
+  assert.equal(priority, '5');
+  assert.deepEqual(JSON.parse(requestBody), { aps: { badge: 0, 'content-available': 1 } });
+  fs.unlinkSync(keyPath);
+});
+
 function setHttp2Connect(connect: typeof http2.connect) {
   (require('http2') as { connect: typeof http2.connect }).connect = connect;
 }

@@ -119,7 +119,17 @@ export class ChatsController {
       result.messageIds,
       result.readAt,
       result.senderIds,
+      authUser.userId,
+      result.unreadTotal,
     );
+    this.chatsGateway.emitUnreadChanged(
+      authUser.userId,
+      result.chat,
+      result.unreadTotal,
+    );
+    // Badge delivery is a best-effort side effect and must never roll back a
+    // committed read or turn its HTTP response into a failure.
+    await this.notificationsService.sendBadgeUpdate(authUser.userId);
     return result;
   }
 
@@ -156,7 +166,8 @@ export class ChatsController {
     this.chatsGateway.emitUnreadChanged(authUser.userId, {
       id: chatId,
       unreadCount: 0,
-    });
+    }, result.unreadTotal);
+    await this.notificationsService.sendBadgeUpdate(authUser.userId);
     return result;
   }
 
@@ -171,7 +182,7 @@ export class ChatsController {
       this.chatsGateway.emitUnreadChanged(item.userId, {
         id: item.chatId,
         unreadCount: item.unreadCount,
-      });
+      }, item.unreadTotal);
     });
     return result;
   }
@@ -191,7 +202,7 @@ export class MessagesController {
     @Param('id', new ParseUUIDPipe()) messageId: string,
   ) {
     const result = await this.chatsService.markMessageDelivered(authUser, messageId);
-    this.chatsGateway.emitDelivered(result.message);
+    if (result.published) this.chatsGateway.emitDelivered(result.message);
     return result;
   }
 
@@ -227,7 +238,7 @@ export class MessagesController {
       this.chatsGateway.emitUnreadChanged(item.userId, {
         id: item.chatId,
         unreadCount: item.unreadCount,
-      });
+      }, item.unreadTotal);
     });
     return result;
   }

@@ -367,6 +367,44 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         };
         await this.sendPushToUser(params.recipientId, serialized);
     }
+    async sendBadgeUpdate(userId) {
+        try {
+            const normalizedUserId = userId.trim();
+            if (!normalizedUserId)
+                return;
+            const [badge, devices] = await Promise.all([
+                this.canonicalBadgeCount(normalizedUserId),
+                this.prisma.userDevice.findMany({
+                    where: {
+                        userId: normalizedUserId,
+                        isActive: true,
+                        platform: client_1.DevicePlatform.IOS,
+                        session: { revokedAt: null, expiresAt: { gt: new Date() } },
+                    },
+                    select: { userId: true, deviceToken: true, platform: true },
+                }),
+            ]);
+            await Promise.all(devices.map(async (device) => {
+                try {
+                    const result = await this.apnsService.sendBadge({
+                        token: device.deviceToken,
+                        badge,
+                    });
+                    if (!result.sent && (result.status === 400 || result.status === 410) &&
+                        (result.reason === 'BadDeviceToken' || result.reason === 'Unregistered' ||
+                            result.reason === 'DeviceTokenNotForTopic')) {
+                        await this.deactivateDevice(device);
+                    }
+                }
+                catch (error) {
+                    this.logger.warn(`APNs badge update failed. error=${error instanceof Error ? error.name : 'unknown'}`);
+                }
+            }));
+        }
+        catch (error) {
+            this.logger.warn(`APNs badge update skipped. error=${error instanceof Error ? error.name : 'unknown'}`);
+        }
+    }
     serializeNotification(item) {
         return this.serialize(item);
     }

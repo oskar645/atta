@@ -95,8 +95,8 @@ let AppController = AppController_1 = class AppController {
     <main>
       <section class="card">
         <h1>ATTA</h1>
-        <p>Откройте приложение ATTA или установите его из магазина.</p>
-        ${this.renderStoreButtons()}
+        <p>Продолжайте в браузере или установите приложение ATTA.</p>
+        ${this.renderSmartLinkActions(this.buildInviteWebUrl(ref))}
       </section>
     </main>
   </body>
@@ -108,6 +108,14 @@ let AppController = AppController_1 = class AppController {
             return AppController_1.appLandingUrl;
         }
         return `${AppController_1.appLandingUrl}?ref=${encodeURIComponent(normalizedRef)}`;
+    }
+    buildInviteWebUrl(ref) {
+        const query = new URLSearchParams({ source: 'invite' });
+        const normalizedRef = (ref ?? '').trim();
+        if (normalizedRef) {
+            query.set('ref', normalizedRef);
+        }
+        return `/?${query.toString()}`;
     }
     getAppIcon(res) {
         const candidates = [
@@ -322,9 +330,12 @@ let AppController = AppController_1 = class AppController {
         return `<script>
       (function () {
         var ua = navigator.userAgent || navigator.vendor || '';
+        var navigatorPlatform = navigator.platform || '';
+        var isTouchMac = /Mac/i.test(navigatorPlatform) &&
+          (navigator.maxTouchPoints || 0) > 1;
         var platform = /android/i.test(ua)
           ? 'android'
-          : (/iPad|iPhone|iPod/.test(ua) ? 'ios' : 'unknown');
+          : (/iPad|iPhone|iPod/.test(ua) || isTouchMac ? 'ios' : 'unknown');
         document.documentElement.setAttribute('data-platform', platform);
         ${normalizedRef ? `try {
           var ref = '${this.escapeJavaScriptString(normalizedRef)}';
@@ -339,6 +350,11 @@ let AppController = AppController_1 = class AppController {
             });
           } catch (_) {}
         } catch (_) {}` : ''}
+        if (platform === 'ios') {
+          window.location.replace('${AppController_1.appStoreFallbackUrl}');
+        } else if (platform === 'android') {
+          window.location.replace('${AppController_1.googlePlayFallbackUrl}');
+        }
       })();
     </script>`;
     }
@@ -394,6 +410,10 @@ let AppController = AppController_1 = class AppController {
         color: #1f1f1f;
         border: 1px solid rgba(31, 31, 31, 0.14);
       }
+      html[data-platform="ios"] .store-android,
+      html[data-platform="android"] .store-ios {
+        display: none;
+      }
     </style>`;
     }
     renderSmartFallbackScript() {
@@ -431,11 +451,11 @@ let AppController = AppController_1 = class AppController {
       })();
     </script>`;
     }
-    renderStoreButtons(options) {
-        const appStoreLabel = options?.appStoreLabel ?? 'Скачать в App Store';
+    renderSmartLinkActions(continueUrl) {
         return `<div class="actions">
-          <a class="button" href="${AppController_1.appStoreFallbackUrl}">${appStoreLabel}</a>
-          <a class="button secondary" href="${AppController_1.googlePlayFallbackUrl}">Скачать в Google Play</a>
+          <a class="button store-ios" data-store="ios" href="${AppController_1.appStoreFallbackUrl}">Загрузить в App Store</a>
+          <a class="button store-android" data-store="android" href="${AppController_1.googlePlayFallbackUrl}">Загрузить в Google Play</a>
+          <a class="button secondary continue-browser" href="${this.escapeHtml(continueUrl)}">Остаться в браузере</a>
         </div>`;
     }
     escapeHtml(value) {

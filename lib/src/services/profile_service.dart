@@ -127,6 +127,13 @@ class ProfileService {
     _profileCache[id] = _mergeRows(_profileCache[id], row);
   }
 
+  void seedFreshProfile(String uid, Map<String, dynamic> row) {
+    final id = uid.trim();
+    if (id.isEmpty || row.isEmpty) return;
+    seedProfile(id, row);
+    _profileCachedAt[id] = DateTime.now();
+  }
+
   void resetSession() {
     _profileCache.clear();
     _profileCachedAt.clear();
@@ -151,7 +158,7 @@ class ProfileService {
 
     _debugSource('Profile source: Timeweb');
     try {
-      final live = await getProfile(id, forceRefresh: true);
+      final live = await getProfile(id);
       if (live.isNotEmpty) {
         _cacheProfile(id, live);
       }

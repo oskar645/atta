@@ -33,10 +33,10 @@ class AppBadgeService {
     if (_activeUserId == userId) return;
     final generation = ++_generation;
     _activeUserId = userId;
-    _unreadChats = 0;
+    final knownChats = chatService.peekUnreadTotal(userId);
+    _unreadChats = knownChats ?? 0;
     _unreadNotifications = notificationsService.peekUnreadBadgeCount(userId);
     final cancelled = _cancelSubscriptions();
-    unawaited(_pushBadge());
     await cancelled;
     if (generation != _generation) return;
     _chatSub = chatService.streamUnreadTotal(userId).listen((count) {
@@ -52,6 +52,7 @@ class AppBadgeService {
       _unreadNotifications = count.clamp(0, 2147483647);
       unawaited(_pushBadge());
     }, onError: (_, __) {});
+    if (knownChats != null) unawaited(_pushBadge());
   }
 
   Future<void> clear() async {

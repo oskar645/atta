@@ -341,6 +341,10 @@ test('emitOutgoingMessage forwards absolute unread total to recipient', () => {
 
   assert.equal(recipientMessage?.payload['unreadTotal'], 7);
   assert.equal(unreadChanged?.payload['unreadTotal'], 7);
+  const recipientChatUpdated = emissions.find(
+    (item) => item.room == 'user:buyer-1' && item.event == 'chat.updated',
+  );
+  assert.equal(recipientChatUpdated?.payload['unreadTotal'], 7);
 });
 
 test('emitNotificationNew sends global notification to all sockets', () => {

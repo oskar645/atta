@@ -75,6 +75,18 @@ void main() {
     expect(link?.referrerId, '');
   });
 
+  test('invite web continuation preserves referral context', () {
+    final link = parseAttaDeepLink(
+      Uri.parse(
+        'https://attamarket.online/?source=invite&ref=REFERRAL_CODE_789',
+      ),
+    );
+
+    expect(link, isNotNull);
+    expect(link?.type, AttaDeepLinkType.invite);
+    expect(link?.referrerId, 'REFERRAL_CODE_789');
+  });
+
   test('saving pending listing deep link does not log out user', () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(

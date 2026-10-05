@@ -73,7 +73,7 @@ void main() {
       chatService.markChatReadCalls.every((chatId) => chatId == 'chat-unread'),
       isTrue,
     );
-    expect(chatService.markChatsDeliveredCalls, isNotEmpty);
+    expect(chatService.markChatsDeliveredCalls, isEmpty);
   });
 
   testWidgets(
@@ -491,6 +491,9 @@ class _InboxFakeChatService extends ChatService {
   }
 
   @override
+  Future<void> ensureInboxSynced(String uid) => refreshInbox(uid);
+
+  @override
   Stream<List<ChatMessage>> streamMessages(String chatId) =>
       Stream<List<ChatMessage>>.multi(
         (controller) {
@@ -560,6 +563,9 @@ class _RetryInboxFakeChatService extends ChatService {
     _lastError = null;
     _myChatsController.add(<Chat>[_chatFixture()]);
   }
+
+  @override
+  Future<void> ensureInboxSynced(String uid) => refreshInbox(uid);
 
   @override
   Future<void> markChatsDelivered({

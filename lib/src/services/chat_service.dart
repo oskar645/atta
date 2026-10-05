@@ -76,6 +76,8 @@ class ChatService {
   final Map<String, Future<void>> _messagesRefreshInFlight = {};
   final Map<String, Future<void>> _olderMessagesLoadInFlight = {};
   final Map<String, Future<void>> _markReadInFlight = {};
+  final Map<String, Future<void>> _deliveredInFlight = {};
+  final Set<String> _deliveredCompleted = <String>{};
   final Map<String, Future<void>> _messageSendInFlight = {};
   final Map<String, Future<void>> _imageSendInFlight = {};
   final Set<String> _restoredCacheUserIds = <String>{};
@@ -91,6 +93,8 @@ class ChatService {
   final Set<String> _activeChatIds = <String>{};
   String? _foregroundChatId;
   int? _authoritativeUnreadTotal;
+  int _stateRevision = 0;
+  int _authoritativeUnreadRevision = 0;
   int _messageOrderSequence = 0;
   Future<void>? _ensureReadyInFlight;
   String? _ensureReadyUserId;
@@ -100,12 +104,17 @@ class ChatService {
   static const Duration _markReadCooldown = Duration(seconds: 2);
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
   static const Duration _initialSocketSyncGrace = Duration(seconds: 5);
+  static const Duration _chatsFreshnessTtl = Duration(seconds: 30);
   static const Duration _sendRetryBackoff = Duration(milliseconds: 250);
   static const int _chatPageSize = 30;
   static const int _messagePageSize = 30;
 
   Object? get lastChatsLoadError => _lastChatsLoadError;
   bool get hasMoreChats => _chatsHasMore;
+  int? peekUnreadTotal(String uid) {
+    if (_activeUserId != null && _activeUserId != uid.trim()) return null;
+    return _authoritativeUnreadTotal;
+  }
 
   bool hasMoreMessages(String chatId) =>
       _messagesHasMore[chatId.trim()] ?? true;
@@ -139,6 +148,7 @@ class ChatService {
   int _sessionVersion = 0;
 
   Future<void> resetSession() async {
+    final previousUid = _activeUserId?.trim() ?? '';
     ++_sessionVersion;
     _activeUserId = null;
     _loadedChats = false;
@@ -148,6 +158,8 @@ class ChatService {
     _messagesRefreshInFlight.clear();
     _olderMessagesLoadInFlight.clear();
     _markReadInFlight.clear();
+    _deliveredInFlight.clear();
+    _deliveredCompleted.clear();
     _messageSendInFlight.clear();
     _imageSendInFlight.clear();
     _restoredCacheUserIds.clear();
@@ -162,6 +174,8 @@ class ChatService {
     _activeChatIds.clear();
     _foregroundChatId = null;
     _authoritativeUnreadTotal = null;
+    _stateRevision = 0;
+    _authoritativeUnreadRevision = 0;
     _ensureReadyInFlight = null;
     _ensureReadyUserId = null;
     _hasSeenSocketConnection = false;
@@ -177,6 +191,12 @@ class ChatService {
     }
     for (final controller in _messageControllers.values) {
       controller.add(const <ChatMessage>[]);
+    }
+    if (previousUid.isNotEmpty) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_cacheKey(previousUid));
+      } catch (_) {}
     }
     await _socketService?.resetSession();
   }
@@ -291,27 +311,21 @@ class ChatService {
   void _emitChats() {
     final items = _sortedChats();
     _chatsController.add(items);
-    final uid = _activeUserId ?? '';
-    _unreadController.add(
-      _currentUnreadTotalFor(uid),
-    );
+    final unreadTotal = _authoritativeUnreadTotal;
+    if (unreadTotal != null) _unreadController.add(unreadTotal);
     for (final chat in items) {
       _chatControllers[chat.id]?.add(chat);
     }
   }
 
-  int _currentUnreadTotalFor(String uid) {
-    return _authoritativeUnreadTotal ??
-        _sortedChats().fold<int>(0, (sum, chat) => sum + chat.unreadFor(uid));
-  }
-
-  void _applyAuthoritativeUnreadTotal(Map<String, dynamic> payload) {
+  bool _applyAuthoritativeUnreadTotal(Map<String, dynamic> payload) {
     final raw = payload['unreadTotal'] ?? payload['unread_total'];
     final value =
         raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
-    if (value == null) return;
+    if (value == null) return false;
     _authoritativeUnreadTotal = value < 0 ? 0 : value;
-    _emitChats();
+    _authoritativeUnreadRevision = ++_stateRevision;
+    return true;
   }
 
   String _cacheKey(String uid) => 'atta.chat.cache.v1.${uid.trim()}';
@@ -329,6 +343,10 @@ class ChatService {
       if (raw == null || raw.trim().isEmpty) return;
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
+      final cachedUnread = decoded['authoritativeUnreadTotal'];
+      if (cachedUnread is num) {
+        _authoritativeUnreadTotal = cachedUnread.toInt().clamp(0, 2147483647);
+      }
       final chats = (decoded['chats'] as List? ?? const [])
           .whereType<Map>()
           .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
@@ -372,6 +390,8 @@ class ChatService {
       final prefs = await SharedPreferences.getInstance();
       final payload = <String, dynamic>{
         'updatedAt': DateTime.now().toUtc().toIso8601String(),
+        if (_authoritativeUnreadTotal != null)
+          'authoritativeUnreadTotal': _authoritativeUnreadTotal,
         'chats': _sortedChats().map(_chatToCacheMap).toList(),
         'messagesByChat': _messagesByChat.map(
           (chatId, messages) => MapEntry(
@@ -462,10 +482,9 @@ class ChatService {
     _messageControllers[chatId]?.add(items);
   }
 
-  void _upsertChat(Chat chat) {
-    _authoritativeUnreadTotal = null;
+  void _upsertChat(Chat chat, {bool emit = true}) {
     _chatsById[chat.id] = chat;
-    _emitChats();
+    if (emit) _emitChats();
     unawaited(_persistCachedState());
   }
 
@@ -670,6 +689,14 @@ class ChatService {
     final messageMap = payload['message'] is Map
         ? Map<String, dynamic>.from(payload['message'] as Map)
         : null;
+    if (event.name == 'chat.updated' ||
+        event.name == 'message.new' ||
+        event.name == 'message.sent' ||
+        event.name == 'unread.changed' ||
+        event.name == 'message.deleted' ||
+        event.name == 'chat.deleted') {
+      ++_stateRevision;
+    }
 
     switch (event.name) {
       case 'chat.updated':
@@ -682,18 +709,19 @@ class ChatService {
       case 'message.new':
       case 'message.sent':
         _debugSource('Socket event: ${event.name}');
-        if (chatMap != null) _upsertChat(Chat.fromMap(chatMap));
+        if (chatMap != null) _upsertChat(Chat.fromMap(chatMap), emit: false);
         if (messageMap != null) {
           final message = ChatMessage.fromMap(messageMap);
           _upsertMessage(message);
           if (message.senderId != (_activeUserId ?? '')) {
-            _socketService?.sendDelivered(message.id);
+            _sendSocketDeliveredOnce(message.id);
           }
         } else if (chatMap != null) {
           final chatId = (chatMap['id'] ?? chatMap['chatId'] ?? '').toString();
           unawaited(_refreshMessages(chatId).catchError((_) {}));
         }
         _applyAuthoritativeUnreadTotal(payload);
+        _emitChats();
         break;
       case 'message.delivered':
       case 'message.read':
@@ -750,14 +778,23 @@ class ChatService {
               unreadForBuyer: isBuyer ? unread : current.unreadForBuyer,
               unreadForSeller: isSeller ? unread : current.unreadForSeller,
             ),
+            emit: false,
           );
         }
         if (unread > 0 && _activeChatIds.contains(chatId)) {
           _refreshMessagesInBackground(chatId);
         }
         _applyAuthoritativeUnreadTotal(payload);
+        _emitChats();
         break;
     }
+  }
+
+  void _sendSocketDeliveredOnce(String messageId) {
+    final id = messageId.trim();
+    if (id.isEmpty || _deliveredCompleted.contains(id)) return;
+    _deliveredCompleted.add(id);
+    _socketService?.sendDelivered(id);
   }
 
   void _refreshHistoryForVisibleChatUpdate(Chat chat) {
@@ -802,6 +839,7 @@ class ChatService {
 
   Future<void> _refreshChatsInternal() async {
     final version = _sessionVersion;
+    final requestRevision = _stateRevision;
     final uid = _activeUserId?.trim() ?? '';
     _debugSource('Chats list load start user=$uid');
     try {
@@ -814,6 +852,10 @@ class ChatService {
           .whereType<Map>()
           .map((item) => Chat.fromMap(Map<String, dynamic>.from(item)))
           .toList();
+      if (requestRevision != _stateRevision) {
+        _debugSource('Chats list stale response discarded');
+        return;
+      }
       _chatsById
         ..clear()
         ..addEntries(items.map((item) => MapEntry(item.id, item)));
@@ -825,6 +867,17 @@ class ChatService {
       _authoritativeUnreadTotal = unreadTotal is num
           ? unreadTotal.toInt()
           : int.tryParse(unreadTotal?.toString() ?? '');
+      if (_authoritativeUnreadTotal == null && !_chatsHasMore) {
+        _authoritativeUnreadTotal = items.fold<int>(
+          0,
+          (sum, chat) => sum + chat.unreadFor(uid),
+        );
+      }
+      if (_authoritativeUnreadTotal != null) {
+        _authoritativeUnreadTotal =
+            _authoritativeUnreadTotal!.clamp(0, 2147483647);
+        _authoritativeUnreadRevision = ++_stateRevision;
+      }
       _lastChatsLoadError = null;
       _lastSuccessfulChatsLoadAt = DateTime.now();
       _emitChats();
@@ -956,6 +1009,12 @@ class ChatService {
     }
     _loadedMessageChatIds.add(chatId);
     _emitMessages(chatId);
+    final uid = _activeUserId ?? '';
+    for (final message in incoming) {
+      if (message.senderId != uid && message.deliveredAt == null) {
+        unawaited(_ackDeliveredMessage(message, uid));
+      }
+    }
     unawaited(_persistCachedState());
   }
 
@@ -1027,7 +1086,8 @@ class ChatService {
     _ensureChatsRefreshStarted(uid);
     _ensureSocketConnectedInBackground(uid);
     return Stream<int>.multi((controller) {
-      controller.add(_currentUnreadTotalFor(uid));
+      final current = _authoritativeUnreadTotal;
+      if (current != null) controller.add(current);
       final sub = _unreadController.stream.listen(
         controller.add,
         onError: controller.addError,
@@ -1075,6 +1135,18 @@ class ChatService {
     await _restoreCachedState(uid);
     _ensureSocketConnectedInBackground(uid);
     await refreshChats();
+  }
+
+  Future<void> ensureInboxSynced(String uid) async {
+    _activeUserId = uid.trim();
+    await _restoreCachedState(uid);
+    _ensureSocketConnectedInBackground(uid);
+    final loadedAt = _lastSuccessfulChatsLoadAt;
+    if (loadedAt != null &&
+        DateTime.now().difference(loadedAt) < _chatsFreshnessTtl) {
+      return;
+    }
+    await refreshInbox(uid);
   }
 
   Future<void> _syncAfterSocketReconnect({
@@ -1246,12 +1318,25 @@ class ChatService {
     if (existing != null) return existing;
 
     final future = () async {
+      final unreadRevisionAtStart = _authoritativeUnreadRevision;
       final response = await _api.markChatRead(trimmedChatId);
       _lastMarkReadAt[trimmedChatId] = DateTime.now();
       final rawChat = response['chat'];
       if (rawChat is Map) {
-        _upsertChat(Chat.fromMap(Map<String, dynamic>.from(rawChat)));
+        _upsertChat(
+          Chat.fromMap(Map<String, dynamic>.from(rawChat)),
+          emit: false,
+        );
       }
+      if (_authoritativeUnreadTotal != null &&
+          _authoritativeUnreadRevision == unreadRevisionAtStart &&
+          unreadCount > 0) {
+        _authoritativeUnreadTotal =
+            (_authoritativeUnreadTotal! - unreadCount).clamp(0, 2147483647);
+        _authoritativeUnreadRevision = ++_stateRevision;
+      }
+      _emitChats();
+      unawaited(_persistCachedState());
       final readAt = DateTime.tryParse((response['readAt'] ?? '').toString());
       final messageIds = (response['messageIds'] as List? ?? const [])
           .map((item) => item.toString())
@@ -1297,20 +1382,44 @@ class ChatService {
           List<ChatMessage>.from(_messagesByChat[chatId] ?? const []);
       for (final message in messages) {
         if (message.senderId == uid || message.deliveredAt != null) continue;
-        try {
-          final response = await _api.markMessageDelivered(message.id);
-          final rawMessage = response['message'];
-          if (rawMessage is Map) {
-            _upsertMessage(
-                ChatMessage.fromMap(Map<String, dynamic>.from(rawMessage)));
-          }
-        } catch (error) {
-          _debugSource(
-              'markMessageDelivered skipped for ${message.id}: $error');
-        }
+        await _ackDeliveredMessage(message, uid);
       }
     } catch (error) {
       _debugSource('markChatDelivered skipped for $chatId: $error');
+    }
+  }
+
+  Future<void> _ackDeliveredMessage(ChatMessage message, String uid) async {
+    final id = message.id.trim();
+    if (id.isEmpty ||
+        message.senderId == uid ||
+        message.deliveredAt != null ||
+        _deliveredCompleted.contains(id)) {
+      return;
+    }
+    final existing = _deliveredInFlight[id];
+    if (existing != null) return existing;
+    final future = () async {
+      try {
+        final response = await _api.markMessageDelivered(id);
+        _deliveredCompleted.add(id);
+        final rawMessage = response['message'];
+        if (rawMessage is Map) {
+          _upsertMessage(
+            ChatMessage.fromMap(Map<String, dynamic>.from(rawMessage)),
+          );
+        }
+      } catch (error) {
+        _debugSource('markMessageDelivered skipped for $id: $error');
+      }
+    }();
+    _deliveredInFlight[id] = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_deliveredInFlight[id], future)) {
+        _deliveredInFlight.remove(id);
+      }
     }
   }
 

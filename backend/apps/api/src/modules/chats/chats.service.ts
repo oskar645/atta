@@ -673,6 +673,15 @@ export class ChatsService {
       });
     });
 
+    const unreadTotals = new Map(
+      await Promise.all(
+        participantIds.map(async (userId) => [
+          userId,
+          await this.unreadTotalForUser(userId),
+        ] as const),
+      ),
+    );
+
     return {
       source: 'timeweb',
       deleted: true,
@@ -682,6 +691,7 @@ export class ChatsService {
         userId,
         chatId,
         unreadCount: 0,
+        unreadTotal: unreadTotals.get(userId) ?? 0,
       })),
     };
   }
@@ -840,6 +850,11 @@ export class ChatsService {
       };
     });
 
+    const [buyerUnreadTotal, sellerUnreadTotal] = await Promise.all([
+      this.unreadTotalForUser(chat.buyerId),
+      this.unreadTotalForUser(chat.sellerId),
+    ]);
+
     return {
       source: 'timeweb',
       deleted: true,
@@ -853,11 +868,13 @@ export class ChatsService {
           userId: chat.buyerId,
           chatId: chat.id,
           unreadCount: result.chat.unreadForBuyer,
+          unreadTotal: buyerUnreadTotal,
         },
         {
           userId: chat.sellerId,
           chatId: chat.id,
           unreadCount: result.chat.unreadForSeller,
+          unreadTotal: sellerUnreadTotal,
         },
       ],
     };
@@ -1011,58 +1028,46 @@ export class ChatsService {
   async markChatRead(authUser: AuthenticatedUser, chatId: string) {
     const chat = await this.ensureChatParticipant(chatId, authUser.userId);
     const now = new Date();
-    const incoming = await this.prisma.chatMessage.findMany({
-      where: {
-        chatId,
-        senderId: {
-          not: authUser.userId,
-        },
-        deletedAt: null,
-        OR: [
-          {
-            deliveredAt: null,
-          },
-          {
-            readAt: null,
-          },
-        ],
-      },
-      include: messageInclude,
-    });
-
-    if (incoming.length > 0) {
-      await this.prisma.chatMessage.updateMany({
+    const result = await this.prisma.$transaction(async (tx) => {
+      const incoming = await tx.chatMessage.findMany({
         where: {
-          id: {
-            in: incoming.map((message) => message.id),
+          chatId,
+          senderId: {
+            not: authUser.userId,
           },
+          deletedAt: null,
+          readAt: null,
         },
-        data: {
-          deliveredAt: now,
-          readAt: now,
-        },
+        select: { id: true, senderId: true },
       });
-    }
 
-    const updatedChat = await this.prisma.chat.update({
-      where: {
-        id: chatId,
-      },
-      data: authUser.userId === chat.buyerId
-          ? {
-              unreadForBuyer: 0,
-            }
-          : {
-              unreadForSeller: 0,
-            },
-      include: chatInclude,
+      if (incoming.length > 0) {
+        await tx.chatMessage.updateMany({
+          where: { id: { in: incoming.map((message) => message.id) } },
+          data: { deliveredAt: now, readAt: now },
+        });
+      }
+
+      const updatedChat = await tx.chat.update({
+        where: { id: chatId },
+        data: authUser.userId === chat.buyerId
+            ? { unreadForBuyer: 0 }
+            : { unreadForSeller: 0 },
+        include: chatInclude,
+      });
+      return { incoming, updatedChat };
     });
+
+    // This query intentionally runs after the read transaction commits. It is
+    // the same canonical all-chat calculation used by GET /chats.
+    const unreadTotal = await this.unreadTotalForUser(authUser.userId);
 
     return {
-      chat: await this.serializeChat(updatedChat, authUser.userId),
-      messageIds: incoming.map((message) => message.id),
+      chat: await this.serializeChat(result.updatedChat, authUser.userId),
+      unreadTotal,
+      messageIds: result.incoming.map((message) => message.id),
       readAt: now.toISOString(),
-      senderIds: [...new Set(incoming.map((message) => message.senderId))],
+      senderIds: [...new Set(result.incoming.map((message) => message.senderId))],
     };
   }
 
@@ -1091,23 +1096,29 @@ export class ChatsService {
       return {
         message: this.serializeMessage(message),
         recipientId: authUser.userId,
+        published: false,
       };
     }
 
     const deliveredAt = new Date();
-    const updated = await this.prisma.chatMessage.update({
+    const claimed = await this.prisma.chatMessage.updateMany({
       where: {
         id: messageId,
+        deliveredAt: null,
+        readAt: null,
+        deletedAt: null,
       },
-      data: {
-        deliveredAt,
-      },
+      data: { deliveredAt },
+    });
+    const updated = await this.prisma.chatMessage.findUniqueOrThrow({
+      where: { id: messageId },
       include: messageInclude,
     });
 
     return {
       message: this.serializeMessage(updated),
       recipientId: authUser.userId,
+      published: claimed.count === 1,
     };
   }
 

@@ -64,7 +64,22 @@ let ApnsService = ApnsService_1 = class ApnsService {
         };
     }
     async send(push) {
-        const deviceToken = push.token.trim();
+        return this.sendPayload(push.token, {
+            aps: {
+                alert: { title: push.title, body: push.body },
+                sound: 'default',
+                ...(push.badge == null ? {} : { badge: push.badge }),
+            },
+            ...(push.payload ?? {}),
+        }, 'alert', '10');
+    }
+    async sendBadge(push) {
+        return this.sendPayload(push.token, {
+            aps: { badge: Math.max(0, Math.trunc(push.badge)), 'content-available': 1 },
+        }, 'background', '5');
+    }
+    async sendPayload(token, payload, pushType, priority) {
+        const deviceToken = token.trim();
         if (!deviceToken) {
             return { sent: false, status: 0, reason: 'missing_token' };
         }
@@ -77,17 +92,7 @@ let ApnsService = ApnsService_1 = class ApnsService {
         catch (error) {
             return this.skipForConfigurationError(error);
         }
-        const body = JSON.stringify({
-            aps: {
-                alert: {
-                    title: push.title,
-                    body: push.body,
-                },
-                sound: 'default',
-                ...(push.badge == null ? {} : { badge: push.badge }),
-            },
-            ...(push.payload ?? {}),
-        });
+        const body = JSON.stringify(payload);
         return await new Promise((resolve) => {
             let settled = false;
             const finish = (result) => {
@@ -108,8 +113,8 @@ let ApnsService = ApnsService_1 = class ApnsService {
                     ':path': `/3/device/${deviceToken}`,
                     authorization: `bearer ${jwt}`,
                     'apns-topic': env_1.env.APNS_BUNDLE_ID,
-                    'apns-push-type': 'alert',
-                    'apns-priority': '10',
+                    'apns-push-type': pushType,
+                    'apns-priority': priority,
                     'content-type': 'application/json',
                 });
             }

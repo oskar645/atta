@@ -230,7 +230,8 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             sessionId: '',
             role: 'user',
         }, payload.messageId);
-        this.emitDelivered(result.message);
+        if (result.published)
+            this.emitDelivered(result.message);
         return result;
     }
     async handleRead(payload, client) {
@@ -275,7 +276,7 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             });
         }
         this.emitChatUpdatedToUser((message['senderId'] ?? '').toString(), senderChat);
-        this.emitChatUpdatedToUser(recipientId, recipientChat);
+        this.emitChatUpdatedToUser(recipientId, recipientChat, recipientUnreadTotal);
         this.emitUnreadChanged(recipientId, recipientChat, recipientUnreadTotal);
     }
     emitChatUpdated(chat) {
@@ -288,12 +289,13 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             chat,
         });
     }
-    emitChatUpdatedToUser(userId, chat) {
+    emitChatUpdatedToUser(userId, chat, unreadTotal) {
         const normalizedUserId = userId.trim();
         if (!normalizedUserId)
             return;
         this.server.to(`user:${normalizedUserId}`).emit('chat.updated', {
             chat,
+            ...(unreadTotal == null ? {} : { unreadTotal }),
         });
     }
     emitUnreadChanged(userId, chat, unreadTotal) {
@@ -354,8 +356,13 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             this.server.to(`user:${userId}`).emit('chat.deleted', payload);
         }
     }
-    emitChatRead(chat, messageIds, readAt, senderIds) {
-        this.emitChatUpdated(chat);
+    emitChatRead(chat, messageIds, readAt, senderIds, readerId, unreadTotal) {
+        if (readerId) {
+            this.emitChatUpdatedToUser(readerId, chat, unreadTotal);
+        }
+        else {
+            this.emitChatUpdated(chat);
+        }
         const chatId = (chat['id'] ?? '').toString();
         for (const messageId of messageIds) {
             this.server.to(`chat:${chatId}`).emit('message.read', {

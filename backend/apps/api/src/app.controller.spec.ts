@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AppController } from './app.controller';
 
-test('app landing page contains metadata and manual store fallback', () => {
+test('app landing page contains metadata and platform-aware web fallback', () => {
   const controller = new AppController({} as any, {} as any, {} as any);
 
   const html = controller.getAppLandingPage();
@@ -22,10 +22,27 @@ test('app landing page contains metadata and manual store fallback', () => {
     /https:\/\/play\.google\.com\/store\/apps\/details\?id=online\.attomarket\.atta/,
   );
   assert.doesNotMatch(html, /http-equiv="refresh"/);
-  assert.doesNotMatch(html, /window\.location\.replace/);
+  assert.match(
+    html,
+    /platform === 'ios'[\s\S]*window\.location\.replace\('https:\/\/apps\.apple\.com\/app\/id6762604298'\)/,
+  );
+  assert.match(
+    html,
+    /platform === 'android'[\s\S]*window\.location\.replace\('https:\/\/play\.google\.com\/store\/apps\/details\?id=online\.attomarket\.atta'\)/,
+  );
   assert.doesNotMatch(html, /setTimeout/);
   assert.match(html, /data-platform/);
   assert.match(html, /navigator\.userAgent/);
+  assert.match(html, /navigator\.maxTouchPoints/);
+  assert.match(html, /class="button store-ios" data-store="ios"/);
+  assert.match(html, /class="button store-android" data-store="android"/);
+  assert.match(
+    html,
+    /class="button secondary continue-browser" href="\/\?source=invite"/,
+  );
+  assert.match(html, /Остаться в браузере/);
+  assert.match(html, /data-platform="ios".*store-android/s);
+  assert.match(html, /data-platform="android".*store-ios/s);
 });
 
 test('invite landing page preserves referral code in canonical metadata', () => {
@@ -43,7 +60,11 @@ test('invite landing page preserves referral code in canonical metadata', () => 
   );
   assert.match(html, /localStorage\.setItem\('atta\.invite\.referralCode'/);
   assert.match(html, /atta_invite_ref/);
-  assert.doesNotMatch(html, /window\.location\.replace/);
+  assert.match(
+    html,
+    /href="\/\?source=invite&amp;ref=REF\+CODE%2F42"/,
+  );
+  assert.match(html, /window\.location\.replace/);
 });
 
 test('listing fallback renders cancelable store fallback', async () => {

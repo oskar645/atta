@@ -68,7 +68,11 @@ let ChatsController = class ChatsController {
     }
     async markChatRead(authUser, chatId) {
         const result = await this.chatsService.markChatRead(authUser, chatId);
-        this.chatsGateway.emitChatRead(result.chat, result.messageIds, result.readAt, result.senderIds);
+        this.chatsGateway.emitChatRead(result.chat, result.messageIds, result.readAt, result.senderIds, authUser.userId, result.unreadTotal);
+        this.chatsGateway.emitUnreadChanged(authUser.userId, result.chat, result.unreadTotal);
+        // Badge delivery is a best-effort side effect and must never roll back a
+        // committed read or turn its HTTP response into a failure.
+        await this.notificationsService.sendBadgeUpdate(authUser.userId);
         return result;
     }
     peerBlockStatus(authUser, chatId) {
@@ -85,7 +89,8 @@ let ChatsController = class ChatsController {
         this.chatsGateway.emitUnreadChanged(authUser.userId, {
             id: chatId,
             unreadCount: 0,
-        });
+        }, result.unreadTotal);
+        await this.notificationsService.sendBadgeUpdate(authUser.userId);
         return result;
     }
     async deleteChat(authUser, chatId) {
@@ -95,7 +100,7 @@ let ChatsController = class ChatsController {
             this.chatsGateway.emitUnreadChanged(item.userId, {
                 id: item.chatId,
                 unreadCount: item.unreadCount,
-            });
+            }, item.unreadTotal);
         });
         return result;
     }
@@ -209,7 +214,8 @@ let MessagesController = class MessagesController {
     }
     async markDelivered(authUser, messageId) {
         const result = await this.chatsService.markMessageDelivered(authUser, messageId);
-        this.chatsGateway.emitDelivered(result.message);
+        if (result.published)
+            this.chatsGateway.emitDelivered(result.message);
         return result;
     }
     async markRead(authUser, messageId) {
@@ -228,7 +234,7 @@ let MessagesController = class MessagesController {
             this.chatsGateway.emitUnreadChanged(item.userId, {
                 id: item.chatId,
                 unreadCount: item.unreadCount,
-            });
+            }, item.unreadTotal);
         });
         return result;
     }

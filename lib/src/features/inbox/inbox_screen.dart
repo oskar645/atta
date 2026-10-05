@@ -33,7 +33,7 @@ class InboxScreen extends StatefulWidget {
   State<InboxScreen> createState() => _InboxScreenState();
 }
 
-class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
+class _InboxScreenState extends State<InboxScreen> {
   bool _showUnreadOnly = false;
   StreamSubscription<List<Chat>>? _chatsSub;
   final ScrollController _scrollController = ScrollController();
@@ -43,14 +43,10 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
   bool _loadedOnce = false;
   bool _loadingMore = false;
   String? _errorText;
-  DateTime? _lastResumeRefreshAt;
-
-  static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_handleScroll);
   }
 
@@ -67,7 +63,6 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     _chatsSub?.cancel();
@@ -95,20 +90,6 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
-    final uid = _boundUid;
-    if (uid == null || uid.isEmpty) return;
-    final lastRefreshAt = _lastResumeRefreshAt;
-    if (lastRefreshAt != null &&
-        DateTime.now().difference(lastRefreshAt) < _resumeRefreshCooldown) {
-      return;
-    }
-    _lastResumeRefreshAt = DateTime.now();
-    unawaited(context.read<ChatService>().handleAppResumed(uid));
   }
 
   void _bindInbox(String uid) {
@@ -157,7 +138,7 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
   Future<void> _loadInbox(ChatService chat, String uid) async {
     _debugInboxLog('Chats list load start user=$uid');
     try {
-      await chat.refreshInbox(uid);
+      await chat.ensureInboxSynced(uid);
       final loadError = chat.lastChatsLoadError;
       final hasItems = (_items ?? const <Chat>[]).isNotEmpty;
       if (!mounted) return;
@@ -304,15 +285,6 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
         ? items.where((chat) => chat.unreadFor(uid) > 0).toList()
         : items;
 
-    if (items.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        chat.markChatsDelivered(
-          chatIds: items.map((e) => e.id),
-          uid: uid,
-        );
-      });
-    }
-
     if (_loading && items.isEmpty) {
       return ListView.separated(
         padding: const EdgeInsets.all(12),
@@ -379,9 +351,14 @@ class _InboxScreenState extends State<InboxScreen> with WidgetsBindingObserver {
           final isUnread = unread > 0;
           final activityAt = c.lastMessageAt ?? c.createdAt;
           final stableKey = ValueKey('chat-item:${c.id}:${c.listingId}');
+          final profileSeed = <String, dynamic>{
+            'display_name': c.otherUserName(uid),
+            'avatar_url': c.otherUserAvatar(uid),
+          };
+          profiles.seedFreshProfile(otherId, profileSeed);
 
           final tile = StreamBuilder<Map<String, dynamic>>(
-            stream: profiles.streamProfile(otherId),
+            stream: profiles.streamProfile(otherId, seed: profileSeed),
             builder: (context, profileSnap) {
               final row = profileSnap.data ?? const <String, dynamic>{};
               if (row.isNotEmpty) {

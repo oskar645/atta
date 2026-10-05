@@ -74,6 +74,25 @@ function chatAggregate(sum: Record<string, number | null> = {}) {
   });
 }
 
+test('canonical unread totals are personalized for buyer and seller roles', async () => {
+  const service = new ChatsService(
+    {
+      chat: {
+        aggregate: async ({ where }: any) => ({
+          _sum: where.buyerId
+            ? { unreadForBuyer: where.buyerId === 'buyer-1' ? 5 : 0 }
+            : { unreadForSeller: where.sellerId === 'seller-1' ? 2 : 0 },
+        }),
+      },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+
+  assert.equal(await service.unreadTotalForUser('buyer-1'), 5);
+  assert.equal(await service.unreadTotalForUser('seller-1'), 2);
+});
+
 test('sendMessage updates chats without creating in-app notification', async () => {
   const chatUpdateCalls: Array<Record<string, unknown>> = [];
   const prisma = {
@@ -386,23 +405,28 @@ test('markChatRead resets only current participant unread and marks incoming mes
 
   const service = new ChatsService(
     {
+      $transaction: async (callback: (tx: any) => Promise<unknown>) => callback({
+        chat: {
+          update: async (args: Record<string, unknown>) => {
+            chatUpdateCalls.push(args);
+            return {
+              ...createChat(),
+              unreadForBuyer: 0,
+              unreadForSeller: 4,
+            };
+          },
+        },
+        chatMessage: {
+          findMany: async () => [incomingMessage],
+          updateMany: async (args: Record<string, unknown>) => {
+            chatMessageUpdateManyCalls.push(args);
+            return { count: 1 };
+          },
+        },
+      }),
       chat: {
         findUnique: async () => createChat(),
-        update: async (args: Record<string, unknown>) => {
-          chatUpdateCalls.push(args);
-          return {
-            ...createChat(),
-            unreadForBuyer: 0,
-            unreadForSeller: 4,
-          };
-        },
-      },
-      chatMessage: {
-        findMany: async () => [incomingMessage],
-        updateMany: async (args: Record<string, unknown>) => {
-          chatMessageUpdateManyCalls.push(args);
-          return { count: 1 };
-        },
+        aggregate: chatAggregate({ unreadForBuyer: 2, unreadForSeller: 1 }),
       },
     } as never,
     {
@@ -424,6 +448,7 @@ test('markChatRead resets only current participant unread and marks incoming mes
   assert.deepEqual(result.messageIds, ['message-1']);
   assert.deepEqual(result.senderIds, ['seller-1']);
   assert.equal(result.chat.unreadCount, 0);
+  assert.equal(result.unreadTotal, 3);
   assert.equal(result.chat.buyerId, 'buyer-1');
   assert.deepEqual(chatMessageUpdateManyCalls[0]?.['where'], {
     id: {
@@ -608,9 +633,10 @@ test('markMessageDelivered does not convert message to read', async () => {
     {
       chatMessage: {
         findUnique: async () => createMessage(),
-        update: async ({ data }: { data: Record<string, unknown> }) => ({
+        updateMany: async () => ({ count: 1 }),
+        findUniqueOrThrow: async () => ({
           ...createMessage(),
-          deliveredAt: data['deliveredAt'],
+          deliveredAt: baseDate,
           readAt: null,
         }),
       },
@@ -634,6 +660,7 @@ test('markMessageDelivered does not convert message to read', async () => {
   assert.equal(result.message.status, 'delivered');
   assert.equal(result.message.readAt, null);
   assert.ok(result.message.deliveredAt);
+  assert.equal(result.published, true);
 });
 
 for (const userId of ['buyer-1', 'seller-1', 'stranger-1']) {
@@ -696,13 +723,21 @@ test('analytics invalidates once after commit; REST/socket resend and delivery d
 
 test('repeated delivery acknowledgement does not invalidate analytics', async () => {
   let invalidations = 0;
+  let deliveredAt: Date | null = null;
   const service = new ChatsService({ chatMessage: {
-    findUnique: async () => createMessage(),
-    update: async ({ data }: any) => ({ ...createMessage(), ...data }),
+    findUnique: async () => ({ ...createMessage(), deliveredAt }),
+    updateMany: async () => {
+      if (deliveredAt) return { count: 0 };
+      deliveredAt = baseDate;
+      return { count: 1 };
+    },
+    findUniqueOrThrow: async () => ({ ...createMessage(), deliveredAt }),
   } } as never, {} as never, {} as never, undefined,
   { changed: () => invalidations++ } as never);
   const auth = { userId: 'buyer-1', role: 'user' } as never;
-  await service.markMessageDelivered(auth, 'message-1');
-  await service.markMessageDelivered(auth, 'message-1');
+  const first = await service.markMessageDelivered(auth, 'message-1');
+  const second = await service.markMessageDelivered(auth, 'message-1');
+  assert.equal(first.published, true);
+  assert.equal(second.published, false);
   assert.equal(invalidations, 0);
 });

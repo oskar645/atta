@@ -284,6 +284,56 @@ test('chat message push sends absolute APNs badge count', async () => {
   );
 });
 
+test('badge update sends the same canonical zero badge to every active iOS device', async () => {
+  const pushes: Array<Record<string, unknown>> = [];
+  const service = new NotificationsService(
+    {
+      sendBadge: async (push: Record<string, unknown>) => {
+        pushes.push(push);
+        return { sent: true, status: 200 };
+      },
+    } as never,
+    {
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 0, unreadForSeller: 0 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
+      userNotification: { count: async () => 0 },
+      userDevice: { findMany: async () => [
+        { userId: 'user-1', deviceToken: 'ios-a', platform: 'IOS' },
+        { userId: 'user-1', deviceToken: 'ios-b', platform: 'IOS' },
+      ] },
+    } as never,
+    {} as never,
+  );
+
+  await service.sendBadgeUpdate('user-1');
+
+  assert.deepEqual(pushes, [
+    { token: 'ios-a', badge: 0 },
+    { token: 'ios-b', badge: 0 },
+  ]);
+});
+
+test('badge update contains APNs failures and preserves the completed read flow', async () => {
+  const warnings: string[] = [];
+  const service = new NotificationsService(
+    { sendBadge: async () => { throw new Error('APNs unavailable'); } } as never,
+    {
+      chat: { aggregate: async () => ({ _sum: { unreadForBuyer: 1, unreadForSeller: 0 } }) },
+      user: { findUnique: async () => ({ lastNotificationsSeenAt: baseDate }) },
+      userNotification: { count: async () => 0 },
+      userDevice: { findMany: async () => [
+        { userId: 'user-1', deviceToken: 'secret-token', platform: 'IOS' },
+      ] },
+    } as never,
+    {} as never,
+  );
+  (service as any).logger = { warn: (message: string) => warnings.push(message) };
+
+  await assert.doesNotReject(() => service.sendBadgeUpdate('user-1'));
+  assert.equal(warnings.length, 1);
+  assert.doesNotMatch(warnings[0], /secret-token/);
+});
+
 test('createSystemNotification keeps in-app notification when APNs send throws', async () => {
   const warnings: string[] = [];
   let notificationCreated = false;

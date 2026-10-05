@@ -299,7 +299,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       payload.messageId,
     );
 
-    this.emitDelivered(result.message);
+    if (result.published) this.emitDelivered(result.message);
     return result;
   }
 
@@ -374,7 +374,7 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       });
     }
     this.emitChatUpdatedToUser((message['senderId'] ?? '').toString(), senderChat);
-    this.emitChatUpdatedToUser(recipientId, recipientChat);
+    this.emitChatUpdatedToUser(recipientId, recipientChat, recipientUnreadTotal);
     this.emitUnreadChanged(recipientId, recipientChat, recipientUnreadTotal);
   }
 
@@ -389,11 +389,16 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     });
   }
 
-  emitChatUpdatedToUser(userId: string, chat: Record<string, unknown>) {
+  emitChatUpdatedToUser(
+    userId: string,
+    chat: Record<string, unknown>,
+    unreadTotal?: number,
+  ) {
     const normalizedUserId = userId.trim();
     if (!normalizedUserId) return;
     this.server.to(`user:${normalizedUserId}`).emit('chat.updated', {
       chat,
+      ...(unreadTotal == null ? {} : { unreadTotal }),
     });
   }
 
@@ -474,8 +479,14 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     messageIds: string[],
     readAt: string,
     senderIds: string[],
+    readerId?: string,
+    unreadTotal?: number,
   ) {
-    this.emitChatUpdated(chat);
+    if (readerId) {
+      this.emitChatUpdatedToUser(readerId, chat, unreadTotal);
+    } else {
+      this.emitChatUpdated(chat);
+    }
     const chatId = (chat['id'] ?? '').toString();
     for (const messageId of messageIds) {
       this.server.to(`chat:${chatId}`).emit('message.read', {

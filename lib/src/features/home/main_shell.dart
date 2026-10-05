@@ -13,6 +13,7 @@ import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/web_app_promo_storage.dart';
+import 'package:atta/src/services/web_mobile_platform.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -251,12 +252,13 @@ class _MainShellState extends State<MainShell> {
         stream: widget.guestMode
             ? const Stream<int>.empty()
             : chat.streamUnreadTotal(uid),
+        initialData: widget.guestMode ? null : chat.peekUnreadTotal(uid),
         builder: (context, chatSnap) {
-          final unreadChats = chatSnap.data ?? 0;
+          final unreadChats = chatSnap.data;
 
           Widget msgIcon(Color color) {
             final icon = Icon(Icons.chat_bubble_outline, color: color);
-            if (unreadChats <= 0) return icon;
+            if (unreadChats == null || unreadChats <= 0) return icon;
             return Badge(
               label: Text(unreadChats > 99 ? '99+' : '$unreadChats'),
               child: icon,
@@ -365,6 +367,9 @@ class _WebAppPromoDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final platform = currentWebMobilePlatform();
+    final showAppStore = platform != WebMobilePlatform.android;
+    final showGooglePlay = platform != WebMobilePlatform.ios;
     return PopScope(
       onPopInvokedWithResult: (_, __) => markWebAppPromoDismissed(),
       child: AlertDialog(
@@ -393,16 +398,18 @@ class _WebAppPromoDialog extends StatelessWidget {
           'Скачайте приложение или продолжайте пользоваться Атта в браузере.',
         ),
         actions: [
-          TextButton.icon(
-            onPressed: () => _openStore(webAppPromoAppStoreUrl),
-            icon: const Icon(Icons.apple),
-            label: const Text('Загрузить в App Store'),
-          ),
-          TextButton.icon(
-            onPressed: () => _openStore(webAppPromoGooglePlayUrl),
-            icon: const Icon(Icons.shop),
-            label: const Text('Доступно в Google Play'),
-          ),
+          if (showAppStore)
+            TextButton.icon(
+              onPressed: () => _openStore(webAppPromoAppStoreUrl),
+              icon: const Icon(Icons.apple),
+              label: const Text('Загрузить в App Store'),
+            ),
+          if (showGooglePlay)
+            TextButton.icon(
+              onPressed: () => _openStore(webAppPromoGooglePlayUrl),
+              icon: const Icon(Icons.shop),
+              label: const Text('Загрузить в Google Play'),
+            ),
           FilledButton(
             onPressed: () => _close(context),
             child: const Text('Продолжить в браузере'),

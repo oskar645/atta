@@ -181,6 +181,79 @@ void main() {
     expect(unread, 0);
   });
 
+  test('chat.updated preserves authoritative unread total', () async {
+    final socket = _FakeChatSocketService();
+    final service = ChatService(
+      socketService: socket,
+      api: _FakeChatsApi(unreadTotal: 3),
+      mediaApi: _FakeMediaApi(),
+    );
+    await service.refreshInbox('user-1');
+    final values = <int>[];
+    final sub = service.streamUnreadTotal('user-1').listen(values.add);
+    await Future<void>.delayed(Duration.zero);
+
+    socket.emitEvent('chat.updated', <String, dynamic>{
+      'chat': _chatMap(unreadCount: 1),
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(values, everyElement(3));
+    await sub.cancel();
+  });
+
+  test('message.new applies chat and absolute unread in one emission',
+      () async {
+    final socket = _FakeChatSocketService();
+    final service = ChatService(
+      socketService: socket,
+      api: _FakeChatsApi(unreadTotal: 3),
+      mediaApi: _FakeMediaApi(),
+    );
+    await service.refreshInbox('user-1');
+    final values = <int>[];
+    final sub = service.streamUnreadTotal('user-1').listen(values.add);
+    await Future<void>.delayed(Duration.zero);
+    values.clear();
+
+    socket.emitEvent('message.new', <String, dynamic>{
+      'chat': _chatMap(unreadCount: 4),
+      'message': _messageMap(
+        id: 'atomic-1',
+        chatId: 'chat-1',
+        text: 'Новое',
+      ),
+      'unreadTotal': 4,
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(values, <int>[4]);
+    await sub.cancel();
+  });
+
+  test('cold start restores cached authoritative unread without zero',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'atta.chat.cache.v1.user-1': jsonEncode(<String, dynamic>{
+        'authoritativeUnreadTotal': 7,
+        'chats': const <Map<String, dynamic>>[],
+      }),
+    });
+    final service = ChatService(
+      socketService: _FakeChatSocketService(),
+      api: _FakeChatsApi(unreadTotal: 7),
+      mediaApi: _FakeMediaApi(),
+    );
+    final values = <int>[];
+    final sub = service.streamUnreadTotal('user-1').listen(values.add);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(values, isNotEmpty);
+    expect(values.first, 7);
+    expect(values, isNot(contains(0)));
+    await sub.cancel();
+  });
+
   test('socket read update does not erase existing message text', () async {
     final socket = _FakeChatSocketService();
     final service = ChatService(

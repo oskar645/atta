@@ -224,5 +224,17 @@ AttaDeepLink? parseAttaDeepLink(Uri uri) {
     );
   }
 
+  // The server's "continue in browser" action moves invite visitors to the
+  // Flutter web root so they can use the marketplace without looping back to
+  // the install landing page. Keep the referral context on that transition.
+  if (uri.pathSegments.isEmpty &&
+      (uri.queryParameters['source'] ?? '').trim().toLowerCase() == 'invite') {
+    final referrerId = (uri.queryParameters['ref'] ?? '').trim();
+    return AttaDeepLink.invite(
+      uri: uri,
+      referrerId: referrerId,
+    );
+  }
+
   return null;
 }

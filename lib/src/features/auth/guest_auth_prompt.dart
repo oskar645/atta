@@ -1,5 +1,6 @@
 import 'package:atta/src/features/auth/passwordless_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/web_mobile_platform.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -55,6 +56,7 @@ class GuestAuthSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final webPlatform = currentWebMobilePlatform();
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final screenHeight = MediaQuery.sizeOf(context).height;
     final sheetHeight = (screenHeight * 0.56).clamp(360.0, 520.0);
@@ -119,16 +121,18 @@ class GuestAuthSheet extends StatelessWidget {
                               spacing: 10,
                               runSpacing: 8,
                               children: [
-                                _StoreBadgeButton(
-                                  icon: Icons.apple,
-                                  label: 'App Store',
-                                  onPressed: () => _openStore(_appStoreUrl),
-                                ),
-                                _StoreBadgeButton(
-                                  icon: Icons.shop,
-                                  label: 'Google Play',
-                                  onPressed: () => _openStore(_googlePlayUrl),
-                                ),
+                                if (webPlatform != WebMobilePlatform.android)
+                                  _StoreBadgeButton(
+                                    icon: Icons.apple,
+                                    label: 'App Store',
+                                    onPressed: () => _openStore(_appStoreUrl),
+                                  ),
+                                if (webPlatform != WebMobilePlatform.ios)
+                                  _StoreBadgeButton(
+                                    icon: Icons.shop,
+                                    label: 'Google Play',
+                                    onPressed: () => _openStore(_googlePlayUrl),
+                                  ),
                               ],
                             ),
                           ],

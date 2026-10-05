@@ -39,7 +39,29 @@ export class ApnsService {
   }
 
   async send(push: ApnsPush): Promise<ApnsSendResult> {
-    const deviceToken = push.token.trim();
+    return this.sendPayload(push.token, {
+      aps: {
+        alert: { title: push.title, body: push.body },
+        sound: 'default',
+        ...(push.badge == null ? {} : { badge: push.badge }),
+      },
+      ...(push.payload ?? {}),
+    }, 'alert', '10');
+  }
+
+  async sendBadge(push: { token: string; badge: number }): Promise<ApnsSendResult> {
+    return this.sendPayload(push.token, {
+      aps: { badge: Math.max(0, Math.trunc(push.badge)), 'content-available': 1 },
+    }, 'background', '5');
+  }
+
+  private async sendPayload(
+    token: string,
+    payload: Record<string, unknown>,
+    pushType: 'alert' | 'background',
+    priority: '10' | '5',
+  ): Promise<ApnsSendResult> {
+    const deviceToken = token.trim();
     if (!deviceToken) {
       return { sent: false, status: 0, reason: 'missing_token' };
     }
@@ -52,17 +74,7 @@ export class ApnsService {
     } catch (error) {
       return this.skipForConfigurationError(error);
     }
-    const body = JSON.stringify({
-      aps: {
-        alert: {
-          title: push.title,
-          body: push.body,
-        },
-        sound: 'default',
-        ...(push.badge == null ? {} : { badge: push.badge }),
-      },
-      ...(push.payload ?? {}),
-    });
+    const body = JSON.stringify(payload);
 
     return await new Promise<ApnsSendResult>(
       (resolve) => {
@@ -84,8 +96,8 @@ export class ApnsService {
             ':path': `/3/device/${deviceToken}`,
             authorization: `bearer ${jwt}`,
             'apns-topic': env.APNS_BUNDLE_ID,
-            'apns-push-type': 'alert',
-            'apns-priority': '10',
+            'apns-push-type': pushType,
+            'apns-priority': priority,
             'content-type': 'application/json',
           });
         } catch (error) {

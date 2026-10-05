@@ -169,6 +169,26 @@ void main() {
 
     expect(updates, <int>[0]);
   });
+
+  test('bind uses last known chat count without writing temporary zero',
+      () async {
+    final updates = <int>[];
+    final badge = AppBadgeService(
+      isSupported: () async => true,
+      updateBadge: (value) async => updates.add(value),
+    );
+
+    await badge.bindForUser(
+      userId: 'user-1',
+      chatService: _KnownUnreadChats(4),
+      notificationsService: NotificationsService(),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(updates, isNotEmpty);
+    expect(updates.first, 4);
+    expect(updates, isNot(contains(0)));
+  });
 }
 
 Map<String, dynamic> _messageEvent(String id, {required int unreadTotal}) {
@@ -260,6 +280,14 @@ class _UnreadChats extends ChatService {
   final counts = StreamController<int>.broadcast();
   @override
   Stream<int> streamUnreadTotal(String uid) => counts.stream;
+}
+
+class _KnownUnreadChats extends _UnreadChats {
+  _KnownUnreadChats(this.value);
+  final int value;
+
+  @override
+  int? peekUnreadTotal(String uid) => value;
 }
 
 class _UnreadNotifications extends NotificationsService {

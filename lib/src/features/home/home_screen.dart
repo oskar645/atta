@@ -833,7 +833,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                     _CategoryRow(
                         selected: _category, onSelect: _selectCategory),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
                       child: TextField(
                         controller: _searchCtrl,
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
@@ -1587,7 +1587,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         SliverToBoxAdapter(
           child: Padding(
             key: _adKey,
-            padding: const EdgeInsets.fromLTRB(10, 10, 10, 0),
+            padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
             child: FeedAdBanner(
               ad: widget.ad!,
               onTapAd: (ad) {
