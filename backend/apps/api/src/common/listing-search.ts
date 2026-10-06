@@ -44,6 +44,18 @@ const CAR_CHARACTERISTIC_KEYS = [
 ] as const;
 
 const SEARCH_ALIASES = [
+  [
+    'toyota',
+    'toyta',
+    'toiota',
+    'тойота',
+    'тайота',
+    'тайото',
+    'тоёта',
+    'таёта',
+    'тойото',
+    'toyoto',
+  ],
   ['xiaomi', 'сяоми'],
   ['huawei', 'хуавей'],
   ['iphone', 'айфон'],
@@ -234,6 +246,13 @@ const addAliasVariants = (variants: Set<string>, value: string) => {
   }
 };
 
+const matchesKnownAlias = (value: string) => {
+  const compactValue = compactSearchText(value);
+  return compactValue.length > 0 && SEARCH_ALIASES.some(
+    (group) => group.map(compactSearchText).includes(compactValue),
+  );
+};
+
 const addLatinOrthographicVariants = (variants: Set<string>, value: string) => {
   if (!/^[a-z]+$/.test(value)) return;
 
@@ -372,9 +391,12 @@ const carCharacteristicContains = (key: (typeof CAR_CHARACTERISTIC_KEYS)[number]
 
 const buildTokenSearchWhere = (token: string): Prisma.ListingWhereInput | null => {
   const variants = new Set(searchTextVariants(token));
-  for (const variant of [...variants]) {
-    for (const deletion of deletionTypoVariants(variant)) {
-      variants.add(deletion);
+  const knownAlias = matchesKnownAlias(token);
+  if (!knownAlias) {
+    for (const variant of [...variants]) {
+      for (const deletion of deletionTypoVariants(variant)) {
+        variants.add(deletion);
+      }
     }
   }
 
@@ -394,7 +416,7 @@ const buildTokenSearchWhere = (token: string): Prisma.ListingWhereInput | null =
     ),
   );
 
-  const fragments = typoFragments(token);
+  const fragments = knownAlias ? [] : typoFragments(token);
   if (fragments.length > 1) {
     textConditions.push(
       ...SEARCHABLE_TEXT_FIELDS.map((field) => ({
@@ -559,9 +581,12 @@ export const buildListingSearchSql = (
 
   const tokenConditions = tokenizeSearchText(value).map((token) => {
     const variants = new Set(searchTextVariants(token));
-    for (const variant of [...variants]) {
-      for (const deletion of deletionTypoVariants(variant)) {
-        variants.add(deletion);
+    const knownAlias = matchesKnownAlias(token);
+    if (!knownAlias) {
+      for (const variant of [...variants]) {
+        for (const deletion of deletionTypoVariants(variant)) {
+          variants.add(deletion);
+        }
       }
     }
     const textConditions = [...variants].flatMap((variant) =>
@@ -576,7 +601,7 @@ export const buildListingSearchSql = (
         sqlCarValuesCompactContain(alias, variant),
       ]),
     );
-    if (typoFragments(token).length > 1) {
+    if (!knownAlias && typoFragments(token).length > 1) {
       textConditions.push(
         ...SEARCHABLE_TEXT_FIELDS.map((field) => sqlTextFuzzyContains(alias, field.sql, token)),
         sqlCarValuesFuzzyContain(alias, token),

@@ -42,6 +42,15 @@ const CAR_CHARACTERISTIC_KEYS = [
     'note',
 ];
 const SEARCH_ALIASES = [
+    [
+        'toyota',
+        'toyta',
+        'toiota',
+        'тойота',
+        'тайота',
+        'тоёта',
+        'таёта',
+    ],
     ['xiaomi', 'сяоми'],
     ['huawei', 'хуавей'],
     ['iphone', 'айфон'],

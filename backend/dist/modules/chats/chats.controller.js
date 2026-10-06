@@ -20,6 +20,7 @@ const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const create_chat_dto_1 = require("./dto/create-chat.dto");
 const send_chat_message_dto_1 = require("./dto/send-chat-message.dto");
+const edit_chat_message_dto_1 = require("./dto/edit-chat-message.dto");
 const chats_gateway_1 = require("./chats.gateway");
 const chats_service_1 = require("./chats.service");
 let ChatsController = class ChatsController {
@@ -224,18 +225,18 @@ let MessagesController = class MessagesController {
         return result;
     }
     async deleteMessage(authUser, messageId) {
-        const result = await this.chatsService.deleteMessage(authUser, messageId);
-        this.chatsGateway.emitMessageDeleted(result.messageId, result.chatId, result.participantIds);
-        this.chatsGateway.emitChatUpdatedToUser(authUser.userId, result.senderChat);
-        this.chatsGateway.emitChatUpdatedToUser(result.recipientChat['buyerId'] == authUser.userId
-            ? result.recipientChat['sellerId'].toString()
-            : result.recipientChat['buyerId'].toString(), result.recipientChat);
-        result.unreadUpdates.forEach((item) => {
-            this.chatsGateway.emitUnreadChanged(item.userId, {
-                id: item.chatId,
-                unreadCount: item.unreadCount,
-            }, item.unreadTotal);
-        });
+        const result = await this.chatsService.hideMessageForMe(authUser, messageId);
+        this.chatsGateway.emitMessageHidden(result.messageId, result.chatId, result.userId);
+        return result;
+    }
+    async deleteMessageForEveryone(authUser, messageId) {
+        const result = await this.chatsService.deleteMessageForEveryone(authUser, messageId);
+        this.chatsGateway.emitMessageUpdated(result.message, result.chatId, result.participantIds);
+        return result;
+    }
+    async editMessage(authUser, messageId, dto) {
+        const result = await this.chatsService.editMessage(authUser, messageId, dto.text);
+        this.chatsGateway.emitMessageUpdated(result.message, result.chatId, result.participantIds);
         return result;
     }
 };
@@ -264,6 +265,23 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], MessagesController.prototype, "deleteMessage", null);
+__decorate([
+    (0, common_1.Delete)(':id/everyone'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], MessagesController.prototype, "deleteMessageForEveryone", null);
+__decorate([
+    (0, common_1.Patch)(':id'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, edit_chat_message_dto_1.EditChatMessageDto]),
+    __metadata("design:returntype", Promise)
+], MessagesController.prototype, "editMessage", null);
 exports.MessagesController = MessagesController = __decorate([
     (0, common_1.Controller)('messages'),
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),

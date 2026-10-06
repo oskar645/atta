@@ -116,8 +116,12 @@ let AuthController = class AuthController {
     revokeRestoreCredential(authUser, dto) {
         return this.restoreCredentialsService.revoke(authUser, dto.credentialId ?? dto.credential_id);
     }
-    markAppOpened(authUser) {
-        return this.appVisitsService.markAppOpened(authUser.userId);
+    markAppOpened(authUser, body) {
+        return this.appVisitsService.markAppOpened(authUser.userId, new Date(), {
+            platform: body.platform,
+            appVersion: body.app_version,
+            buildNumber: body.build_number,
+        });
     }
     refresh(dto) {
         return this.authService.refresh(dto);
@@ -255,8 +259,9 @@ __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('app-open'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", void 0)
 ], AuthController.prototype, "markAppOpened", null);
 __decorate([

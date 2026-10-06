@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { UserStatus } from '@prisma/client';
+import { DevicePlatform, UserStatus } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { normalizeStoredMediaUrl, toIsoString } from '../../common/serializers';
@@ -23,7 +23,11 @@ export class AppVisitsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async markAppOpened(userId: string, openedAt = new Date()) {
+  async markAppOpened(
+    userId: string,
+    openedAt = new Date(),
+    client?: { platform?: string; appVersion?: string; buildNumber?: string },
+  ) {
     const visitDate = this.getZonedDateStamp(openedAt);
     const visitId = randomUUID();
     await this.prisma.$executeRaw`
@@ -35,11 +39,43 @@ export class AppVisitsService {
         updated_at = CURRENT_TIMESTAMP
     `;
 
+    const platform = this.parsePlatform(client?.platform);
+    if (platform != null) {
+      const appVersion = client?.appVersion?.trim().slice(0, 64) ?? '';
+      const buildNumber = client?.buildNumber?.trim().slice(0, 64) ?? '';
+      await this.prisma.$executeRaw`
+        INSERT INTO analytics_platform_activity
+          (user_id, platform, day, app_version, build_number, last_activity_at)
+        VALUES
+          (${userId}::uuid, ${platform}::"DevicePlatform", ${visitDate}::date,
+           ${appVersion}, ${buildNumber}, ${openedAt})
+        ON CONFLICT (user_id, platform, day)
+        DO UPDATE SET
+          app_version = EXCLUDED.app_version,
+          build_number = EXCLUDED.build_number,
+          last_activity_at = EXCLUDED.last_activity_at,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+    }
+
     return {
       source: 'timeweb',
       visit_date: visitDate,
       last_activity_at: openedAt.toISOString(),
     };
+  }
+
+  private parsePlatform(value?: string): DevicePlatform | null {
+    switch (value?.trim().toUpperCase()) {
+      case 'IOS':
+        return DevicePlatform.IOS;
+      case 'ANDROID':
+        return DevicePlatform.ANDROID;
+      case 'WEB':
+        return DevicePlatform.WEB;
+      default:
+        return null;
+    }
   }
 
   async countToday(now = new Date()) {

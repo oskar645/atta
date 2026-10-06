@@ -332,6 +332,28 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     return presence;
   }
 
+  @SubscribeMessage('typing.set')
+  async handleTyping(
+    @MessageBody() payload: { chatId: string; isTyping: boolean },
+    @ConnectedSocket() client: Socket,
+  ) {
+    await this.requireActiveSocket(client);
+    const userId = (client.data.userId ?? '').toString();
+    const result = await this.chatsService.getChat(
+      { userId, sessionId: '', role: 'user' },
+      payload.chatId,
+    );
+    const buyerId = (result.chat['buyerId'] ?? '').toString();
+    const sellerId = (result.chat['sellerId'] ?? '').toString();
+    const recipientId = buyerId === userId ? sellerId : buyerId;
+    this.server.to(`user:${recipientId}`).emit('typing.changed', {
+      chatId: payload.chatId,
+      userId,
+      isTyping: payload.isTyping === true,
+    });
+    return { sent: true };
+  }
+
   @SubscribeMessage('presence.set')
   async handlePresence(
     @MessageBody() payload: { isOnline: boolean },
@@ -461,6 +483,18 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.server.to(`chat:${chatId}`).emit('message.deleted', payload);
     for (const userId of participantIds) {
       this.server.to(`user:${userId}`).emit('message.deleted', payload);
+    }
+  }
+
+  emitMessageHidden(messageId: string, chatId: string, userId: string) {
+    this.server.to(`user:${userId}`).emit('message.hidden', { messageId, chatId });
+  }
+
+  emitMessageUpdated(message: Record<string, unknown>, chatId: string, participantIds: string[]) {
+    const payload = { message };
+    this.server.to(`chat:${chatId}`).emit('message.updated', payload);
+    for (const userId of participantIds) {
+      this.server.to(`user:${userId}`).emit('message.updated', payload);
     }
   }
 

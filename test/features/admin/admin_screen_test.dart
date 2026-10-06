@@ -10,6 +10,88 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('dashboard loads once and keeps platform analytics last',
+      (tester) async {
+    tester.view.physicalSize = const Size(900, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(
+              value: _FakeSavedSearchService()),
+        ],
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Пользователей'), findsOneWidget);
+    expect(find.text('Платформы'), findsOneWidget);
+    final usersY = tester.getTopLeft(find.text('Пользователей')).dy;
+    final platformsY = tester.getTopLeft(find.text('Платформы')).dy;
+    expect(usersY, lessThan(platformsY));
+
+    await tester.tap(find.text('Платформы'));
+    await tester.pumpAndSettle();
+    expect(find.text('Активные пользователи'), findsOneWidget);
+    expect(find.text('Регистрации'), findsOneWidget);
+    expect(find.text('iPhone'), findsNWidgets(2));
+    expect(find.text('Android'), findsNWidgets(2));
+    expect(find.text('Web'), findsNWidgets(2));
+    expect(find.text('Версии приложения'), findsOneWidget);
+  });
+
+  testWidgets('pulling dashboard down refreshes every dashboard block',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    var usageCalls = 0;
+    Future<Map<String, dynamic>> loadUsage() async {
+      usageCalls += 1;
+      return _loadUsageAnalytics();
+    }
+
+    tester.view.physicalSize = const Size(900, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(
+              value: _FakeSavedSearchService()),
+        ],
+        child: MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: loadUsage),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 1);
+    expect(usageCalls, 1);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, 500));
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 2);
+    expect(adminService.lastDashboardForceRefresh, isTrue);
+    expect(usageCalls, 2);
+  });
+
   testWidgets(
     'dashboard shows points purchases card and opens purchases screen',
     (tester) async {
@@ -371,7 +453,29 @@ void main() {
 }
 
 Future<Map<String, dynamic>> _loadUsageAnalytics() async => <String, dynamic>{
-      'periods': <String, dynamic>{},
+      'periods': <String, dynamic>{
+        'today': <String, dynamic>{
+          'guests': 2,
+          'guestOpens': 3,
+          'registeredOpens': 4,
+          'totalOpens': 7,
+          'messages': 5,
+          'activeChats': 1,
+        },
+      },
+      'platforms': <String, dynamic>{
+        for (final period in <String>['today', 'week', 'month', 'all'])
+          period: <String, dynamic>{
+            'active': <String, dynamic>{'ios': 1, 'android': 2, 'web': 3},
+            'registrations': <String, dynamic>{
+              'ios': 4,
+              'android': 5,
+              'web': 6,
+              'unknown': 0,
+            },
+            'versions': <Map<String, dynamic>>[],
+          },
+      },
     };
 
 class _FakeAuthService extends AuthService {
@@ -394,6 +498,8 @@ class _FakeAdminService extends AdminService {
   int pendingModerationStreamCalls = 0;
   int unreadSupportStreamCalls = 0;
   int openReportsStreamCalls = 0;
+  int dashboardStatsCalls = 0;
+  bool lastDashboardForceRefresh = false;
   int _moderationBadgeCount = 2;
   int _supportBadgeCount = 0;
   int _reportsBadgeCount = 1;
@@ -471,6 +577,8 @@ class _FakeAdminService extends AdminService {
   @override
   Future<Map<String, dynamic>> dashboardStats(
       {bool forceRefresh = false}) async {
+    dashboardStatsCalls += 1;
+    lastDashboardForceRefresh = forceRefresh;
     return <String, dynamic>{
       'stats': <String, dynamic>{
         'users': 1,

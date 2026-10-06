@@ -196,8 +196,19 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('app-open')
-  markAppOpened(@CurrentUser() authUser: AuthenticatedUser) {
-    return this.appVisitsService.markAppOpened(authUser.userId);
+  markAppOpened(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() body: {
+      platform?: string;
+      app_version?: string;
+      build_number?: string;
+    },
+  ) {
+    return this.appVisitsService.markAppOpened(authUser.userId, new Date(), {
+      platform: body.platform,
+      appVersion: body.app_version,
+      buildNumber: body.build_number,
+    });
   }
 
   @Post('refresh')

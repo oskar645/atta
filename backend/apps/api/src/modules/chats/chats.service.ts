@@ -37,7 +37,10 @@ const messageInclude = {
   chat: {
     include: chatInclude,
   },
+  replyTo: true,
 } satisfies Prisma.ChatMessageInclude;
+
+const messageActionWindowMs = 15 * 60 * 1000;
 
 type ChatCursorPayload = {
   lastMessageAt: string | null;
@@ -349,7 +352,8 @@ export class ChatsService {
   private serializeMessage(
     message: Prisma.ChatMessageGetPayload<{ include: typeof messageInclude }>,
   ) {
-    const imageUrl =
+    const deletedForEveryone = message.deletedAt != null;
+    const imageUrl = deletedForEveryone ? null :
       message.messageType === ChatMessageType.IMAGE && message.imageKey
         ? this.storageService.buildProtectedChatUrl(message.id)
         : normalizeStoredMediaUrl(message.imageUrl, {
@@ -368,10 +372,10 @@ export class ChatsService {
           ? message.chat.sellerId
           : message.chat.buyerId,
       participants: [message.chat.buyerId, message.chat.sellerId],
-      text: message.text,
-      body: message.text,
-      content: message.text,
-      message: message.text,
+      text: deletedForEveryone ? 'Сообщение удалено' : message.text,
+      body: deletedForEveryone ? 'Сообщение удалено' : message.text,
+      content: deletedForEveryone ? 'Сообщение удалено' : message.text,
+      message: deletedForEveryone ? 'Сообщение удалено' : message.text,
       type: message.messageType === ChatMessageType.TEXT ? 'text' : 'image',
       messageType: message.messageType === ChatMessageType.TEXT ? 'text' : 'image',
       imageUrl,
@@ -391,6 +395,19 @@ export class ChatsService {
       delivered_at: message.deliveredAt?.toISOString() ?? null,
       readAt: message.readAt?.toISOString() ?? null,
       read_at: message.readAt?.toISOString() ?? null,
+      editedAt: message.editedAt?.toISOString() ?? null,
+      edited_at: message.editedAt?.toISOString() ?? null,
+      deletedForEveryone,
+      deleted_for_everyone: deletedForEveryone,
+      replyToMessageId: message.replyToMessageId,
+      reply_to_message_id: message.replyToMessageId,
+      replyTo: message.replyTo ? {
+        id: message.replyTo.id,
+        senderId: message.replyTo.senderId,
+        text: message.replyTo.deletedAt ? 'Сообщение удалено' : message.replyTo.text,
+        type: message.replyTo.messageType === ChatMessageType.IMAGE ? 'image' : 'text',
+        deletedForEveryone: message.replyTo.deletedAt != null,
+      } : null,
     };
   }
 
@@ -527,7 +544,7 @@ export class ChatsService {
     const messages = await this.prisma.chatMessage.findMany({
       where: {
         chatId,
-        deletedAt: null,
+        NOT: { hiddenForUserIds: { has: authUser.userId } },
         ...(cursorWhere ?? {}),
       },
       include: messageInclude,
@@ -565,9 +582,18 @@ export class ChatsService {
       throw new BadRequestException('Текст сообщения пустой');
     }
     const clientMessageId = dto.clientMessageId?.trim() || null;
+    const replyToMessageId = dto.replyToMessageId?.trim() || null;
 
     const recipientId = this.otherParticipantId(chat, authUser.userId);
     await this.assertNoPeerBlock(authUser.userId, recipientId);
+
+    if (replyToMessageId) {
+      const replyTarget = await this.prisma.chatMessage.findFirst({
+        where: { id: replyToMessageId, chatId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!replyTarget) throw new BadRequestException('Сообщение для ответа не найдено');
+    }
 
     if (clientMessageId) {
       const existing = await this.prisma.chatMessage.findFirst({
@@ -599,6 +625,7 @@ export class ChatsService {
           clientMessageId,
           messageType: ChatMessageType.TEXT,
           text,
+          replyToMessageId,
         },
         include: messageInclude,
       });
@@ -775,7 +802,7 @@ export class ChatsService {
     };
   }
 
-  async deleteMessage(authUser: AuthenticatedUser, messageId: string) {
+  async hideMessageForMe(authUser: AuthenticatedUser, messageId: string) {
     const message = await this.prisma.chatMessage.findUnique({
       where: {
         id: messageId,
@@ -783,7 +810,7 @@ export class ChatsService {
       include: messageInclude,
     });
 
-    if (!message || message.deletedAt) {
+    if (!message) {
       throw new NotFoundException('Сообщение не найдено');
     }
 
@@ -792,92 +819,56 @@ export class ChatsService {
       throw new ForbiddenException('Нет доступа к сообщению');
     }
 
-    await this.storageService.deleteChatImageForMessage(messageId);
-
-    const result = await this.prisma.$transaction(async (tx) => {
-      await tx.chatMessage.update({
-        where: {
-          id: messageId,
-        },
-        data: {
-          deletedAt: new Date(),
-        },
+    if (!message.hiddenForUserIds.includes(authUser.userId)) {
+      await this.prisma.chatMessage.update({
+        where: { id: messageId },
+        data: { hiddenForUserIds: { push: authUser.userId } },
       });
-
-      const lastVisible = await tx.chatMessage.findFirst({
-        where: {
-          chatId: chat.id,
-          deletedAt: null,
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-      });
-
-      const unreadForBuyer = await tx.chatMessage.count({
-        where: {
-          chatId: chat.id,
-          deletedAt: null,
-          senderId: chat.sellerId,
-          readAt: null,
-        },
-      });
-      const unreadForSeller = await tx.chatMessage.count({
-        where: {
-          chatId: chat.id,
-          deletedAt: null,
-          senderId: chat.buyerId,
-          readAt: null,
-        },
-      });
-
-      const nextChat = await tx.chat.update({
-        where: {
-          id: chat.id,
-        },
-        data: {
-          lastMessage: lastVisible?.text ?? '',
-          lastMessageType: lastVisible?.messageType ?? ChatMessageType.TEXT,
-          lastMessageAt: lastVisible?.createdAt ?? chat.createdAt,
-          unreadForBuyer,
-          unreadForSeller,
-        },
-        include: chatInclude,
-      });
-
-      return {
-        chat: nextChat,
-      };
-    });
-
-    const [buyerUnreadTotal, sellerUnreadTotal] = await Promise.all([
-      this.unreadTotalForUser(chat.buyerId),
-      this.unreadTotalForUser(chat.sellerId),
-    ]);
+    }
 
     return {
       source: 'timeweb',
-      deleted: true,
+      hidden: true,
       messageId,
       chatId: chat.id,
-      participantIds: [chat.buyerId, chat.sellerId],
-      senderChat: await this.serializeChat(result.chat, chat.buyerId),
-      recipientChat: await this.serializeChat(result.chat, chat.sellerId),
-      unreadUpdates: [
-        {
-          userId: chat.buyerId,
-          chatId: chat.id,
-          unreadCount: result.chat.unreadForBuyer,
-          unreadTotal: buyerUnreadTotal,
-        },
-        {
-          userId: chat.sellerId,
-          chatId: chat.id,
-          unreadCount: result.chat.unreadForSeller,
-          unreadTotal: sellerUnreadTotal,
-        },
-      ],
+      userId: authUser.userId,
     };
+  }
+
+  async deleteMessageForEveryone(authUser: AuthenticatedUser, messageId: string) {
+    const message = await this.prisma.chatMessage.findUnique({ where: { id: messageId }, include: messageInclude });
+    if (!message || message.deletedAt) throw new NotFoundException('Сообщение не найдено');
+    if (message.senderId !== authUser.userId) throw new ForbiddenException('Удалить у всех может только отправитель');
+    if (Date.now() - message.createdAt.getTime() > messageActionWindowMs) {
+      throw new BadRequestException('Удалить у всех можно в течение 15 минут');
+    }
+    await this.storageService.deleteChatImageForMessage(messageId);
+    const updated = await this.prisma.chatMessage.update({
+      where: { id: messageId },
+      data: { deletedAt: new Date(), text: '', imageBucket: null, imageKey: null, imageUrl: null },
+      include: messageInclude,
+    });
+    await this.prisma.chat.updateMany({
+      where: { id: message.chatId, lastMessageAt: message.createdAt },
+      data: { lastMessage: 'Сообщение удалено', lastMessageType: ChatMessageType.TEXT },
+    });
+    return { message: this.serializeMessage(updated), chatId: message.chatId, participantIds: [message.chat.buyerId, message.chat.sellerId] };
+  }
+
+  async editMessage(authUser: AuthenticatedUser, messageId: string, rawText: string) {
+    const message = await this.prisma.chatMessage.findUnique({ where: { id: messageId }, include: messageInclude });
+    if (!message || message.deletedAt) throw new NotFoundException('Сообщение не найдено');
+    if (message.senderId !== authUser.userId || message.messageType !== ChatMessageType.TEXT) {
+      throw new ForbiddenException('Можно редактировать только своё текстовое сообщение');
+    }
+    if (Date.now() - message.createdAt.getTime() > messageActionWindowMs) {
+      throw new BadRequestException('Редактировать сообщение можно в течение 15 минут');
+    }
+    const text = rawText.trim();
+    if (!text) throw new BadRequestException('Текст сообщения пустой');
+    const updated = await this.prisma.chatMessage.update({ where: { id: messageId }, data: { text, editedAt: new Date() }, include: messageInclude });
+    await this.prisma.chat.updateMany({ where: { id: message.chatId, lastMessageAt: message.createdAt }, data: { lastMessage: text } });
+    return { message: this.serializeMessage(updated), chatId: message.chatId, participantIds: [message.chat.buyerId, message.chat.sellerId] };
   }
 
   async uploadImage(

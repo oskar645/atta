@@ -57,7 +57,7 @@ void main() {
         expect(tester.getCenter(refresh).dy, tester.getCenter(topUp).dy);
         expect(
             tester
-                .getCenter(find.byIcon(Icons.account_balance_wallet_outlined))
+                .getCenter(find.byIcon(Icons.account_balance_wallet_rounded))
                 .dy,
             tester.getCenter(topUp).dy);
       } else {
@@ -80,6 +80,21 @@ void main() {
 
     expect(find.text('ID'), findsNothing);
     expect(find.textContaining('user-1'), findsNothing);
+  });
+
+  testWidgets('ordinary profile shows verification and member since statuses',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Подтвердите почту'));
+
+    expect(find.textContaining('Номер подтверж'), findsNothing);
+    expect(find.text('На ATTA с августа 2026 года'), findsOneWidget);
+    expect(find.byKey(const Key('profile-member-since')), findsOneWidget);
   });
 
   testWidgets('profile shows cached auth user immediately without skeleton',
@@ -720,6 +735,8 @@ class _FakeProfileService extends ProfileService {
       'display_name': 'ATTA User',
       'phone': '79990000000',
       'phoneVerified': true,
+      'email_verified': false,
+      'created_at': '2026-08-12T10:00:00.000Z',
     };
   }
 

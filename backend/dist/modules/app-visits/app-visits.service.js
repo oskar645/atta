@@ -21,7 +21,7 @@ let AppVisitsService = class AppVisitsService {
         this.prisma = prisma;
         this.onlineTtlMs = 2 * 60 * 1000;
     }
-    async markAppOpened(userId, openedAt = new Date()) {
+    async markAppOpened(userId, openedAt = new Date(), client) {
         const visitDate = this.getZonedDateStamp(openedAt);
         const visitId = (0, crypto_1.randomUUID)();
         await this.prisma.$executeRaw `
@@ -32,11 +32,41 @@ let AppVisitsService = class AppVisitsService {
         last_activity_at = EXCLUDED.last_activity_at,
         updated_at = CURRENT_TIMESTAMP
     `;
+        const platform = this.parsePlatform(client?.platform);
+        if (platform != null) {
+            const appVersion = client?.appVersion?.trim().slice(0, 64) ?? '';
+            const buildNumber = client?.buildNumber?.trim().slice(0, 64) ?? '';
+            await this.prisma.$executeRaw `
+        INSERT INTO analytics_platform_activity
+          (user_id, platform, day, app_version, build_number, last_activity_at)
+        VALUES
+          (${userId}::uuid, ${platform}::"DevicePlatform", ${visitDate}::date,
+           ${appVersion}, ${buildNumber}, ${openedAt})
+        ON CONFLICT (user_id, platform, day)
+        DO UPDATE SET
+          app_version = EXCLUDED.app_version,
+          build_number = EXCLUDED.build_number,
+          last_activity_at = EXCLUDED.last_activity_at,
+          updated_at = CURRENT_TIMESTAMP
+      `;
+        }
         return {
             source: 'timeweb',
             visit_date: visitDate,
             last_activity_at: openedAt.toISOString(),
         };
+    }
+    parsePlatform(value) {
+        switch (value?.trim().toUpperCase()) {
+            case 'IOS':
+                return client_1.DevicePlatform.IOS;
+            case 'ANDROID':
+                return client_1.DevicePlatform.ANDROID;
+            case 'WEB':
+                return client_1.DevicePlatform.WEB;
+            default:
+                return null;
+        }
     }
     async countToday(now = new Date()) {
         const visitDate = this.getZonedDateStamp(now);

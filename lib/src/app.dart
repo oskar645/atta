@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:atta/src/features/auth/auth_gate.dart';
 import 'package:atta/src/features/auth/legal_document_screen.dart';
@@ -720,7 +721,11 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       return;
     }
     _lastAppOpenMarkedAt = now;
-    await _auth.markAppOpened();
+    final package = await PackageInfo.fromPlatform();
+    await _auth.markAppOpened(
+      appVersion: package.version,
+      buildNumber: package.buildNumber,
+    );
   }
 
   Future<void> _syncBadge() async {
@@ -843,6 +848,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
 
   Future<void> _handleNetworkRecovered() async {
     final uid = _auth.currentUser?.uid;
+    _listings.prepareForNetworkRecovery();
     if (uid == null || uid.isEmpty) return;
 
     _runSoftStartupTask(() => _recoverRealtimeAfterNetworkChange(uid));

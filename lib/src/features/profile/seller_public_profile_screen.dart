@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/admin/admin_support_message_dialog.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
@@ -59,6 +60,9 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
       GlobalKey<_SellerListingsSectionState>();
   final GlobalKey<_SellerListingsSectionState> _archiveListingsKey =
       GlobalKey<_SellerListingsSectionState>();
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
+  String _sellerSearch = '';
   bool _followBusy = false;
 
   @override
@@ -91,6 +95,8 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     _scrollController.dispose();
     _tab.dispose();
     super.dispose();
@@ -115,6 +121,13 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     required String sellerAvatar,
   }) async {
     try {
+      var resolvedUid = myUid.trim();
+      if (resolvedUid.isEmpty) {
+        final authenticated = await promptGuestAuth(context);
+        if (!authenticated || !context.mounted) return;
+        resolvedUid = context.read<AuthService>().currentUser?.uid.trim() ?? '';
+      }
+      if (resolvedUid.isEmpty || resolvedUid == sellerId) return;
       final listing =
           await listingsSvc.getLatestApprovedListingByOwner(sellerId);
       if (listing == null) {
@@ -128,7 +141,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
       final chatId = await chats.getOrCreateChat(
         listingId: listing.id,
         listingTitle: listing.title,
-        buyerId: myUid,
+        buyerId: resolvedUid,
         sellerId: sellerId,
       );
 
@@ -180,6 +193,67 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
     final digits = normalizeRuPhoneForApi(rawPhone);
     if (digits.length < 5) return '';
     return '+${digits.substring(0, 1)} *** *** ${digits.substring(digits.length - 4)}';
+  }
+
+  String _profilePhone(Map<String, dynamic> userRow) {
+    for (final candidate in <dynamic>[
+      userRow['phone'],
+      userRow['normalized_phone'],
+      userRow['normalizedPhone'],
+      widget.initialSellerPhone,
+    ]) {
+      final value = candidate?.toString().trim() ?? '';
+      if (normalizeRuPhoneForApi(value).isNotEmpty) return value;
+    }
+    return '';
+  }
+
+  void _onSellerSearchChanged(String rawValue) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      setState(() => _sellerSearch = rawValue.trim());
+    });
+  }
+
+  String _memberSinceLabel(Map<String, dynamic> userRow) {
+    final raw =
+        (userRow['created_at'] ?? userRow['createdAt'] ?? '').toString().trim();
+    final createdAt = DateTime.tryParse(raw)?.toLocal();
+    if (createdAt == null) return '';
+    const months = <String>[
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+    return 'На ATTA с ${months[createdAt.month - 1]} ${createdAt.year} года';
+  }
+
+  int _listingCount(Map<String, dynamic> userRow, String snake, String camel) {
+    final value = userRow[snake] ?? userRow[camel];
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  void _openReviews(String sellerName) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SellerReviewsScreen(
+          sellerId: widget.sellerId,
+          sellerName: sellerName,
+          listingId: '',
+        ),
+      ),
+    );
   }
 
   String _supportHandle(Map<String, dynamic> userRow, String phone) {
@@ -236,13 +310,6 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
       appBar: AppBar(
         title: Text(widget.titleText),
         centerTitle: false,
-        bottom: TabBar(
-          controller: _tab,
-          tabs: const [
-            Tab(text: 'Активные'),
-            Tab(text: 'Архив'),
-          ],
-        ),
       ),
       body: StreamBuilder<Map<String, dynamic>>(
         stream: profile.streamProfile(widget.sellerId, seed: seed),
@@ -259,7 +326,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
 
           final sellerName = profile.pickNameFromRow(userRow);
           final photoUrl = profile.pickAvatarFromRow(userRow);
-          final phone = (userRow['phone'] ?? '').toString().trim();
+          final phone = _profilePhone(userRow);
           final phoneDisplay =
               phone.isEmpty ? 'Телефон не указан' : formatRussianPhone(phone);
           final statusText = widget.initialStatusLabel.trim().isNotEmpty
@@ -269,9 +336,20 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
               userRow['is_admin'] == true ||
               userRow['isAdmin'] == true;
           final sellerLevel = SellerLevelBadge.levelFromRow(userRow);
+          final memberSince = _memberSinceLabel(userRow);
+          final activeListingsCount = _listingCount(
+            userRow,
+            'active_listings_count',
+            'activeListingsCount',
+          );
+          final archivedListingsCount = _listingCount(
+            userRow,
+            'archived_listings_count',
+            'archivedListingsCount',
+          );
 
           final canCall = phone.isNotEmpty && !isMe;
-          final canWrite = myUid.isNotEmpty && !isMe;
+          final canWrite = !isMe;
 
           return RefreshIndicator(
             onRefresh: () => _handleRefresh(profile: profile, reviews: reviews),
@@ -373,6 +451,18 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                 );
                               },
                             ),
+                            if (memberSince.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                memberSince,
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                             if (widget.showAdminFields) ...[
                               const SizedBox(height: 10),
                               Wrap(
@@ -431,127 +521,153 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                if (!isMe && myUid.isNotEmpty)
+                const SizedBox(height: 8),
+                if (!isMe)
                   StreamBuilder<bool>(
-                    stream: follows.streamIsFollowing(
-                      followerId: myUid,
-                      sellerId: widget.sellerId,
-                    ),
+                    stream: myUid.isEmpty
+                        ? const Stream<bool>.empty()
+                        : follows.streamIsFollowing(
+                            followerId: myUid,
+                            sellerId: widget.sellerId,
+                          ),
                     initialData: false,
                     builder: (context, followSnap) {
                       final isFollowing = followSnap.data == true;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: FilledButton.icon(
-                          onPressed: _followBusy
-                              ? null
-                              : () => _toggleFollow(
-                                    follows: follows,
-                                    myUid: myUid,
-                                    isFollowing: isFollowing,
-                                  ),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size.fromHeight(52),
-                            backgroundColor: isFollowing
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .secondaryContainer
-                                : null,
-                            foregroundColor: isFollowing
-                                ? Theme.of(context)
-                                    .colorScheme
-                                    .onSecondaryContainer
-                                : null,
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: _SellerActionButton(
+                              icon: isFollowing
+                                  ? Icons.notifications_active_outlined
+                                  : Icons.person_add_alt_1_outlined,
+                              label:
+                                  isFollowing ? 'Вы подписаны' : 'Подписаться',
+                              busy: _followBusy,
+                              selected: isFollowing,
+                              onTap: _followBusy
+                                  ? null
+                                  : () async {
+                                      var followerId = myUid;
+                                      if (followerId.isEmpty) {
+                                        final authenticated =
+                                            await promptGuestAuth(context);
+                                        if (!authenticated ||
+                                            !context.mounted) {
+                                          return;
+                                        }
+                                        followerId = context
+                                                .read<AuthService>()
+                                                .currentUser
+                                                ?.uid
+                                                .trim() ??
+                                            '';
+                                      }
+                                      if (followerId.isEmpty) return;
+                                      await _toggleFollow(
+                                        follows: follows,
+                                        myUid: followerId,
+                                        isFollowing: isFollowing,
+                                      );
+                                    },
+                            ),
                           ),
-                          icon: _followBusy
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : Icon(
-                                  isFollowing
-                                      ? Icons.notifications_active_outlined
-                                      : Icons.person_add_alt_1_outlined,
-                                ),
-                          label: Text(
-                            isFollowing
-                                ? 'Вы подписаны на новые объявления'
-                                : 'Подписаться на продавца',
+                          Expanded(
+                            child: _SellerActionButton(
+                              icon: Icons.call_outlined,
+                              label: 'Позвонить',
+                              onTap: canCall
+                                  ? () async {
+                                      final normalizedPhone =
+                                          normalizeRuPhoneForApi(phone);
+                                      await launchUrl(
+                                        Uri(
+                                          scheme: 'tel',
+                                          path: '+$normalizedPhone',
+                                        ),
+                                      );
+                                    }
+                                  : null,
+                            ),
                           ),
-                        ),
+                          Expanded(
+                            child: _SellerActionButton(
+                              icon: Icons.chat_bubble_outline,
+                              label: 'Написать',
+                              onTap: canWrite
+                                  ? () => _openChat(
+                                        context: context,
+                                        listingsSvc: listingsSvc,
+                                        chats: chats,
+                                        myUid: myUid,
+                                        sellerId: widget.sellerId,
+                                        sellerName: sellerName,
+                                        sellerAvatar: photoUrl,
+                                      )
+                                  : null,
+                            ),
+                          ),
+                          Expanded(
+                            child: _SellerActionButton(
+                              icon: Icons.star_outline,
+                              label: 'Отзывы',
+                              onTap: () => _openReviews(sellerName),
+                            ),
+                          ),
+                        ],
                       );
                     },
                   ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: canCall
-                            ? () async {
-                                final normalizedPhone =
-                                    normalizeRuPhoneForApi(phone);
-                                final uri = Uri(
-                                  scheme: 'tel',
-                                  path: normalizedPhone.isEmpty
-                                      ? phone
-                                      : '+$normalizedPhone',
-                                );
-                                await launchUrl(uri);
-                              }
-                            : null,
-                        icon: const Icon(Icons.call),
-                        label: Text(canCall ? 'Позвонить' : 'Телефон скрыт'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _searchController,
+                  onChanged: _onSellerSearchChanged,
+                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search),
+                    hintText: 'Поиск в объявлениях продавца',
+                    isDense: true,
+                    filled: true,
+                    fillColor:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                        color: Theme.of(context).dividerColor,
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.tonalIcon(
-                        onPressed: canWrite
-                            ? () => _openChat(
-                                  context: context,
-                                  listingsSvc: listingsSvc,
-                                  chats: chats,
-                                  myUid: myUid,
-                                  sellerId: widget.sellerId,
-                                  sellerName: sellerName,
-                                  sellerAvatar: photoUrl,
-                                )
-                            : null,
-                        icon: const Icon(Icons.chat_bubble_outline),
-                        label: const Text('Написать'),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 1.6,
                       ),
                     ),
+                    suffixIcon: _searchController.text.trim().isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Очистить',
+                            onPressed: () {
+                              _searchDebounce?.cancel();
+                              _searchController.clear();
+                              setState(() => _sellerSearch = '');
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TabBar(
+                  controller: _tab,
+                  tabs: [
+                    Tab(text: 'Активные · $activeListingsCount'),
+                    Tab(text: 'Архив · $archivedListingsCount'),
                   ],
                 ),
-                const SizedBox(height: 12),
-                ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  tileColor:
-                      Theme.of(context).colorScheme.surfaceContainerHighest,
-                  leading: Icon(
-                    Icons.rate_review_outlined,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  title: const Text('Отзывы продавца'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => SellerReviewsScreen(
-                          sellerId: widget.sellerId,
-                          sellerName: sellerName,
-                          listingId: '',
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 10),
                 AnimatedBuilder(
                   animation: _tab,
                   builder: (context, _) {
@@ -564,6 +680,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                             ownerId: widget.sellerId,
                             listingsService: listingsSvc,
                             isArchive: false,
+                            search: _sellerSearch,
                           ),
                         ),
                         Offstage(
@@ -573,6 +690,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                             ownerId: widget.sellerId,
                             listingsService: listingsSvc,
                             isArchive: true,
+                            search: _sellerSearch,
                           ),
                         ),
                       ],
@@ -583,6 +701,80 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _SellerActionButton extends StatelessWidget {
+  const _SellerActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.busy = false,
+    this.selected = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+  final bool busy;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = onTap != null;
+    final background =
+        selected ? scheme.secondaryContainer : scheme.surfaceContainerHighest;
+    final foreground = selected
+        ? scheme.onSecondaryContainer
+        : enabled
+            ? scheme.primary
+            : scheme.outline;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: background,
+                shape: BoxShape.circle,
+              ),
+              alignment: Alignment.center,
+              child: busy
+                  ? SizedBox(
+                      width: 19,
+                      height: 19,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: foreground,
+                      ),
+                    )
+                  : Icon(icon, color: foreground, size: 23),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.1,
+                color: enabled ? scheme.onSurface : scheme.outline,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -647,11 +839,13 @@ class _SellerListingsSection extends StatefulWidget {
     required this.ownerId,
     required this.listingsService,
     required this.isArchive,
+    required this.search,
   });
 
   final String ownerId;
   final ListingsService listingsService;
   final bool isArchive;
+  final String search;
 
   @override
   State<_SellerListingsSection> createState() => _SellerListingsSectionState();
@@ -666,6 +860,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
   bool _isLoadingMore = false;
   bool _hasMore = false;
   String? _nextCursor;
+  int _loadRequestSerial = 0;
 
   @override
   void initState() {
@@ -686,7 +881,8 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
   void didUpdateWidget(covariant _SellerListingsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ownerId == widget.ownerId &&
-        oldWidget.isArchive == widget.isArchive) {
+        oldWidget.isArchive == widget.isArchive &&
+        oldWidget.search == widget.search) {
       return;
     }
     _allItems = widget.isArchive
@@ -711,7 +907,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
   Future<void> refresh() => _load(forceRefresh: true);
 
   Future<void> _load({bool forceRefresh = false}) async {
-    if (_isLoading) return;
+    final requestId = ++_loadRequestSerial;
     if (mounted) {
       setState(() {
         _isLoading = true;
@@ -727,10 +923,11 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
       final page = await widget.listingsService.getPublicOwnerListingsPage(
         ownerId: widget.ownerId,
         status: widget.isArchive ? 'archive' : 'approved',
+        search: widget.search,
         limit: _pageSize,
         forceRefresh: forceRefresh,
       );
-      if (!mounted) return;
+      if (!mounted || requestId != _loadRequestSerial) return;
       setState(() {
         _allItems = _dedupe(page.items);
         _nextCursor = page.nextCursor;
@@ -738,7 +935,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
         _isLoading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || requestId != _loadRequestSerial) return;
       setState(() {
         _error = error;
         _isLoading = false;
@@ -758,6 +955,7 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
       final page = await widget.listingsService.getPublicOwnerListingsPage(
         ownerId: widget.ownerId,
         status: widget.isArchive ? 'archive' : 'approved',
+        search: widget.search,
         limit: _pageSize,
         cursor: _nextCursor,
       );
@@ -821,7 +1019,11 @@ class _SellerListingsSectionState extends State<_SellerListingsSection> {
     if (items.isEmpty) {
       return Center(
         child: Text(
-          widget.isArchive ? 'Архив пуст' : 'Пока нет объявлений',
+          widget.search.trim().isNotEmpty
+              ? 'У продавца ничего не найдено'
+              : widget.isArchive
+                  ? 'Архив пуст'
+                  : 'Пока нет объявлений',
           style: TextStyle(color: Theme.of(context).colorScheme.outline),
         ),
       );

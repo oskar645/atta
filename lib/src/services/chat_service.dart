@@ -71,6 +71,7 @@ class ChatService {
   final Map<String, List<ChatMessage>> _messagesByChat = {};
   final Map<String, StreamController<List<ChatMessage>>> _messageControllers =
       {};
+  final Map<String, StreamController<bool>> _typingControllers = {};
   final Map<String, int> _messageOrderByKey = {};
   final Map<String, Future<void>> _chatRefreshInFlight = {};
   final Map<String, Future<void>> _messagesRefreshInFlight = {};
@@ -694,6 +695,8 @@ class ChatService {
         event.name == 'message.sent' ||
         event.name == 'unread.changed' ||
         event.name == 'message.deleted' ||
+        event.name == 'message.updated' ||
+        event.name == 'message.hidden' ||
         event.name == 'chat.deleted') {
       ++_stateRevision;
     }
@@ -728,6 +731,22 @@ class ChatService {
         _debugSource('Socket event: ${event.name}');
         if (messageMap != null) {
           _patchExistingMessage(ChatMessage.fromMap(messageMap));
+        }
+        break;
+      case 'message.updated':
+        if (messageMap != null) _upsertMessage(ChatMessage.fromMap(messageMap));
+        break;
+      case 'message.hidden':
+        final hiddenMessageId = (payload['messageId'] ?? '').toString();
+        final hiddenChatId = (payload['chatId'] ?? '').toString();
+        if (hiddenChatId.isNotEmpty && hiddenMessageId.isNotEmpty) {
+          _removeMessage(hiddenChatId, hiddenMessageId);
+        }
+        break;
+      case 'typing.changed':
+        final typingChatId = (payload['chatId'] ?? '').toString();
+        if (typingChatId.isNotEmpty) {
+          _typingControllers[typingChatId]?.add(payload['isTyping'] == true);
         }
         break;
       case 'message.deleted':
@@ -1441,6 +1460,7 @@ class ChatService {
     required String chatId,
     required String senderId,
     required String text,
+    String? replyToMessageId,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
@@ -1454,6 +1474,7 @@ class ChatService {
       senderId: senderId,
       text: trimmed,
       clientMessageId: localClientMessageId,
+      replyToMessageId: replyToMessageId,
     );
     _messageSendInFlight[sendKey] = future;
     try {
@@ -1534,6 +1555,7 @@ class ChatService {
     String? clientMessageId,
     String? tempId,
     DateTime? createdAt,
+    String? replyToMessageId,
   }) async {
     await _prepareTransportForTextSend(chatId: chatId, senderId: senderId);
     final localClientMessageId = clientMessageId ?? _uuid.v4();
@@ -1548,6 +1570,7 @@ class ChatService {
         clientMessageId: localClientMessageId,
         status: 'pending',
         createdAt: localCreatedAt,
+        replyToMessageId: replyToMessageId,
       ),
     );
 
@@ -1557,6 +1580,7 @@ class ChatService {
         senderId: senderId,
         text: text,
         clientMessageId: localClientMessageId,
+        replyToMessageId: replyToMessageId,
       );
       final rawChat = response['chat'];
       if (rawChat is Map) {
@@ -1585,6 +1609,7 @@ class ChatService {
           clientMessageId: localClientMessageId,
           status: 'failed',
           createdAt: localCreatedAt,
+          replyToMessageId: replyToMessageId,
         ),
       );
       rethrow;
@@ -1596,12 +1621,14 @@ class ChatService {
     required String senderId,
     required String text,
     required String clientMessageId,
+    String? replyToMessageId,
   }) async {
     try {
       return await _api.sendMessage(
         chatId: chatId,
         text: text,
         clientMessageId: clientMessageId,
+        replyToMessageId: replyToMessageId,
       );
     } catch (firstError) {
       _debugSource(
@@ -1614,6 +1641,7 @@ class ChatService {
           chatId: chatId,
           text: text,
           clientMessageId: clientMessageId,
+          replyToMessageId: replyToMessageId,
         );
       } catch (_) {
         throw firstError;
@@ -1855,6 +1883,32 @@ class ChatService {
     await _refreshChat(chatId);
   }
 
+  Future<void> deleteMessageForEveryone({required String messageId}) async {
+    final response = await _api.deleteMessageForEveryone(messageId);
+    final raw = response['message'];
+    if (raw is Map) {
+      _upsertMessage(ChatMessage.fromMap(Map<String, dynamic>.from(raw)));
+    }
+  }
+
+  Future<void> editMessage(
+      {required String messageId, required String text}) async {
+    final response = await _api.editMessage(messageId, text);
+    final raw = response['message'];
+    if (raw is Map) {
+      _upsertMessage(ChatMessage.fromMap(Map<String, dynamic>.from(raw)));
+    }
+  }
+
+  Stream<bool> streamTyping(String chatId) {
+    final id = chatId.trim();
+    return (_typingControllers[id] ??= StreamController<bool>.broadcast())
+        .stream;
+  }
+
+  void setTyping(String chatId, bool isTyping) =>
+      _socketService?.sendTyping(chatId, isTyping);
+
   Future<void> dispose() async {
     await _socketSub?.cancel();
     await _socketConnectionSub?.cancel();
@@ -1864,6 +1918,9 @@ class ChatService {
       await controller.close();
     }
     for (final controller in _messageControllers.values) {
+      await controller.close();
+    }
+    for (final controller in _typingControllers.values) {
       await controller.close();
     }
   }

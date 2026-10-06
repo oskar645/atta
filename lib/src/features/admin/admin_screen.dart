@@ -23,6 +23,7 @@ import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/usage_analytics_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/ru_phone.dart';
@@ -804,10 +805,46 @@ class _ModerationLoadingView extends StatelessWidget {
 // ----------------
 // 0) ДАШБОРД
 // ----------------
-class _DashboardTab extends StatelessWidget {
+class _DashboardTab extends StatefulWidget {
   const _DashboardTab({this.usageAnalyticsLoad});
 
   final Future<Map<String, dynamic>> Function()? usageAnalyticsLoad;
+
+  @override
+  State<_DashboardTab> createState() => _DashboardTabState();
+}
+
+class _DashboardTabState extends State<_DashboardTab> {
+  late Future<List<Map<String, dynamic>>> _timewebFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _timewebFuture = _loadTimewebDashboard();
+  }
+
+  Future<List<Map<String, dynamic>>> _loadTimewebDashboard({
+    bool forceRefresh = false,
+  }) async {
+    final usageFuture =
+        (widget.usageAnalyticsLoad ?? UsageAnalyticsService.instance.dashboard)()
+            .catchError((_) => <String, dynamic>{});
+    final results = await Future.wait<Map<String, dynamic>>([
+      context
+          .read<AdminService>()
+          .dashboardStats(forceRefresh: forceRefresh),
+      usageFuture,
+    ]);
+    return results;
+  }
+
+  Future<void> _refreshTimewebDashboard() async {
+    final future = _loadTimewebDashboard(forceRefresh: true);
+    setState(() {
+      _timewebFuture = future;
+    });
+    await future;
+  }
 
   Future<int> _count(
     String table, {
@@ -832,15 +869,17 @@ class _DashboardTab extends StatelessWidget {
   Widget build(BuildContext context) {
     if (ApiConfig.useTimewebBackend) {
       debugPrint('Admin dashboard source: Timeweb');
-      return FutureBuilder<Map<String, dynamic>>(
-        future: context.read<AdminService>().dashboardStats(),
+      return FutureBuilder<List<Map<String, dynamic>>>(
+        future: _timewebFuture,
         builder: (context, snap) {
           if (!snap.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
+          final dashboard = snap.data![0];
+          final usage = snap.data![1];
           final stats = Map<String, dynamic>.from(
-              (snap.data!['stats'] as Map?) ?? const {});
+              (dashboard['stats'] as Map?) ?? const {});
           Widget card(
             String title,
             String value,
@@ -919,10 +958,12 @@ class _DashboardTab extends StatelessWidget {
             return amount.toStringAsFixed(2);
           }
 
-          return ListView(
-            padding: const EdgeInsets.all(12),
-            children: [
-              AdminUsageAnalytics(load: usageAnalyticsLoad),
+          return RefreshIndicator(
+            onRefresh: _refreshTimewebDashboard,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(12),
+              children: [
               card(
                 'Пользователей',
                 '${read('users')}',
@@ -1037,7 +1078,11 @@ class _DashboardTab extends StatelessWidget {
                   builder: (_) => const AdminZeroViewListingsScreen(),
                 )),
               ),
-            ],
+              const SizedBox(height: 8),
+              AdminUsageAnalytics(data: usage),
+                AdminPlatformAnalytics(data: usage),
+              ],
+            ),
           );
         },
       );

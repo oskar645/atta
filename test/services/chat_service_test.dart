@@ -2315,6 +2315,7 @@ class _FakeChatsApi extends ChatsApi {
     required String chatId,
     required String text,
     String? clientMessageId,
+    String? replyToMessageId,
   }) async {
     sendMessageCalls += 1;
     lastClientMessageId = clientMessageId;

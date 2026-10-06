@@ -248,9 +248,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final hasRecoveryEmail = recoveryEmail.isNotEmpty &&
         !recoveryEmail.endsWith('@phone.atta.local');
     final securityComplete = user.phoneVerified && user.emailVerified;
-    final securityColor = securityComplete
-        ? Colors.green.shade700
-        : Theme.of(context).colorScheme.error;
+    final securityColor =
+        securityComplete ? Colors.green.shade700 : Colors.orange.shade700;
 
     return Scaffold(
       appBar: AppBar(

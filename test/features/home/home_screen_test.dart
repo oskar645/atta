@@ -1852,6 +1852,13 @@ void main() {
       await tester.enterText(find.byType(TextField), 'обновить');
       await tester.pump();
 
+      // Search is intentionally debounced: keep the current feed and its ad
+      // visible until the 400 ms debounce starts the replacement request.
+      expect(find.byType(FeedAdBanner), findsOneWidget);
+      expect(feedAds.activeSubscriptions, 1);
+
+      await tester.pump(const Duration(milliseconds: 400));
+
       expect(find.byType(FeedAdBanner), findsNothing);
       expect(feedAds.activeSubscriptions, 0);
 

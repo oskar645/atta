@@ -2,21 +2,25 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
+import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/models/chat.dart';
+import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/message.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/network_resilience.dart';
+import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/last_seen_formatter.dart';
+import 'package:atta/src/utils/listing_link_parser.dart';
+import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
@@ -51,6 +55,10 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
   bool _loadingOlder = false;
   int _lastSeenMessageCount = 0;
   Timer? _markReadDebounce;
+  Timer? _typingTimer;
+  bool _typingSent = false;
+  ChatMessage? _replyingTo;
+  ChatMessage? _editingMessage;
   StreamSubscription<List<ChatMessage>>? _messagesSub;
   Stream<List<ChatMessage>>? _messagesStream;
   late Future<void> _chatLoadFuture;
@@ -67,6 +75,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     super.initState();
     _chatService = context.read<ChatService>();
     _messagesScrollController.addListener(_handleMessagesScroll);
+    _text.addListener(_handleTypingChanged);
     _chatLoadFuture = _chatService.preloadChat(
       widget.chatId,
       uid: _uid(context),
@@ -93,6 +102,8 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     _messagesScrollController.removeListener(_handleMessagesScroll);
     _messagesScrollController.dispose();
     _markReadDebounce?.cancel();
+    _typingTimer?.cancel();
+    if (_typingSent) _chatService.setTyping(widget.chatId, false);
     _messagesSub?.cancel();
     _text.dispose();
     super.dispose();
@@ -213,7 +224,16 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     setState(() => _sending = true);
     try {
       if (t.isNotEmpty) {
-        await chat.sendMessage(chatId: widget.chatId, senderId: uid, text: t);
+        if (_editingMessage != null) {
+          await chat.editMessage(messageId: _editingMessage!.id, text: t);
+        } else {
+          await chat.sendMessage(
+            chatId: widget.chatId,
+            senderId: uid,
+            text: t,
+            replyToMessageId: _replyingTo?.id,
+          );
+        }
       }
       for (final image in List<XFile>.from(_selectedImages)) {
         await chat.sendImage(
@@ -224,12 +244,36 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
       }
       _text.clear();
       _selectedImages.clear();
+      _replyingTo = null;
+      _editingMessage = null;
     } catch (e) {
       if (!mounted) return;
       final message = _friendlyChatError(e);
       showAppSnack(context, message, isError: true);
     } finally {
       if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  void _handleTypingChanged() {
+    if (_editingMessage != null) return;
+    final typing = _text.text.trim().isNotEmpty;
+    _typingTimer?.cancel();
+    if (typing && !_typingSent) {
+      _typingSent = true;
+      _chatService.setTyping(widget.chatId, true);
+    }
+    if (!typing && _typingSent) {
+      _typingSent = false;
+      _chatService.setTyping(widget.chatId, false);
+      return;
+    }
+    if (typing) {
+      _typingTimer = Timer(const Duration(milliseconds: 1400), () {
+        if (!_typingSent) return;
+        _typingSent = false;
+        _chatService.setTyping(widget.chatId, false);
+      });
     }
   }
 
@@ -485,40 +529,73 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     );
   }
 
-  Future<void> _confirmDeleteMessage(ChatMessage m) async {
+  Future<void> _openMessageActions(ChatMessage m) async {
     final uid = _uid(context);
     if (uid.isEmpty) return;
-    if (!ApiConfig.useTimewebBackend && m.senderId != uid) return;
-
-    final ok = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Удалить сообщение?'),
-            content: const Text(
-                'Сообщение будет удалено без возможности восстановления.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Отмена'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Удалить'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-
-    if (!ok) return;
-    if (!mounted) return;
-
+    final mine = m.senderId == uid;
+    final withinWindow = DateTime.now().difference(m.createdAt).inMinutes < 15;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (!m.deletedForEveryone)
+            ListTile(
+                dense: true,
+                leading: const Icon(Icons.reply, size: 21),
+                title: const Text('Ответить'),
+                onTap: () => Navigator.pop(ctx, 'reply')),
+          if (mine && withinWindow && m.type == 'text' && !m.deletedForEveryone)
+            ListTile(
+                dense: true,
+                leading: const Icon(Icons.edit_outlined, size: 21),
+                title: const Text('Редактировать'),
+                onTap: () => Navigator.pop(ctx, 'edit')),
+          ListTile(
+              dense: true,
+              leading: const Icon(Icons.delete_outline, size: 21),
+              title: const Text('Удалить у меня'),
+              onTap: () => Navigator.pop(ctx, 'me')),
+          if (mine && withinWindow && !m.deletedForEveryone)
+            ListTile(
+                dense: true,
+                leading: const Icon(Icons.delete_forever_outlined,
+                    size: 21, color: Colors.red),
+                title: const Text('Удалить у всех',
+                    style: TextStyle(color: Colors.red)),
+                onTap: () => Navigator.pop(ctx, 'everyone')),
+        ]),
+      ),
+    );
+    if (action == null || !mounted) return;
     try {
-      await context.read<ChatService>().deleteMessage(
-            chatId: widget.chatId,
-            messageId: m.id,
-            uid: uid,
-          );
+      if (action == 'reply') {
+        setState(() {
+          _replyingTo = m;
+          _editingMessage = null;
+        });
+        return;
+      }
+      if (action == 'edit') {
+        setState(() {
+          _editingMessage = m;
+          _replyingTo = null;
+          _text.text = m.text;
+          _text.selection = TextSelection.collapsed(offset: _text.text.length);
+        });
+        return;
+      }
+      if (action == 'everyone') {
+        await context
+            .read<ChatService>()
+            .deleteMessageForEveryone(messageId: m.id);
+      } else {
+        await context.read<ChatService>().deleteMessage(
+              chatId: widget.chatId,
+              messageId: m.id,
+              uid: uid,
+            );
+      }
     } catch (e) {
       if (!mounted) return;
       showAppSnack(context, 'Ошибка удаления: $e', isError: true);
@@ -807,18 +884,26 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                                   ),
                                 ),
                                 const SizedBox(height: 1),
-                                Text(
-                                  status.isEmpty ? ' ' : status,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11.5,
-                                    fontWeight: FontWeight.w400,
-                                    color: isOnline
-                                        ? Theme.of(context).colorScheme.primary
-                                        : Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant,
+                                StreamBuilder<bool>(
+                                  stream: chatSvc.streamTyping(widget.chatId),
+                                  initialData: false,
+                                  builder: (context, typingSnap) => Text(
+                                    typingSnap.data == true
+                                        ? 'печатает…'
+                                        : (status.isEmpty ? ' ' : status),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w400,
+                                      color: typingSnap.data == true || isOnline
+                                          ? Theme.of(context)
+                                              .colorScheme
+                                              .primary
+                                          : Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -926,7 +1011,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                                   ? _dayDivider(m.createdAt)
                                   : null,
                               chatSvc: chatSvc,
-                              onDeleteMessage: () => _confirmDeleteMessage(m),
+                              onDeleteMessage: () => _openMessageActions(m),
                               onOpenImage: _openImageFullScreen,
                               formatMessageTime: _formatMessageTime,
                               onRetryMessage: () async {
@@ -983,6 +1068,57 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (_replyingTo != null ||
+                              _editingMessage != null) ...[
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(children: [
+                                Icon(
+                                    _editingMessage != null
+                                        ? Icons.edit_outlined
+                                        : Icons.reply,
+                                    size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                      Text(
+                                          _editingMessage != null
+                                              ? 'Редактирование'
+                                              : 'Ответ',
+                                          style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .primary)),
+                                      Text(
+                                          (_editingMessage ?? _replyingTo)!
+                                              .text,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                    ])),
+                                IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    icon: const Icon(Icons.close, size: 19),
+                                    onPressed: () => setState(() {
+                                          _replyingTo = null;
+                                          _editingMessage = null;
+                                          _text.clear();
+                                        })),
+                              ]),
+                            ),
+                            const SizedBox(height: 6),
+                          ],
                           if (_selectedImages.isNotEmpty) ...[
                             SizedBox(
                               height: 72,
@@ -1048,7 +1184,9 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                                   controller: _text,
                                   decoration: InputDecoration(
                                     hintText: _selectedImages.isEmpty
-                                        ? 'Сообщение...'
+                                        ? (_editingMessage != null
+                                            ? 'Изменить сообщение...'
+                                            : 'Сообщение...')
                                         : 'Сообщение или подпись...',
                                     isDense: true,
                                     border: OutlineInputBorder(
@@ -1253,15 +1391,42 @@ class _ChatMessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasImg = message.hasImage;
-    final text = message.hasText
-        ? message.text
-        : hasImg
-            ? ''
-            : 'Сообщение недоступно';
+    final hasImg = message.hasImage && !message.deletedForEveryone;
+    final linkedListingId =
+        hasImg ? null : extractListingIdFromMessage(message.text);
+    final text = message.deletedForEveryone
+        ? 'Сообщение удалено'
+        : message.hasText
+            ? message.text
+            : hasImg
+                ? ''
+                : 'Сообщение недоступно';
     final bubbleColor = mine
         ? Theme.of(context).colorScheme.primaryContainer
         : Theme.of(context).colorScheme.surfaceContainerHighest;
+
+    if (linkedListingId != null) {
+      return Column(
+        crossAxisAlignment:
+            mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          _ListingMessagePreview(
+            key: ValueKey<String>('listing-preview-${message.stableKey}'),
+            listingId: linkedListingId,
+            backgroundColor: bubbleColor,
+            maxWidth: maxWidth,
+          ),
+          const SizedBox(height: 2),
+          _MessageMeta(
+            key: ValueKey<String>('meta-${message.stableKey}'),
+            message: message,
+            mine: mine,
+            formatMessageTime: formatMessageTime,
+            onRetry: onRetryMessage,
+          ),
+        ],
+      );
+    }
 
     if (hasImg && text.isEmpty) {
       return Column(
@@ -1308,6 +1473,38 @@ class _ChatMessageBubble extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (message.replyTo != null && !message.deletedForEveryone) ...[
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surface
+                        .withValues(alpha: 0.55),
+                    border: Border(
+                        left: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 3)),
+                    borderRadius: BorderRadius.circular(7),
+                  ),
+                  child: Text(
+                    ((message.replyTo!['text'] ?? '')
+                            .toString()
+                            .trim()
+                            .isNotEmpty)
+                        ? message.replyTo!['text'].toString()
+                        : (message.replyTo!['type'] == 'image'
+                            ? 'Фотография'
+                            : 'Сообщение'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(height: 6),
+              ],
               if (hasImg)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(14),
@@ -1322,7 +1519,7 @@ class _ChatMessageBubble extends StatelessWidget {
                 if (hasImg) const SizedBox(height: 8),
                 Text(
                   text,
-                  style: message.hasVisibleContent
+                  style: !message.deletedForEveryone
                       ? null
                       : TextStyle(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1349,6 +1546,198 @@ class _ChatMessageBubble extends StatelessWidget {
   }
 }
 
+class _ListingMessagePreview extends StatefulWidget {
+  const _ListingMessagePreview({
+    super.key,
+    required this.listingId,
+    required this.backgroundColor,
+    required this.maxWidth,
+  });
+
+  final String listingId;
+  final Color backgroundColor;
+  final double maxWidth;
+
+  @override
+  State<_ListingMessagePreview> createState() => _ListingMessagePreviewState();
+}
+
+class _ListingMessagePreviewState extends State<_ListingMessagePreview> {
+  Future<Listing?>? _listingFuture;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_listingFuture != null) return;
+    final listings = Provider.of<ListingsService?>(context, listen: false);
+    if (listings == null) return;
+    final cached = listings.peekListingById(widget.listingId);
+    _listingFuture = cached != null
+        ? Future<Listing?>.value(cached)
+        : listings.getListingById(widget.listingId);
+  }
+
+  void _openListing() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        settings: RouteSettings(
+          name: 'chat-listing:${widget.listingId}',
+        ),
+        builder: (_) => ListingDetailScreen(listingId: widget.listingId),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: widget.maxWidth),
+      child: Material(
+        color: widget.backgroundColor,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _openListing,
+          child: FutureBuilder<Listing?>(
+            future: _listingFuture,
+            builder: (context, snapshot) {
+              final listing = snapshot.data;
+              if (listing == null) {
+                return _buildUnavailableOrLoading(
+                  context,
+                  loading: snapshot.connectionState != ConnectionState.done,
+                );
+              }
+              return _buildListing(context, listing);
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListing(BuildContext context, Listing listing) {
+    final photoUrl = listing.firstPhotoUrl?.trim() ?? '';
+    final city = listing.cityShort.trim();
+    final price = formatPrice(listing.price)
+        .replaceAll('\u00A0', ' ')
+        .replaceAll('\u202F', ' ');
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: SizedBox(
+              width: 78,
+              height: 78,
+              child: photoUrl.isEmpty
+                  ? _photoFallback(context)
+                  : CachedNetworkImage(
+                      imageUrl: photoUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => _photoFallback(context),
+                      errorWidget: (_, __, ___) => _photoFallback(context),
+                    ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$price ₽',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  listing.title.trim().isEmpty
+                      ? 'Объявление ATTA'
+                      : listing.title.trim(),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    height: 1.12,
+                  ),
+                ),
+                if (city.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    city,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUnavailableOrLoading(
+    BuildContext context, {
+    required bool loading,
+  }) {
+    return SizedBox(
+      height: 94,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 78,
+              height: 78,
+              child: _photoFallback(context, loading: loading),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                loading ? 'Загрузка объявления…' : 'Объявление недоступно',
+                maxLines: 2,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _photoFallback(BuildContext context, {bool loading = false}) {
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHigh,
+      child: Center(
+        child: loading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                Icons.image_not_supported_outlined,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+      ),
+    );
+  }
+}
+
 class _MessageMeta extends StatelessWidget {
   const _MessageMeta({
     super.key,
@@ -1370,7 +1759,13 @@ class _MessageMeta extends StatelessWidget {
       color: Theme.of(context).colorScheme.onSurfaceVariant,
     );
 
-    final time = Text(formatMessageTime(message.createdAt), style: timeStyle);
+    final time = Row(mainAxisSize: MainAxisSize.min, children: [
+      if (message.editedAt != null) ...[
+        Text('изменено', style: timeStyle),
+        const SizedBox(width: 4),
+      ],
+      Text(formatMessageTime(message.createdAt), style: timeStyle),
+    ]);
     if (!mine) return time;
 
     final isRead = message.status == 'read' || message.readAt != null;

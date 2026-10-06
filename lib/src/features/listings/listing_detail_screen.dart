@@ -352,11 +352,33 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       final authenticated = await promptGuestAuth(context);
       if (!authenticated || !mounted) return;
     }
-    final normalizedPhone = normalizeRuPhoneForApi(listing.phone);
+    var phone = listing.phone.trim();
+    if (phone.isEmpty) {
+      try {
+        final profile =
+            await context.read<ProfileService>().getProfile(listing.ownerId);
+        for (final candidate in <dynamic>[
+          profile['phone'],
+          profile['normalized_phone'],
+          profile['normalizedPhone'],
+        ]) {
+          final value = candidate?.toString().trim() ?? '';
+          if (normalizeRuPhoneForApi(value).isNotEmpty) {
+            phone = value;
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    final normalizedPhone = normalizeRuPhoneForApi(phone);
+    if (normalizedPhone.isEmpty) {
+      showAppSnack(context, 'Продавец не указал номер телефона');
+      return;
+    }
     final uri = Uri(
       scheme: 'tel',
-      path:
-          normalizedPhone.isEmpty ? listing.phone.trim() : '+$normalizedPhone',
+      path: '+$normalizedPhone',
     );
     await launchUrl(uri);
   }
@@ -769,7 +791,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
           children: [
             Expanded(
               child: FilledButton.icon(
-                onPressed: (!canContact || listing.phone.trim().isEmpty)
+                onPressed: (!canContact || listing.ownerId == myUid)
                     ? isGuest
                         ? () => _openLoginScreen()
                         : null

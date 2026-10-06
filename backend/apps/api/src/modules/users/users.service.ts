@@ -85,10 +85,10 @@ export class UsersService {
       }
     }
 
-    const sellerLevel = await this.getSellerLevel(user.id);
+    const sellerSummary = await this.getSellerSummary(user.id);
 
     return {
-      user: this.withSellerLevel(serializeUser(user, { includePrivate: true }), sellerLevel),
+      user: this.withSellerSummary(serializeUser(user, { includePrivate: true }), sellerSummary),
       admin_profile: serializeAdminProfile(user.adminProfile),
       is_admin: user.adminProfile?.isAdmin === true,
       isAdmin: user.adminProfile?.isAdmin === true,
@@ -166,10 +166,10 @@ export class UsersService {
       },
     });
 
-    const sellerLevel = await this.getSellerLevel(user.id);
+    const sellerSummary = await this.getSellerSummary(user.id);
 
     return {
-      user: this.withSellerLevel(serializeUser(user, { includePrivate: true }), sellerLevel),
+      user: this.withSellerSummary(serializeUser(user, { includePrivate: true }), sellerSummary),
       admin_profile: serializeAdminProfile(user.adminProfile),
       is_admin: user.adminProfile?.isAdmin === true,
       isAdmin: user.adminProfile?.isAdmin === true,
@@ -187,10 +187,10 @@ export class UsersService {
       throw new NotFoundException('Seller not found');
     }
 
-    const sellerLevel = await this.getSellerLevel(user.id);
+    const sellerSummary = await this.getSellerSummary(user.id);
 
     return {
-      user: this.withSellerLevel(serializeUser(user), sellerLevel),
+      user: this.withSellerSummary(serializeUser(user), sellerSummary),
     };
   }
 
@@ -261,10 +261,10 @@ export class UsersService {
       },
     });
 
-    const sellerLevel = await this.getSellerLevel(user.id);
+    const sellerSummary = await this.getSellerSummary(user.id);
 
     return {
-      user: this.withSellerLevel(serializeUser(user, { includePrivate: true }), sellerLevel),
+      user: this.withSellerSummary(serializeUser(user, { includePrivate: true }), sellerSummary),
       avatar_url: uploaded.url,
       photo_url: uploaded.url,
       admin_profile: serializeAdminProfile(user.adminProfile),
@@ -273,14 +273,23 @@ export class UsersService {
     };
   }
 
-  private async getSellerLevel(userId: string) {
-    const [activeListingsCount, reviews] = await Promise.all([
+  private async getSellerSummary(userId: string) {
+    const [activeListingsCount, archivedListingsCount, reviews] = await Promise.all([
       this.prisma.listing.count({
         where: {
           ownerId: userId,
           status: ListingStatus.APPROVED,
           publishedAt: {
             not: null,
+          },
+          deletedAt: null,
+        },
+      }),
+      this.prisma.listing.count({
+        where: {
+          ownerId: userId,
+          status: {
+            in: [ListingStatus.ARCHIVED, ListingStatus.SOLD],
           },
           deletedAt: null,
         },
@@ -299,17 +308,29 @@ export class UsersService {
         },
       }),
     ]);
-    return sellerLevelFromMetrics(activeListingsCount, reviews, userId);
+    return {
+      sellerLevel: sellerLevelFromMetrics(activeListingsCount, reviews, userId),
+      activeListingsCount,
+      archivedListingsCount,
+    };
   }
 
-  private withSellerLevel<T extends Record<string, unknown>>(
+  private withSellerSummary<T extends Record<string, unknown>>(
     user: T,
-    sellerLevel: SellerLevel | null,
+    summary: {
+      sellerLevel: SellerLevel | null;
+      activeListingsCount: number;
+      archivedListingsCount: number;
+    },
   ) {
     return {
       ...user,
-      seller_level: sellerLevel,
-      sellerLevel,
+      seller_level: summary.sellerLevel,
+      sellerLevel: summary.sellerLevel,
+      active_listings_count: summary.activeListingsCount,
+      activeListingsCount: summary.activeListingsCount,
+      archived_listings_count: summary.archivedListingsCount,
+      archivedListingsCount: summary.archivedListingsCount,
     };
   }
 

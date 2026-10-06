@@ -174,7 +174,7 @@ void main() {
 
     await tester.pumpWidget(_buildApp(listings: listings));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Архив'));
+    await tester.tap(find.textContaining('Архив'));
     await tester.pumpAndSettle();
 
     expect(find.text('Снятое'), findsOneWidget);
@@ -221,6 +221,46 @@ void main() {
     );
     await tester.pumpAndSettle();
   });
+
+  testWidgets('seller search is debounced and sent with owner scope',
+      (tester) async {
+    final listings = _FakeSellerListingsService(
+      initialItems: <Listing>[
+        _listing('toyota', 'Фара Toyota'),
+        _listing('honda', 'Дверь Honda'),
+      ],
+    );
+
+    await tester.pumpWidget(_buildApp(listings: listings));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Поиск в объявлениях продавца'),
+      'Toyota',
+    );
+    await tester.pump(const Duration(milliseconds: 399));
+    expect(listings.publicOwnerQueries.last['search'], '');
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(listings.publicOwnerQueries.last['ownerId'], 'seller-1');
+    expect(listings.publicOwnerQueries.last['search'], 'Toyota');
+    expect(find.text('Фара Toyota'), findsOneWidget);
+    expect(find.text('Дверь Honda'), findsNothing);
+  });
+
+  testWidgets('normalized public phone keeps call action available',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildApp(
+        listings: _FakeSellerListingsService(),
+        profile: _NormalizedPhoneProfileService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Позвонить'), findsOneWidget);
+    expect(find.text('Телефон скрыт'), findsNothing);
+  });
 }
 
 Finder get _activeListingsSectionFinder {
@@ -234,11 +274,12 @@ Finder get _activeListingsSectionFinder {
 Widget _buildApp({
   required _FakeSellerListingsService listings,
   _FakeAuthService? auth,
+  ProfileService? profile,
   String sellerId = 'seller-1',
 }) {
   return MultiProvider(
     providers: [
-      Provider<ProfileService>.value(value: _FakeProfileService()),
+      Provider<ProfileService>.value(value: profile ?? _FakeProfileService()),
       Provider<ReviewsService>.value(value: _FakeReviewsService()),
       Provider<ListingsService>.value(value: listings),
       Provider<ChatService>.value(value: _FakeChatService()),
@@ -304,12 +345,14 @@ class _FakeSellerListingsService extends ListingsService {
   Future<ListingsFeedPage> getPublicOwnerListingsPage({
     required String ownerId,
     required String status,
+    String search = '',
     int limit = 20,
     String? cursor,
     bool forceRefresh = false,
   }) async {
     publicOwnerQueries.add(<String, dynamic>{
       'ownerId': ownerId,
+      'search': search,
       'limit': limit,
       if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
       if (status == 'archive') 'publicMode': 'archive' else 'status': status,
@@ -332,9 +375,15 @@ class _FakeSellerListingsService extends ListingsService {
     final allowed = status == 'archive'
         ? const <String>{'archived', 'sold'}
         : <String>{status};
+    final normalizedSearch = search.trim().toLowerCase();
     final filtered = _items
         .where(
             (item) => item.ownerId == ownerId && allowed.contains(item.status))
+        .where((item) =>
+            normalizedSearch.isEmpty ||
+            '${item.title} ${item.description}'
+                .toLowerCase()
+                .contains(normalizedSearch))
         .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final start = int.tryParse((cursor ?? '').trim()) ?? 0;
@@ -359,6 +408,9 @@ class _FakeProfileService extends ProfileService {
       'display_name': 'Продавец',
       'avatar_url': '',
       'phone': '+79990000000',
+      'created_at': '2026-08-12T10:00:00.000Z',
+      'active_listings_count': 2,
+      'archived_listings_count': 2,
     };
   }
 
@@ -372,6 +424,27 @@ class _FakeProfileService extends ProfileService {
       'display_name': 'Продавец',
       'avatar_url': '',
       'phone': '+79990000000',
+      'created_at': '2026-08-12T10:00:00.000Z',
+      'active_listings_count': 2,
+      'archived_listings_count': 2,
+    };
+  }
+}
+
+class _NormalizedPhoneProfileService extends _FakeProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{
+      'id': uid,
+      'display_name': 'Продавец',
+      'avatar_url': '',
+      'normalized_phone': '79990000000',
+      'created_at': '2026-08-12T10:00:00.000Z',
+      'active_listings_count': 2,
+      'archived_listings_count': 2,
     };
   }
 }

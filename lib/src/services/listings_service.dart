@@ -215,6 +215,14 @@ class ListingsService {
 
   Stream<void> get refreshes => _refreshController.stream;
 
+  /// Drops requests that belong to the previous network route. Visible data
+  /// stays cached so Wi-Fi/mobile/VPN changes do not blank the feed.
+  void prepareForNetworkRecovery() {
+    _timewebInFlight.clear();
+    _feedPageInFlight.clear();
+    _ownerListingsInFlight.clear();
+  }
+
   Future<void> recordSearchAttempt({
     required String attemptId,
     required String query,
@@ -291,6 +299,7 @@ class ListingsService {
   Future<ListingsFeedPage> getPublicOwnerListingsPage({
     required String ownerId,
     required String status,
+    String search = '',
     int limit = 20,
     String? cursor,
     bool forceRefresh = false,
@@ -305,8 +314,15 @@ class ListingsService {
       final allowed = status == 'archive'
           ? const <String>{'archived', 'sold'}
           : <String>{status};
+      final normalizedSearch = search.trim().toLowerCase();
       return ListingsFeedPage(
-        items: items.where((item) => allowed.contains(item.status)).toList(),
+        items: items.where((item) {
+          if (!allowed.contains(item.status)) return false;
+          if (normalizedSearch.isEmpty) return true;
+          return '${item.title} ${item.description} ${item.category} ${item.subcategory}'
+              .toLowerCase()
+              .contains(normalizedSearch);
+        }).toList(),
         hasMore: false,
       );
     }
@@ -320,6 +336,7 @@ class ListingsService {
       'owner',
       id,
       normalizedStatus,
+      search.trim(),
       limit,
       (cursor ?? '').trim(),
       if (forceRefresh) 'refresh',
@@ -334,6 +351,7 @@ class ListingsService {
       final response = await _api.list(
         queryParameters: {
           'ownerId': id,
+          if (search.trim().isNotEmpty) 'search': search.trim(),
           'limit': limit,
           if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
           if (normalizedStatus == 'archive')

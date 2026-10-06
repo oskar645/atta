@@ -4,10 +4,12 @@ import 'package:atta/src/app.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/inbox/inbox_screen.dart';
 import 'package:atta/src/models/chat.dart';
+import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/message.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
+import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
@@ -312,6 +314,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('ATTA listing link renders as compact listing card',
+      (tester) async {
+    final chatService = _InboxFakeChatService(
+      chat: _chatFixture(),
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'listing-link',
+          chatId: 'chat-1',
+          senderId: 'user-2',
+          text: 'Посмотри объявление:\n'
+              'https://attamarket.online/listing/listing-42',
+          createdAt: DateTime.parse('2026-06-30T10:00:00.000Z'),
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildInboxApp(
+        chatService: chatService,
+        listingsService: _PreviewListingsService(_listingPreviewFixture()),
+        child: const ChatScreen(chatId: 'chat-1'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('listing-preview-listing-link')),
+      findsOneWidget,
+    );
+    expect(find.text('15 000 ₽'), findsOneWidget);
+    expect(find.text('Фара левая exeed txl'), findsOneWidget);
+    expect(find.text('Краснодар'), findsOneWidget);
+    expect(find.textContaining('https://attamarket.online'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('tap outside input closes keyboard', (tester) async {
     final focusNode = FocusNode();
 
@@ -343,6 +383,7 @@ void main() {
 Widget _buildInboxApp({
   required ChatService chatService,
   required Widget child,
+  ListingsService? listingsService,
 }) {
   return MultiProvider(
     providers: [
@@ -350,6 +391,8 @@ Widget _buildInboxApp({
       Provider<ChatService>.value(value: chatService),
       Provider<ProfileService>.value(value: _FakeProfileService()),
       Provider<PresenceService>.value(value: _FakePresenceService()),
+      if (listingsService != null)
+        Provider<ListingsService>.value(value: listingsService),
       ChangeNotifierProvider(
         create: (_) => MainShellController(initialIndex: 3),
       ),
@@ -359,6 +402,59 @@ Widget _buildInboxApp({
       home: child,
     ),
   );
+}
+
+Listing _listingPreviewFixture() {
+  return Listing(
+    id: 'listing-42',
+    ownerId: 'user-2',
+    ownerEmail: '',
+    ownerName: 'Seller',
+    title: 'Фара левая exeed txl',
+    description: 'Описание',
+    category: 'Автозапчасти',
+    subcategory: 'Фары',
+    price: 15000,
+    phone: '',
+    phoneHidden: false,
+    city: 'Краснодар',
+    location: const ListingLocation(raw: 'Краснодар'),
+    delivery: const <String, dynamic>{},
+    photoUrls: const <String>[],
+    photoItems: const <ListingPhotoItem>[],
+    car: null,
+    dealType: null,
+    realEstateType: null,
+    clothesType: null,
+    clothesSize: null,
+    oemPartNumber: null,
+    viewCount: 0,
+    favoriteCount: 0,
+    status: 'approved',
+    rejectionReason: '',
+    activeShowcase: null,
+    activeBump: null,
+    activeVip: null,
+    activeTurbo: null,
+    canPromote: true,
+    cannotPromoteReason: null,
+    publishedAt: null,
+    createdAt: DateTime.parse('2026-06-30T09:00:00.000Z'),
+    updatedAt: null,
+  );
+}
+
+class _PreviewListingsService extends ListingsService {
+  _PreviewListingsService(this.listing);
+
+  final Listing listing;
+
+  @override
+  Listing? peekListingById(String id) => id == listing.id ? listing : null;
+
+  @override
+  Future<Listing?> getListingById(String id) async =>
+      id == listing.id ? listing : null;
 }
 
 Chat _chatFixture({

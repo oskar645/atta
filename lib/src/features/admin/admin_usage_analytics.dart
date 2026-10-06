@@ -5,8 +5,9 @@ import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/usage_analytics_service.dart';
 
 class AdminUsageAnalytics extends StatefulWidget {
-  const AdminUsageAnalytics({super.key, this.load});
+  const AdminUsageAnalytics({super.key, this.load, this.data});
   final Future<Map<String, dynamic>> Function()? load;
+  final Map<String, dynamic>? data;
   @override
   State<AdminUsageAnalytics> createState() => _AdminUsageAnalyticsState();
 }
@@ -58,6 +59,8 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _data = widget.data;
+    if (widget.data != null) return;
     _reload();
     _poll = Timer.periodic(
       const Duration(seconds: 30),
@@ -68,6 +71,7 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (widget.data != null) return;
     if (_events != null) return;
     final socket = Provider.of<ChatSocketService?>(context, listen: false);
     if (socket == null) return;
@@ -81,6 +85,14 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
         _invalidate();
       }
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminUsageAnalytics oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.data, widget.data) && widget.data != null) {
+      _data = widget.data;
+    }
   }
 
   void _invalidate() {
@@ -240,6 +252,188 @@ class _AdminUsageAnalyticsState extends State<AdminUsageAnalytics>
       }),
       const SizedBox(height: 12),
     ]);
+  }
+}
+
+class AdminPlatformAnalytics extends StatelessWidget {
+  const AdminPlatformAnalytics({super.key, required this.data});
+
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final platforms = data['platforms'] as Map?;
+    final today = platforms?['today'] as Map?;
+    final active = today?['active'] as Map?;
+    final total = _number(active?['ios']) +
+        _number(active?['android']) +
+        _number(active?['web']);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('analytics-platforms'),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => _PlatformAnalyticsDetails(platforms: platforms),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Icon(Icons.devices_outlined,
+                  color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Платформы',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                    Text('Активные сегодня', style: TextStyle(fontSize: 12)),
+                  ],
+                ),
+              ),
+              Text('$total',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w900, fontSize: 18)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlatformAnalyticsDetails extends StatefulWidget {
+  const _PlatformAnalyticsDetails({required this.platforms});
+  final Map? platforms;
+
+  @override
+  State<_PlatformAnalyticsDetails> createState() =>
+      _PlatformAnalyticsDetailsState();
+}
+
+class _PlatformAnalyticsDetailsState
+    extends State<_PlatformAnalyticsDetails> {
+  static const _periods = <String, String>{
+    'today': 'Сегодня',
+    'week': '7 дней',
+    'month': 'Месяц',
+    'all': 'Всё время',
+  };
+  String _period = 'today';
+
+  @override
+  Widget build(BuildContext context) {
+    final values = widget.platforms?[_period] as Map?;
+    final active = values?['active'] as Map?;
+    final registrations = values?['registrations'] as Map?;
+    final versions = (values?['versions'] as List? ?? const [])
+        .whereType<Map>()
+        .toList(growable: false);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Платформы')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final entry in _periods.entries)
+                ChoiceChip(
+                  label: Text(entry.value),
+                  selected: _period == entry.key,
+                  onSelected: (_) => setState(() => _period = entry.key),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _platformCard('Активные пользователи', active),
+          _platformCard('Регистрации', registrations,
+              includeUnknown: true),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('Версии приложения',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  if (versions.isEmpty)
+                    const Text('Данные начнут собираться после обновления приложения.')
+                  else
+                    for (final item in versions)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                            '${_platformLabel(item['platform'])} · ${item['version']}'),
+                        subtitle: '${item['buildNumber'] ?? ''}'.trim().isEmpty
+                            ? null
+                            : Text('Сборка ${item['buildNumber']}'),
+                        trailing: Text('${item['users'] ?? 0}'),
+                      ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _platformCard(String title, Map? values,
+      {bool includeUnknown = false}) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(title,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            _metric('iPhone', values?['ios']),
+            _metric('Android', values?['android']),
+            _metric('Web', values?['web']),
+            if (includeUnknown && _number(values?['unknown']) > 0)
+              _metric('Платформа не определена', values?['unknown']),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metric(String label, Object? value) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(child: Text(label)),
+            Text('${_number(value)}',
+                style: const TextStyle(fontWeight: FontWeight.w800)),
+          ],
+        ),
+      );
+}
+
+int _number(Object? value) =>
+    value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+
+String _platformLabel(Object? value) {
+  switch ('$value'.toLowerCase()) {
+    case 'ios':
+      return 'iPhone';
+    case 'android':
+      return 'Android';
+    case 'web':
+      return 'Web';
+    default:
+      return '$value';
   }
 }
 

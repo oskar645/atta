@@ -11,6 +11,11 @@ export class SendChatMessageDto {
   @IsUUID()
   clientMessageId?: string;
 
+  @IsOptional()
+  @IsString()
+  @IsUUID()
+  replyToMessageId?: string;
+
   @IsString()
   @MinLength(1)
   @MaxLength(4000)

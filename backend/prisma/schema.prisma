@@ -180,87 +180,88 @@ enum UserConsentType {
 }
 
 model User {
-  id             String              @id @db.Uuid
-  email          String?             @unique
-  emailVerifiedAt DateTime?          @map("email_verified_at") @db.Timestamptz(3)
-  phone          String?             @unique
-  phoneVerified  Boolean             @default(false)
-  displayName    String              @default("") @map("display_name")
-  name           String              @default("")
-  avatarUrl      String?             @map("avatar_url")
-  photoUrl       String?             @map("photo_url")
-  passwordHash   String              @map("password_hash")
-  status         UserStatus          @default(ACTIVE)
-  blockedAt      DateTime?           @map("blocked_at")
-  blockReason    String?             @map("block_reason")
-  lastLoginAt    DateTime?           @map("last_login_at")
-  lastNotificationsSeenAt DateTime?  @map("last_notifications_seen_at")
-  createdAt      DateTime            @default(now()) @map("created_at")
-  updatedAt      DateTime            @updatedAt @map("updated_at")
-  deletedAt      DateTime?           @map("deleted_at")
-  adminProfile   AdminUser?
-  sessions       UserSession[]
-  devices        UserDevice[]
-  listings       Listing[]           @relation("ListingOwner")
-  favorites      Favorite[]
-  viewedListings ViewedListing[]
-  savedSearches  SavedSearch[]
-  following      UserFollow[]        @relation("UserFollowFollower")
-  followers      UserFollow[]        @relation("UserFollowSeller")
-  reviewsWritten Review[]            @relation("ReviewAuthor")
-  reviewsAbout   Review[]            @relation("ReviewSeller")
-  buyerChats     Chat[]              @relation("ChatBuyer")
-  sellerChats    Chat[]              @relation("ChatSeller")
-  messages       ChatMessage[]
-  presence       UserPresence?
-  dailyVisits    AppDailyVisit[]
-  notifications  UserNotification[]
-  reportsFiled   Report[]            @relation("ReportReporter")
-  reportsOwned   Report[]            @relation("ReportOwner")
-  reportsHandled Report[]            @relation("ReportHandledBy")
-  supportTickets SupportTicket[]
-  supportReplies SupportMessage[]
-  feedAdsCreated FeedAd[]            @relation("FeedAdCreatedBy")
-  topBannersCreated TopBanner[]       @relation("TopBannerCreatedBy")
-  auditLogs      AuditLog[]          @relation("AuditActor")
-  wallet         Wallet?
-  walletTransactions WalletTransaction[]
-  referralsSent Referral[]           @relation("ReferralInviter")
-  referralInvite Referral?           @relation("ReferralInvited")
-  promotions     Promotion[]
-  listingRaiseCampaigns ListingRaiseCampaign[]
-  payments        Payment[]
-  blocks          UserBlock[]        @relation("UserBlocks")
-  blocksIssued    UserBlock[]        @relation("UserBlocksIssued")
-  blocksLifted    UserBlock[]        @relation("UserBlocksLifted")
-  blockedIdentitiesLifted BlockedIdentity[] @relation("BlockedIdentityLiftedBy")
-  peerBlocksIssued ChatPeerBlock[]   @relation("ChatPeerBlocksIssued")
-  peerBlocksReceived ChatPeerBlock[] @relation("ChatPeerBlocksReceived")
-  restoreCredentials RestoreCredential[]
-  consents       UserConsent[]
-  emailChallenges EmailChallenge[]
-  recoveryGrants AccountRecoveryGrant[]
+  id                      String                      @id @db.Uuid
+  email                   String?                     @unique
+  emailVerifiedAt         DateTime?                   @map("email_verified_at") @db.Timestamptz(3)
+  phone                   String?                     @unique
+  phoneVerified           Boolean                     @default(false)
+  displayName             String                      @default("") @map("display_name")
+  name                    String                      @default("")
+  avatarUrl               String?                     @map("avatar_url")
+  photoUrl                String?                     @map("photo_url")
+  passwordHash            String                      @map("password_hash")
+  status                  UserStatus                  @default(ACTIVE)
+  blockedAt               DateTime?                   @map("blocked_at")
+  blockReason             String?                     @map("block_reason")
+  lastLoginAt             DateTime?                   @map("last_login_at")
+  lastNotificationsSeenAt DateTime?                   @map("last_notifications_seen_at")
+  createdAt               DateTime                    @default(now()) @map("created_at")
+  updatedAt               DateTime                    @updatedAt @map("updated_at")
+  deletedAt               DateTime?                   @map("deleted_at")
+  adminProfile            AdminUser?
+  sessions                UserSession[]
+  devices                 UserDevice[]
+  listings                Listing[]                   @relation("ListingOwner")
+  favorites               Favorite[]
+  viewedListings          ViewedListing[]
+  savedSearches           SavedSearch[]
+  following               UserFollow[]                @relation("UserFollowFollower")
+  followers               UserFollow[]                @relation("UserFollowSeller")
+  reviewsWritten          Review[]                    @relation("ReviewAuthor")
+  reviewsAbout            Review[]                    @relation("ReviewSeller")
+  buyerChats              Chat[]                      @relation("ChatBuyer")
+  sellerChats             Chat[]                      @relation("ChatSeller")
+  messages                ChatMessage[]
+  presence                UserPresence?
+  dailyVisits             AppDailyVisit[]
+  platformActivity        AnalyticsPlatformActivity[]
+  notifications           UserNotification[]
+  reportsFiled            Report[]                    @relation("ReportReporter")
+  reportsOwned            Report[]                    @relation("ReportOwner")
+  reportsHandled          Report[]                    @relation("ReportHandledBy")
+  supportTickets          SupportTicket[]
+  supportReplies          SupportMessage[]
+  feedAdsCreated          FeedAd[]                    @relation("FeedAdCreatedBy")
+  topBannersCreated       TopBanner[]                 @relation("TopBannerCreatedBy")
+  auditLogs               AuditLog[]                  @relation("AuditActor")
+  wallet                  Wallet?
+  walletTransactions      WalletTransaction[]
+  referralsSent           Referral[]                  @relation("ReferralInviter")
+  referralInvite          Referral?                   @relation("ReferralInvited")
+  promotions              Promotion[]
+  listingRaiseCampaigns   ListingRaiseCampaign[]
+  payments                Payment[]
+  blocks                  UserBlock[]                 @relation("UserBlocks")
+  blocksIssued            UserBlock[]                 @relation("UserBlocksIssued")
+  blocksLifted            UserBlock[]                 @relation("UserBlocksLifted")
+  blockedIdentitiesLifted BlockedIdentity[]           @relation("BlockedIdentityLiftedBy")
+  peerBlocksIssued        ChatPeerBlock[]             @relation("ChatPeerBlocksIssued")
+  peerBlocksReceived      ChatPeerBlock[]             @relation("ChatPeerBlocksReceived")
+  restoreCredentials      RestoreCredential[]
+  consents                UserConsent[]
+  emailChallenges         EmailChallenge[]
+  recoveryGrants          AccountRecoveryGrant[]
 
   @@map("users")
 }
 
 model EmailChallenge {
-  id                 String                @id @default(uuid()) @db.Uuid
-  userId             String?               @map("user_id") @db.Uuid
-  purpose            EmailChallengePurpose
-  targetEmail        String                @map("target_email")
-  codeHash           String                @map("code_hash")
-  attempts           Int                   @default(0)
-  maxAttempts        Int                   @default(5) @map("max_attempts")
-  expiresAt          DateTime              @map("expires_at") @db.Timestamptz(3)
-  resendAvailableAt  DateTime              @map("resend_available_at") @db.Timestamptz(3)
-  consumedAt         DateTime?             @map("consumed_at") @db.Timestamptz(3)
-  requestedByIp      String?               @map("requested_by_ip")
-  requestedByDevice  String?               @map("requested_by_device")
-  metadata           Json                  @default("{}")
-  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
-  user               User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String                @id @default(uuid()) @db.Uuid
+  userId            String?               @map("user_id") @db.Uuid
+  purpose           EmailChallengePurpose
+  targetEmail       String                @map("target_email")
+  codeHash          String                @map("code_hash")
+  attempts          Int                   @default(0)
+  maxAttempts       Int                   @default(5) @map("max_attempts")
+  expiresAt         DateTime              @map("expires_at") @db.Timestamptz(3)
+  resendAvailableAt DateTime              @map("resend_available_at") @db.Timestamptz(3)
+  consumedAt        DateTime?             @map("consumed_at") @db.Timestamptz(3)
+  requestedByIp     String?               @map("requested_by_ip")
+  requestedByDevice String?               @map("requested_by_device")
+  metadata          Json                  @default("{}")
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user              User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, purpose, createdAt])
   @@index([targetEmail, purpose, createdAt])
@@ -269,13 +270,13 @@ model EmailChallenge {
 }
 
 model AccountRecoveryGrant {
-  id          String   @id @default(uuid()) @db.Uuid
-  userId      String   @map("user_id") @db.Uuid
-  tokenHash   String   @unique @map("token_hash")
-  expiresAt   DateTime @map("expires_at") @db.Timestamptz(3)
-  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz(3)
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
   @@map("account_recovery_grants")
@@ -299,19 +300,19 @@ model UserConsent {
 }
 
 model RestoreCredential {
-  id             String                @id @default(uuid()) @db.Uuid
-  userId         String                @map("user_id") @db.Uuid
-  credentialId   String                @unique @map("credential_id")
-  publicKey      Bytes                 @map("public_key")
-  counter        Int                   @default(0)
-  transports     String[]              @default([])
-  type           RestoreCredentialType @default(RESTORE)
-  deviceType     String?               @map("device_type")
-  backedUp       Boolean               @default(false) @map("backed_up")
-  createdAt      DateTime              @default(now()) @map("created_at")
-  lastUsedAt     DateTime?             @map("last_used_at")
-  revokedAt      DateTime?             @map("revoked_at")
-  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String                @id @default(uuid()) @db.Uuid
+  userId       String                @map("user_id") @db.Uuid
+  credentialId String                @unique @map("credential_id")
+  publicKey    Bytes                 @map("public_key")
+  counter      Int                   @default(0)
+  transports   String[]              @default([])
+  type         RestoreCredentialType @default(RESTORE)
+  deviceType   String?               @map("device_type")
+  backedUp     Boolean               @default(false) @map("backed_up")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  lastUsedAt   DateTime?             @map("last_used_at")
+  revokedAt    DateTime?             @map("revoked_at")
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, revokedAt], map: "restore_credentials_user_id_revoked_at_idx")
   @@map("restore_credentials")
@@ -331,6 +332,23 @@ model AppDailyVisit {
   @@map("app_daily_visits")
 }
 
+model AnalyticsPlatformActivity {
+  userId         String         @map("user_id") @db.Uuid
+  platform       DevicePlatform
+  day            DateTime       @db.Date
+  appVersion     String         @default("") @map("app_version")
+  buildNumber    String         @default("") @map("build_number")
+  lastActivityAt DateTime       @default(now()) @map("last_activity_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, platform, day])
+  @@index([day, platform])
+  @@index([platform, appVersion, day])
+  @@map("analytics_platform_activity")
+}
+
 model AdminUser {
   userId      String   @id @map("user_id") @db.Uuid
   isAdmin     Boolean  @default(true) @map("is_admin")
@@ -344,17 +362,17 @@ model AdminUser {
 }
 
 model UserSession {
-  id               String   @id @default(uuid()) @db.Uuid
-  userId           String   @map("user_id") @db.Uuid
-  refreshTokenHash String   @map("refresh_token_hash")
-  deviceId         String?  @map("device_id") @db.Uuid
-  deviceName       String?  @map("device_name")
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @map("refresh_token_hash")
+  deviceId         String?   @map("device_id") @db.Uuid
+  deviceName       String?   @map("device_name")
   ip               String?
-  userAgent        String?  @map("user_agent")
-  expiresAt        DateTime @map("expires_at")
+  userAgent        String?   @map("user_agent")
+  expiresAt        DateTime  @map("expires_at")
   revokedAt        DateTime? @map("revoked_at")
-  createdAt        DateTime @default(now()) @map("created_at")
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   pushDevices UserDevice[]
 
@@ -364,24 +382,24 @@ model UserSession {
 }
 
 model PhoneVerification {
-  id                 String                    @id @default(uuid()) @db.Uuid
-  phone              String
-  purpose            PhoneVerificationPurpose
-  provider           PhoneVerificationProvider @default(SMS_RU)
-  checkId            String?                   @map("provider_check_id")
-  status             PhoneVerificationStatus   @default(PENDING)
-  providerStatusCode String?                   @map("provider_status_code")
-  providerStatusText String?                   @map("provider_status_text")
-  attempts           Int                       @default(0) @map("attempts_count")
-  maxAttempts        Int                       @default(5) @map("max_attempts")
-  requestedByIp      String?                   @map("requested_by_ip")
-  requestedByDeviceId String?                  @map("requested_by_device_id") @db.Uuid
-  confirmedAt        DateTime?                 @map("verified_at")
-  expiresAt          DateTime                  @map("expires_at")
-  createdUserId      String?                   @map("created_user_id") @db.Uuid
-  metadata           Json                      @default("{}")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  id                  String                    @id @default(uuid()) @db.Uuid
+  phone               String
+  purpose             PhoneVerificationPurpose
+  provider            PhoneVerificationProvider @default(SMS_RU)
+  checkId             String?                   @map("provider_check_id")
+  status              PhoneVerificationStatus   @default(PENDING)
+  providerStatusCode  String?                   @map("provider_status_code")
+  providerStatusText  String?                   @map("provider_status_text")
+  attempts            Int                       @default(0) @map("attempts_count")
+  maxAttempts         Int                       @default(5) @map("max_attempts")
+  requestedByIp       String?                   @map("requested_by_ip")
+  requestedByDeviceId String?                   @map("requested_by_device_id") @db.Uuid
+  confirmedAt         DateTime?                 @map("verified_at")
+  expiresAt           DateTime                  @map("expires_at")
+  createdUserId       String?                   @map("created_user_id") @db.Uuid
+  metadata            Json                      @default("{}")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  updatedAt           DateTime                  @updatedAt @map("updated_at")
 
   @@index([phone, purpose, createdAt])
   @@index([checkId])
@@ -413,56 +431,56 @@ model UserDevice {
 }
 
 model Listing {
-  id              String        @id @default(uuid()) @db.Uuid
-  ownerId         String        @map("owner_id") @db.Uuid
-  ownerEmail      String?       @map("owner_email")
-  ownerName       String        @default("") @map("owner_name")
-  title           String
-  description     String        @default("")
-  category        String
-  subcategory     String        @default("")
-  price           BigInt        @default(0)
-  previousPrice   BigInt?       @map("previous_price")
-  priceReducedAt  DateTime?     @map("price_reduced_at")
-  phone           String        @default("")
-  phoneHidden     Boolean       @default(false) @map("phone_hidden")
-  city            String        @default("")
-  address         String        @default("")
-  latitude        Decimal?      @db.Decimal(10, 7)
-  longitude       Decimal?      @db.Decimal(10, 7)
-  locationJson    Json          @default("{}") @map("location_json")
-  delivery        Json          @default("{}")
-  car             Json?
-  dealType        String?       @map("deal_type")
-  realEstateType  String?       @map("real_estate_type")
-  clothesType     String?       @map("clothes_type")
-  clothesSize     String?       @map("clothes_size")
-  oemPartNumber   String?       @map("oem_part_number")
-  oemPartNumberNormalized String? @map("oem_part_number_normalized")
-  status          ListingStatus @default(PENDING)
-  rejectionReason String?       @map("rejection_reason")
-  moderationNote  String?       @map("moderation_note")
-  moderatedBy     String?       @map("moderated_by") @db.Uuid
-  moderatedAt     DateTime?     @map("moderated_at")
-  publishedAt     DateTime?     @map("published_at")
-  archivedAt      DateTime?     @map("archived_at")
-  deletedAt       DateTime?     @map("deleted_at")
-  viewCount       Int           @default(0) @map("view_count")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-  owner           User          @relation("ListingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  photos          ListingPhoto[]
-  views           ListingView[]
-  favorites       Favorite[]
-  viewedBy        ViewedListing[]
-  reviews         Review[]
-  chats           Chat[]
-  reports         Report[]
-  promotions      Promotion[]
-  raiseCampaigns  ListingRaiseCampaign[]
-  userBlocks      UserBlock[]
-  moderationRevisions ListingModerationRevision[]
-  savedSearchAlerts SavedSearchAlert[]
+  id                      String                      @id @default(uuid()) @db.Uuid
+  ownerId                 String                      @map("owner_id") @db.Uuid
+  ownerEmail              String?                     @map("owner_email")
+  ownerName               String                      @default("") @map("owner_name")
+  title                   String
+  description             String                      @default("")
+  category                String
+  subcategory             String                      @default("")
+  price                   BigInt                      @default(0)
+  previousPrice           BigInt?                     @map("previous_price")
+  priceReducedAt          DateTime?                   @map("price_reduced_at")
+  phone                   String                      @default("")
+  phoneHidden             Boolean                     @default(false) @map("phone_hidden")
+  city                    String                      @default("")
+  address                 String                      @default("")
+  latitude                Decimal?                    @db.Decimal(10, 7)
+  longitude               Decimal?                    @db.Decimal(10, 7)
+  locationJson            Json                        @default("{}") @map("location_json")
+  delivery                Json                        @default("{}")
+  car                     Json?
+  dealType                String?                     @map("deal_type")
+  realEstateType          String?                     @map("real_estate_type")
+  clothesType             String?                     @map("clothes_type")
+  clothesSize             String?                     @map("clothes_size")
+  oemPartNumber           String?                     @map("oem_part_number")
+  oemPartNumberNormalized String?                     @map("oem_part_number_normalized")
+  status                  ListingStatus               @default(PENDING)
+  rejectionReason         String?                     @map("rejection_reason")
+  moderationNote          String?                     @map("moderation_note")
+  moderatedBy             String?                     @map("moderated_by") @db.Uuid
+  moderatedAt             DateTime?                   @map("moderated_at")
+  publishedAt             DateTime?                   @map("published_at")
+  archivedAt              DateTime?                   @map("archived_at")
+  deletedAt               DateTime?                   @map("deleted_at")
+  viewCount               Int                         @default(0) @map("view_count")
+  createdAt               DateTime                    @default(now()) @map("created_at")
+  updatedAt               DateTime                    @updatedAt @map("updated_at")
+  owner                   User                        @relation("ListingOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  photos                  ListingPhoto[]
+  views                   ListingView[]
+  favorites               Favorite[]
+  viewedBy                ViewedListing[]
+  reviews                 Review[]
+  chats                   Chat[]
+  reports                 Report[]
+  promotions              Promotion[]
+  raiseCampaigns          ListingRaiseCampaign[]
+  userBlocks              UserBlock[]
+  moderationRevisions     ListingModerationRevision[]
+  savedSearchAlerts       SavedSearchAlert[]
 
   @@index([ownerId, createdAt])
   @@index([status, createdAt])
@@ -472,37 +490,37 @@ model Listing {
 }
 
 model ListingModerationRevision {
-  id           String    @id @default(uuid()) @db.Uuid
-  listingId    String    @map("listing_id") @db.Uuid
-  snapshot     Json
-  resolvedAt   DateTime? @map("resolved_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  listing      Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  id         String    @id @default(uuid()) @db.Uuid
+  listingId  String    @map("listing_id") @db.Uuid
+  snapshot   Json
+  resolvedAt DateTime? @map("resolved_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  listing    Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   @@index([listingId, resolvedAt, createdAt])
   @@map("listing_moderation_revisions")
 }
 
 model UserBlock {
-  id              String          @id @default(uuid()) @db.Uuid
-  userId          String          @map("user_id") @db.Uuid
-  listingId       String?         @map("listing_id") @db.Uuid
-  adminId         String          @map("admin_id") @db.Uuid
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  listingId       String?           @map("listing_id") @db.Uuid
+  adminId         String            @map("admin_id") @db.Uuid
   type            UserBlockType
-  status          UserBlockStatus @default(ACTIVE)
+  status          UserBlockStatus   @default(ACTIVE)
   reason          String
-  internalNote    String?         @map("internal_note")
-  startsAt        DateTime        @default(now()) @map("starts_at")
-  endsAt          DateTime?       @map("ends_at")
-  liftedAt        DateTime?       @map("lifted_at")
-  liftedByAdminId String?         @map("lifted_by_admin_id") @db.Uuid
-  liftReason      String?         @map("lift_reason")
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-  user            User            @relation("UserBlocks", fields: [userId], references: [id], onDelete: Cascade)
-  listing         Listing?        @relation(fields: [listingId], references: [id], onDelete: SetNull)
-  admin           User            @relation("UserBlocksIssued", fields: [adminId], references: [id], onDelete: Restrict)
-  liftedByAdmin   User?           @relation("UserBlocksLifted", fields: [liftedByAdminId], references: [id], onDelete: SetNull)
+  internalNote    String?           @map("internal_note")
+  startsAt        DateTime          @default(now()) @map("starts_at")
+  endsAt          DateTime?         @map("ends_at")
+  liftedAt        DateTime?         @map("lifted_at")
+  liftedByAdminId String?           @map("lifted_by_admin_id") @db.Uuid
+  liftReason      String?           @map("lift_reason")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  user            User              @relation("UserBlocks", fields: [userId], references: [id], onDelete: Cascade)
+  listing         Listing?          @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  admin           User              @relation("UserBlocksIssued", fields: [adminId], references: [id], onDelete: Restrict)
+  liftedByAdmin   User?             @relation("UserBlocksLifted", fields: [liftedByAdminId], references: [id], onDelete: SetNull)
   identities      BlockedIdentity[]
   appeals         SupportTicket[]
 
@@ -514,18 +532,18 @@ model UserBlock {
 }
 
 model BlockedIdentity {
-  id              String     @id @default(uuid()) @db.Uuid
-  normalizedPhone String     @map("normalized_phone")
-  userBlockId     String     @map("user_block_id") @db.Uuid
-  bannedUntil     DateTime?  @map("banned_until")
-  permanent       Boolean    @default(false)
+  id              String    @id @default(uuid()) @db.Uuid
+  normalizedPhone String    @map("normalized_phone")
+  userBlockId     String    @map("user_block_id") @db.Uuid
+  bannedUntil     DateTime? @map("banned_until")
+  permanent       Boolean   @default(false)
   reason          String
-  liftedAt        DateTime?  @map("lifted_at")
-  liftedByAdminId String?    @map("lifted_by_admin_id") @db.Uuid
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
-  userBlock       UserBlock  @relation(fields: [userBlockId], references: [id], onDelete: Cascade)
-  liftedByAdmin   User?      @relation("BlockedIdentityLiftedBy", fields: [liftedByAdminId], references: [id], onDelete: SetNull)
+  liftedAt        DateTime? @map("lifted_at")
+  liftedByAdminId String?   @map("lifted_by_admin_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  userBlock       UserBlock @relation(fields: [userBlockId], references: [id], onDelete: Cascade)
+  liftedByAdmin   User?     @relation("BlockedIdentityLiftedBy", fields: [liftedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([normalizedPhone, liftedAt])
   @@index([userBlockId])
@@ -551,17 +569,17 @@ model ListingPhoto {
 }
 
 model ListingView {
-  id            String   @id @default(uuid()) @db.Uuid
-  listingId     String   @map("listing_id") @db.Uuid
-  viewerUserId  String?  @map("viewer_user_id") @db.Uuid
-  viewerDeviceId String? @map("viewer_device_id") @db.Uuid
-  ip            String?
-  viewedAt      DateTime @default(now()) @map("viewed_at")
-  listing       Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  id             String   @id @default(uuid()) @db.Uuid
+  listingId      String   @map("listing_id") @db.Uuid
+  viewerUserId   String?  @map("viewer_user_id") @db.Uuid
+  viewerDeviceId String?  @map("viewer_device_id") @db.Uuid
+  ip             String?
+  viewedAt       DateTime @default(now()) @map("viewed_at")
+  listing        Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
+  @@unique([listingId, viewerDeviceId])
   @@index([listingId, viewedAt])
   @@index([viewerUserId, viewedAt])
-  @@unique([listingId, viewerDeviceId])
   @@map("listing_views")
 }
 
@@ -607,25 +625,25 @@ model ViewedListing {
 }
 
 model SavedSearch {
-  id                 String   @id @default(uuid()) @db.Uuid
-  userId             String   @map("user_id") @db.Uuid
-  title              String   @default("")
-  queryKey           String   @map("query_key")
-  category           String   @default("Все")
-  search             String   @default("")
-  subcategory        String   @default("Все")
-  location           String   @default("")
-  preferLocationFirst Boolean @default(false) @map("prefer_location_first")
-  radiusKm           Int?     @map("radius_km")
-  autoBrand          String   @default("") @map("auto_brand")
-  autoModel          String   @default("") @map("auto_model")
-  autoCondition      String   @default("") @map("auto_condition")
-  autoMileageTo      Int?     @map("auto_mileage_to")
-  onlyUncrashed      Boolean  @default(false) @map("only_uncrashed")
-  alertsEnabled      Boolean  @default(true) @map("alerts_enabled")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @map("user_id") @db.Uuid
+  title               String   @default("")
+  queryKey            String   @map("query_key")
+  category            String   @default("Все")
+  search              String   @default("")
+  subcategory         String   @default("Все")
+  location            String   @default("")
+  preferLocationFirst Boolean  @default(false) @map("prefer_location_first")
+  radiusKm            Int?     @map("radius_km")
+  autoBrand           String   @default("") @map("auto_brand")
+  autoModel           String   @default("") @map("auto_model")
+  autoCondition       String   @default("") @map("auto_condition")
+  autoMileageTo       Int?     @map("auto_mileage_to")
+  onlyUncrashed       Boolean  @default(false) @map("only_uncrashed")
+  alertsEnabled       Boolean  @default(true) @map("alerts_enabled")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   alerts SavedSearchAlert[]
 
@@ -669,23 +687,23 @@ model Review {
 }
 
 model Chat {
-  id                String    @id @default(uuid()) @db.Uuid
-  listingId         String?   @map("listing_id") @db.Uuid
-  listingTitle      String    @default("") @map("listing_title")
-  buyerId           String    @map("buyer_id") @db.Uuid
-  sellerId          String    @map("seller_id") @db.Uuid
-  lastMessage       String    @default("") @map("last_message")
+  id                String          @id @default(uuid()) @db.Uuid
+  listingId         String?         @map("listing_id") @db.Uuid
+  listingTitle      String          @default("") @map("listing_title")
+  buyerId           String          @map("buyer_id") @db.Uuid
+  sellerId          String          @map("seller_id") @db.Uuid
+  lastMessage       String          @default("") @map("last_message")
   lastMessageType   ChatMessageType @default(TEXT) @map("last_message_type")
-  lastMessageAt     DateTime? @map("last_message_at")
-  unreadForBuyer    Int       @default(0) @map("unread_for_buyer")
-  unreadForSeller   Int       @default(0) @map("unread_for_seller")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
-  deletedByBuyerAt  DateTime? @map("deleted_by_buyer_at")
-  deletedBySellerAt DateTime? @map("deleted_by_seller_at")
-  listing           Listing?  @relation(fields: [listingId], references: [id], onDelete: SetNull)
-  buyer             User      @relation("ChatBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
-  seller            User      @relation("ChatSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+  lastMessageAt     DateTime?       @map("last_message_at")
+  unreadForBuyer    Int             @default(0) @map("unread_for_buyer")
+  unreadForSeller   Int             @default(0) @map("unread_for_seller")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  deletedByBuyerAt  DateTime?       @map("deleted_by_buyer_at")
+  deletedBySellerAt DateTime?       @map("deleted_by_seller_at")
+  listing           Listing?        @relation(fields: [listingId], references: [id], onDelete: SetNull)
+  buyer             User            @relation("ChatBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller            User            @relation("ChatSeller", fields: [sellerId], references: [id], onDelete: Cascade)
   messages          ChatMessage[]
 
   @@unique([listingId, buyerId, sellerId])
@@ -708,26 +726,32 @@ model ChatPeerBlock {
 }
 
 model ChatMessage {
-  id          String          @id @default(uuid()) @db.Uuid
-  chatId       String         @map("chat_id") @db.Uuid
-  senderId     String         @map("sender_id") @db.Uuid
-  clientMessageId String?     @map("client_message_id")
-  messageType  ChatMessageType @default(TEXT) @map("message_type")
-  text         String         @default("")
-  imageBucket  String?        @map("image_bucket")
-  imageKey     String?        @map("image_key")
-  imageUrl     String?        @map("image_url")
-  deliveredAt  DateTime?      @map("delivered_at")
-  readAt       DateTime?      @map("read_at")
-  createdAt    DateTime       @default(now()) @map("created_at")
-  deletedAt    DateTime?      @map("deleted_at")
-  chat         Chat           @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  sender       User           @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  id               String          @id @default(uuid()) @db.Uuid
+  chatId           String          @map("chat_id") @db.Uuid
+  senderId         String          @map("sender_id") @db.Uuid
+  clientMessageId  String?         @map("client_message_id")
+  messageType      ChatMessageType @default(TEXT) @map("message_type")
+  text             String          @default("")
+  imageBucket      String?         @map("image_bucket")
+  imageKey         String?         @map("image_key")
+  imageUrl         String?         @map("image_url")
+  deliveredAt      DateTime?       @map("delivered_at")
+  readAt           DateTime?       @map("read_at")
+  editedAt         DateTime?       @map("edited_at")
+  replyToMessageId String?         @map("reply_to_message_id") @db.Uuid
+  hiddenForUserIds String[]        @default([]) @map("hidden_for_user_ids") @db.Uuid
+  createdAt        DateTime        @default(now()) @map("created_at")
+  deletedAt        DateTime?       @map("deleted_at")
+  chat             Chat            @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender           User            @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo          ChatMessage?    @relation("ChatMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          ChatMessage[]   @relation("ChatMessageReplies")
 
+  @@unique([chatId, senderId, clientMessageId])
   @@index([chatId, createdAt])
   @@index([senderId, createdAt])
+  @@index([replyToMessageId])
   @@index([createdAt, chatId], map: "chat_messages_created_at_chat_id_idx")
-  @@unique([chatId, senderId, clientMessageId])
   @@map("chat_messages")
 }
 
@@ -788,25 +812,25 @@ model Report {
 }
 
 model SupportTicket {
-  id             String              @id @default(uuid()) @db.Uuid
-  userId         String?             @map("user_id") @db.Uuid
-  category       SupportTicketCategory @default(GENERAL)
-  publicTokenHash String?             @unique @map("public_token_hash")
-  contactPhone   String?             @map("contact_phone")
-  contactEmail   String?             @map("contact_email")
-  name           String              @default("Пользователь")
-  subject        String              @default("Обращение в поддержку")
-  status         SupportTicketStatus @default(OPEN)
-  lastMessage    String              @default("") @map("last_message")
-  unreadForAdmin Boolean             @default(false) @map("unread_for_admin")
-  unreadForUser  Boolean             @default(false) @map("unread_for_user")
-  userBlockId    String?             @map("user_block_id") @db.Uuid
-  isBlockAppeal  Boolean             @default(false) @map("is_block_appeal")
-  createdAt      DateTime            @default(now()) @map("created_at")
-  updatedAt      DateTime            @updatedAt @map("updated_at")
-  user           User?               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userBlock      UserBlock?          @relation(fields: [userBlockId], references: [id], onDelete: SetNull)
-  messages       SupportMessage[]
+  id              String                @id @default(uuid()) @db.Uuid
+  userId          String?               @map("user_id") @db.Uuid
+  category        SupportTicketCategory @default(GENERAL)
+  publicTokenHash String?               @unique @map("public_token_hash")
+  contactPhone    String?               @map("contact_phone")
+  contactEmail    String?               @map("contact_email")
+  name            String                @default("Пользователь")
+  subject         String                @default("Обращение в поддержку")
+  status          SupportTicketStatus   @default(OPEN)
+  lastMessage     String                @default("") @map("last_message")
+  unreadForAdmin  Boolean               @default(false) @map("unread_for_admin")
+  unreadForUser   Boolean               @default(false) @map("unread_for_user")
+  userBlockId     String?               @map("user_block_id") @db.Uuid
+  isBlockAppeal   Boolean               @default(false) @map("is_block_appeal")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  user            User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userBlock       UserBlock?            @relation(fields: [userBlockId], references: [id], onDelete: SetNull)
+  messages        SupportMessage[]
 
   @@index([userId])
   @@index([status, updatedAt])
@@ -818,38 +842,38 @@ model SupportTicket {
 }
 
 model SupportMessage {
-  id           String            @id @default(uuid()) @db.Uuid
-  ticketId      String           @map("ticket_id") @db.Uuid
-  sender        SupportSenderType
-  senderUserId  String?          @map("sender_user_id") @db.Uuid
-  text          String
-  idempotencyKey String?         @unique @map("idempotency_key")
-  createdAt     DateTime         @default(now()) @map("created_at")
-  ticket        SupportTicket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  senderUser    User?            @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+  id             String            @id @default(uuid()) @db.Uuid
+  ticketId       String            @map("ticket_id") @db.Uuid
+  sender         SupportSenderType
+  senderUserId   String?           @map("sender_user_id") @db.Uuid
+  text           String
+  idempotencyKey String?           @unique @map("idempotency_key")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  ticket         SupportTicket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderUser     User?             @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
 
   @@index([ticketId, createdAt])
   @@map("support_messages")
 }
 
 model FeedAd {
-  id              String           @id @default(uuid()) @db.Uuid
+  id              String          @id @default(uuid()) @db.Uuid
   title           String
-  imageUrl        String           @map("image_url")
-  imageBucket     String           @default("feed-ads") @map("image_bucket")
-  imageKey        String?          @map("image_key")
-  targetUrl       String           @default("") @map("target_url")
-  placement       FeedAdPlacement  @default(HOME)
-  durationDays    Int              @map("duration_days")
-  isActive        Boolean          @default(false) @map("is_active")
-  activatedAt     DateTime?        @map("activated_at")
-  expiresAt       DateTime?        @map("expires_at")
-  impressionCount BigInt           @default(0) @map("impression_count")
-  clickCount      BigInt           @default(0) @map("click_count")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime?        @map("updated_at")
-  createdById     String?          @map("created_by_id") @db.Uuid
-  createdBy       User?            @relation("FeedAdCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  imageUrl        String          @map("image_url")
+  imageBucket     String          @default("feed-ads") @map("image_bucket")
+  imageKey        String?         @map("image_key")
+  targetUrl       String          @default("") @map("target_url")
+  placement       FeedAdPlacement @default(HOME)
+  durationDays    Int             @map("duration_days")
+  isActive        Boolean         @default(false) @map("is_active")
+  activatedAt     DateTime?       @map("activated_at")
+  expiresAt       DateTime?       @map("expires_at")
+  impressionCount BigInt          @default(0) @map("impression_count")
+  clickCount      BigInt          @default(0) @map("click_count")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime?       @map("updated_at")
+  createdById     String?         @map("created_by_id") @db.Uuid
+  createdBy       User?           @relation("FeedAdCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([placement, isActive])
   @@index([expiresAt])
@@ -894,31 +918,31 @@ model TopBannerEvent {
 }
 
 model Wallet {
-  id                 String    @id @default(uuid()) @db.Uuid
-  userId             String    @unique @map("user_id") @db.Uuid
-  bonusBalance       Int       @default(0) @map("bonus_balance")
-  lastBonusAccrualAt DateTime? @map("last_bonus_accrual_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                 String              @id @default(uuid()) @db.Uuid
+  userId             String              @unique @map("user_id") @db.Uuid
+  bonusBalance       Int                 @default(0) @map("bonus_balance")
+  lastBonusAccrualAt DateTime?           @map("last_bonus_accrual_at")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions       WalletTransaction[]
 
   @@map("wallets")
 }
 
 model WalletTransaction {
-  id        String                  @id @default(uuid()) @db.Uuid
-  userId    String                  @map("user_id") @db.Uuid
-  walletId  String                  @map("wallet_id") @db.Uuid
-  type      WalletTransactionType
-  amount    Int
-  reason    WalletTransactionReason
-  idempotencyKey String?             @unique @map("idempotency_key")
-  metadata  Json?
-  createdAt DateTime                @default(now()) @map("created_at")
-  user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet    Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  referral  Referral?
+  id             String                  @id @default(uuid()) @db.Uuid
+  userId         String                  @map("user_id") @db.Uuid
+  walletId       String                  @map("wallet_id") @db.Uuid
+  type           WalletTransactionType
+  amount         Int
+  reason         WalletTransactionReason
+  idempotencyKey String?                 @unique @map("idempotency_key")
+  metadata       Json?
+  createdAt      DateTime                @default(now()) @map("created_at")
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet         Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  referral       Referral?
 
   @@index([userId])
   @@index([walletId])
@@ -948,25 +972,25 @@ model Payment {
 }
 
 model Referral {
-  id              String   @id @default(uuid()) @db.Uuid
-  inviterUserId   String   @map("inviter_user_id") @db.Uuid
-  invitedUserId   String?  @unique @map("invited_user_id") @db.Uuid
-  referralCode    String   @map("referral_code")
-  openedAt        DateTime? @map("opened_at")
-  appOpenedAt     DateTime? @map("app_opened_at")
-  signupStartedAt DateTime? @map("signup_started_at")
-  registeredAt    DateTime? @map("registered_at")
-  isNewUser        Boolean? @map("is_new_user")
-  rewardStatus    ReferralRewardStatus @default(PENDING) @map("reward_status")
-  rewardAmount    Int      @default(0) @map("reward_amount")
-  rewardedAt      DateTime? @map("rewarded_at")
-  failureReason   String?  @map("failure_reason")
-  walletTransactionId String? @unique @map("wallet_transaction_id") @db.Uuid
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-  inviter         User     @relation("ReferralInviter", fields: [inviterUserId], references: [id], onDelete: Cascade)
-  invited         User?    @relation("ReferralInvited", fields: [invitedUserId], references: [id], onDelete: Cascade)
-  walletTransaction WalletTransaction? @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
+  id                  String               @id @default(uuid()) @db.Uuid
+  inviterUserId       String               @map("inviter_user_id") @db.Uuid
+  invitedUserId       String?              @unique @map("invited_user_id") @db.Uuid
+  referralCode        String               @map("referral_code")
+  openedAt            DateTime?            @map("opened_at")
+  appOpenedAt         DateTime?            @map("app_opened_at")
+  signupStartedAt     DateTime?            @map("signup_started_at")
+  registeredAt        DateTime?            @map("registered_at")
+  isNewUser           Boolean?             @map("is_new_user")
+  rewardStatus        ReferralRewardStatus @default(PENDING) @map("reward_status")
+  rewardAmount        Int                  @default(0) @map("reward_amount")
+  rewardedAt          DateTime?            @map("rewarded_at")
+  failureReason       String?              @map("failure_reason")
+  walletTransactionId String?              @unique @map("wallet_transaction_id") @db.Uuid
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  inviter             User                 @relation("ReferralInviter", fields: [inviterUserId], references: [id], onDelete: Cascade)
+  invited             User?                @relation("ReferralInvited", fields: [invitedUserId], references: [id], onDelete: Cascade)
+  walletTransaction   WalletTransaction?   @relation(fields: [walletTransactionId], references: [id], onDelete: SetNull)
 
   @@index([inviterUserId, createdAt])
   @@index([referralCode, createdAt])
@@ -991,7 +1015,7 @@ model Promotion {
   listing          Listing         @relation(fields: [listingId], references: [id], onDelete: Cascade)
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  raiseCampaign    ListingRaiseCampaign? @relation(fields: [raiseCampaignId], references: [id], onDelete: SetNull)
+  raiseCampaign ListingRaiseCampaign? @relation(fields: [raiseCampaignId], references: [id], onDelete: SetNull)
 
   @@index([listingId])
   @@index([userId])
@@ -1022,7 +1046,7 @@ model ListingRaiseCampaign {
   listing         Listing                    @relation(fields: [listingId], references: [id], onDelete: Cascade)
   user            User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  promotions      Promotion[]
+  promotions Promotion[]
 
   @@index([listingId, status, nextRaiseAt])
   @@index([userId])
@@ -1051,11 +1075,11 @@ model AuditLog {
 }
 
 model SavedSearchAlert {
-  savedSearchId String @map("saved_search_id") @db.Uuid
-  listingId String @map("listing_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at")
-  savedSearch SavedSearch @relation(fields: [savedSearchId], references: [id], onDelete: Cascade)
-  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  savedSearchId String      @map("saved_search_id") @db.Uuid
+  listingId     String      @map("listing_id") @db.Uuid
+  createdAt     DateTime    @default(now()) @map("created_at")
+  savedSearch   SavedSearch @relation(fields: [savedSearchId], references: [id], onDelete: Cascade)
+  listing       Listing     @relation(fields: [listingId], references: [id], onDelete: Cascade)
 
   @@id([savedSearchId, listingId])
   @@map("saved_search_alerts")
@@ -1074,17 +1098,20 @@ model AccountDeletionCleanup {
 
 // Anonymous usage only; independent of public listing view rules and account deletion.
 model AnalyticsGuestDay {
-  guestId String @map("guest_id") @db.Uuid
-  day DateTime @db.Date
+  guestId String   @map("guest_id") @db.Uuid
+  day     DateTime @db.Date
+
   @@id([guestId, day])
   @@index([day, guestId])
   @@map("analytics_guest_days")
 }
+
 model AnalyticsListingOpen {
-  eventId String @id @map("event_id") @db.Uuid
-  listingId String @map("listing_id") @db.Uuid
+  eventId    String   @id @map("event_id") @db.Uuid
+  listingId  String   @map("listing_id") @db.Uuid
   registered Boolean
-  openedAt DateTime @default(now()) @map("opened_at")
+  openedAt   DateTime @default(now()) @map("opened_at")
+
   @@index([registered, openedAt])
   @@map("analytics_listing_opens")
 }

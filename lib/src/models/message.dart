@@ -14,6 +14,10 @@ class ChatMessage {
   final DateTime? deliveredAt;
   final DateTime? readAt;
   final String? clientMessageId;
+  final DateTime? editedAt;
+  final bool deletedForEveryone;
+  final String? replyToMessageId;
+  final Map<String, dynamic>? replyTo;
 
   ChatMessage({
     required this.id,
@@ -28,6 +32,10 @@ class ChatMessage {
     this.deliveredAt,
     this.readAt,
     this.clientMessageId,
+    this.editedAt,
+    this.deletedForEveryone = false,
+    this.replyToMessageId,
+    this.replyTo,
   });
 
   bool get hasText => text.trim().isNotEmpty;
@@ -118,6 +126,14 @@ class ChatMessage {
       deliveredAt: parseNullableDt(row['delivered_at'] ?? row['deliveredAt']),
       readAt: parseNullableDt(row['read_at'] ?? row['readAt']),
       clientMessageId: clientMessageId.isEmpty ? null : clientMessageId,
+      editedAt: parseNullableDt(row['edited_at'] ?? row['editedAt']),
+      deletedForEveryone: row['deleted_for_everyone'] == true ||
+          row['deletedForEveryone'] == true,
+      replyToMessageId:
+          (row['reply_to_message_id'] ?? row['replyToMessageId'])?.toString(),
+      replyTo: row['replyTo'] is Map
+          ? Map<String, dynamic>.from(row['replyTo'] as Map)
+          : null,
     );
   }
 
@@ -134,6 +150,10 @@ class ChatMessage {
     DateTime? deliveredAt,
     DateTime? readAt,
     String? clientMessageId,
+    DateTime? editedAt,
+    bool? deletedForEveryone,
+    String? replyToMessageId,
+    Map<String, dynamic>? replyTo,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -148,6 +168,10 @@ class ChatMessage {
       deliveredAt: deliveredAt ?? this.deliveredAt,
       readAt: readAt ?? this.readAt,
       clientMessageId: clientMessageId ?? this.clientMessageId,
+      editedAt: editedAt ?? this.editedAt,
+      deletedForEveryone: deletedForEveryone ?? this.deletedForEveryone,
+      replyToMessageId: replyToMessageId ?? this.replyToMessageId,
+      replyTo: replyTo ?? this.replyTo,
     );
   }
 

@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -18,6 +19,7 @@ import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateChatDto } from './dto/create-chat.dto';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
+import { EditChatMessageDto } from './dto/edit-chat-message.dto';
 import { ChatsGateway } from './chats.gateway';
 import { ChatsService } from './chats.service';
 
@@ -221,25 +223,29 @@ export class MessagesController {
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe()) messageId: string,
   ) {
-    const result = await this.chatsService.deleteMessage(authUser, messageId);
-    this.chatsGateway.emitMessageDeleted(
-      result.messageId,
-      result.chatId,
-      result.participantIds,
-    );
-    this.chatsGateway.emitChatUpdatedToUser(authUser.userId, result.senderChat);
-    this.chatsGateway.emitChatUpdatedToUser(
-      result.recipientChat['buyerId'] == authUser.userId
-        ? result.recipientChat['sellerId'].toString()
-        : result.recipientChat['buyerId'].toString(),
-      result.recipientChat,
-    );
-    result.unreadUpdates.forEach((item) => {
-      this.chatsGateway.emitUnreadChanged(item.userId, {
-        id: item.chatId,
-        unreadCount: item.unreadCount,
-      }, item.unreadTotal);
-    });
+    const result = await this.chatsService.hideMessageForMe(authUser, messageId);
+    this.chatsGateway.emitMessageHidden(result.messageId, result.chatId, result.userId);
+    return result;
+  }
+
+  @Delete(':id/everyone')
+  async deleteMessageForEveryone(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) messageId: string,
+  ) {
+    const result = await this.chatsService.deleteMessageForEveryone(authUser, messageId);
+    this.chatsGateway.emitMessageUpdated(result.message, result.chatId, result.participantIds);
+    return result;
+  }
+
+  @Patch(':id')
+  async editMessage(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) messageId: string,
+    @Body() dto: EditChatMessageDto,
+  ) {
+    const result = await this.chatsService.editMessage(authUser, messageId, dto.text);
+    this.chatsGateway.emitMessageUpdated(result.message, result.chatId, result.participantIds);
     return result;
   }
 }

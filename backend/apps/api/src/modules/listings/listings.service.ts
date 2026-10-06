@@ -156,6 +156,7 @@ type ListingPublicationCandidate = Pick<
 >;
 
 const PROTECTED_FEED_HEAD_SIZE = 10;
+const FREE_ARCHIVE_REPUBLISH_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 const VIP_INTERLEAVE_FEED_MODE = 'vip_interleave_v1';
 const PUBLIC_ARCHIVE_MODE = 'archive';
 const AUTO_PARTS_CATEGORY = 'Запчасти';
@@ -1668,6 +1669,11 @@ export class ListingsService {
 
     this.assertListingReadyForStatus(listing, ListingStatus.PENDING);
 
+    const refreshPublishedAt =
+      listing.status === ListingStatus.ARCHIVED &&
+      listing.archivedAt != null &&
+      Date.now() - listing.archivedAt.getTime() >= FREE_ARCHIVE_REPUBLISH_AFTER_MS;
+
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.createOwnerResubmitSnapshotIfNeeded(tx, listing);
 
@@ -1676,7 +1682,10 @@ export class ListingsService {
         data: {
           status: ListingStatus.PENDING,
           ...this.pendingModerationUpdateData(),
-          publishedAt: null,
+          publishedAt:
+            listing.status === ListingStatus.ARCHIVED && !refreshPublishedAt
+              ? listing.publishedAt
+              : null,
         },
         include: listingInclude,
       });

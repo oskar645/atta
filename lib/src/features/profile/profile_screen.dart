@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:atta/src/features/admin/admin_screen.dart';
+import 'package:atta/src/features/profile/security_screen.dart';
 import 'package:atta/src/features/profile/settings_screen.dart';
 import 'package:atta/src/features/reviews/seller_reviews_screen.dart';
 import 'package:atta/src/features/wallet/wallet_screen.dart';
@@ -146,11 +147,34 @@ class _ProfileScreenState extends State<ProfileScreen>
       if ((user.phone?.trim().isNotEmpty ?? false)) 'phone': user.phone!.trim(),
       'phoneVerified': user.phoneVerified,
       'phone_verified': user.phoneVerified,
+      'emailVerified': user.emailVerified,
+      'email_verified': user.emailVerified,
       if ((_avatarOverrideUrl?.trim().isNotEmpty ?? false))
         'avatar_url': _avatarOverrideUrl!.trim()
       else if ((user.photoUrl?.trim().isNotEmpty ?? false))
         'avatar_url': user.photoUrl!.trim(),
     };
+  }
+
+  String _memberSinceLabel(Map<String, dynamic> row) {
+    final raw = (row['created_at'] ?? row['createdAt'] ?? '').toString().trim();
+    final createdAt = DateTime.tryParse(raw)?.toLocal();
+    if (createdAt == null) return '';
+    const months = <String>[
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ];
+    return 'На ATTA с ${months[createdAt.month - 1]} ${createdAt.year} года';
   }
 
   Stream<Map<String, dynamic>> _ensureProfileStream(
@@ -450,6 +474,8 @@ class _ProfileScreenState extends State<ProfileScreen>
               'phone': user.phone!.trim(),
             'phoneVerified': user.phoneVerified,
             'phone_verified': user.phoneVerified,
+            'emailVerified': user.emailVerified,
+            'email_verified': user.emailVerified,
             if ((_avatarOverrideUrl?.trim().isNotEmpty ?? false))
               'avatar_url': _avatarOverrideUrl!.trim()
             else if ((user.photoUrl?.trim().isNotEmpty ?? false))
@@ -488,270 +514,288 @@ class _ProfileScreenState extends State<ProfileScreen>
               profile.pickNameFromRow(data, fallback: authFallbackName);
           final phone = (data['phone'] ?? '').toString().trim();
           final phoneDisplay = phone.isEmpty ? '' : formatRussianPhone(phone);
-          final phoneVerified =
-              data['phoneVerified'] == true || data['phone_verified'] == true;
+          final email = (data['email'] ?? user.email ?? '').toString().trim();
+          final hasVisibleEmail = email.isNotEmpty &&
+              !email.toLowerCase().endsWith('@phone.atta.local');
+          final emailVerified = data['emailVerified'] == true ||
+              data['email_verified'] == true ||
+              user.emailVerified;
+          final memberSince = _memberSinceLabel(data);
           final sellerLevel = SellerLevelBadge.levelFromRow(data);
 
           final avatar = _currentAvatarUrl(profile, user, data);
 
-          return RepaintBoundary(
-            child: ListView(
-              children: [
-                Container(
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-                  decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      GestureDetector(
-                        key: const Key('profile_avatar_tap_target'),
-                        onTap: _isAvatarUploading
-                            ? null
-                            : () => _pickAndUploadAvatar(context, user.uid),
-                        child: _Avatar(
-                          photoUrl: avatar,
-                          fallbackText: name,
-                          previewBytes: _avatarPreviewBytes,
-                          isLoading: _isAvatarUploading,
-                        ),
+          return ListView(
+            key: ValueKey(
+              'profile-layout-${snap.connectionState.name}',
+            ),
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      key: const Key('profile_avatar_tap_target'),
+                      onTap: _isAvatarUploading
+                          ? null
+                          : () => _pickAndUploadAvatar(context, user.uid),
+                      child: _Avatar(
+                        photoUrl: avatar,
+                        fallbackText: name,
+                        previewBytes: _avatarPreviewBytes,
+                        isLoading: _isAvatarUploading,
                       ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () => _editName(context, user.uid, name),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 2),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.w800),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Icon(Icons.edit,
-                                        size: 18,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Padding(
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () => _editName(context, user.uid, name),
+                            child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 2),
-                              child: Wrap(
-                                spacing: 10,
-                                runSpacing: 6,
-                                crossAxisAlignment: WrapCrossAlignment.center,
+                              child: Row(
                                 children: [
-                                  Text(
-                                    phoneDisplay.isEmpty
-                                        ? 'Телефон не указан'
-                                        : phoneDisplay,
-                                    key: const ValueKey(
-                                      'profile-phone-display',
+                                  Expanded(
+                                    child: Text(
+                                      name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          fontSize: 22,
+                                          fontWeight: FontWeight.w800),
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline),
                                   ),
-                                  if (sellerLevel != null)
-                                    SellerLevelBadge(
-                                      level: sellerLevel,
-                                      size: SellerLevelBadgeSize.large,
-                                    ),
+                                  const SizedBox(width: 6),
+                                  Icon(Icons.edit,
+                                      size: 18,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .outline),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            if (phone.isNotEmpty)
-                              Text(
-                                phoneVerified
-                                    ? 'Номер подтвержден'
-                                    : 'Номер не подтвержден',
-                                style: TextStyle(
-                                  color: Theme.of(context).colorScheme.outline,
-                                ),
-                              ),
-                            const SizedBox(height: 14),
-                            _CompactStatsRow(
-                              ratingAvgStream:
-                                  profile.streamMyRatingAvg(user.uid),
-                              reviewsCountStream:
-                                  profile.streamMyReviewsCount(user.uid),
-                              listingsStream:
-                                  profile.streamMyListingsCount(user.uid),
-                              followersStream:
-                                  follows.streamFollowersCount(user.uid),
-                              onOpenReviews: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => SellerReviewsScreen(
-                                      sellerId: user.uid,
-                                      sellerName: name,
-                                      listingId: '',
-                                    ),
+                          ),
+                          const SizedBox(height: 6),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Wrap(
+                              spacing: 10,
+                              runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  phoneDisplay.isEmpty
+                                      ? 'Телефон не указан'
+                                      : phoneDisplay,
+                                  key: const ValueKey(
+                                    'profile-phone-display',
                                   ),
-                                );
-                              },
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .outline),
+                                ),
+                                if (sellerLevel != null)
+                                  SellerLevelBadge(
+                                    level: sellerLevel,
+                                    size: SellerLevelBadgeSize.large,
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          _ProfileVerificationStatus(
+                            verified: hasVisibleEmail && emailVerified,
+                            label: hasVisibleEmail && emailVerified
+                                ? 'Почта подтверждена'
+                                : 'Подтвердите почту',
+                            onTap: () async {
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const SecurityScreen(),
+                                ),
+                              );
+                              if (mounted) {
+                                await _refreshProfileOnResume();
+                              }
+                            },
+                          ),
+                          if (memberSince.isNotEmpty) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              memberSince,
+                              key: const ValueKey('profile-member-since'),
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                             ),
                           ],
-                        ),
+                          const SizedBox(height: 14),
+                          _CompactStatsRow(
+                            ratingAvgStream:
+                                profile.streamMyRatingAvg(user.uid),
+                            reviewsCountStream:
+                                profile.streamMyReviewsCount(user.uid),
+                            listingsStream:
+                                profile.streamMyListingsCount(user.uid),
+                            followersStream:
+                                follows.streamFollowersCount(user.uid),
+                            onOpenReviews: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => SellerReviewsScreen(
+                                    sellerId: user.uid,
+                                    sellerName: name,
+                                    listingId: '',
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 14),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      const _ProfileWalletTile(),
-                      const SizedBox(height: 10),
-                      ListTile(
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        tileColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        leading: const Icon(Icons.settings_outlined),
-                        title: const Text('Настройки'),
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                                builder: (_) => const SettingsScreen()),
+              ),
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    const _ProfileWalletTile(),
+                    const SizedBox(height: 10),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      tileColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      leading: const Icon(Icons.settings_outlined),
+                      title: const Text('Настройки'),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => const SettingsScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      tileColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      leading: const Icon(Icons.person_add_alt_1_outlined),
+                      title: const Text('Пригласить друга'),
+                      subtitle: const Text('Поделиться ссылкой на мой профиль'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => _shareProfileInvite(
+                        context,
+                        referralCode: user.referralCode ?? '',
+                        name: name,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      tileColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      leading: const Icon(Icons.dark_mode_outlined),
+                      title: const Text('Тёмная тема'),
+                      trailing: Switch(
+                        value: context.watch<ThemeService>().mode ==
+                            ThemeMode.dark,
+                        onChanged: (v) =>
+                            context.read<ThemeService>().toggle(v),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (user.isAdmin) ...[
+                      StreamBuilder<bool>(
+                        stream: admin.streamNeedsAttention(),
+                        initialData: false,
+                        builder: (context, attSnap) {
+                          final hasAlert = attSnap.data == true;
+
+                          return ListTile(
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                            tileColor: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            leading: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                const Icon(Icons.admin_panel_settings_outlined),
+                                if (hasAlert)
+                                  const Positioned(
+                                    right: -2,
+                                    top: -2,
+                                    child: Icon(Icons.brightness_1,
+                                        size: 10, color: Colors.red),
+                                  ),
+                              ],
+                            ),
+                            title: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Админ-панель',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (hasAlert) ...[
+                                  const SizedBox(width: 6),
+                                  const Icon(Icons.brightness_1,
+                                      size: 8, color: Colors.red),
+                                ],
+                              ],
+                            ),
+                            subtitle: Text(
+                              hasAlert
+                                  ? 'Есть новые задачи: проверьте разделы'
+                                  : 'Управление приложением',
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => const AdminScreen()),
+                              );
+                            },
                           );
                         },
                       ),
                       const SizedBox(height: 10),
-                      ListTile(
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        tileColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        leading: const Icon(Icons.person_add_alt_1_outlined),
-                        title: const Text('Пригласить друга'),
-                        subtitle:
-                            const Text('Поделиться ссылкой на мой профиль'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _shareProfileInvite(
-                          context,
-                          referralCode: user.referralCode ?? '',
-                          name: name,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      ListTile(
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        tileColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        leading: const Icon(Icons.dark_mode_outlined),
-                        title: const Text('Тёмная тема'),
-                        trailing: Switch(
-                          value: context.watch<ThemeService>().mode ==
-                              ThemeMode.dark,
-                          onChanged: (v) =>
-                              context.read<ThemeService>().toggle(v),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      if (user.isAdmin) ...[
-                        StreamBuilder<bool>(
-                          stream: admin.streamNeedsAttention(),
-                          initialData: false,
-                          builder: (context, attSnap) {
-                            final hasAlert = attSnap.data == true;
-
-                            return ListTile(
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14)),
-                              tileColor: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                              leading: Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  const Icon(
-                                      Icons.admin_panel_settings_outlined),
-                                  if (hasAlert)
-                                    const Positioned(
-                                      right: -2,
-                                      top: -2,
-                                      child: Icon(Icons.brightness_1,
-                                          size: 10, color: Colors.red),
-                                    ),
-                                ],
-                              ),
-                              title: Row(
-                                children: [
-                                  const Expanded(
-                                    child: Text(
-                                      'Админ-панель',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  if (hasAlert) ...[
-                                    const SizedBox(width: 6),
-                                    const Icon(Icons.brightness_1,
-                                        size: 8, color: Colors.red),
-                                  ],
-                                ],
-                              ),
-                              subtitle: Text(
-                                hasAlert
-                                    ? 'Есть новые задачи: проверьте разделы'
-                                    : 'Управление приложением',
-                              ),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                      builder: (_) => const AdminScreen()),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-                      ListTile(
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14)),
-                        tileColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        leading: const Icon(Icons.logout, color: Colors.red),
-                        title: const Text('Выйти',
-                            style: TextStyle(color: Colors.red)),
-                        onTap: () => _confirmLogout(context),
-                      ),
                     ],
-                  ),
+                    ListTile(
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      tileColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      leading: const Icon(Icons.logout, color: Colors.red),
+                      title: const Text('Выйти',
+                          style: TextStyle(color: Colors.red)),
+                      onTap: () => _confirmLogout(context),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
@@ -1109,9 +1153,19 @@ class _ProfileWalletCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    const accent = Color(0xFF2196F3);
+    final isDark = theme.brightness == Brightness.dark;
+    final cardColor =
+        isDark ? const Color(0xFF10283B) : const Color(0xFFF0F8FF);
+    final borderColor =
+        isDark ? accent.withValues(alpha: 0.42) : const Color(0xFFB9DFFF);
     return Material(
-      color: theme.colorScheme.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      color: cardColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: borderColor),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         key: const Key('profile-wallet-card'),
         borderRadius: BorderRadius.circular(14),
@@ -1151,40 +1205,54 @@ class _ProfileWalletCard extends StatelessWidget {
               final button = _ProfileWalletTopUpButton(onPressed: onTopUp);
 
               if (narrow) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.account_balance_wallet_outlined),
-                        const SizedBox(width: 16),
-                        Expanded(child: info),
-                        const SizedBox(width: 8),
-                        refresh,
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(child: _ProfileWalletBalance(wallet: wallet)),
-                        const SizedBox(width: 10),
-                        button,
-                      ],
-                    ),
-                  ],
+                return ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 94),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.account_balance_wallet_rounded,
+                            color: accent,
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(child: info),
+                          const SizedBox(width: 8),
+                          refresh,
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _ProfileWalletBalance(wallet: wallet),
+                          ),
+                          const SizedBox(width: 10),
+                          button,
+                        ],
+                      ),
+                    ],
+                  ),
                 );
               }
 
-              return Row(
-                children: [
-                  const Icon(Icons.account_balance_wallet_outlined),
-                  const SizedBox(width: 16),
-                  Expanded(child: info),
-                  const SizedBox(width: 10),
-                  refresh,
-                  const SizedBox(width: 8),
-                  button,
-                ],
+              return ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 64),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.account_balance_wallet_rounded,
+                      color: accent,
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(child: info),
+                    const SizedBox(width: 10),
+                    refresh,
+                    const SizedBox(width: 8),
+                    button,
+                  ],
+                ),
               );
             },
           ),
@@ -1305,7 +1373,7 @@ class _ProfileWalletTopUpButton extends StatelessWidget {
       key: const Key('profile-wallet-top-up-button'),
       onPressed: onPressed,
       style: FilledButton.styleFrom(
-        backgroundColor: Colors.blue,
+        backgroundColor: const Color(0xFF2196F3),
         foregroundColor: Colors.white,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         minimumSize: const Size(0, 40),
@@ -1315,6 +1383,63 @@ class _ProfileWalletTopUpButton extends StatelessWidget {
         ),
       ),
       child: const Text('Пополнить'),
+    );
+  }
+}
+
+class _ProfileVerificationStatus extends StatelessWidget {
+  const _ProfileVerificationStatus({
+    required this.verified,
+    required this.label,
+    required this.onTap,
+  });
+
+  final bool verified;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = verified ? const Color(0xFF20A55A) : Colors.orange.shade700;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: const ValueKey('profile-email-status'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(
+            children: [
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Icon(
+                  verified ? Icons.check_rounded : Icons.mail_outline_rounded,
+                  size: verified ? 10 : 9,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, size: 16, color: color),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

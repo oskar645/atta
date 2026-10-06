@@ -199,8 +199,20 @@ class AuthApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> markAppOpened() async {
-    final response = await _client.post('/auth/app-open', authorized: true);
+  Future<Map<String, dynamic>> markAppOpened({
+    String appVersion = '',
+    String buildNumber = '',
+  }) async {
+    final response = await _client.post(
+      '/auth/app-open',
+      authorized: true,
+      body: {
+        if (_currentConsentPlatform().isNotEmpty)
+          'platform': _currentConsentPlatform(),
+        if (appVersion.trim().isNotEmpty) 'app_version': appVersion.trim(),
+        if (buildNumber.trim().isNotEmpty) 'build_number': buildNumber.trim(),
+      },
+    );
     return Map<String, dynamic>.from(response as Map);
   }
 

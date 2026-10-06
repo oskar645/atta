@@ -157,8 +157,14 @@ class AuthService {
   Future<AuthUser?> restoreSessionOnResume({bool force = false}) =>
       _backend.restoreSessionOnResume(force: force);
 
-  Future<void> markAppOpened() async {
-    await AuthApi(_apiClient).markAppOpened();
+  Future<void> markAppOpened({
+    String appVersion = '',
+    String buildNumber = '',
+  }) async {
+    await AuthApi(_apiClient).markAppOpened(
+      appVersion: appVersion,
+      buildNumber: buildNumber,
+    );
   }
 
   Future<bool> getMarketingConsent() async {

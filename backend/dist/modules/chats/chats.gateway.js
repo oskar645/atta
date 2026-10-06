@@ -250,6 +250,20 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         this.emitPresenceChanged(presence);
         return presence;
     }
+    async handleTyping(payload, client) {
+        await this.requireActiveSocket(client);
+        const userId = (client.data.userId ?? '').toString();
+        const result = await this.chatsService.getChat({ userId, sessionId: '', role: 'user' }, payload.chatId);
+        const buyerId = (result.chat['buyerId'] ?? '').toString();
+        const sellerId = (result.chat['sellerId'] ?? '').toString();
+        const recipientId = buyerId === userId ? sellerId : buyerId;
+        this.server.to(`user:${recipientId}`).emit('typing.changed', {
+            chatId: payload.chatId,
+            userId,
+            isTyping: payload.isTyping === true,
+        });
+        return { sent: true };
+    }
     async handlePresence(payload, client) {
         await this.requireActiveSocket(client);
         const next = await this.presenceService.setPresence((client.data.userId ?? '').toString(), payload.isOnline);
@@ -345,6 +359,16 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
         this.server.to(`chat:${chatId}`).emit('message.deleted', payload);
         for (const userId of participantIds) {
             this.server.to(`user:${userId}`).emit('message.deleted', payload);
+        }
+    }
+    emitMessageHidden(messageId, chatId, userId) {
+        this.server.to(`user:${userId}`).emit('message.hidden', { messageId, chatId });
+    }
+    emitMessageUpdated(message, chatId, participantIds) {
+        const payload = { message };
+        this.server.to(`chat:${chatId}`).emit('message.updated', payload);
+        for (const userId of participantIds) {
+            this.server.to(`user:${userId}`).emit('message.updated', payload);
         }
     }
     emitChatDeleted(chatId, participantIds) {
@@ -457,6 +481,14 @@ __decorate([
     __metadata("design:paramtypes", [socket_io_1.Socket]),
     __metadata("design:returntype", Promise)
 ], ChatsGateway.prototype, "handlePing", null);
+__decorate([
+    (0, websockets_1.SubscribeMessage)('typing.set'),
+    __param(0, (0, websockets_1.MessageBody)()),
+    __param(1, (0, websockets_1.ConnectedSocket)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, socket_io_1.Socket]),
+    __metadata("design:returntype", Promise)
+], ChatsGateway.prototype, "handleTyping", null);
 __decorate([
     (0, websockets_1.SubscribeMessage)('presence.set'),
     __param(0, (0, websockets_1.MessageBody)()),

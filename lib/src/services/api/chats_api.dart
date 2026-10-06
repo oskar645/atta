@@ -60,6 +60,7 @@ class ChatsApi {
     required String chatId,
     required String text,
     String? clientMessageId,
+    String? replyToMessageId,
   }) async {
     final response = await client.post(
       '/chats/$chatId/messages',
@@ -68,6 +69,8 @@ class ChatsApi {
         'text': text,
         if (clientMessageId != null && clientMessageId.trim().isNotEmpty)
           'clientMessageId': clientMessageId.trim(),
+        if (replyToMessageId != null && replyToMessageId.trim().isNotEmpty)
+          'replyToMessageId': replyToMessageId.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -139,6 +142,23 @@ class ChatsApi {
     final response = await client.delete(
       '/messages/$messageId',
       authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> deleteMessageForEveryone(
+      String messageId) async {
+    final response =
+        await client.delete('/messages/$messageId/everyone', authorized: true);
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> editMessage(
+      String messageId, String text) async {
+    final response = await client.patch(
+      '/messages/$messageId',
+      authorized: true,
+      body: {'text': text},
     );
     return Map<String, dynamic>.from(response as Map);
   }

@@ -695,7 +695,7 @@ test('findVipListings keeps OEM search deterministic without typo variants', asy
   );
 });
 
-test('findVipListings supports limited typo fragments for ordinary text', async () => {
+test('findVipListings uses exact aliases before broad typo matching', async () => {
   let capturedArgs: Record<string, any> | undefined;
   const service = createService({
     findPromotions: async (args?: Record<string, unknown>) => {
@@ -710,8 +710,9 @@ test('findVipListings supports limited typo fragments for ordinary text', async 
   });
 
   const serializedSearchWhere = JSON.stringify(capturedArgs?.where?.listing?.AND?.[0]);
-  assert.ok(serializedSearchWhere.includes('"contains":"toy"'));
-  assert.ok(serializedSearchWhere.includes('"contains":"ta"'));
+  assert.ok(serializedSearchWhere.includes('"contains":"toyota"'));
+  assert.ok(!serializedSearchWhere.includes('"contains":"toy"'));
+  assert.ok(!serializedSearchWhere.includes('"contains":"ta"'));
 });
 
 test('findVipListings uses shared transliteration for multi-word search', async () => {
@@ -3954,6 +3955,31 @@ test('owner archived listing resubmit moves to pending and keeps listing data', 
   assert.equal(listing.photos.length, 1);
   assert.equal(response.listing.photo_items.length, 1);
   assert.equal(context.revisions.length, 1);
+});
+
+test('archive restored before 30 days keeps its original feed position', async () => {
+  const originalPublishedAt = new Date('2026-01-10T10:00:00.000Z');
+  const context = createResubmitService({
+    publishedAt: originalPublishedAt,
+    archivedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+  });
+
+  await context.service.resubmit('listing-1', ownerUser);
+
+  assert.equal(context.listing.status, ListingStatus.PENDING);
+  assert.equal(context.listing.publishedAt, originalPublishedAt);
+});
+
+test('archive restored after 30 days is eligible for a fresh feed position', async () => {
+  const context = createResubmitService({
+    publishedAt: new Date('2026-01-10T10:00:00.000Z'),
+    archivedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+  });
+
+  await context.service.resubmit('listing-1', ownerUser);
+
+  assert.equal(context.listing.status, ListingStatus.PENDING);
+  assert.equal(context.listing.publishedAt, null);
 });
 
 test('legacy owner archived listing with stale moderation fields can be resubmitted', async () => {

@@ -29,6 +29,7 @@ import 'package:atta/src/services/home_filters_session.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
+import 'package:atta/src/services/network_recovery_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/services/search_attempt_analytics.dart';
@@ -103,7 +104,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with RouteAware {
+class _HomeScreenState extends State<HomeScreen>
+    with RouteAware, WidgetsBindingObserver {
   static const int _feedPageSize = 20;
   static const int _vipPreviewPageSize = 20;
   static const Duration _showcaseStaleAfter = Duration(minutes: 5);
@@ -127,6 +129,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   int _vipHomeRotationOffset = 0;
   int _vipHomeLoadCount = 0;
   ModalRoute<dynamic>? _route;
+  StreamSubscription<void>? _networkRecoverySub;
+  Timer? _feedRetryTimer;
+  Timer? _searchDebounce;
+  Future<void>? _transportRecoveryInFlight;
+  DateTime? _lastTransportRecoveryAt;
+  int _feedRetryAttempt = 0;
 
   // Avito-like location filter.
   String _location = ''; // "Москва", "Чеченская Республика" и т.п.
@@ -178,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _bumpListings = context.read<ListingsService>();
     _searchAnalytics =
         SearchAttemptAnalytics(_bumpListings.recordSearchAttempt);
@@ -189,6 +198,10 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       ),
     );
     _bumpListings.bumpPurchases.addListener(_onBumpPurchased);
+    final networkRecovery =
+        Provider.of<NetworkRecoveryService?>(context, listen: false);
+    _networkRecoverySub = networkRecovery?.recoveries
+        .listen((_) => unawaited(_recoverFeedAfterTransportChange()));
     unawaited(_refreshShowcase());
     unawaited(_refreshVipShowcase());
     widget.controller?.attach(scrollToTop: _handleScrollToTop);
@@ -209,12 +222,71 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _networkRecoverySub?.cancel();
+    _feedRetryTimer?.cancel();
+    _searchDebounce?.cancel();
     _bumpListings.bumpPurchases.removeListener(_onBumpPurchased);
     attaRouteObserver.unsubscribe(this);
     widget.controller?.detach();
     _searchCtrl.dispose();
     _searchAnalytics.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_recoverFeedAfterTransportChange());
+    }
+  }
+
+  Future<void> _recoverFeedAfterTransportChange() async {
+    final existing = _transportRecoveryInFlight;
+    if (existing != null) return existing;
+    final now = DateTime.now();
+    final last = _lastTransportRecoveryAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastTransportRecoveryAt = now;
+    final future = () async {
+      _feedRetryTimer?.cancel();
+      _bumpListings.prepareForNetworkRecovery();
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      if (!mounted) return;
+      await Future.wait<void>([
+        _reloadFeed(reset: true, clearExistingItems: false),
+        _refreshShowcase(),
+        _refreshVipShowcase(),
+      ]);
+    }();
+    _transportRecoveryInFlight = future;
+    try {
+      await future;
+    } finally {
+      if (identical(_transportRecoveryInFlight, future)) {
+        _transportRecoveryInFlight = null;
+      }
+    }
+  }
+
+  void _scheduleFeedRetry() {
+    if (_feedRetryTimer != null || _feedRetryAttempt >= 4) return;
+    const delays = <Duration>[
+      Duration(seconds: 1),
+      Duration(seconds: 2),
+      Duration(seconds: 4),
+      Duration(seconds: 8),
+    ];
+    final delay = delays[_feedRetryAttempt];
+    _feedRetryAttempt += 1;
+    _feedRetryTimer = Timer(delay, () {
+      _feedRetryTimer = null;
+      if (!mounted) return;
+      _bumpListings.prepareForNetworkRecovery();
+      unawaited(_reloadFeed(reset: true, clearExistingItems: false));
+    });
   }
 
   @override
@@ -654,6 +726,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           _mainFeedVipRotationOffset = vipRotationOffset + 1;
         }
       });
+      _feedRetryAttempt = 0;
+      _feedRetryTimer?.cancel();
+      _feedRetryTimer = null;
     } catch (error) {
       if (!mounted || requestId != _feedRequestSerial) return;
       setState(() {
@@ -661,6 +736,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         _isLoadingMore = false;
         _feedError = error;
       });
+      _scheduleFeedRetry();
     }
   }
 
@@ -864,9 +940,14 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         ),
                         onChanged: (v) {
                           _searchAnalytics.queryChanged(v);
-                          setState(() => _search = v.trim());
-                          _persistFilters();
-                          unawaited(_reloadFeed(reset: true));
+                          _searchDebounce?.cancel();
+                          _searchDebounce =
+                              Timer(const Duration(milliseconds: 400), () {
+                            if (!mounted) return;
+                            setState(() => _search = v.trim());
+                            _persistFilters();
+                            unawaited(_reloadFeed(reset: true));
+                          });
                         },
                       ),
                     ),
@@ -1047,6 +1128,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
   int _bumpRotation = -1;
   late final ListingsService _bumpListings;
   late final SearchAttemptAnalytics _searchAnalytics;
+  Timer? _searchDebounce;
 
   void _onBumpPurchased() {
     unawaited(_reload(reset: true));
@@ -1097,6 +1179,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
   @override
   void dispose() {
     _bumpListings.bumpPurchases.removeListener(_onBumpPurchased);
+    _searchDebounce?.cancel();
     _searchCtrl.dispose();
     _searchAnalytics.dispose();
     super.dispose();
@@ -1304,8 +1387,13 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
                     ),
                     onChanged: (v) {
                       _searchAnalytics.queryChanged(v);
-                      setState(() => _search = v.trim());
-                      unawaited(_reload(reset: true));
+                      _searchDebounce?.cancel();
+                      _searchDebounce =
+                          Timer(const Duration(milliseconds: 400), () {
+                        if (!mounted) return;
+                        setState(() => _search = v.trim());
+                        unawaited(_reload(reset: true));
+                      });
                     },
                   ),
                 ),

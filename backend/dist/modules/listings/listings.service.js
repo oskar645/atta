@@ -77,6 +77,7 @@ exports.LISTING_PHOTO_REQUIRED = 'LISTING_PHOTO_REQUIRED';
 const toInputJson = (value) => (value ?? {});
 const toNullableInputJson = (value) => (value ?? client_1.Prisma.JsonNull);
 const PROTECTED_FEED_HEAD_SIZE = 10;
+const FREE_ARCHIVE_REPUBLISH_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 const VIP_INTERLEAVE_FEED_MODE = 'vip_interleave_v1';
 const PUBLIC_ARCHIVE_MODE = 'archive';
 const AUTO_PARTS_CATEGORY = 'Запчасти';
@@ -1328,6 +1329,9 @@ let ListingsService = class ListingsService {
             throw new common_2.BadRequestException('LISTING_RESUBMIT_NOT_ALLOWED');
         }
         this.assertListingReadyForStatus(listing, client_1.ListingStatus.PENDING);
+        const refreshPublishedAt = listing.status === client_1.ListingStatus.ARCHIVED &&
+            listing.archivedAt != null &&
+            Date.now() - listing.archivedAt.getTime() >= FREE_ARCHIVE_REPUBLISH_AFTER_MS;
         const updated = await this.prisma.$transaction(async (tx) => {
             await this.createOwnerResubmitSnapshotIfNeeded(tx, listing);
             return tx.listing.update({
@@ -1335,7 +1339,9 @@ let ListingsService = class ListingsService {
                 data: {
                     status: client_1.ListingStatus.PENDING,
                     ...this.pendingModerationUpdateData(),
-                    publishedAt: null,
+                    publishedAt: listing.status === client_1.ListingStatus.ARCHIVED && !refreshPublishedAt
+                        ? listing.publishedAt
+                        : null,
                 },
                 include: exports.listingInclude,
             });

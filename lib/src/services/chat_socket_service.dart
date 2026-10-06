@@ -611,6 +611,9 @@ class ChatSocketService {
         'message.sent',
         'message.delivered',
         'message.read',
+        'message.updated',
+        'message.hidden',
+        'typing.changed',
         'notification.new',
         'chat.updated',
         'unread.changed',
@@ -1030,6 +1033,12 @@ class ChatSocketService {
     if (id.isEmpty) return;
     _debugLog('Socket message.read id=$id connected=$isConnected');
     _safeEmit('message.read', {'messageId': id});
+  }
+
+  void sendTyping(String chatId, bool isTyping) {
+    final id = chatId.trim();
+    if (id.isEmpty) return;
+    _safeEmit('typing.set', {'chatId': id, 'isTyping': isTyping});
   }
 
   void _startPing() {
