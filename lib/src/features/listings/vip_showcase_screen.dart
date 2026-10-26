@@ -197,6 +197,7 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
               child: TextField(
                 key: const ValueKey('vip_showcase_search_field'),
                 controller: _searchController,
+                textCapitalization: TextCapitalization.sentences,
                 textInputAction: TextInputAction.search,
                 onChanged: _onSearchChanged,
                 onSubmitted: (value) {

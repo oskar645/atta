@@ -194,6 +194,7 @@ class Listing {
   final Map<String, dynamic> delivery; // jsonb
   final List<String> photoUrls; // text[]
   final List<ListingPhotoItem> photoItems;
+  final ListingVideo? video;
 
   final CarSpecs? car; // ✅ удобно как модель (nullable)
 
@@ -239,6 +240,7 @@ class Listing {
     required this.delivery,
     required this.photoUrls,
     required this.photoItems,
+    this.video,
     required this.car,
     required this.dealType,
     required this.realEstateType,
@@ -539,6 +541,7 @@ class Listing {
                 ),
               )
               .toList(),
+      video: ListingVideo.fromAny(row['video']),
       car: CarSpecs.fromAny(carRaw),
       dealType: row['deal_type']?.toString(),
       realEstateType: row['real_estate_type']?.toString(),
@@ -614,6 +617,7 @@ class Listing {
             },
           )
           .toList(),
+      'video': video?.toMap(),
       'car': car?.toMap(),
       'deal_type': dealType,
       'real_estate_type': realEstateType,
@@ -638,6 +642,50 @@ class Listing {
       'updated_at': updatedAt?.toIso8601String(),
     };
   }
+}
+
+class ListingVideo {
+  const ListingVideo({
+    required this.provider,
+    required this.originalUrl,
+    required this.videoId,
+    required this.playbackUrl,
+    required this.thumbnailUrl,
+  });
+
+  final String provider;
+  final String originalUrl;
+  final String videoId;
+  final String playbackUrl;
+  final String thumbnailUrl;
+
+  static ListingVideo? fromAny(dynamic value) {
+    if (value is! Map) return null;
+    String read(String camel, String snake) =>
+        (value[camel] ?? value[snake] ?? '').toString().trim();
+    final result = ListingVideo(
+      provider: read('provider', 'provider'),
+      originalUrl: read('originalUrl', 'original_url'),
+      videoId: read('videoId', 'video_id'),
+      playbackUrl: read('playbackUrl', 'playback_url'),
+      thumbnailUrl: read('thumbnailUrl', 'thumbnail_url'),
+    );
+    if (result.provider.isEmpty ||
+        result.originalUrl.isEmpty ||
+        result.playbackUrl.isEmpty ||
+        result.thumbnailUrl.isEmpty) {
+      return null;
+    }
+    return result;
+  }
+
+  Map<String, dynamic> toMap() => {
+        'provider': provider,
+        'originalUrl': originalUrl,
+        'videoId': videoId,
+        'playbackUrl': playbackUrl,
+        'thumbnailUrl': thumbnailUrl,
+      };
 }
 
 String? _nullableTrimmedString(dynamic value) {

@@ -111,6 +111,27 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
   });
 
+  testWidgets('member since is immediate after cold start and scoped to account',
+      (tester) async {
+    Widget account(String uid, DateTime createdAt) => _wrapProfile(
+          walletService: _ProfileWalletSuccessService(),
+          profileService: _DelayedProfileService(),
+          authService: _DateAuthService(AuthUser(
+            uid: uid,
+            displayName: 'ATTA User',
+            createdAt: createdAt,
+          )),
+        );
+
+    await tester.pumpWidget(account('account-A', DateTime.utc(2026, 7, 10)));
+    expect(find.text('На ATTA с июля 2026 года'), findsOneWidget);
+
+    await tester.pumpWidget(account('account-B', DateTime.utc(2025, 3, 15)));
+    expect(find.text('На ATTA с марта 2025 года'), findsOneWidget);
+    expect(find.text('На ATTA с июля 2026 года'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 150));
+  });
+
   testWidgets('profile shows wallet balance when loaded', (tester) async {
     await tester.pumpWidget(
       _wrapProfile(
@@ -673,6 +694,15 @@ class _FakeAuthService extends AuthService {
         photoUrl:
             'https://cdn.example.com/old.jpg?v=2026-06-20T10%3A00%3A00.000Z',
       );
+}
+
+class _DateAuthService extends _FakeAuthService {
+  _DateAuthService(this.user);
+
+  final AuthUser user;
+
+  @override
+  AuthUser? get currentUser => user;
 }
 
 class _MutableAuthService extends AuthService {

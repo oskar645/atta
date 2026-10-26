@@ -124,4 +124,9 @@ __decorate([
     (0, class_validator_1.IsArray)(),
     __metadata("design:type", Array)
 ], CreateListingDto.prototype, "photo_urls", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateListingDto.prototype, "video_url", void 0);
 //# sourceMappingURL=create-listing.dto.js.map

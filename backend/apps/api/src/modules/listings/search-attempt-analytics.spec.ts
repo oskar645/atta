@@ -7,7 +7,14 @@ const attempt = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
 function serviceWithStore() {
   const rows = new Map<string, any>();
+  const allRows = new Map<string, any>();
   const prisma = {
+    searchAttempt: {
+      deleteMany: async ({ where }: any) => ({ count: allRows.delete(where.attemptId) ? 1 : 0 }),
+      upsert: async ({ where, create, update }: any) => {
+        allRows.set(where.attemptId, { ...(allRows.get(where.attemptId) ?? create), ...update });
+      },
+    },
     zeroResultSearch: {
       deleteMany: async ({ where }: any) => ({ count: rows.delete(where.attemptId) ? 1 : 0 }),
       upsert: async ({ where, create, update }: any) => {
@@ -17,6 +24,7 @@ function serviceWithStore() {
   };
   return {
     rows,
+    allRows,
     service: new ListingsService(prisma as any, {} as any, {} as any, {} as any),
   };
 }
@@ -30,12 +38,14 @@ test('one attempt supersedes an intermediate zero with its final normalized quer
 });
 
 test('a final result or restrictive filter removes an earlier zero', async () => {
-  const { service, rows } = serviceWithStore();
+  const { service, rows, allRows } = serviceWithStore();
   await service.recordSearchAttempt({ attemptId: attempt, query: 'арматур', resultCount: 0, hasRestrictiveFilters: false });
   await service.recordSearchAttempt({ attemptId: attempt, query: 'арматура', resultCount: 1, hasRestrictiveFilters: false });
   assert.equal(rows.size, 0);
+  assert.equal(allRows.get(attempt).resultCount, 1);
   await service.recordSearchAttempt({ attemptId: attempt, query: 'арматура', resultCount: 0, hasRestrictiveFilters: true });
   assert.equal(rows.size, 0);
+  assert.equal(allRows.size, 1);
 });
 
 test('independent attempts remain independently countable', async () => {

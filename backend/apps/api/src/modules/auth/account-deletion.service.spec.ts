@@ -31,6 +31,7 @@ function fixture() {
     'listing', 'listingPhoto', 'promotion', 'listingRaiseCampaign', 'userConsent',
     'phoneVerification', 'report', 'wallet', 'walletTransaction', 'payment', 'referral',
     'auditLog', 'listingModerationRevision', 'accountDeletionCleanup', 'blockedIdentity',
+    'deletedUserIdentity',
   ].map(name => [name, []]));
   rows.user = [user(A), user(B)];
   for (const userId of [A, B]) {
@@ -109,11 +110,14 @@ function fixture() {
     fail: (table: string) => { failTable = table; }, failExternal: (value: boolean) => { externalFailure = value; } };
 }
 
-test('deletion invalidates both devices, purges private identifiers and leaves B isolated', async () => {
+test('deletion invalidates devices, anonymizes public identity and keeps a restricted admin record', async () => {
   const f = fixture(), otherUser = structuredClone(f.state().user[1]);
   const b = structuredClone(Object.fromEntries(Object.entries(f.state()).map(([k, rows]) => [k, rows.filter(r => r.userId === B)])));
   await f.deletion.deleteUser(A); const state = f.state();
   assert.equal(state.user[0].status, 'DELETED'); assert.equal(state.user[0].phone, null); assert.equal(state.user[0].passwordHash, '');
+  assert.deepEqual(state.deletedUserIdentity.map(({ userId, displayName, phone }) => ({ userId, displayName, phone })), [
+    { userId: A, displayName: 'Private name', phone: '79281234567' },
+  ]);
   for (const row of state.userSession.filter(s => s.userId === A)) { assert.ok(row.revokedAt); assert.equal(row.refreshTokenHash, ''); assert.equal(row.ip, null); assert.equal(row.userAgent, null); }
   for (const table of ['userDevice', 'restoreCredential', 'favorite', 'savedSearch', 'viewedListing', 'appDailyVisit', 'userNotification', 'userPresence']) assert.equal(state[table].filter(r => r.userId === A).length, 0, table);
   assert.equal(state.listingView[0].viewerUserId, null); assert.equal(state.listingView[0].viewerDeviceId, null); assert.equal(state.listingView[0].ip, null);

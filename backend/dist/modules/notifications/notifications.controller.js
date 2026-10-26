@@ -26,6 +26,12 @@ let NotificationsController = class NotificationsController {
     listInAppNotifications(authUser) {
         return this.notificationsService.listInAppNotifications(authUser);
     }
+    getPushPreference(authUser, userId) {
+        return this.notificationsService.getPushPreference(authUser, userId);
+    }
+    setPushPreference(authUser, body) {
+        return this.notificationsService.setPushPreference(authUser, body.enabled, body.userId);
+    }
     registerDevice(authUser, body) {
         return this.notificationsService.registerDevice(authUser, {
             token: body.token,
@@ -63,6 +69,22 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", void 0)
 ], NotificationsController.prototype, "listInAppNotifications", null);
+__decorate([
+    (0, common_1.Get)('push-preference'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)('userId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], NotificationsController.prototype, "getPushPreference", null);
+__decorate([
+    (0, common_1.Patch)('push-preference'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", void 0)
+], NotificationsController.prototype, "setPushPreference", null);
 __decorate([
     (0, common_1.Post)('devices'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

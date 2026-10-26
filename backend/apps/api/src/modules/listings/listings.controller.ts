@@ -22,6 +22,7 @@ import { UpdateListingDto } from './dto/update-listing.dto';
 import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
 import { RecordSearchAttemptDto } from './dto/record-search-attempt.dto';
 import { ListingsService } from './listings.service';
+import { resolveListingVideo } from './listing-video';
 
 @Controller('listings')
 export class ListingsController {
@@ -83,6 +84,12 @@ export class ListingsController {
   @Post('search-attempt')
   recordSearchAttempt(@Body() dto: RecordSearchAttemptDto) {
     return this.listingsService.recordSearchAttempt(dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('video/preview')
+  resolveVideo(@Body('url') url: string) {
+    return resolveListingVideo(url ?? '');
   }
 
   @Get('vip')

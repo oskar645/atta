@@ -7,6 +7,7 @@ import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/image_preparation_service.dart';
+import 'package:atta/src/utils/price_formatter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +42,20 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(_textFieldWithLabel('Пробег (необязательно)'), findsOneWidget);
+    final mileageField = tester.widget<TextField>(
+      _textFieldWithLabel('Пробег (необязательно)'),
+    );
+    expect(
+      mileageField.inputFormatters?.whereType<PriceThousandsInputFormatter>(),
+      isNotEmpty,
+    );
+    await tester.enterText(
+      _textFieldWithLabel('Пробег (необязательно)'),
+      '2000',
+    );
+    expect(mileageField.controller?.text, formatPrice(2000));
+    tester.testTextInput.hide();
+    await tester.pumpAndSettle();
     expect(_dropdownWithLabel('Кузов (необязательно)'), findsOneWidget);
     expect(_dropdownWithLabel('Топливо (необязательно)'), findsOneWidget);
     expect(

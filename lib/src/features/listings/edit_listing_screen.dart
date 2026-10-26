@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:atta/src/data/auto_catalog.dart';
 
 import 'package:atta/src/features/listings/car_parameters_screen.dart';
+import 'package:atta/src/features/listings/listing_video_field.dart';
 import 'package:atta/src/features/listings/pick_location_screen.dart';
 import 'package:atta/src/models/car_specs.dart';
 import 'package:atta/src/models/listing.dart';
@@ -83,6 +84,9 @@ class _EditListingScreenState extends State<EditListingScreen> {
   final _removedPhotoIds = <String>{};
   final _picker = ImagePicker();
   int _nextPhotoLocalId = 0;
+  ListingVideo? _video;
+  bool _videoUnresolved = false;
+  bool _videoChanged = false;
 
   final _title = TextEditingController();
   final _city = TextEditingController();
@@ -295,6 +299,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
     _phone.text = formatRuPhoneForField(l.phone);
     _oemPartNumber.text = l.oemPartNumber ?? '';
     _phoneHidden = l.phoneHidden;
+    _video = l.video;
 
     for (final k in _delivery.keys) {
       _delivery[k] = l.delivery[k] == true;
@@ -307,7 +312,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
       _autoGen = c.generation.trim().isEmpty ? null : c.generation;
 
       _carYear.text = c.year?.toString() ?? '';
-      _carMileage.text = c.mileageKm?.toString() ?? '';
+      _carMileage.text = c.mileageKm == null ? '' : formatPrice(c.mileageKm!);
       _carEngine.text =
           c.engineVolume == null ? '' : formatEngineVolume(c.engineVolume);
       _carPower.text = c.powerHp?.toString() ?? '';
@@ -880,6 +885,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                     child: TextField(
+                      textCapitalization: TextCapitalization.sentences,
                       decoration: const InputDecoration(
                         prefixIcon: Icon(Icons.search),
                         hintText: 'Поиск',
@@ -1002,13 +1008,20 @@ class _EditListingScreenState extends State<EditListingScreen> {
       return;
     }
 
+    if (_videoUnresolved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Исправьте или удалите ссылку на видео')),
+      );
+      return;
+    }
+
     CarSpecs? car;
     if (_isAuto) {
       final year =
           _validInt(_carYear.text) ? int.parse(_carYear.text.trim()) : null;
-      final mileage = _validInt(_carMileage.text)
-          ? int.parse(_carMileage.text.trim())
-          : null;
+      final mileage = _carMileage.text.trim().isEmpty
+          ? null
+          : parseFormattedPrice(_carMileage.text);
       final engine = _carEngine.text.trim().isEmpty
           ? null
           : parseEngineVolumeInput(_carEngine.text);
@@ -1066,6 +1079,13 @@ class _EditListingScreenState extends State<EditListingScreen> {
         car: _isAuto ? car : null,
         oemPartNumber: _isAutoParts ? _oemPartNumber.text : null,
       );
+
+      if (_videoChanged) {
+        await listingsService.updateListingVideo(
+          listingId: listing.id,
+          videoUrl: _video?.originalUrl,
+        );
+      }
 
       if (!mounted) return;
       for (final photoId in _removedPhotoIds.where((id) => id.isNotEmpty)) {
@@ -1426,6 +1446,16 @@ class _EditListingScreenState extends State<EditListingScreen> {
             ),
           ),
           const SizedBox(height: 14),
+          ListingVideoField(
+            initialVideo: listing.video,
+            enabled: !_saving,
+            onChanged: (video, unresolved) {
+              _video = video;
+              _videoUnresolved = unresolved;
+              _videoChanged = true;
+            },
+          ),
+          const SizedBox(height: 14),
           if (_isPassengerCar) ...[
             _selectTile(
               title: 'Марка • Модель • Поколение (в одном окне)',
@@ -1436,6 +1466,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
           ],
           TextField(
             controller: _title,
+            textCapitalization: TextCapitalization.sentences,
             decoration: InputDecoration(
               labelText: _isPassengerCar
                   ? 'Название (автозаполнение можно править)'
@@ -1525,6 +1556,7 @@ class _EditListingScreenState extends State<EditListingScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _desc,
+            textCapitalization: TextCapitalization.sentences,
             maxLines: 5,
             decoration: const InputDecoration(labelText: 'Описание'),
           ),

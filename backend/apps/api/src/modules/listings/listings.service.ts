@@ -45,6 +45,7 @@ import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { ArchiveListingDto } from './dto/archive-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
+import { resolveListingVideo } from './listing-video';
 import { IncrementListingViewDto } from './dto/increment-listing-view.dto';
 import { RecordSearchAttemptDto } from './dto/record-search-attempt.dto';
 
@@ -506,11 +507,21 @@ export class ListingsService {
       .replace(/[^\p{L}\p{N}]+/gu, ' ')
       .trim()
       .replace(/\s+/g, ' ');
-    if (query.length < 2 || !normalizedQuery || dto.resultCount > 0 || dto.hasRestrictiveFilters) {
+    if (query.length < 2 || !normalizedQuery) {
+      await this.prisma.searchAttempt.deleteMany({ where: { attemptId: dto.attemptId } });
+      await this.prisma.zeroResultSearch.deleteMany({ where: { attemptId: dto.attemptId } });
+      return { recorded: false };
+    }
+    await this.prisma.searchAttempt.upsert({
+      where: { attemptId: dto.attemptId },
+      create: { attemptId: dto.attemptId, query, normalizedQuery, resultCount: dto.resultCount },
+      update: { query, normalizedQuery, resultCount: dto.resultCount, createdAt: new Date() },
+    });
+    if (dto.resultCount > 0 || dto.hasRestrictiveFilters) {
       await this.prisma.zeroResultSearch.deleteMany({
         where: { attemptId: dto.attemptId },
       });
-      return { recorded: false };
+      return { recorded: true };
     }
     await this.prisma.zeroResultSearch.upsert({
       where: { attemptId: dto.attemptId },
@@ -540,6 +551,9 @@ export class ListingsService {
     const category = dto.category.trim();
     const oemPartNumber = isAutoPartsCategory(category)
       ? trimOptional(dto.oem_part_number)
+      : null;
+    const video = dto.video_url?.trim()
+      ? await resolveListingVideo(dto.video_url)
       : null;
 
     if (
@@ -574,6 +588,7 @@ export class ListingsService {
         subcategory: dto.subcategory?.trim() ?? '',
         oemPartNumber,
         oemPartNumberNormalized: normalizeOemPartNumber(oemPartNumber),
+        video: video ? toInputJson(video) : undefined,
         price: dto.price,
         city: dto.city?.trim() ?? '',
         address: dto.address?.trim() ?? '',
@@ -1151,7 +1166,7 @@ export class ListingsService {
             WHERE p."status"::text = 'ACTIVE'
               AND p."ends_at" > NOW()
               AND p."type"::text = 'VIP'
-          ) AS vip_promoted_at,
+          ) AS vip_purchased_at,
           MAX(p."created_at") FILTER (
             WHERE p."status"::text = 'ACTIVE'
               AND p."ends_at" > NOW()
@@ -1163,29 +1178,44 @@ export class ListingsService {
         WHERE ${Prisma.join(params.whereParts, ' AND ')}
         GROUP BY l."id", l."published_at", l."created_at"
       ),
-      ranked AS (
-        SELECT
-          base.*,
+      ranked_natural AS (
+        SELECT base.*,
           ROW_NUMBER() OVER (
-            PARTITION BY (vip_promoted_at IS NULL)
             ORDER BY
               base."published_at" DESC NULLS LAST,
               base."created_at" DESC,
               base."id" DESC
+          ) AS natural_rank
+        FROM base
+      ),
+      ranked AS (
+        SELECT
+          ranked_natural."id",
+          ranked_natural."published_at",
+          ranked_natural."created_at",
+          ranked_natural."bump_promoted_at",
+          CASE WHEN natural_rank > ${PROTECTED_FEED_HEAD_SIZE}
+            THEN vip_purchased_at ELSE NULL END AS vip_promoted_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY (natural_rank <= ${PROTECTED_FEED_HEAD_SIZE} OR vip_purchased_at IS NULL)
+            ORDER BY
+              ranked_natural."published_at" DESC NULLS LAST,
+              ranked_natural."created_at" DESC,
+              ranked_natural."id" DESC
           ) AS ordinary_rank,
           ROW_NUMBER() OVER (
-            PARTITION BY (vip_promoted_at IS NOT NULL)
+            PARTITION BY (natural_rank > ${PROTECTED_FEED_HEAD_SIZE} AND vip_purchased_at IS NOT NULL)
             ORDER BY
-              vip_promoted_at DESC,
-              base."created_at" DESC,
-              base."id" DESC
+              vip_purchased_at DESC,
+              ranked_natural."created_at" DESC,
+              ranked_natural."id" DESC
           ) AS vip_queue_rank,
-          COUNT(*) FILTER (WHERE vip_promoted_at IS NOT NULL) OVER () AS vip_count,
+          COUNT(*) FILTER (WHERE natural_rank > ${PROTECTED_FEED_HEAD_SIZE} AND vip_purchased_at IS NOT NULL) OVER () AS vip_count,
           LEAST(
-            COUNT(*) FILTER (WHERE vip_promoted_at IS NULL) OVER (),
+            COUNT(*) FILTER (WHERE natural_rank <= ${PROTECTED_FEED_HEAD_SIZE} OR vip_purchased_at IS NULL) OVER (),
             ${PROTECTED_FEED_HEAD_SIZE}
           ) AS ordinary_head_count
-        FROM base
+        FROM ranked_natural
       ),
       -- Reorder only the ordinary tail; the VIP interleave below stays unchanged.
       bump_candidates AS (
@@ -1439,6 +1469,10 @@ export class ListingsService {
     const nextOemPartNumber = isAutoPartsCategory(nextCategory)
       ? trimOptional(dto.oem_part_number)
       : null;
+    const shouldUpdateVideo = Object.prototype.hasOwnProperty.call(dto, 'video_url');
+    const nextVideo = shouldUpdateVideo && dto.video_url?.trim()
+      ? await resolveListingVideo(dto.video_url)
+      : null;
 
     const updated = await this.prisma.$transaction(async (tx) => {
       await this.createOwnerApprovedSnapshotIfNeeded(tx, listing);
@@ -1478,6 +1512,11 @@ export class ListingsService {
               ? normalizeOemPartNumber(nextOemPartNumber)
               : undefined
             : null,
+          video: shouldUpdateVideo
+            ? nextVideo
+              ? toInputJson(nextVideo)
+              : Prisma.DbNull
+            : undefined,
           dealType: dto.deal_type?.trim(),
           realEstateType: dto.real_estate_type?.trim(),
           clothesType: dto.clothes_type?.trim(),

@@ -242,6 +242,14 @@ class AdminService {
           String? cursor}) =>
       _api.zeroResultSearches(
           period: period, search: search, limit: limit, cursor: cursor);
+  Future<Map<String, dynamic>> allSearches(
+          {String period = 'month',
+          String search = '',
+          int limit = 30,
+          String? cursor}) =>
+      _api.allSearches(
+          period: period, search: search, limit: limit, cursor: cursor);
+  Future<Map<String, dynamic>> repeatedMessages() => _api.repeatedMessages();
   Future<Map<String, dynamic>> popularCategories({String period = 'month'}) =>
       _api.popularCategories(period: period);
   Future<Map<String, dynamic>> zeroViewListings(
@@ -445,6 +453,41 @@ class AdminService {
         () => _api.bonusAnalytics(period: period),
         forceRefresh: forceRefresh,
       );
+  Future<Map<String, dynamic>> raffleSummary(
+          {required String from,
+          required String to,
+          required String ticketPrice}) =>
+      _api.raffleSummary(from: from, to: to, ticketPrice: ticketPrice);
+
+  Future<Map<String, dynamic>> raffleParticipants(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          int limit = 30,
+          String? cursor}) =>
+      _api.raffleParticipants(
+          from: from,
+          to: to,
+          ticketPrice: ticketPrice,
+          limit: limit,
+          cursor: cursor);
+
+  Future<Uint8List> raffleExport(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          required String format}) =>
+      _api.raffleExport(
+          from: from, to: to, ticketPrice: ticketPrice, format: format);
+
+  Future<String> raffleExportToFile(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          required String format}) =>
+      _api.raffleExportToFile(
+          from: from, to: to, ticketPrice: ticketPrice, format: format);
+
   Future<Map<String, dynamic>> pointsPurchasesSummary({
     String? from,
     String? to,
@@ -1107,6 +1150,8 @@ class AdminService {
       displayName: _pickText(next.displayName, previous.displayName),
       phone: _pickText(next.phone, previous.phone),
       phoneVerified: next.phoneVerified || previous.phoneVerified,
+      createdAt: next.createdAt ??
+          (next.uid == previous.uid ? previous.createdAt : null),
       photoUrl: _pickText(next.photoUrl, previous.photoUrl),
       referralCode: _pickText(next.referralCode, previous.referralCode),
       isAdmin: next.isAdmin,

@@ -38,9 +38,9 @@ void main() {
     expect(find.text('Витрина ATTA'), findsOneWidget);
     expect(find.text('Поднятие'), findsOneWidget);
     expect(find.text('VIP'), findsOneWidget);
-    expect(find.text('230 бонусов'), findsOneWidget);
-    expect(find.text('35 бонусов'), findsOneWidget);
-    expect(find.text('150 бонусов'), findsOneWidget);
+    expect(find.text('200 бонусов'), findsOneWidget);
+    expect(find.text('25 бонусов'), findsOneWidget);
+    expect(find.text('125 бонусов'), findsOneWidget);
     expect(find.text('Турбо'), findsNothing);
 
     await tester
@@ -49,7 +49,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Добавить в Витрину ATTA?'), findsOneWidget);
-    expect(find.text('Стоимость: 230 бонусов'), findsOneWidget);
+    expect(find.text('Стоимость: 200 бонусов'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
   });
 
@@ -83,14 +83,14 @@ void main() {
 
     expect(find.text('1 день'), findsOneWidget);
     expect(find.text('Срок: 1 день'), findsOneWidget);
-    expect(find.text('Стоимость: 230 бонусов'), findsOneWidget);
+    expect(find.text('Стоимость: 200 бонусов'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Увеличить'));
     await tester.pumpAndSettle();
 
     expect(find.text('2 дня'), findsOneWidget);
     expect(find.text('Срок: 2 дня'), findsOneWidget);
-    expect(find.text('Стоимость: 460 бонусов'), findsOneWidget);
+    expect(find.text('Стоимость: 400 бонусов'), findsOneWidget);
   });
 
   testWidgets('VIP confirmation shows 48-hour periods as calendar days',
@@ -123,7 +123,7 @@ void main() {
 
     expect(find.text('2 дня'), findsOneWidget);
     expect(find.text('Срок: 2 дня'), findsOneWidget);
-    expect(find.text('Стоимость: 150 бонусов'), findsOneWidget);
+    expect(find.text('Стоимость: 125 бонусов'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Увеличить'));
     await tester.tap(find.byTooltip('Увеличить'));
@@ -131,7 +131,7 @@ void main() {
 
     expect(find.text('6 дней'), findsOneWidget);
     expect(find.text('Срок: 6 дней'), findsOneWidget);
-    expect(find.text('Стоимость: 450 бонусов'), findsOneWidget);
+    expect(find.text('Стоимость: 375 бонусов'), findsOneWidget);
   });
 
   testWidgets('duration selector stops at 30 quantity steps', (tester) async {
@@ -168,7 +168,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('60 дней'), findsOneWidget);
-    expect(find.text('Стоимость: 4500 бонусов'), findsOneWidget);
+    expect(find.text('Стоимость: 3750 бонусов'), findsOneWidget);
     expect(
       tester
           .widget<IconButton>(
@@ -292,7 +292,7 @@ class _FakeWalletService extends WalletService {
       'balance': _balance,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 15,
+      'dailyBonusAmount': 10,
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
     });
@@ -314,21 +314,21 @@ class _FakePromotionsService extends PromotionsService {
         type: 'showcase',
         title: 'Витрина ATTA',
         description: 'Ваше объявление появится на главной.',
-        costBonus: 230,
+        costBonus: 200,
         durationHours: 24,
       ),
       PromotionPlan(
         type: 'bump',
         title: 'Поднятие',
         description: 'Объявление поднимется в ленте.',
-        costBonus: 35,
+        costBonus: 25,
         durationHours: 24,
       ),
       PromotionPlan(
         type: 'vip',
         title: 'VIP',
         description: 'Объявление станет заметнее.',
-        costBonus: 150,
+        costBonus: 125,
         durationHours: 48,
       ),
       PromotionPlan(

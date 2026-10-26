@@ -58,6 +58,39 @@ void main() {
     expect(api.registered, ['B', 'A']);
     await service.dispose();
   });
+
+  test('push switch defaults on and stays off for the same user', () async {
+    final storage = TokenStorage();
+    storage.beginSessionChange();
+    await storage.saveSession(
+      accessToken: 'access',
+      refreshToken: 'refresh',
+      currentUser: const AuthUser(uid: 'A'),
+    );
+    final api = _DevicesApi(storage);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'requestToken') return 'device-token';
+      return null;
+    });
+    final service = PushNotificationService(
+      channel: channel,
+      platformSupported: true,
+      tokenStorage: storage,
+    );
+    expect(await service.isEnabledForUser('A'), true);
+    await service.bindForUser(api: api, userId: 'A');
+    expect(api.registered, ['A']);
+    await service.setEnabledForUser(api: api, userId: 'A', enabled: false);
+    expect(api.unregistered, ['A']);
+    await service.bindForUser(api: api, userId: 'A');
+    expect(api.registered, ['A']);
+    expect(await service.isEnabledForUser('A'), false);
+    expect(await service.isEnabledForUser('B'), true);
+    await service.setEnabledForUser(api: api, userId: 'A', enabled: true);
+    expect(api.registered, ['A', 'A']);
+    await service.dispose();
+  });
 }
 
 class _DevicesApi extends NotificationsApi {
@@ -65,6 +98,17 @@ class _DevicesApi extends NotificationsApi {
   final TokenStorage storage;
   final registered = <String>[];
   final unregistered = <String>[];
+  bool enabled = true;
+
+  @override
+  Future<bool> getPushPreference(String userId) async => enabled;
+
+  @override
+  Future<bool> setPushPreference(String userId, bool value) async {
+    enabled = value;
+    return enabled;
+  }
+
   @override
   Future<Map<String, dynamic>> registerDevice(
       {required String token,

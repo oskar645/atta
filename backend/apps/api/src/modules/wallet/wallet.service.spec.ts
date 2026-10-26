@@ -270,7 +270,7 @@ function createService(initial?: {
   };
 }
 
-test('signup welcome bonus 250 is granted once on first wallet bootstrap', async () => {
+test('signup welcome bonus 200 is granted once on first wallet bootstrap', async () => {
   const { service, state } = createService();
 
   const wallet = await service.ensureWalletAndBonuses('user-1');
@@ -498,8 +498,8 @@ test('referral inviter bonus credits exactly once with referral reason and idemp
 
   assert.equal(first.applied, true);
   assert.equal(second.applied, false);
-  assert.equal(first.wallet.bonusBalance, 400);
-  assert.equal(second.wallet.bonusBalance, 400);
+  assert.equal(first.wallet.bonusBalance, 350);
+  assert.equal(second.wallet.bonusBalance, 350);
   assert.equal(
     state.transactions.filter(
       (item) =>

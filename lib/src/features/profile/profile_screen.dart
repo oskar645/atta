@@ -149,6 +149,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       'phone_verified': user.phoneVerified,
       'emailVerified': user.emailVerified,
       'email_verified': user.emailVerified,
+      if (user.createdAt != null)
+        'created_at': user.createdAt!.toIso8601String(),
       if ((_avatarOverrideUrl?.trim().isNotEmpty ?? false))
         'avatar_url': _avatarOverrideUrl!.trim()
       else if ((user.photoUrl?.trim().isNotEmpty ?? false))
@@ -463,6 +465,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     return Scaffold(
       appBar: AppBar(title: const Text('Профиль'), centerTitle: false),
       body: StreamBuilder<Map<String, dynamic>>(
+        key: ValueKey('profile-stream-${user.uid}'),
         initialData: (() {
           final cached = profile.getCachedProfile(user.uid);
           final merged = <String, dynamic>{
@@ -476,6 +479,8 @@ class _ProfileScreenState extends State<ProfileScreen>
             'phone_verified': user.phoneVerified,
             'emailVerified': user.emailVerified,
             'email_verified': user.emailVerified,
+            if (user.createdAt != null)
+              'created_at': user.createdAt!.toIso8601String(),
             if ((_avatarOverrideUrl?.trim().isNotEmpty ?? false))
               'avatar_url': _avatarOverrideUrl!.trim()
             else if ((user.photoUrl?.trim().isNotEmpty ?? false))

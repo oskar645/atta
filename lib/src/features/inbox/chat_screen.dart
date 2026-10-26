@@ -1182,6 +1182,8 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                               Expanded(
                                 child: TextField(
                                   controller: _text,
+                                  textCapitalization:
+                                      TextCapitalization.sentences,
                                   decoration: InputDecoration(
                                     hintText: _selectedImages.isEmpty
                                         ? (_editingMessage != null

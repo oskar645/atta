@@ -56,3 +56,6 @@ app.*.map.json
 .env.*
 backend/.env
 backend/.env.*
+
+# Firebase server credentials (never commit private service-account keys)
+/backend/secrets/

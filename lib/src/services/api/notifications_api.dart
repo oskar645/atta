@@ -5,6 +5,21 @@ class NotificationsApi {
 
   final ApiClient client;
 
+  Future<bool> getPushPreference(String userId) async {
+    final response = await client.get('/notifications/push-preference',
+        authorized: true, queryParameters: {'userId': userId});
+    return (response as Map)['enabled'] == true;
+  }
+
+  Future<bool> setPushPreference(String userId, bool enabled) async {
+    final response = await client.patch(
+      '/notifications/push-preference',
+      authorized: true,
+      body: <String, dynamic>{'userId': userId, 'enabled': enabled},
+    );
+    return (response as Map)['enabled'] == true;
+  }
+
   Future<Map<String, dynamic>> registerDevice({
     required String token,
     required String platform,

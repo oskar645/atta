@@ -14,6 +14,7 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminController = void 0;
 const common_1 = require("@nestjs/common");
+const events_1 = require("events");
 const admin_guard_1 = require("../auth/admin.guard");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
@@ -22,6 +23,7 @@ const list_admin_bonus_analytics_dto_1 = require("./dto/list-admin-bonus-analyti
 const admin_registration_stats_dto_1 = require("./dto/admin-registration-stats.dto");
 const list_admin_listings_dto_1 = require("./dto/list-admin-listings.dto");
 const list_admin_points_purchases_dto_1 = require("./dto/list-admin-points-purchases.dto");
+const list_raffle_participants_dto_1 = require("./dto/list-raffle-participants.dto");
 const list_admin_promotions_dto_1 = require("./dto/list-admin-promotions.dto");
 const list_admin_blocks_dto_1 = require("./dto/list-admin-blocks.dto");
 const list_admin_wallet_transactions_dto_1 = require("./dto/list-admin-wallet-transactions.dto");
@@ -43,6 +45,12 @@ let AdminController = class AdminController {
     }
     getZeroResultSearches(query) {
         return this.adminService.getZeroResultSearches(query);
+    }
+    getAllSearches(query) {
+        return this.adminService.getAllSearches(query);
+    }
+    getRepeatedMessages() {
+        return this.adminService.getRepeatedMessages();
     }
     getPopularCategories(query) {
         return this.adminService.getPopularCategories(query);
@@ -118,6 +126,60 @@ let AdminController = class AdminController {
     getBonusAnalytics(query) {
         return this.adminService.getBonusAnalytics(query);
     }
+    getRaffleSummary(query) {
+        return this.adminService.getRaffleSummary(query);
+    }
+    listRaffleParticipants(query) {
+        return this.adminService.listRaffleParticipants(query);
+    }
+    async exportRaffle(query, format, response) {
+        if (format !== 'participants' && format !== 'tickets') {
+            response.status(400).json({ message: 'Некорректный формат выгрузки' });
+            return;
+        }
+        const summary = await this.adminService.getRaffleSummary(query);
+        response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        response.setHeader('Content-Disposition', `attachment; filename="raffle-${format}.csv"`);
+        const csv = (value) => {
+            const raw = String(value ?? '');
+            const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+            return `"${safe.replace(/"/g, '""')}"`;
+        };
+        const write = async (fields) => {
+            if (!response.write(fields.map(csv).join(';') + '\r\n'))
+                await (0, events_1.once)(response, 'drain');
+        };
+        response.write('\uFEFF');
+        await write(['Период', summary.from, summary.to]);
+        await write(['Цена билета, ₽', summary.ticketPriceRub]);
+        await write(['Уникальных участников', summary.participants]);
+        await write(['Всего билетов', summary.tickets]);
+        await write(['Сумма пополнений участников, ₽', summary.amountRub]);
+        await write([]);
+        await write(format === 'tickets'
+            ? ['№ билета', 'Имя', 'Телефон']
+            : ['№', 'Имя', 'Телефон', 'Сумма, ₽', 'Билетов', 'Остаток, ₽', 'Первое пополнение', 'Последнее пополнение']);
+        let cursor;
+        let number = 0;
+        do {
+            const page = await this.adminService.listRaffleParticipants({
+                from: query.from, to: query.to,
+                ticketPrice: query.ticketPrice, limit: 100, cursor,
+            });
+            for (const item of page.items) {
+                if (format === 'tickets') {
+                    for (let i = 0; i < item.tickets; i++)
+                        await write([++number, item.name, item.phone]);
+                }
+                else {
+                    await write([++number, item.name, item.phone, item.totalRub, item.tickets,
+                        item.remainderRub, item.firstAt, item.lastAt]);
+                }
+            }
+            cursor = page.nextCursor ?? undefined;
+        } while (cursor);
+        response.end();
+    }
     getPointsPurchasesSummary(query) {
         return this.adminService.getPointsPurchasesSummary(query);
     }
@@ -178,6 +240,19 @@ __decorate([
     __metadata("design:paramtypes", [admin_marketplace_analytics_dto_1.AdminAnalyticsPeriodDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getZeroResultSearches", null);
+__decorate([
+    (0, common_1.Get)('analytics/all-searches'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [admin_marketplace_analytics_dto_1.AdminAnalyticsPeriodDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getAllSearches", null);
+__decorate([
+    (0, common_1.Get)('analytics/repeated-messages'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getRepeatedMessages", null);
 __decorate([
     (0, common_1.Get)('analytics/popular-categories'),
     __param(0, (0, common_1.Query)()),
@@ -346,6 +421,29 @@ __decorate([
     __metadata("design:paramtypes", [list_admin_bonus_analytics_dto_1.ListAdminBonusAnalyticsDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getBonusAnalytics", null);
+__decorate([
+    (0, common_1.Get)('raffle/summary'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getRaffleSummary", null);
+__decorate([
+    (0, common_1.Get)('raffle/participants'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listRaffleParticipants", null);
+__decorate([
+    (0, common_1.Get)('raffle/export'),
+    __param(0, (0, common_1.Query)()),
+    __param(1, (0, common_1.Query)('format')),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto, String, Object]),
+    __metadata("design:returntype", Promise)
+], AdminController.prototype, "exportRaffle", null);
 __decorate([
     (0, common_1.Get)('payments/points-purchases/summary'),
     __param(0, (0, common_1.Query)()),

@@ -961,6 +961,7 @@ class BackendAuthService {
         previous.email != next.email ||
         previous.emailVerified != next.emailVerified ||
         previous.emailVerifiedAt != next.emailVerifiedAt ||
+        previous.createdAt != next.createdAt ||
         previous.displayName != next.displayName ||
         previous.phone != next.phone ||
         previous.phoneVerified != next.phoneVerified ||
@@ -983,6 +984,8 @@ class BackendAuthService {
     final emailVerifiedAt = emailVerifiedAtRaw == null
         ? null
         : DateTime.tryParse(emailVerifiedAtRaw);
+    final createdAtRaw = pick(raw['createdAt']) ?? pick(raw['created_at']);
+    final createdAt = createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw);
 
     return AuthUser(
       uid: pick(raw['id']) ?? '',
@@ -1001,6 +1004,7 @@ class BackendAuthService {
           raw['isEmailVerified'] == true ||
           emailVerifiedAt != null,
       emailVerifiedAt: emailVerifiedAt,
+      createdAt: createdAt,
       photoUrl: _cacheBustedAvatarUrl(
         _normalizeAvatarUrl(
           pick(raw['avatar_url']) ??
@@ -1090,6 +1094,7 @@ class BackendAuthService {
       phoneVerified: next.phoneVerified || previous.phoneVerified,
       emailVerified: next.emailVerified || previous.emailVerified,
       emailVerifiedAt: next.emailVerifiedAt ?? previous.emailVerifiedAt,
+      createdAt: next.createdAt ?? previous.createdAt,
       photoUrl: _pickPreferred(next.photoUrl, previous.photoUrl),
       referralCode: _pickPreferred(next.referralCode, previous.referralCode),
       blockStatus: next.blockStatus,

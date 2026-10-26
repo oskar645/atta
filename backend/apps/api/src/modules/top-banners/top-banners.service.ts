@@ -26,6 +26,14 @@ export class TopBannersService {
     return raw;
   }
 
+  private imageAlignmentY(value: unknown) {
+    const alignment = Number(value ?? 0);
+    if (!Number.isFinite(alignment) || alignment < -1 || alignment > 1) {
+      throw new BadRequestException('Некорректное положение изображения');
+    }
+    return alignment;
+  }
+
   private status(item: { enabled: boolean; startAt: Date; endAt: Date }, now = new Date()) {
     if (item.endAt <= now) return 'completed';
     if ('imageUrl' in item && !String(item.imageUrl ?? '').trim()) return 'draft';
@@ -37,7 +45,8 @@ export class TopBannersService {
   private serialize(item: any) {
     const impressions = Number(item.impressionCount ?? 0);
     const clicks = Number(item.clickCount ?? 0);
-    return { id: item.id, title: item.title, image_url: item.imageUrl, target_url: item.targetUrl,
+    return { id: item.id, title: item.title, image_url: item.imageUrl,
+      image_alignment_y: Number(item.imageAlignmentY ?? 0), target_url: item.targetUrl,
       enabled: item.enabled, start_at: item.startAt.toISOString(), end_at: item.endAt.toISOString(),
       sort_order: item.sortOrder, status: this.status(item), impression_count: impressions,
       click_count: clicks, ctr: impressions ? clicks * 100 / impressions : 0,
@@ -72,6 +81,7 @@ export class TopBannersService {
     if (endAt <= startAt) throw new BadRequestException('Окончание должно быть позже начала');
     const item = await this.prisma.topBanner.create({ data: { title: String(body['title'] ?? '').trim(),
       imageUrl: String(body['image_url'] ?? '').trim(), targetUrl: this.url(body['target_url']),
+      imageAlignmentY: this.imageAlignmentY(body['image_alignment_y']),
       enabled: false, startAt, endAt, sortOrder: Number(body['sort_order'] ?? 0), createdById: user.userId } });
     return { source: 'timeweb', banner: this.serialize(item) };
   }
@@ -84,6 +94,8 @@ export class TopBannersService {
     const item = await this.prisma.topBanner.update({ where: { id }, data: {
       title: body['title'] == null ? undefined : String(body['title']).trim(),
       imageUrl: body['image_url'] == null ? undefined : String(body['image_url']).trim(),
+      imageAlignmentY: body['image_alignment_y'] == null
+        ? undefined : this.imageAlignmentY(body['image_alignment_y']),
       targetUrl: body['target_url'] == null ? undefined : this.url(body['target_url']), startAt, endAt,
       sortOrder: body['sort_order'] == null ? undefined : Number(body['sort_order']),
     }});
@@ -108,7 +120,11 @@ export class TopBannersService {
   async extend(id: string, body: Input) {
     const current = await this.require(id);
     const base = current.endAt > new Date() ? current.endAt : new Date();
-    const endAt = body['end_at'] != null ? this.date(body['end_at'], 'end_at') : new Date(base.getTime() + Number(body['days'] ?? 0) * 86400000);
+    const days = Number(body['days'] ?? 0);
+    if (body['end_at'] == null && (!Number.isInteger(days) || days <= 0 || days > 3650)) {
+      throw new BadRequestException('Количество дней должно быть от 1 до 3650');
+    }
+    const endAt = body['end_at'] != null ? this.date(body['end_at'], 'end_at') : new Date(base.getTime() + days * 86400000);
     if (endAt <= new Date()) throw new BadRequestException('Новая дата окончания должна быть в будущем');
     const item = await this.prisma.topBanner.update({ where: { id }, data: { endAt } });
     return { source: 'timeweb', banner: this.serialize(item) };

@@ -65,6 +65,7 @@ class AuthUser {
   final bool phoneVerified;
   final bool emailVerified;
   final DateTime? emailVerifiedAt;
+  final DateTime? createdAt;
   final String? photoUrl;
   final String? referralCode;
   final bool isAdmin;
@@ -78,6 +79,7 @@ class AuthUser {
     this.phoneVerified = false,
     this.emailVerified = false,
     this.emailVerifiedAt,
+    this.createdAt,
     this.photoUrl,
     this.referralCode,
     this.isAdmin = false,
@@ -100,6 +102,7 @@ class AuthUser {
       'phoneVerified': phoneVerified,
       'emailVerified': emailVerified,
       'emailVerifiedAt': emailVerifiedAt?.toIso8601String(),
+      'createdAt': createdAt?.toIso8601String(),
       'photoUrl': photoUrl,
       'referralCode': referralCode,
       'isAdmin': isAdmin,
@@ -123,6 +126,8 @@ class AuthUser {
     final emailVerifiedAt = emailVerifiedAtRaw == null
         ? null
         : DateTime.tryParse(emailVerifiedAtRaw);
+    final createdAtRaw = pickText(const ['createdAt', 'created_at']);
+    final createdAt = createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw);
 
     return AuthUser(
       uid: pickText(const ['uid', 'id']) ?? '',
@@ -137,6 +142,7 @@ class AuthUser {
           json['isEmailVerified'] == true ||
           emailVerifiedAt != null,
       emailVerifiedAt: emailVerifiedAt,
+      createdAt: createdAt,
       photoUrl: () {
         final raw = pickText(const [
           'photoUrl',

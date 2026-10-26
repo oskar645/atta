@@ -11,12 +11,14 @@ import 'package:atta/src/features/admin/admin_listings_screen.dart';
 import 'package:atta/src/features/admin/admin_deleted_users_screen.dart';
 import 'package:atta/src/features/admin/admin_online_users_screen.dart';
 import 'package:atta/src/features/admin/admin_points_purchases_screen.dart';
+import 'package:atta/src/features/admin/admin_raffle_screen.dart';
 import 'package:atta/src/features/admin/admin_promotions_screen.dart';
 import 'package:atta/src/features/admin/admin_reports_screen.dart';
 import 'package:atta/src/features/admin/admin_today_visits_screen.dart';
 import 'package:atta/src/features/admin/admin_users_screen.dart';
 import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
 import 'package:atta/src/features/admin/admin_marketplace_analytics_screens.dart';
+import 'package:atta/src/features/admin/admin_repeated_messages_screen.dart';
 import 'package:atta/src/features/admin/admin_advertising_tab.dart';
 import 'package:atta/src/features/admin/admin_blocks_screen.dart';
 import 'admin_support_screen.dart';
@@ -826,13 +828,11 @@ class _DashboardTabState extends State<_DashboardTab> {
   Future<List<Map<String, dynamic>>> _loadTimewebDashboard({
     bool forceRefresh = false,
   }) async {
-    final usageFuture =
-        (widget.usageAnalyticsLoad ?? UsageAnalyticsService.instance.dashboard)()
-            .catchError((_) => <String, dynamic>{});
+    final usageFuture = (widget.usageAnalyticsLoad ??
+            UsageAnalyticsService.instance.dashboard)()
+        .catchError((_) => <String, dynamic>{});
     final results = await Future.wait<Map<String, dynamic>>([
-      context
-          .read<AdminService>()
-          .dashboardStats(forceRefresh: forceRefresh),
+      context.read<AdminService>().dashboardStats(forceRefresh: forceRefresh),
       usageFuture,
     ]);
     return results;
@@ -964,122 +964,149 @@ class _DashboardTabState extends State<_DashboardTab> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(12),
               children: [
-              card(
-                'Пользователей',
-                '${read('users')}',
-                Icons.people,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
-                ),
-              ),
-              card(
-                'Сейчас онлайн',
-                '${read('onlineUsers')}',
-                Icons.circle,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const AdminOnlineUsersScreen(),
+                card(
+                  'Пользователей',
+                  '${read('users')}',
+                  Icons.people,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
                   ),
                 ),
-              ),
-              card(
-                'Сегодня заходили',
-                '${read('todayVisits')}',
-                Icons.groups,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const AdminTodayVisitsScreen(),
+                card(
+                  'Сейчас онлайн',
+                  '${read('onlineUsers')}',
+                  Icons.circle,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminOnlineUsersScreen(),
+                    ),
                   ),
                 ),
-              ),
-              card(
-                'Объявлений всего',
-                '${read('listings')}',
-                Icons.list_alt,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const AdminListingsScreen(),
+                card(
+                  'Сегодня заходили',
+                  '${read('todayVisits')}',
+                  Icons.groups,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminTodayVisitsScreen(),
+                    ),
                   ),
                 ),
-              ),
-              card('Активных объявлений', '${read('activeListings')}',
-                  Icons.campaign),
-              card(
-                'Продано',
-                '${read('sold')}',
-                Icons.sell,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
+                card(
+                  'Объявлений всего',
+                  '${read('listings')}',
+                  Icons.list_alt,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminListingsScreen(),
+                    ),
+                  ),
+                ),
+                card('Активных объявлений', '${read('activeListings')}',
+                    Icons.campaign),
+                card(
+                  'Продано',
+                  '${read('sold')}',
+                  Icons.sell,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          const AdminListingsScreen(initialStatus: 'sold'),
+                    ),
+                  ),
+                ),
+                card('Продажи за 30 дней', '${read('sales30d')}',
+                    Icons.sell_outlined),
+                card(
+                  'Потрачено баллов',
+                  '${read('spentPoints30d')}',
+                  Icons.stars_outlined,
+                  subtitle: 'за последние 30 дней',
+                ),
+                card(
+                  'Участники розыгрыша',
+                  'Открыть',
+                  Icons.confirmation_number_outlined,
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const AdminRaffleScreen(),
+                  )),
+                ),
+                card(
+                  'Покупки баллов',
+                  '${readPurchaseAmountRub()} ₽',
+                  Icons.payments_outlined,
+                  subtitle:
+                      '${readPurchaseMetric('totalPoints')} баллов • ${readPurchaseMetric('purchasesCount')} покупок',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminPointsPurchasesScreen(),
+                    ),
+                  ),
+                ),
+                card('На модерации', '${read('pendingModeration')}',
+                    Icons.shield),
+                card('Тикетов поддержки', '${read('supportTickets')}',
+                    Icons.support_agent),
+                card(
+                  'Одинаковые сообщения',
+                  '›',
+                  Icons.repeat,
+                  subtitle: 'за последние 24 часа',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const AdminRepeatedMessagesScreen(),
+                  )),
+                ),
+                card('Жалоб (open)', '${read('reportsOpen')}', Icons.report),
+                card('Рекламы active', '${read('activeAds')}',
+                    Icons.ad_units_outlined),
+                card(
+                  'Удалённые пользователи',
+                  '${read('deletedUsers')}',
+                  Icons.person_off_outlined,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminDeletedUsersScreen(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                card(
+                  'Поиски без результата',
+                  '${read('zeroResultSearches')}',
+                  Icons.search_off,
+                  subtitle: 'за этот месяц',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const AdminZeroResultSearchesScreen(),
+                  )),
+                ),
+                card(
+                  'Все поиски',
+                  '${read('allSearches')}',
+                  Icons.search,
+                  subtitle: 'за этот месяц',
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) =>
-                        const AdminListingsScreen(initialStatus: 'sold'),
-                  ),
+                        const AdminZeroResultSearchesScreen(allSearches: true),
+                  )),
                 ),
-              ),
-              card('Продажи за 30 дней', '${read('sales30d')}',
-                  Icons.sell_outlined),
-              card(
-                'Потрачено баллов',
-                '${read('spentPoints30d')}',
-                Icons.stars_outlined,
-                subtitle: 'за последние 30 дней',
-              ),
-              card(
-                'Покупки баллов',
-                '${readPurchaseAmountRub()} ₽',
-                Icons.payments_outlined,
-                subtitle:
-                    '${readPurchaseMetric('totalPoints')} баллов • ${readPurchaseMetric('purchasesCount')} покупок',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const AdminPointsPurchasesScreen(),
-                  ),
+                card(
+                  'Популярные категории',
+                  '›',
+                  Icons.category_outlined,
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const AdminPopularCategoriesScreen(),
+                  )),
                 ),
-              ),
-              card(
-                  'На модерации', '${read('pendingModeration')}', Icons.shield),
-              card('Тикетов поддержки', '${read('supportTickets')}',
-                  Icons.support_agent),
-              card('Жалоб (open)', '${read('reportsOpen')}', Icons.report),
-              card('Рекламы active', '${read('activeAds')}',
-                  Icons.ad_units_outlined),
-              card(
-                'Удалённые пользователи',
-                '${read('deletedUsers')}',
-                Icons.person_off_outlined,
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const AdminDeletedUsersScreen(),
-                  ),
+                card(
+                  'Без единого просмотра',
+                  '${read('zeroViewListings')}',
+                  Icons.visibility_off_outlined,
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const AdminZeroViewListingsScreen(),
+                  )),
                 ),
-              ),
-              const SizedBox(height: 8),
-              card(
-                'Поиски без результата',
-                '${read('zeroResultSearches')}',
-                Icons.search_off,
-                subtitle: 'за этот месяц',
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const AdminZeroResultSearchesScreen(),
-                )),
-              ),
-              card(
-                'Популярные категории',
-                '›',
-                Icons.category_outlined,
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const AdminPopularCategoriesScreen(),
-                )),
-              ),
-              card(
-                'Без единого просмотра',
-                '${read('zeroViewListings')}',
-                Icons.visibility_off_outlined,
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const AdminZeroViewListingsScreen(),
-                )),
-              ),
-              const SizedBox(height: 8),
-              AdminUsageAnalytics(data: usage),
+                const SizedBox(height: 8),
+                AdminUsageAnalytics(data: usage),
                 AdminPlatformAnalytics(data: usage),
               ],
             ),
@@ -1219,6 +1246,14 @@ class _DashboardTabState extends State<_DashboardTab> {
               ),
             ),
             card('Продажи за 30 дней', '$soldThisMonth', Icons.sell_outlined),
+            card(
+              'Участники розыгрыша',
+              'Открыть',
+              Icons.confirmation_number_outlined,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const AdminRaffleScreen(),
+              )),
+            ),
             card(
               'Покупки баллов',
               'Открыть',

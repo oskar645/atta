@@ -621,6 +621,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                 const SizedBox(height: 8),
                 TextField(
                   controller: _searchController,
+                  textCapitalization: TextCapitalization.sentences,
                   onChanged: _onSellerSearchChanged,
                   onTapOutside: (_) => FocusScope.of(context).unfocus(),
                   decoration: InputDecoration(

@@ -118,4 +118,9 @@ __decorate([
     (0, class_validator_1.IsArray)(),
     __metadata("design:type", Array)
 ], UpdateListingDto.prototype, "photo_urls", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", Object)
+], UpdateListingDto.prototype, "video_url", void 0);
 //# sourceMappingURL=update-listing.dto.js.map

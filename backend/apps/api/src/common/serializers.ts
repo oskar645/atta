@@ -478,6 +478,7 @@ export const serializeListing = (
   clothes_type: listing.clothesType,
   clothes_size: listing.clothesSize ?? null,
   oem_part_number: listing.oemPartNumber ?? null,
+  video: listing.video == null ? null : normalizeJsonRecord(listing.video),
   photo_urls:
     listing.photos?.map((photo) =>
       normalizeStoredMediaUrl(photo.publicUrl, {

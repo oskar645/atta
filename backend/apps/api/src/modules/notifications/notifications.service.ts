@@ -1,10 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { DevicePlatform, NotificationScope, NotificationType, Prisma } from '@prisma/client';
 
 import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { ApnsService } from '../apns/apns.service';
 import { ChatsGateway } from '../chats/chats.gateway';
+import { FcmService } from '../fcm/fcm.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 const excludedInAppNotificationTypes = [NotificationType.CHAT_MESSAGE];
@@ -17,6 +18,7 @@ export class NotificationsService {
     private readonly apnsService: ApnsService,
     private readonly prisma: PrismaService,
     private readonly chatsGateway: ChatsGateway,
+    @Optional() private readonly fcmService?: FcmService,
   ) {}
 
   private toType(type?: string) {
@@ -194,6 +196,41 @@ export class NotificationsService {
     };
   }
 
+  private assertPushPreferenceOwner(authUser: AuthenticatedUser, userId?: string) {
+    if (userId !== authUser.userId) {
+      throw new ForbiddenException('Push preference belongs to another user');
+    }
+  }
+
+  async getPushPreference(authUser: AuthenticatedUser, userId?: string) {
+    this.assertPushPreferenceOwner(authUser, userId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: authUser.userId },
+      select: { pushNotificationsEnabled: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return { enabled: user.pushNotificationsEnabled };
+  }
+
+  async setPushPreference(authUser: AuthenticatedUser, enabled?: boolean, userId?: string) {
+    this.assertPushPreferenceOwner(authUser, userId);
+    if (typeof enabled !== 'boolean') {
+      throw new BadRequestException('enabled must be a boolean');
+    }
+    const user = await this.prisma.user.update({
+      where: { id: authUser.userId },
+      data: { pushNotificationsEnabled: enabled },
+      select: { pushNotificationsEnabled: true },
+    });
+    if (!enabled) {
+      await this.prisma.userDevice.updateMany({
+        where: { userId: authUser.userId },
+        data: { isActive: false },
+      });
+    }
+    return { enabled: user.pushNotificationsEnabled };
+  }
+
   async sendToUser(body: {
     userId?: string;
     title?: string;
@@ -340,6 +377,13 @@ export class NotificationsService {
           revokedAt: null, expiresAt: { gt: new Date() } },
       });
       if (!session) throw new ForbiddenException('Push session is not active');
+      const user = await tx.user.findUnique({
+        where: { id: authUser.userId },
+        select: { pushNotificationsEnabled: true },
+      });
+      if (!user?.pushNotificationsEnabled) {
+        throw new ForbiddenException('Push notifications are disabled');
+      }
       const previous = await tx.userDevice.findUnique({
         where: { deviceToken: token }, include: { session: true },
       });
@@ -454,6 +498,7 @@ export class NotificationsService {
             userId: normalizedUserId,
             isActive: true,
             platform: DevicePlatform.IOS,
+            user: { pushNotificationsEnabled: true },
             session: { revokedAt: null, expiresAt: { gt: new Date() } },
           },
           select: { userId: true, deviceToken: true, platform: true },
@@ -622,7 +667,8 @@ export class NotificationsService {
     const devices = await this.prisma.userDevice.findMany({
       where: {
         isActive: true,
-        platform: DevicePlatform.IOS,
+        platform: { in: [DevicePlatform.IOS, DevicePlatform.ANDROID] },
+        user: { pushNotificationsEnabled: true },
         session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
@@ -645,7 +691,8 @@ export class NotificationsService {
       where: {
         userId: normalizedUserId,
         isActive: true,
-        platform: DevicePlatform.IOS,
+        platform: { in: [DevicePlatform.IOS, DevicePlatform.ANDROID] },
+        user: { pushNotificationsEnabled: true },
         session: { revokedAt: null, expiresAt: { gt: new Date() } },
       },
       select: {
@@ -681,17 +728,26 @@ export class NotificationsService {
             badges.set(device.userId, badge);
           }
           const absoluteBadge = await badge;
-          result = await this.apnsService.send({
-              token: device.deviceToken,
-              title,
-              body,
-              payload: { ...payload, recipientId: device.userId },
-              badge: absoluteBadge,
-            });
+          result = device.platform === DevicePlatform.ANDROID
+            ? await (this.fcmService?.send({
+                token: device.deviceToken,
+                title,
+                body,
+                notification,
+                recipientId: device.userId,
+                actionType: `${payload.actionType ?? ''}`,
+              }) ?? Promise.resolve({ sent: false, status: 0, skipped: true }))
+            : await this.apnsService.send({
+                token: device.deviceToken,
+                title,
+                body,
+                payload: { ...payload, recipientId: device.userId },
+                badge: absoluteBadge,
+              });
         } catch (error) {
           if (!unexpectedPushFailureLogged) {
             this.logger.warn(
-              `APNs push skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`,
+              `Push delivery skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`,
             );
             unexpectedPushFailureLogged = true;
           }
@@ -699,10 +755,12 @@ export class NotificationsService {
         }
         if (
           !result.sent &&
-          (result.status === 400 || result.status === 410) &&
+          (((result.status === 400 || result.status === 410) &&
           (result.reason === 'BadDeviceToken' ||
             result.reason === 'Unregistered' ||
-            result.reason === 'DeviceTokenNotForTopic')
+            result.reason === 'DeviceTokenNotForTopic')) ||
+            result.reason === 'UNREGISTERED' ||
+            result.reason === 'INVALID_ARGUMENT')
         ) {
           await this.deactivateDevice(device);
         }

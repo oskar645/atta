@@ -24,3 +24,63 @@ test('no eligible banner returns safe empty response', async () => {
   const service = new TopBannersService(prisma as never, {} as never);
   assert.equal((await service.active()).banner, null);
 });
+
+test('expired banner extension adds days from current time', async () => {
+  const current = {
+    ...banner('expired', 1),
+    enabled: false,
+    endAt: new Date('2020-01-01T00:00:00Z'),
+  };
+  let savedEnd = current.endAt;
+  const prisma = {
+    topBanner: {
+      findUnique: async () => current,
+      update: async ({ data }: { data: { endAt: Date } }) => {
+        savedEnd = data.endAt;
+        return { ...current, endAt: data.endAt };
+      },
+    },
+  };
+  const service = new TopBannersService(prisma as never, {} as never);
+  const before = Date.now();
+
+  await service.extend(current.id, { days: 30 });
+
+  assert.ok(savedEnd.getTime() >= before + 30 * 86400000);
+});
+
+test('active banner extension adds days to existing end date', async () => {
+  const current = banner('active', 1);
+  let savedEnd = current.endAt;
+  const prisma = {
+    topBanner: {
+      findUnique: async () => current,
+      update: async ({ data }: { data: { endAt: Date } }) => {
+        savedEnd = data.endAt;
+        return { ...current, endAt: data.endAt };
+      },
+    },
+  };
+  const service = new TopBannersService(prisma as never, {} as never);
+
+  await service.extend(current.id, { days: 7 });
+
+  assert.equal(
+    savedEnd.getTime(),
+    current.endAt.getTime() + 7 * 86400000,
+  );
+});
+
+test('banner extension rejects missing or invalid day counts', async () => {
+  const current = banner('active', 1);
+  const prisma = {
+    topBanner: {
+      findUnique: async () => current,
+    },
+  };
+  const service = new TopBannersService(prisma as never, {} as never);
+
+  await assert.rejects(() => service.extend(current.id, { days: 0 }));
+  await assert.rejects(() => service.extend(current.id, { days: -1 }));
+  await assert.rejects(() => service.extend(current.id, { days: 1.5 }));
+});

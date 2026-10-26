@@ -256,6 +256,7 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
         child: TextField(
           controller: widget.controller,
           focusNode: _focusNode,
+          textCapitalization: TextCapitalization.sentences,
           decoration: InputDecoration(
             labelText: widget.label,
             border: OutlineInputBorder(

@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 
@@ -26,6 +27,22 @@ export class NotificationsController {
   @Get()
   listInAppNotifications(@CurrentUser() authUser: AuthenticatedUser) {
     return this.notificationsService.listInAppNotifications(authUser);
+  }
+
+  @Get('push-preference')
+  getPushPreference(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Query('userId') userId?: string,
+  ) {
+    return this.notificationsService.getPushPreference(authUser, userId);
+  }
+
+  @Patch('push-preference')
+  setPushPreference(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Body() body: { enabled?: boolean; userId?: string },
+  ) {
+    return this.notificationsService.setPushPreference(authUser, body.enabled, body.userId);
   }
 
   @Post('devices')

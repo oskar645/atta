@@ -30,6 +30,7 @@ const storage_service_1 = require("../storage/storage.service");
 const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const promotion_plans_constants_1 = require("../promotions/promotion-plans.constants");
 const listings_service_1 = require("../listings/listings.service");
+const raffle_ticket_calculation_1 = require("./raffle-ticket-calculation");
 const promotionStatusFromInput = (value) => {
     switch ((value ?? '').trim().toLowerCase()) {
         case 'active':
@@ -191,6 +192,102 @@ let AdminService = class AdminService {
             })).toString('base64url') : null,
         };
     }
+    async getAllSearches(query) {
+        const from = this.analyticsStart(query.period);
+        const contains = query.search?.normalize('NFKC').trim().toLocaleLowerCase('ru-RU') ?? '';
+        const limit = this.pageLimit(query.limit, 30);
+        let cursor = null;
+        if (query.cursor) {
+            try {
+                const parsed = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8'));
+                const date = new Date(String(parsed.lastSearchedAt ?? ''));
+                if (Number.isInteger(parsed.count) && Number(parsed.count) > 0 && !Number.isNaN(date.getTime()) && typeof parsed.normalizedQuery === 'string') {
+                    cursor = { count: Number(parsed.count), lastSearchedAt: date, normalizedQuery: parsed.normalizedQuery };
+                }
+            }
+            catch { /* Invalid cursors start at the first page. */ }
+        }
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      WITH grouped AS (
+        SELECT "normalized_query",
+          (array_agg("query" ORDER BY "created_at" DESC, "id" DESC))[1] AS "query",
+          count(*)::bigint AS "count",
+          count(*) FILTER (WHERE "result_count" > 0)::bigint AS "with_results",
+          max("created_at") AS "last_searched_at"
+        FROM "search_attempts"
+        WHERE 1 = 1
+          ${from ? client_1.Prisma.sql `AND "created_at" >= ${from}` : client_1.Prisma.empty}
+          ${contains ? client_1.Prisma.sql `AND "normalized_query" ILIKE ${`%${contains}%`}` : client_1.Prisma.empty}
+        GROUP BY "normalized_query"
+      )
+      SELECT "query", "normalized_query", "count", "with_results", "last_searched_at"
+      FROM grouped
+      WHERE 1 = 1
+        ${cursor ? client_1.Prisma.sql `AND (
+          "count" < ${cursor.count} OR
+          ("count" = ${cursor.count} AND "last_searched_at" < ${cursor.lastSearchedAt}) OR
+          ("count" = ${cursor.count} AND "last_searched_at" = ${cursor.lastSearchedAt} AND "normalized_query" > ${cursor.normalizedQuery})
+        )` : client_1.Prisma.empty}
+      ORDER BY "count" DESC, "last_searched_at" DESC, "normalized_query" ASC
+      LIMIT ${limit + 1}
+    `);
+        const page = rows.slice(0, limit);
+        const last = page.at(-1);
+        const hasMore = rows.length > limit;
+        return {
+            items: page.map((row) => ({
+                query: row.query,
+                normalized_query: row.normalized_query,
+                count: Number(row.count),
+                with_results: Number(row.with_results),
+                last_searched_at: row.last_searched_at.toISOString(),
+            })),
+            has_more: hasMore,
+            next_cursor: hasMore && last ? Buffer.from(JSON.stringify({
+                count: Number(last.count),
+                lastSearchedAt: last.last_searched_at.toISOString(),
+                normalizedQuery: last.normalized_query,
+            })).toString('base64url') : null,
+        };
+    }
+    async getRepeatedMessages() {
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      WITH candidates AS (
+        SELECT m."sender_id", m."text", m."created_at", m."id",
+          CASE WHEN c."buyer_id" = m."sender_id" THEN c."seller_id" ELSE c."buyer_id" END AS recipient_id,
+          lower(regexp_replace(btrim(m."text"), '\\s+', ' ', 'g')) AS normalized_text
+        FROM "chat_messages" m
+        JOIN "chats" c ON c."id" = m."chat_id"
+        WHERE m."created_at" >= now() - interval '24 hours'
+          AND m."deleted_at" IS NULL AND m."message_type" = 'TEXT'
+          AND length(btrim(m."text")) >= 10
+      ), grouped AS (
+        SELECT "sender_id", normalized_text,
+          count(DISTINCT recipient_id)::bigint AS recipients,
+          count(*)::bigint AS messages,
+          max("created_at") AS last_sent_at,
+          (array_agg("text" ORDER BY "created_at" DESC, "id" DESC))[1] AS sample_text
+        FROM candidates
+        GROUP BY "sender_id", normalized_text
+        HAVING count(DISTINCT recipient_id) >= 6
+      )
+      SELECT g."sender_id", u."display_name", u."phone", g.sample_text,
+        g.recipients, g.messages, g.last_sent_at
+      FROM grouped g JOIN "users" u ON u."id" = g."sender_id"
+      WHERE u."deleted_at" IS NULL
+      ORDER BY g.last_sent_at DESC
+      LIMIT 100
+    `);
+        return { items: rows.map((row) => ({
+                sender_id: row.sender_id,
+                display_name: row.display_name,
+                phone: row.phone,
+                sample_text: row.sample_text,
+                recipients: Number(row.recipients),
+                messages: Number(row.messages),
+                last_sent_at: row.last_sent_at.toISOString(),
+            })) };
+    }
     async getPopularCategories(query) {
         const from = this.analyticsStart(query.period);
         const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
@@ -278,7 +375,7 @@ let AdminService = class AdminService {
         const deletedUsers = await this.prisma.user.count({
             where: { status: client_1.UserStatus.DELETED, deletedAt: { not: null } },
         });
-        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth, zeroResultSearches, zeroViewListings] = await Promise.all([
+        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth, zeroResultSearches, allSearches, zeroViewListings] = await Promise.all([
             this.prisma.user.count({
                 where: {
                     deletedAt: null,
@@ -368,6 +465,9 @@ let AdminService = class AdminService {
             this.prisma.zeroResultSearch.count({
                 where: { createdAt: { gte: monthStart } },
             }),
+            this.prisma.searchAttempt.count({
+                where: { createdAt: { gte: monthStart } },
+            }),
             this.prisma.listing.count({
                 where: { deletedAt: null, viewCount: 0 },
             }),
@@ -406,6 +506,7 @@ let AdminService = class AdminService {
                 spentPoints30d: spentPoints30d._sum.amount ?? 0,
                 pointsPurchasesMonth,
                 zeroResultSearches,
+                allSearches,
                 zeroViewListings,
             },
             daily: {
@@ -488,14 +589,21 @@ let AdminService = class AdminService {
             deletedAt: user.deletedAt.toISOString(),
             id: user.id,
         }));
+        const identities = await this.prisma.deletedUserIdentity.findMany({
+            where: { userId: { in: page.items.map((user) => user.id) } },
+        });
+        const identityByUser = new Map(identities.map((identity) => [identity.userId, identity]));
         return {
             source: 'timeweb',
-            items: page.items.map((user) => ({
-                id: user.id,
-                display_name: user.displayName.trim() || user.name.trim() || 'Удалённый пользователь',
-                phone: user.phone?.trim() || null,
-                deleted_at: user.deletedAt.toISOString(),
-            })),
+            items: page.items.map((user) => {
+                const identity = identityByUser.get(user.id);
+                return {
+                    id: user.id,
+                    display_name: identity?.displayName || user.displayName.trim() || user.name.trim() || 'Удалённый пользователь',
+                    phone: identity?.phone || user.phone?.trim() || null,
+                    deleted_at: user.deletedAt.toISOString(),
+                };
+            }),
             total,
             nextCursor: page.nextCursor,
             hasMore: page.hasMore,
@@ -601,11 +709,16 @@ let AdminService = class AdminService {
                 status: {
                     not: client_1.UserStatus.DELETED,
                 },
+                presence: {
+                    is: {
+                        isOnline: true,
+                        lastSeen: { gte: onlineCutoff },
+                    },
+                },
             },
             include: {
                 presence: true,
             },
-            take: 300,
         });
         const items = users
             .map((user) => {
@@ -1795,6 +1908,85 @@ let AdminService = class AdminService {
             note: 'Реальные платежи не подключены. Сейчас учитываются только бонусы.',
         };
     }
+    raffleRange(query) {
+        const from = new Date(query.from);
+        const to = new Date(query.to);
+        if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) {
+            throw new common_2.BadRequestException('Укажите корректный период розыгрыша');
+        }
+        return { from, to };
+    }
+    raffleTicketPrice(query) {
+        const price = query.ticketPrice;
+        if (typeof price !== 'string' || !/^[1-9][0-9]*$/.test(price)) {
+            throw new common_2.BadRequestException('Укажите положительную целую цену билета');
+        }
+        return price;
+    }
+    raffleParticipantsSql(from, to, ticketPrice, cursor) {
+        const filters = this.buildPointsPurchaseFilters({
+            fromDate: from, toDate: to, search: '', dateColumn: 'credited_at',
+        });
+        if (cursor)
+            filters.push(client_1.Prisma.sql `p."user_id" > ${cursor}::uuid`);
+        return client_1.Prisma.sql `
+      SELECT p."user_id", SUM(p."amount_rub") AS total_rub,
+        MIN(p."credited_at") AS first_at, MAX(p."credited_at") AS last_at
+      FROM "payments" p JOIN "users" u ON u."id" = p."user_id"
+      WHERE ${client_1.Prisma.join(filters, ' AND ')}
+      GROUP BY p."user_id"
+      HAVING SUM(p."amount_rub") >= ${new client_1.Prisma.Decimal(ticketPrice)}
+    `;
+    }
+    async getRaffleSummary(query) {
+        const { from, to } = this.raffleRange(query);
+        const ticketPrice = this.raffleTicketPrice(query);
+        const participants = this.raffleParticipantsSql(from, to, ticketPrice);
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      SELECT COUNT(*)::bigint AS participants,
+        COALESCE(SUM(FLOOR(total_rub / ${new client_1.Prisma.Decimal(ticketPrice)})), 0)::bigint AS tickets,
+        COALESCE(SUM(total_rub), 0)::text AS amount
+      FROM (${participants}) raffle
+    `);
+        const row = rows[0];
+        return {
+            from: from.toISOString(), to: to.toISOString(), ticketPriceRub: ticketPrice,
+            participants: Number(row?.participants ?? 0),
+            tickets: Number(row?.tickets ?? 0),
+            amountRub: Number(row?.amount ?? 0),
+        };
+    }
+    async listRaffleParticipants(query) {
+        const { from, to } = this.raffleRange(query);
+        const ticketPrice = this.raffleTicketPrice(query);
+        const limit = Math.min(query.limit ?? 30, 100);
+        const cursor = query.cursor;
+        if (cursor && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor)) {
+            throw new common_2.BadRequestException('Некорректный курсор');
+        }
+        const participants = this.raffleParticipantsSql(from, to, ticketPrice, cursor);
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      SELECT raffle.user_id::text AS user_id, u."display_name", u."name", u."phone",
+        raffle.total_rub::text AS total_rub,
+        raffle.first_at, raffle.last_at
+      FROM (${participants}) raffle
+      JOIN "users" u ON u."id" = raffle.user_id
+      ORDER BY raffle.user_id ASC LIMIT ${limit + 1}
+    `);
+        const page = rows.slice(0, limit);
+        return {
+            nextCursor: rows.length > limit ? page[page.length - 1].user_id : null,
+            items: page.map((row) => ({
+                userId: row.user_id,
+                name: row.display_name?.trim() || row.name?.trim() || 'Пользователь',
+                phone: row.phone?.trim() || '',
+                totalRub: Number(row.total_rub),
+                ...(0, raffle_ticket_calculation_1.calculateRaffleTickets)(row.total_rub, ticketPrice),
+                firstAt: row.first_at.toISOString(),
+                lastAt: row.last_at.toISOString(),
+            })),
+        };
+    }
     async getPointsPurchasesSummary(query) {
         const { fromDate, toDate } = this.resolvePointsPurchasesRange(query);
         const search = (query.search ?? '').trim();
@@ -2493,13 +2685,17 @@ let AdminService = class AdminService {
             toDate: explicit?.lte ?? now,
         };
     }
-    buildPointsPurchaseFilters({ fromDate, toDate, search, }) {
+    buildPointsPurchaseFilters({ fromDate, toDate, search, dateColumn = 'created_at', }) {
         const filters = [
             client_1.Prisma.sql `p."provider" = ${client_1.PaymentProvider.YOOKASSA}::"PaymentProvider"`,
             client_1.Prisma.sql `p."status" = ${client_1.PaymentStatus.SUCCEEDED}::"PaymentStatus"`,
             client_1.Prisma.sql `p."credited_at" IS NOT NULL`,
-            client_1.Prisma.sql `p."created_at" >= ${fromDate}`,
-            client_1.Prisma.sql `p."created_at" <= ${toDate}`,
+            dateColumn === 'credited_at'
+                ? client_1.Prisma.sql `p."credited_at" >= ${fromDate}`
+                : client_1.Prisma.sql `p."created_at" >= ${fromDate}`,
+            dateColumn === 'credited_at'
+                ? client_1.Prisma.sql `p."credited_at" <= ${toDate}`
+                : client_1.Prisma.sql `p."created_at" <= ${toDate}`,
             client_1.Prisma.sql `EXISTS (
         SELECT 1
         FROM "wallet_transactions" wt

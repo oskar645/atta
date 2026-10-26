@@ -221,6 +221,7 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
           child: TextField(
             controller: _qCtrl,
+            textCapitalization: TextCapitalization.sentences,
             decoration: InputDecoration(
               prefixIcon: const Icon(Icons.search),
               hintText: 'Начните писать: Грозный, Москва, Шонни…',

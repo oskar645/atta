@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/features/profile/about_app_screen.dart';
 import 'package:atta/src/features/profile/security_screen.dart';
 import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/push_notification_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -16,6 +20,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool get _hasNativePush => !kIsWeb && (Platform.isIOS || Platform.isAndroid);
   final _nameCtrl = TextEditingController();
   String _savedName = '';
   bool _nameChanged = false;
@@ -23,6 +28,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _deletingAccount = false;
   bool _loadingMarketingConsent = true;
   bool _marketingConsent = false;
+  bool _pushEnabled = true;
+  bool _updatingPush = false;
 
   @override
   void initState() {
@@ -48,6 +55,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) {
         setState(() => _nameChanged = false);
       }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!_hasNativePush) return;
+      final auth = context.read<AuthService>();
+      final userId = auth.currentUser?.uid;
+      if (userId == null) return;
+      final enabled = await context
+          .read<PushNotificationService>()
+          .isEnabledForUser(userId, api: auth.notificationsApi);
+      if (mounted) setState(() => _pushEnabled = enabled);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final auth = context.read<AuthService>();
@@ -198,6 +215,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _setPushEnabled(bool enabled) async {
+    final auth = context.read<AuthService>();
+    final userId = auth.currentUser?.uid;
+    if (userId == null) return;
+    final previous = _pushEnabled;
+    setState(() {
+      _pushEnabled = enabled;
+      _updatingPush = true;
+    });
+    try {
+      await context.read<PushNotificationService>().setEnabledForUser(
+            api: auth.notificationsApi,
+            userId: userId,
+            enabled: enabled,
+          );
+      if (mounted) {
+        showAppSnack(
+          context,
+          enabled ? 'Push-уведомления включены' : 'Push-уведомления выключены',
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _pushEnabled = previous);
+        showAppSnack(
+          context,
+          'Не удалось изменить push-уведомления',
+          isError: true,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _updatingPush = false);
+    }
+  }
+
   Widget _sectionTitle(String text) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
@@ -331,6 +383,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: _deletingAccount ? null : _deleteAccount,
           ),
           _sectionTitle('Приложение'),
+          if (_hasNativePush)
+            SwitchListTile(
+              secondary: const Icon(Icons.notifications_active_outlined),
+              title: const Text('Push-уведомления'),
+              subtitle: const Text('Сообщения и события ATTA'),
+              value: _pushEnabled,
+              onChanged: _updatingPush ? null : _setPushEnabled,
+            ),
           SwitchListTile(
             secondary: const Icon(Icons.campaign_outlined),
             title: const Text('Рекламные уведомления'),

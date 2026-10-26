@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:atta/src/constants/app_install_url.dart';
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -93,11 +95,13 @@ class HomeTabController {
 class HomeScreen extends StatefulWidget {
   final HomeTabController? controller;
   final bool showColdStartVpnBanner;
+  final bool showWebInstallAction;
 
   const HomeScreen({
     super.key,
     this.controller,
     this.showColdStartVpnBanner = false,
+    this.showWebInstallAction = false,
   });
 
   @override
@@ -132,6 +136,8 @@ class _HomeScreenState extends State<HomeScreen>
   StreamSubscription<void>? _networkRecoverySub;
   Timer? _feedRetryTimer;
   Timer? _searchDebounce;
+  Timer? _webInstallActionTimer;
+  bool _showWebInstallAction = true;
   Future<void>? _transportRecoveryInFlight;
   DateTime? _lastTransportRecoveryAt;
   int _feedRetryAttempt = 0;
@@ -173,6 +179,7 @@ class _HomeScreenState extends State<HomeScreen>
   late final ListingsService _bumpListings;
   late final TopBannersService _topBanners;
   late final Future<TopBanner?> _topBanner;
+  bool _hasTopBanner = false;
   late final SearchAttemptAnalytics _searchAnalytics;
 
   void _promptLogin() {
@@ -191,12 +198,19 @@ class _HomeScreenState extends State<HomeScreen>
     _searchAnalytics =
         SearchAttemptAnalytics(_bumpListings.recordSearchAttempt);
     _topBanners = context.read<TopBannersService>();
-    _topBanner = _topBanners.prepareForDisplay(
+    _topBanner = _topBanners
+        .prepareForDisplay(
       (imageUrl) => precacheImage(
         CachedNetworkImageProvider(imageUrl),
         context,
       ),
-    );
+    )
+        .then((banner) {
+      if (mounted && banner != null) {
+        setState(() => _hasTopBanner = true);
+      }
+      return banner;
+    });
     _bumpListings.bumpPurchases.addListener(_onBumpPurchased);
     final networkRecovery =
         Provider.of<NetworkRecoveryService?>(context, listen: false);
@@ -226,12 +240,41 @@ class _HomeScreenState extends State<HomeScreen>
     _networkRecoverySub?.cancel();
     _feedRetryTimer?.cancel();
     _searchDebounce?.cancel();
+    _webInstallActionTimer?.cancel();
     _bumpListings.bumpPurchases.removeListener(_onBumpPurchased);
     attaRouteObserver.unsubscribe(this);
     widget.controller?.detach();
     _searchCtrl.dispose();
     _searchAnalytics.dispose();
     super.dispose();
+  }
+
+  Uri _smartInstallUri() {
+    final referralCode = (Uri.base.queryParameters['ref'] ?? '').trim();
+    final inviteUri = Uri.parse(appInviteLandingUrl);
+    if (referralCode.isEmpty) return inviteUri;
+    return inviteUri.replace(
+      queryParameters: <String, String>{
+        ...inviteUri.queryParameters,
+        'ref': referralCode,
+      },
+    );
+  }
+
+  Future<void> _openSmartInstallLink() async {
+    await launchUrl(
+      _smartInstallUri(),
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
+  void _dismissWebInstallAction() {
+    _webInstallActionTimer?.cancel();
+    setState(() => _showWebInstallAction = false);
+    _webInstallActionTimer = Timer(const Duration(minutes: 1), () {
+      if (!mounted) return;
+      setState(() => _showWebInstallAction = true);
+    });
   }
 
   @override
@@ -800,6 +843,8 @@ class _HomeScreenState extends State<HomeScreen>
     final reviews = context.read<ReviewsService>();
     final notifications = context.read<NotificationsService>();
     final user = context.read<AuthService>().currentUser;
+    final headerSurface =
+        _hasTopBanner ? Colors.white : Theme.of(context).colorScheme.surface;
 
     // Search hint in Avito-like format: "Поиск в <локация>".
     final hint =
@@ -808,7 +853,7 @@ class _HomeScreenState extends State<HomeScreen>
     return Scaffold(
       appBar: AppBar(
         centerTitle: false,
-        backgroundColor: Colors.white,
+        backgroundColor: Theme.of(context).colorScheme.surface,
         surfaceTintColor: Colors.transparent,
         flexibleSpace: FutureBuilder<TopBanner?>(
           future: _topBanner,
@@ -817,7 +862,23 @@ class _HomeScreenState extends State<HomeScreen>
             service: _topBanners,
           ),
         ),
-        title: const AbsorbPointer(child: _HomeBrandTitle()),
+        titleSpacing: 12,
+        title: Row(
+          children: [
+            const AbsorbPointer(child: _HomeBrandTitle()),
+            if (kIsWeb &&
+                widget.showWebInstallAction &&
+                _showWebInstallAction) ...[
+              const SizedBox(width: 4),
+              Expanded(
+                child: _WebInstallAction(
+                  onInstall: _openSmartInstallLink,
+                  onClose: _dismissWebInstallAction,
+                ),
+              ),
+            ],
+          ],
+        ),
         actions: [
           StreamBuilder<int>(
             stream: user == null
@@ -879,8 +940,8 @@ class _HomeScreenState extends State<HomeScreen>
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
+                  decoration: BoxDecoration(
+                    color: headerSurface,
                     shape: BoxShape.circle,
                   ),
                   child: icon,
@@ -888,12 +949,14 @@ class _HomeScreenState extends State<HomeScreen>
               );
             },
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: DecoratedBox(
-              decoration:
-                  BoxDecoration(color: Colors.white, shape: BoxShape.circle),
-              child: AddListingIconButton(),
+              decoration: BoxDecoration(
+                color: headerSurface,
+                shape: BoxShape.circle,
+              ),
+              child: const AddListingIconButton(),
             ),
           ),
         ],
@@ -912,6 +975,7 @@ class _HomeScreenState extends State<HomeScreen>
                       padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
                       child: TextField(
                         controller: _searchCtrl,
+                        textCapitalization: TextCapitalization.sentences,
                         onTapOutside: (_) => FocusScope.of(context).unfocus(),
                         decoration: InputDecoration(
                           prefixIcon: const Icon(Icons.search),
@@ -1359,6 +1423,7 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
                   child: TextField(
                     controller: _searchCtrl,
+                    textCapitalization: TextCapitalization.sentences,
                     onTapOutside: (_) => FocusScope.of(context).unfocus(),
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.search),
@@ -2184,37 +2249,57 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
   Widget build(BuildContext context) {
     const vipBlue = Color(0xFF2563D9);
     const vipBlueDark = Color(0xFF163A8A);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final showcaseGradient = isDark
+        ? const <Color>[Color(0xFF2B2F36), Color(0xFF1F2228)]
+        : const <Color>[Color(0xFFF8FBFF), Color(0xFFEFF6FF)];
+    final showcaseBorder =
+        isDark ? const Color(0xFF536B97) : const Color(0xFF8BB8FF);
+    final headerColor = isDark ? const Color(0xFFE8EDF7) : vipBlueDark;
+    final controlSurface = isDark ? const Color(0xFF353A43) : Colors.white;
     return Padding(
       key: const ValueKey('home_vip_showcase_section'),
       padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
       child: DecoratedBox(
+        key: const ValueKey('home_vip_showcase_surface'),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(
+          gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFFF8FBFF),
-              Color(0xFFEFF6FF),
-            ],
+            colors: showcaseGradient,
           ),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: const Color(0xFF8BB8FF),
+            color: showcaseBorder,
             width: 1.2,
           ),
-          boxShadow: [
-            const BoxShadow(
-              color: Color(0x262563D9),
-              blurRadius: 22,
-              spreadRadius: 1,
-              offset: Offset(0, 8),
-            ),
-            BoxShadow(
-              color: Colors.white.withValues(alpha: 0.72),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
+          boxShadow: isDark
+              ? const [
+                  BoxShadow(
+                    color: Color(0x52000000),
+                    blurRadius: 22,
+                    spreadRadius: 1,
+                    offset: Offset(0, 8),
+                  ),
+                  BoxShadow(
+                    color: Color(0x1A2563D9),
+                    blurRadius: 10,
+                    offset: Offset(0, -2),
+                  ),
+                ]
+              : [
+                  const BoxShadow(
+                    color: Color(0x262563D9),
+                    blurRadius: 22,
+                    spreadRadius: 1,
+                    offset: Offset(0, 8),
+                  ),
+                  BoxShadow(
+                    color: Colors.white.withValues(alpha: 0.72),
+                    blurRadius: 10,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 11, 12, 12),
@@ -2232,10 +2317,13 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                         child: Row(
                           children: [
                             Container(
+                              key: const ValueKey(
+                                'home_vip_showcase_icon_surface',
+                              ),
                               width: 30,
                               height: 30,
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: controlSurface,
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
                                   color: vipBlue.withValues(alpha: 0.20),
@@ -2255,13 +2343,13 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            const Flexible(
+                            Flexible(
                               child: Text(
                                 'Витрина VIP',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  color: vipBlueDark,
+                                  color: headerColor,
                                   fontSize: 16,
                                   fontWeight: FontWeight.w900,
                                   height: 1,
@@ -2300,10 +2388,13 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                         ),
                       ),
                       TextButton(
+                        key: const ValueKey('home_vip_showcase_all_button'),
                         onPressed: widget.onOpenAll,
                         style: TextButton.styleFrom(
-                          foregroundColor: vipBlueDark,
-                          backgroundColor: Colors.white.withValues(alpha: 0.82),
+                          foregroundColor: headerColor,
+                          backgroundColor: isDark
+                              ? controlSurface
+                              : Colors.white.withValues(alpha: 0.82),
                           padding: const EdgeInsets.symmetric(horizontal: 11),
                           minimumSize: const Size(0, 34),
                           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -2655,6 +2746,61 @@ class _HomeBrandTitle extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _WebInstallAction extends StatelessWidget {
+  const _WebInstallAction({
+    required this.onInstall,
+    required this.onClose,
+  });
+
+  final VoidCallback onInstall;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 34,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Flexible(
+            child: FilledButton(
+              onPressed: onInstall,
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'Скачать приложение',
+                  maxLines: 1,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            height: 32,
+            child: IconButton(
+              tooltip: 'Закрыть',
+              onPressed: onClose,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.close, size: 18),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3925,6 +4071,7 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
           const SizedBox(height: 8),
           TextField(
             controller: _locCtrl,
+            textCapitalization: TextCapitalization.sentences,
             onTapOutside: (_) => FocusScope.of(context).unfocus(),
             decoration: const InputDecoration(
               prefixIcon: Icon(Icons.search),

@@ -84,10 +84,12 @@ class TopBannersService {
       required String url,
       required DateTime start,
       required DateTime end,
-      required int order}) async {
+      required int order,
+      double imageAlignmentY = 0}) async {
     final body = {
       'title': title,
       'target_url': url,
+      'image_alignment_y': imageAlignmentY.clamp(-1.0, 1.0).toDouble(),
       'start_at': start.toUtc().toIso8601String(),
       'end_at': end.toUtc().toIso8601String(),
       'sort_order': order

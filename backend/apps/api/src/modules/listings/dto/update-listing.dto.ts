@@ -95,4 +95,8 @@ export class UpdateListingDto {
   @IsOptional()
   @IsArray()
   photo_urls?: string[];
+
+  @IsOptional()
+  @IsString()
+  video_url?: string | null;
 }

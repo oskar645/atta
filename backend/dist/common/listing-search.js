@@ -48,8 +48,11 @@ const SEARCH_ALIASES = [
         'toiota',
         'тойота',
         'тайота',
+        'тайото',
         'тоёта',
         'таёта',
+        'тойото',
+        'toyoto',
     ],
     ['xiaomi', 'сяоми'],
     ['huawei', 'хуавей'],
@@ -222,6 +225,10 @@ const addAliasVariants = (variants, value) => {
         }
     }
 };
+const matchesKnownAlias = (value) => {
+    const compactValue = compactSearchText(value);
+    return compactValue.length > 0 && SEARCH_ALIASES.some((group) => group.map(compactSearchText).includes(compactValue));
+};
 const addLatinOrthographicVariants = (variants, value) => {
     if (!/^[a-z]+$/.test(value))
         return;
@@ -336,9 +343,12 @@ const carCharacteristicContains = (key, variant) => ({
 });
 const buildTokenSearchWhere = (token) => {
     const variants = new Set(searchTextVariants(token));
-    for (const variant of [...variants]) {
-        for (const deletion of deletionTypoVariants(variant)) {
-            variants.add(deletion);
+    const knownAlias = matchesKnownAlias(token);
+    if (!knownAlias) {
+        for (const variant of [...variants]) {
+            for (const deletion of deletionTypoVariants(variant)) {
+                variants.add(deletion);
+            }
         }
     }
     const textConditions = [...variants].flatMap((variant) => SEARCHABLE_TEXT_FIELDS.map((field) => textFieldContains(field.prisma, variant)));
@@ -347,7 +357,7 @@ const buildTokenSearchWhere = (token) => {
         textConditions.push(...SEARCHABLE_TEXT_FIELDS.map((field) => textFieldContains(field.prisma, compact)));
     }
     textConditions.push(...[...variants, ...compactVariants].flatMap((variant) => CAR_CHARACTERISTIC_KEYS.map((key) => carCharacteristicContains(key, variant))));
-    const fragments = typoFragments(token);
+    const fragments = knownAlias ? [] : typoFragments(token);
     if (fragments.length > 1) {
         textConditions.push(...SEARCHABLE_TEXT_FIELDS.map((field) => ({
             AND: fragments.map((fragment) => textFieldContains(field.prisma, fragment)),
@@ -460,9 +470,12 @@ const buildListingSearchSql = (search, alias = 'l') => {
     const phraseSql = client_1.Prisma.sql `(${client_1.Prisma.join([...phraseConditions, ...phraseOemConditions], ' OR ')})`;
     const tokenConditions = tokenizeSearchText(value).map((token) => {
         const variants = new Set(searchTextVariants(token));
-        for (const variant of [...variants]) {
-            for (const deletion of deletionTypoVariants(variant)) {
-                variants.add(deletion);
+        const knownAlias = matchesKnownAlias(token);
+        if (!knownAlias) {
+            for (const variant of [...variants]) {
+                for (const deletion of deletionTypoVariants(variant)) {
+                    variants.add(deletion);
+                }
             }
         }
         const textConditions = [...variants].flatMap((variant) => SEARCHABLE_TEXT_FIELDS.flatMap((field) => [
@@ -473,7 +486,7 @@ const buildListingSearchSql = (search, alias = 'l') => {
             sqlCarValuesContain(alias, variant),
             sqlCarValuesCompactContain(alias, variant),
         ]));
-        if (typoFragments(token).length > 1) {
+        if (!knownAlias && typoFragments(token).length > 1) {
             textConditions.push(...SEARCHABLE_TEXT_FIELDS.map((field) => sqlTextFuzzyContains(alias, field.sql, token)), sqlCarValuesFuzzyContain(alias, token));
         }
         const oemConditions = extractOemSearchCandidates(token).map((candidate) => {

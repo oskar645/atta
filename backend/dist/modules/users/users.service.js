@@ -74,9 +74,9 @@ let UsersService = class UsersService {
                 throw new common_1.NotFoundException('Current user was not found');
             }
         }
-        const sellerLevel = await this.getSellerLevel(user.id);
+        const sellerSummary = await this.getSellerSummary(user.id);
         return {
-            user: this.withSellerLevel((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerLevel),
+            user: this.withSellerSummary((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerSummary),
             admin_profile: (0, serializers_1.serializeAdminProfile)(user.adminProfile),
             is_admin: user.adminProfile?.isAdmin === true,
             isAdmin: user.adminProfile?.isAdmin === true,
@@ -144,9 +144,9 @@ let UsersService = class UsersService {
                 adminProfile: true,
             },
         });
-        const sellerLevel = await this.getSellerLevel(user.id);
+        const sellerSummary = await this.getSellerSummary(user.id);
         return {
-            user: this.withSellerLevel((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerLevel),
+            user: this.withSellerSummary((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerSummary),
             admin_profile: (0, serializers_1.serializeAdminProfile)(user.adminProfile),
             is_admin: user.adminProfile?.isAdmin === true,
             isAdmin: user.adminProfile?.isAdmin === true,
@@ -161,9 +161,9 @@ let UsersService = class UsersService {
         if (!user) {
             throw new common_1.NotFoundException('Seller not found');
         }
-        const sellerLevel = await this.getSellerLevel(user.id);
+        const sellerSummary = await this.getSellerSummary(user.id);
         return {
-            user: this.withSellerLevel((0, serializers_1.serializeUser)(user), sellerLevel),
+            user: this.withSellerSummary((0, serializers_1.serializeUser)(user), sellerSummary),
         };
     }
     async getAdminUsersList(authUser) {
@@ -222,9 +222,9 @@ let UsersService = class UsersService {
                 adminProfile: true,
             },
         });
-        const sellerLevel = await this.getSellerLevel(user.id);
+        const sellerSummary = await this.getSellerSummary(user.id);
         return {
-            user: this.withSellerLevel((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerLevel),
+            user: this.withSellerSummary((0, serializers_1.serializeUser)(user, { includePrivate: true }), sellerSummary),
             avatar_url: uploaded.url,
             photo_url: uploaded.url,
             admin_profile: (0, serializers_1.serializeAdminProfile)(user.adminProfile),
@@ -232,14 +232,23 @@ let UsersService = class UsersService {
             isAdmin: user.adminProfile?.isAdmin === true,
         };
     }
-    async getSellerLevel(userId) {
-        const [activeListingsCount, reviews] = await Promise.all([
+    async getSellerSummary(userId) {
+        const [activeListingsCount, archivedListingsCount, reviews] = await Promise.all([
             this.prisma.listing.count({
                 where: {
                     ownerId: userId,
                     status: client_1.ListingStatus.APPROVED,
                     publishedAt: {
                         not: null,
+                    },
+                    deletedAt: null,
+                },
+            }),
+            this.prisma.listing.count({
+                where: {
+                    ownerId: userId,
+                    status: {
+                        in: [client_1.ListingStatus.ARCHIVED, client_1.ListingStatus.SOLD],
                     },
                     deletedAt: null,
                 },
@@ -258,13 +267,21 @@ let UsersService = class UsersService {
                 },
             }),
         ]);
-        return (0, seller_level_1.sellerLevelFromMetrics)(activeListingsCount, reviews, userId);
+        return {
+            sellerLevel: (0, seller_level_1.sellerLevelFromMetrics)(activeListingsCount, reviews, userId),
+            activeListingsCount,
+            archivedListingsCount,
+        };
     }
-    withSellerLevel(user, sellerLevel) {
+    withSellerSummary(user, summary) {
         return {
             ...user,
-            seller_level: sellerLevel,
-            sellerLevel,
+            seller_level: summary.sellerLevel,
+            sellerLevel: summary.sellerLevel,
+            active_listings_count: summary.activeListingsCount,
+            activeListingsCount: summary.activeListingsCount,
+            archived_listings_count: summary.archivedListingsCount,
+            archivedListingsCount: summary.archivedListingsCount,
         };
     }
     async assertConfirmedPhoneChangeVerification(phone, rawCheckId) {

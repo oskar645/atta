@@ -90,6 +90,7 @@ class _State extends State<AdminTopBannersTab> {
                             imageUrl: b.imageUrl,
                             categoryHint: 'feed-ads',
                             borderRadius: 0,
+                            alignment: Alignment(0, b.imageAlignmentY),
                           ))),
             const SizedBox(height: 8),
             Text(b.title.isEmpty ? 'Без названия' : b.title,
@@ -114,7 +115,7 @@ class _State extends State<AdminTopBannersTab> {
                   tooltip: 'Продлить',
                   onSelected: (d) => action(() =>
                       context.read<TopBannersService>().extend(b.id, days: d)),
-                  itemBuilder: (_) => [1, 3, 7, 30]
+                  itemBuilder: (_) => [1, 2, 3, 7, 14, 30]
                       .map((d) => PopupMenuItem(
                           value: d, child: Text('Продлить на $d дн.')))
                       .toList()),
@@ -194,6 +195,7 @@ class _EditorState extends State<_Editor> {
   late DateTime start = widget.existing?.startAt.toLocal() ?? DateTime.now();
   late DateTime end = widget.existing?.endAt.toLocal() ??
       DateTime.now().add(const Duration(days: 7));
+  late double imageAlignmentY = widget.existing?.imageAlignmentY ?? 0;
   Uint8List? bytes;
   String name = 'banner.jpg', type = 'image/jpeg';
   bool busy = false, safe = true;
@@ -212,6 +214,7 @@ class _EditorState extends State<_Editor> {
     }
     setState(() {
       bytes = data;
+      imageAlignmentY = 0;
       name = x.name;
       type = name.toLowerCase().endsWith('.png')
           ? 'image/png'
@@ -231,7 +234,8 @@ class _EditorState extends State<_Editor> {
           url: url.text,
           start: start,
           end: end,
-          order: widget.existing?.sortOrder ?? 0);
+          order: widget.existing?.sortOrder ?? 0,
+          imageAlignmentY: imageAlignmentY);
       if (bytes != null) {
         await service.upload(b, bytes!, name, type);
       }
@@ -257,6 +261,18 @@ class _EditorState extends State<_Editor> {
         context: context, initialTime: TimeOfDay.fromDateTime(initial));
     return DateTime(d.year, d.month, d.day, t?.hour ?? initial.hour,
         t?.minute ?? initial.minute);
+  }
+
+  void applyDays(int days) {
+    setState(() {
+      if (widget.existing == null) {
+        end = start.add(Duration(days: days));
+        return;
+      }
+      final now = DateTime.now();
+      final base = end.isAfter(now) ? end : now;
+      end = base.add(Duration(days: days));
+    });
   }
 
   @override
@@ -300,9 +316,10 @@ class _EditorState extends State<_Editor> {
                   spacing: 6,
                   children: [1, 2, 3, 7, 14, 30]
                       .map((days) => ActionChip(
-                            label: Text('$days дн.'),
-                            onPressed: () => setState(
-                                () => end = start.add(Duration(days: days))),
+                            label: Text(widget.existing == null
+                                ? '$days дн.'
+                                : '+$days дн.'),
+                            onPressed: () => applyDays(days),
                           ))
                       .toList(),
                 ),
@@ -316,20 +333,63 @@ class _EditorState extends State<_Editor> {
                     'Рекомендуемый размер: $topBannerRecommendedSize · 4.88:1'),
                 const SizedBox(height: 8),
                 AspectRatio(
-                    aspectRatio: topBannerAspectRatio,
-                    child: Stack(fit: StackFit.expand, children: [
-                      if (bytes != null)
-                        Image.memory(bytes!, fit: BoxFit.cover)
-                      else if (widget.existing?.imageUrl.isNotEmpty == true)
-                        MediaPreviewBox(
-                          imageUrl: widget.existing!.imageUrl,
-                          categoryHint: 'feed-ads',
-                          borderRadius: 0,
-                        )
-                      else
-                        const ColoredBox(color: Color(0xffeeeeee)),
-                      if (safe) const _TopBannerSafeZoneOverlay(),
-                    ])),
+                  aspectRatio: topBannerAspectRatio,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onVerticalDragUpdate: bytes != null ||
+                              widget.existing?.imageUrl.isNotEmpty == true
+                          ? (details) => setState(() {
+                                imageAlignmentY = (imageAlignmentY -
+                                        details.delta.dy /
+                                            constraints.maxHeight *
+                                            2)
+                                    .clamp(-1.0, 1.0)
+                                    .toDouble();
+                              })
+                          : null,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          if (bytes != null)
+                            Image.memory(
+                              bytes!,
+                              fit: BoxFit.cover,
+                              alignment: Alignment(0, imageAlignmentY),
+                            )
+                          else if (widget.existing?.imageUrl.isNotEmpty == true)
+                            MediaPreviewBox(
+                              imageUrl: widget.existing!.imageUrl,
+                              categoryHint: 'feed-ads',
+                              borderRadius: 0,
+                              alignment: Alignment(0, imageAlignmentY),
+                            )
+                          else
+                            const ColoredBox(color: Color(0xffeeeeee)),
+                          if (safe) const _TopBannerSafeZoneOverlay(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (bytes != null ||
+                    widget.existing?.imageUrl.isNotEmpty == true)
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Проведите по изображению вверх или вниз, чтобы выбрать положение.',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: imageAlignmentY == 0
+                            ? null
+                            : () => setState(() => imageAlignmentY = 0),
+                        child: const Text('По центру'),
+                      ),
+                    ],
+                  ),
                 const SizedBox(height: 8),
                 const Text(
                   '$topBannerRecommendedSize · Важный текст и логотипы размещайте в свободной центральной зоне. Не размещайте их под логотипом AT, камерой/Dynamic Island, статус-баром, колокольчиком и кнопкой +.',

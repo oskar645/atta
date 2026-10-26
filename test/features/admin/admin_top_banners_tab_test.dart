@@ -130,6 +130,58 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('expired banner adds extension days from now', (tester) async {
+    final service = _FakeTopBannersService();
+    await tester.pumpWidget(_host(service));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Изменить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('+30 дн.'));
+    await tester.tap(find.text('Сохранить'));
+    await tester.pumpAndSettle();
+
+    final savedEnd = service.savedEnd;
+    expect(savedEnd, isNotNull);
+    expect(savedEnd!.isAfter(DateTime.now().add(const Duration(days: 29))),
+        isTrue);
+  });
+
+  testWidgets('vertical drag saves selected image alignment', (tester) async {
+    final service = _FakeTopBannersService();
+    final bytes = Uint8List.fromList(base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    ));
+    await tester.pumpWidget(_host(
+      service,
+      pickImage: () async => XFile.fromData(
+        bytes,
+        name: 'banner.png',
+        mimeType: 'image/png',
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Создать'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Выбрать изображение'));
+    await tester.pump();
+    final memoryImage = find.byWidgetPredicate(
+      (widget) => widget is Image && widget.image is MemoryImage,
+    );
+    await tester.ensureVisible(memoryImage);
+    await tester.pumpAndSettle();
+    await tester.drag(
+      memoryImage,
+      const Offset(0, -60),
+    );
+    await tester.tap(find.text('Сохранить'));
+    await tester.pumpAndSettle();
+
+    expect(service.savedImageAlignmentY, isNotNull);
+    expect(service.savedImageAlignmentY!, greaterThan(0));
+  });
 }
 
 const _relativeImageUrl = '/media/object?category=feed-ads&key=banner.jpg';
@@ -150,6 +202,8 @@ Widget _host(
 
 class _FakeTopBannersService extends TopBannersService {
   int listCalls = 0;
+  DateTime? savedEnd;
+  double? savedImageAlignmentY;
   var items = <TopBanner>[_banner()];
 
   @override
@@ -166,7 +220,10 @@ class _FakeTopBannersService extends TopBannersService {
     required DateTime start,
     required DateTime end,
     required int order,
+    double imageAlignmentY = 0,
   }) async {
+    savedEnd = end;
+    savedImageAlignmentY = imageAlignmentY;
     final saved = _banner(id: existing?.id ?? 'created');
     items = <TopBanner>[saved];
     return saved;

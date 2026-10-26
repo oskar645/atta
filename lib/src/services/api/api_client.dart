@@ -117,6 +117,76 @@ class ApiClient {
     );
   }
 
+  Future<Uint8List> getAuthorizedBytes(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    await awaitAuthorizedSessionReadyForRealtime();
+    await awaitActiveRefreshForRealtime();
+    var token = await _tokenStorage.readAccessToken();
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Требуется авторизация');
+    }
+    final uri = ApiConfig.uri(path, queryParameters);
+    var response =
+        await _httpClient.get(uri, headers: {'Authorization': 'Bearer $token'});
+    if (response.statusCode == 401 &&
+        await refreshAuthorizedSessionForRealtime()) {
+      token = await _tokenStorage.readAccessToken();
+      response = await _httpClient
+          .get(uri, headers: {'Authorization': 'Bearer $token'});
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException('Ошибка выгрузки: ${response.statusCode}');
+    }
+    return response.bodyBytes;
+  }
+
+  Future<String> downloadAuthorizedFile(
+    String path, {
+    required String fileName,
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    await awaitAuthorizedSessionReadyForRealtime();
+    await awaitActiveRefreshForRealtime();
+    var token = await _tokenStorage.readAccessToken();
+    if (token == null || token.isEmpty) {
+      throw const ApiException('Требуется авторизация');
+    }
+    final uri = ApiConfig.uri(path, queryParameters);
+    Future<http.StreamedResponse> send(String accessToken) async {
+      final request = http.Request('GET', uri);
+      request.headers['Authorization'] = 'Bearer $accessToken';
+      return _httpClient.send(request);
+    }
+
+    var response = await send(token);
+    if (response.statusCode == 401 &&
+        await refreshAuthorizedSessionForRealtime()) {
+      await response.stream.drain<void>();
+      token = await _tokenStorage.readAccessToken();
+      response = await send(token ?? '');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      await response.stream.drain<void>();
+      throw ApiException('Ошибка выгрузки: ${response.statusCode}');
+    }
+    final safeName = fileName.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
+    final file = File(
+        '${Directory.systemTemp.path}/${DateTime.now().microsecondsSinceEpoch}-$safeName');
+    final sink = file.openWrite();
+    try {
+      await sink.addStream(response.stream);
+      await sink.flush();
+      await sink.close();
+      return file.path;
+    } catch (_) {
+      await sink.close();
+      if (await file.exists()) await file.delete();
+      rethrow;
+    }
+  }
+
   Future<dynamic> post(
     String path, {
     Object? body,

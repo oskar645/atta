@@ -91,6 +91,8 @@ void main() {
     expect(text, isNot(contains('5.42.125.179')));
     expect(text, isNot(contains('atta://invite')));
     expect(text, isNot(contains('user-42')));
+    expect(text?.toLowerCase(), isNot(contains('бонус')));
+    expect(text?.toLowerCase(), isNot(contains('балл')));
   });
 
   test('invite share text without referral code keeps plain invite link', () {

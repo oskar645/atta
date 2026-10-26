@@ -226,6 +226,7 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
       report: { count: async () => 0 },
       feedAd: { count: async () => 0 },
       zeroResultSearch: { count: async () => 0 },
+      searchAttempt: { count: async () => 0 },
       walletTransaction: {
         aggregate: async (args: Record<string, unknown>) => {
           capturedWalletAggregateWhere =
@@ -657,6 +658,74 @@ test('points purchases summary serializes successful paid totals', async () => {
   assert.equal(result.totalPoints, 24500);
   assert.equal(result.purchasesCount, 37);
   assert.equal(result.uniqueBuyersCount, 18);
+});
+
+test('raffle summary uses successful credited purchases and ticket totals', async () => {
+  let sql = '';
+  let parameters: unknown[] = [];
+  const service = new AdminService(
+    { $queryRaw: async (query: { strings: string[]; values: unknown[] }) => {
+      sql = query.strings.join(' ');
+      parameters = query.values;
+      return [{ participants: BigInt(2), tickets: BigInt(3), amount: '1700.00' }];
+    } } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any,
+  );
+  const result = await service.getRaffleSummary({
+    from: '2026-08-01T00:00:00.000Z', to: '2026-08-31T23:59:59.999Z',
+    ticketPrice: '2100',
+  });
+  assert.equal(result.participants, 2);
+  assert.equal(result.tickets, 3);
+  assert.equal(result.amountRub, 1700);
+  assert.equal(result.ticketPriceRub, '2100');
+  assert.match(sql, /FLOOR\(total_rub \/ /);
+  assert.match(sql, /HAVING SUM\(p\."amount_rub"\) >= /);
+  assert.match(sql, /GROUP BY p\."user_id"/);
+  assert.equal(parameters.filter((value) => String(value) === '2100').length, 2);
+  assert.ok(parameters.includes('SUCCEEDED'));
+  assert.ok(parameters.includes('YOOKASSA'));
+  assert.ok(parameters.includes('POINTS_PURCHASE'));
+  assert.match(sql, /credited_at/);
+  assert.match(sql, /wallet_transactions/);
+});
+
+test('raffle participant page keeps one row per user and full admin phone', async () => {
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const date = new Date('2026-08-08T12:00:00.000Z');
+  const service = new AdminService(
+    { $queryRaw: async () => [{ user_id: userId, display_name: 'Иван', name: '',
+      phone: '+79991112233', total_rub: '1200.00',
+      first_at: date, last_at: date }] } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any,
+  );
+  const result = await service.listRaffleParticipants({
+    from: '2026-08-01T00:00:00.000Z', to: '2026-08-31T23:59:59.999Z',
+    ticketPrice: '500', limit: 1,
+  });
+  assert.deepEqual(result.items.map((item) => [item.tickets, item.remainderRub, item.phone]),
+    [[2, 200, '+79991112233']]);
+  assert.equal(result.nextCursor, null);
+});
+
+test('raffle rejects zero, negative, missing and fractional ticket prices before querying', async () => {
+  const service = new AdminService(
+    { $queryRaw: async () => { throw new Error('Database must not be queried'); } } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any,
+  );
+  for (const ticketPrice of [0, -1, undefined, 1.5, '', '0', '-1', '1.5']) {
+    await assert.rejects(
+      () => service.getRaffleSummary({
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-08-31T23:59:59.999Z',
+        ticketPrice,
+      } as any),
+      BadRequestException,
+    );
+  }
 });
 
 test('points purchases list masks phone and returns cursor for next page', async () => {

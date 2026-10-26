@@ -58,6 +58,7 @@ void main() {
           'email': 'member@example.com',
           'emailVerified': true,
           'emailVerifiedAt': '2026-09-24T10:00:00.000Z',
+          'created_at': '2026-07-12T10:00:00.000Z',
         },
       };
     final storage = TokenStorage();
@@ -79,6 +80,7 @@ void main() {
     await service.revalidateCurrentUser();
     await Future<void>.delayed(Duration.zero);
     expect(service.currentUser?.emailVerified, isTrue);
+    expect(service.currentUser?.createdAt, DateTime.utc(2026, 7, 12, 10));
     expect(events, contains(AuthSessionEventType.userUpdated));
 
     final restarted = BackendAuthService(
@@ -89,6 +91,7 @@ void main() {
     await restarted.ensureInitialized();
     expect(restarted.currentUser?.emailVerified, isTrue);
     expect(restarted.currentUser?.emailVerifiedAt, isNotNull);
+    expect(restarted.currentUser?.createdAt, DateTime.utc(2026, 7, 12, 10));
     await subscription.cancel();
   });
 
@@ -672,12 +675,13 @@ void main() {
     await tokenStorage.saveSession(
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
-      currentUser: const AuthUser(
+      currentUser: AuthUser(
         uid: 'user-1',
         email: 'user@example.com',
         displayName: 'Old Name',
         phone: '+79281234567',
         phoneVerified: true,
+        createdAt: DateTime.utc(2026, 7, 12),
         photoUrl: 'https://example.com/avatar.jpg',
         referralCode: 'REFERRAL_CODE_ABC',
         isAdmin: true,
@@ -704,12 +708,14 @@ void main() {
     expect(service.currentUser?.email, 'user@example.com');
     expect(service.currentUser?.phone, '+79281234567');
     expect(service.currentUser?.phoneVerified, isTrue);
+    expect(service.currentUser?.createdAt, DateTime.utc(2026, 7, 12));
     expect(service.currentUser?.photoUrl, 'https://example.com/avatar.jpg');
     expect(service.currentUser?.referralCode, 'REFERRAL_CODE_ABC');
     expect(service.currentUser?.isAdmin, isTrue);
 
     final savedUser = await tokenStorage.readCurrentUser();
     expect(savedUser?.displayName, 'New Name');
+    expect(savedUser?.createdAt, DateTime.utc(2026, 7, 12));
     expect((await tokenStorage.readAccessToken()), 'access-token');
     expect((await tokenStorage.readRefreshToken()), 'refresh-token');
 

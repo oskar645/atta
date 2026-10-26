@@ -55,6 +55,12 @@ let AccountDeletionService = AccountDeletionService_1 = class AccountDeletionSer
                     // Retried cleanup must not reset deletion time or recreate a completed job.
                     if (user.deletedAt || user.status === client_1.UserStatus.DELETED)
                         return;
+                    await tx.deletedUserIdentity.create({ data: {
+                            userId,
+                            displayName: user.displayName.trim() || user.name.trim() || DELETED_NAME,
+                            phone: user.phone?.trim() || null,
+                            deletedAt: now,
+                        } });
                     // Keep the tombstone: finance, referrals, moderation and the peer's history reference it.
                     await tx.user.update({ where: { id: userId }, data: {
                             status: client_1.UserStatus.DELETED, deletedAt: now, blockedAt: now, blockReason: reason,

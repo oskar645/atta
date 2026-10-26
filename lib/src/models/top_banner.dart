@@ -3,6 +3,7 @@ class TopBanner {
       {required this.id,
       required this.title,
       required this.imageUrl,
+      this.imageAlignmentY = 0,
       required this.targetUrl,
       required this.enabled,
       required this.startAt,
@@ -12,6 +13,7 @@ class TopBanner {
       required this.impressions,
       required this.clicks});
   final String id, title, imageUrl, targetUrl, status;
+  final double imageAlignmentY;
   final bool enabled;
   final DateTime startAt, endAt;
   final int sortOrder, impressions, clicks;
@@ -21,6 +23,10 @@ class TopBanner {
       id: '${map['id'] ?? ''}',
       title: '${map['title'] ?? ''}',
       imageUrl: '${map['image_url'] ?? ''}',
+      imageAlignmentY: ((map['image_alignment_y'] as num?) ?? 0)
+          .toDouble()
+          .clamp(-1, 1)
+          .toDouble(),
       targetUrl: '${map['target_url'] ?? ''}',
       enabled: map['enabled'] == true,
       startAt: DateTime.parse('${map['start_at']}').toUtc(),

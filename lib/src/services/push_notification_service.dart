@@ -6,6 +6,7 @@ import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/notification_navigation_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PushNotificationService {
   PushNotificationService({
@@ -15,7 +16,8 @@ class PushNotificationService {
     bool? platformSupported,
     TokenStorage? tokenStorage,
   })  : _api = api,
-        _platformSupported = platformSupported ?? (!kIsWeb && Platform.isIOS),
+        _platformSupported = platformSupported ??
+            (!kIsWeb && (Platform.isIOS || Platform.isAndroid)),
         _tokenStorage = tokenStorage ?? TokenStorage(),
         _channel = channel ?? const MethodChannel('atta/push_notifications'),
         _eventChannel =
@@ -24,6 +26,7 @@ class PushNotificationService {
   final NotificationsApi? _api;
   final bool _platformSupported;
   final TokenStorage _tokenStorage;
+  String get _platformName => !kIsWeb && Platform.isAndroid ? 'android' : 'ios';
   String? _activeUserId;
   String? _registeredUserId;
   int _generation = 0;
@@ -67,21 +70,65 @@ class PushNotificationService {
     bool current() =>
         generation == _generation &&
         authGeneration == _tokenStorage.sessionGeneration;
+    if (!await isEnabledForUser(userId, api: api)) return;
+    if (!current()) return;
     final token = await _requestToken();
     if (!current()) return;
     if (token == null || token.isEmpty) return;
     if (_registeredToken != token || _registeredUserId != userId) {
+      final previousToken =
+          _registeredUserId == userId ? _registeredToken : null;
       await api.registerDevice(
         token: token,
-        platform: 'ios',
+        platform: _platformName,
         locale: Platform.localeName,
       );
       if (!current()) return;
       _registeredToken = token;
       _registeredUserId = userId;
+      if (previousToken != null && previousToken != token) {
+        try {
+          await api.unregisterDevice(token: previousToken);
+        } catch (_) {}
+      }
     }
     _listenForTaps();
     await _consumeInitialNotification(generation);
+  }
+
+  String _preferenceKey(String userId) =>
+      '${_platformName}_push_enabled_$userId';
+
+  Future<bool> isEnabledForUser(String userId, {NotificationsApi? api}) async {
+    if (!_platformSupported) return false;
+    final preferences = await SharedPreferences.getInstance();
+    if (api != null) {
+      try {
+        final enabled = await api.getPushPreference(userId);
+        await preferences.setBool(_preferenceKey(userId), enabled);
+        return enabled;
+      } catch (_) {
+        // The cached choice keeps the switch usable while offline. The server
+        // remains authoritative for delivery and is checked on the next bind.
+      }
+    }
+    return preferences.getBool(_preferenceKey(userId)) ?? true;
+  }
+
+  Future<void> setEnabledForUser({
+    required NotificationsApi api,
+    required String userId,
+    required bool enabled,
+  }) async {
+    final saved = await api.setPushPreference(userId, enabled);
+    if (saved != enabled) throw StateError('Push preference was not saved');
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_preferenceKey(userId), enabled);
+    if (!enabled) {
+      await unbind(api: api);
+    } else {
+      await bindForUser(api: api, userId: userId);
+    }
   }
 
   Future<void> unbind({NotificationsApi? api}) async {

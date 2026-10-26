@@ -1167,7 +1167,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     ),
                   ],
                   if (status != 'approved') const SizedBox(height: 12),
-                  _Photos(photoUrls: listing.photoUrls),
+                  _Photos(photoUrls: listing.photoUrls, video: listing.video),
                   const SizedBox(height: 14),
                   Text(
                     listing.title,
@@ -2501,7 +2501,8 @@ Widget _kv(String k, String v) {
 
 class _Photos extends StatefulWidget {
   final List<String> photoUrls;
-  const _Photos({required this.photoUrls});
+  final ListingVideo? video;
+  const _Photos({required this.photoUrls, this.video});
 
   @override
   State<_Photos> createState() => _PhotosState();
@@ -2514,8 +2515,13 @@ class _PhotosState extends State<_Photos> {
   @override
   Widget build(BuildContext context) {
     final photoUrls = widget.photoUrls;
+    final items = <_GalleryItem>[
+      if (photoUrls.isNotEmpty) _GalleryItem.photo(photoUrls.first),
+      if (widget.video != null) _GalleryItem.video(widget.video!),
+      ...photoUrls.skip(1).map(_GalleryItem.photo),
+    ];
 
-    if (photoUrls.isEmpty) {
+    if (items.isEmpty) {
       return Container(
         height: 260,
         decoration: BoxDecoration(
@@ -2535,7 +2541,7 @@ class _PhotosState extends State<_Photos> {
           children: [
             DesktopWebPhotoNavigation(
               currentIndex: _page,
-              photoCount: photoUrls.length,
+              photoCount: items.length,
               onPrevious: () => _controller.previousPage(
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeInOut,
@@ -2546,23 +2552,57 @@ class _PhotosState extends State<_Photos> {
               ),
               child: PageView.builder(
                 controller: _controller,
-                itemCount: photoUrls.length,
+                itemCount: items.length,
                 onPageChanged: (i) => setState(() => _page = i),
-                itemBuilder: (_, i) => GestureDetector(
-                  onTap: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => PhotoViewerScreen(
-                            photoUrls: photoUrls, initialIndex: i),
-                      ),
-                    );
-                  },
-                  child: MediaPreviewBox(
-                    imageUrl: photoUrls[i],
-                    categoryHint: 'listings',
-                    borderRadius: 0,
-                  ),
-                ),
+                itemBuilder: (_, i) {
+                  final item = items[i];
+                  return GestureDetector(
+                    onTap: () async {
+                      if (item.video != null) {
+                        final uri = Uri.tryParse(item.video!.playbackUrl);
+                        if (uri != null) {
+                          final opened = await launchUrl(
+                            uri,
+                            mode: LaunchMode.inAppBrowserView,
+                          );
+                          if (!opened) {
+                            await launchUrl(uri,
+                                mode: LaunchMode.externalApplication);
+                          }
+                        }
+                        return;
+                      }
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => PhotoViewerScreen(
+                            photoUrls: photoUrls,
+                            initialIndex:
+                                i > 1 && widget.video != null ? i - 1 : i,
+                          ),
+                        ),
+                      );
+                    },
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        MediaPreviewBox(
+                          imageUrl: item.imageUrl,
+                          categoryHint: 'listings',
+                          borderRadius: 0,
+                        ),
+                        if (item.video != null)
+                          const Center(
+                            child: CircleAvatar(
+                              radius: 30,
+                              backgroundColor: Colors.black54,
+                              child: Icon(Icons.play_arrow_rounded,
+                                  color: Colors.white, size: 42),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
               ),
             ),
             Positioned(
@@ -2576,7 +2616,7 @@ class _PhotosState extends State<_Photos> {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '${_page + 1}/${photoUrls.length}',
+                  '${_page + 1}/${items.length}',
                   style: const TextStyle(
                       color: Colors.white, fontWeight: FontWeight.w600),
                 ),
@@ -2587,4 +2627,14 @@ class _PhotosState extends State<_Photos> {
       ),
     );
   }
+}
+
+class _GalleryItem {
+  const _GalleryItem.photo(this.imageUrl) : video = null;
+  _GalleryItem.video(ListingVideo value)
+      : imageUrl = value.thumbnailUrl,
+        video = value;
+
+  final String imageUrl;
+  final ListingVideo? video;
 }

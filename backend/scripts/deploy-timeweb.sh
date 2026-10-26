@@ -28,6 +28,7 @@ RSYNC_ARGS=(
   --exclude "logs/" \
   --exclude "uploads/" \
   --exclude "storage/" \
+  --exclude "secrets/" \
   --exclude ".data/" \
   --exclude "npm-debug.log" \
 )

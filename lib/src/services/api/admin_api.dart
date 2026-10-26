@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:atta/src/services/api/api_client.dart';
 
 class AdminApi {
@@ -26,6 +28,28 @@ class AdminApi {
           'limit': limit,
           if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
         });
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> allSearches(
+      {String period = 'month',
+      String search = '',
+      int limit = 30,
+      String? cursor}) async {
+    final response = await client.get('/admin/analytics/all-searches',
+        authorized: true,
+        queryParameters: {
+          'period': period,
+          if (search.trim().isNotEmpty) 'search': search.trim(),
+          'limit': limit,
+          if ((cursor ?? '').trim().isNotEmpty) 'cursor': cursor!.trim(),
+        });
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> repeatedMessages() async {
+    final response = await client.get('/admin/analytics/repeated-messages',
+        authorized: true);
     return Map<String, dynamic>.from(response as Map);
   }
 
@@ -396,6 +420,60 @@ class AdminApi {
     );
     return Map<String, dynamic>.from(response as Map);
   }
+
+  Future<Map<String, dynamic>> raffleSummary(
+          {required String from,
+          required String to,
+          required String ticketPrice}) async =>
+      Map<String, dynamic>.from(await client.get('/admin/raffle/summary',
+          authorized: true,
+          queryParameters: {
+            'from': from,
+            'to': to,
+            'ticketPrice': ticketPrice
+          }) as Map);
+
+  Future<Map<String, dynamic>> raffleParticipants(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          int limit = 30,
+          String? cursor}) async =>
+      Map<String, dynamic>.from(await client.get('/admin/raffle/participants',
+          authorized: true,
+          queryParameters: {
+            'from': from,
+            'to': to,
+            'ticketPrice': ticketPrice,
+            'limit': '$limit',
+            if (cursor != null) 'cursor': cursor
+          }) as Map);
+
+  Future<Uint8List> raffleExport(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          required String format}) =>
+      client.getAuthorizedBytes('/admin/raffle/export', queryParameters: {
+        'from': from,
+        'to': to,
+        'ticketPrice': ticketPrice,
+        'format': format
+      });
+
+  Future<String> raffleExportToFile(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          required String format}) =>
+      client.downloadAuthorizedFile('/admin/raffle/export',
+          fileName: 'raffle-$format.csv',
+          queryParameters: {
+            'from': from,
+            'to': to,
+            'ticketPrice': ticketPrice,
+            'format': format
+          });
 
   Future<Map<String, dynamic>> pointsPurchasesSummary({
     String? from,

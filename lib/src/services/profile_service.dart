@@ -482,6 +482,8 @@ class ProfileService {
       },
       if ((currentUser.phone ?? '').toString().trim().isNotEmpty)
         'phone': currentUser.phone,
+      if (currentUser.createdAt != null)
+        'created_at': currentUser.createdAt!.toIso8601String(),
       'phone_verified': currentUser.phoneVerified,
       'phoneVerified': currentUser.phoneVerified,
     };
@@ -633,6 +635,10 @@ class ProfileService {
           row['phone_verified'] == true ||
           row['isPhoneVerified'] == true ||
           currentUser.phoneVerified == true,
+      createdAt: DateTime.tryParse(
+            pickText(const ['created_at', 'createdAt']) ?? '',
+          ) ??
+          currentUser.createdAt,
       photoUrl: pickText(const [
             'avatar_url',
             'avatarUrl',

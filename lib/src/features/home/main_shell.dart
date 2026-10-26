@@ -202,6 +202,7 @@ class _MainShellState extends State<MainShell> {
         return HomeScreen(
           controller: _homeTabController,
           showColdStartVpnBanner: _showColdStartVpnBanner && _i == 0,
+          showWebInstallAction: kIsWeb && widget.guestMode,
         );
       case 1:
         return const FavoritesScreen();

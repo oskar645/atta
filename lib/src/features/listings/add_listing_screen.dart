@@ -7,8 +7,10 @@ import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/data/auto_catalog.dart';
 import 'package:atta/src/data/electronics_catalog.dart';
 import 'package:atta/src/features/listings/car_parameters_screen.dart';
+import 'package:atta/src/features/listings/listing_video_field.dart';
 import 'package:atta/src/features/listings/pick_location_screen.dart';
 import 'package:atta/src/models/car_specs.dart';
+import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
@@ -155,6 +157,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
   bool _publishedDraft = false;
   ListingsService? _listingsServiceForCleanup;
   int _nextPhotoLocalId = 0;
+  ListingVideo? _video;
+  bool _videoUnresolved = false;
 
   final _picker = ImagePicker();
   bool _phoneHidden = true;
@@ -1253,6 +1257,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                     child: TextField(
+                      textCapitalization: TextCapitalization.sentences,
                       decoration: const InputDecoration(
                         prefixIcon: Icon(Icons.search),
                         hintText: 'Поиск',
@@ -1399,6 +1404,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                     child: TextField(
+                      textCapitalization: TextCapitalization.sentences,
                       decoration: const InputDecoration(
                         prefixIcon: Icon(Icons.search),
                         hintText: 'Поиск',
@@ -1576,14 +1582,21 @@ class _AddListingScreenState extends State<AddListingScreen> {
       return;
     }
 
+    if (_videoUnresolved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Исправьте или удалите ссылку на видео')),
+      );
+      return;
+    }
+
     // ✅ обязательные авто поля
     CarSpecs? car;
     if (_isAuto) {
       final year =
           _validInt(_carYear.text) ? int.parse(_carYear.text.trim()) : null;
-      final mileage = _validInt(_carMileage.text)
-          ? int.parse(_carMileage.text.trim())
-          : null;
+      final mileage = _carMileage.text.trim().isEmpty
+          ? null
+          : parseFormattedPrice(_carMileage.text);
       final engine = _carEngine.text.trim().isEmpty
           ? null
           : parseEngineVolumeInput(_carEngine.text);
@@ -1651,6 +1664,13 @@ class _AddListingScreenState extends State<AddListingScreen> {
         clothesSize: clothesSize,
         oemPartNumber: _isAutoParts ? _oemPartNumber.text : null,
       );
+
+      if (_video != null) {
+        await svc.updateListingVideo(
+          listingId: _draftListingId,
+          videoUrl: _video!.originalUrl,
+        );
+      }
 
       if (!mounted) return;
       _publishedDraft = true;
@@ -1988,6 +2008,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
           TextField(
             controller: _title,
+            textCapitalization: TextCapitalization.sentences,
             decoration: InputDecoration(
               labelText: _isPassengerCar
                   ? 'Название (автозаполнение можно править)'
@@ -2115,6 +2136,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
 
           TextField(
             controller: _desc,
+            textCapitalization: TextCapitalization.sentences,
             maxLines: 5,
             decoration: const InputDecoration(labelText: 'Описание'),
           ),
@@ -2342,6 +2364,15 @@ class _AddListingScreenState extends State<AddListingScreen> {
                 },
               ),
             ),
+
+          const SizedBox(height: 16),
+          ListingVideoField(
+            enabled: !_saving,
+            onChanged: (video, unresolved) {
+              _video = video;
+              _videoUnresolved = unresolved;
+            },
+          ),
 
           const SizedBox(height: 90),
         ],

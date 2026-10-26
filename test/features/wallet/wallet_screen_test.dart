@@ -35,7 +35,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('225 бонусов', findRichText: true), findsOneWidget);
-    expect(find.text('Ежедневный бонус: +15 бонусов'), findsOneWidget);
+    expect(find.text('Ежедневный бонус: +10 бонусов'), findsOneWidget);
     expect(find.text('Сегодняшний бонус уже начислен'), findsOneWidget);
     expect(find.textContaining('рубл'), findsNothing);
   });
@@ -365,7 +365,7 @@ class _FakeWalletService extends WalletService {
       'balance': 225,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 15,
+      'dailyBonusAmount': 10,
       'lastDailyBonusAt': '2026-06-19T10:00:00.000Z',
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
@@ -415,7 +415,7 @@ class _TransactionsFailingWalletService extends _FakeWalletService {
         'balance': 225,
         'maxBalance': 1000,
         'welcomeBonus': 200,
-        'dailyBonusAmount': 15,
+        'dailyBonusAmount': 10,
         'canClaimDailyBonus': false,
       });
 
@@ -444,7 +444,7 @@ class _RefreshingWalletService extends WalletService {
       'balance': balance,
       'maxBalance': 10000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 15,
+      'dailyBonusAmount': 10,
       'lastDailyBonusAt': '2026-06-19T10:00:00.000Z',
       'canClaimDailyBonus': false,
       'nextDailyBonusAt': '2026-06-20T00:00:00.000Z',
@@ -518,7 +518,7 @@ class _SucceededTopUpWalletService extends WalletService {
       'balance': _walletFetches == 1 ? 225 : 325,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 15,
+      'dailyBonusAmount': 10,
       'canClaimDailyBonus': false,
     });
   }
@@ -552,7 +552,7 @@ class _CachedThenRefreshingWalletService extends WalletService {
         'balance': 225,
         'maxBalance': 1000,
         'welcomeBonus': 200,
-        'dailyBonusAmount': 15,
+        'dailyBonusAmount': 10,
         'canClaimDailyBonus': false,
       });
 
@@ -563,7 +563,7 @@ class _CachedThenRefreshingWalletService extends WalletService {
       'balance': 325,
       'maxBalance': 1000,
       'welcomeBonus': 200,
-      'dailyBonusAmount': 15,
+      'dailyBonusAmount': 10,
       'canClaimDailyBonus': false,
     });
   }

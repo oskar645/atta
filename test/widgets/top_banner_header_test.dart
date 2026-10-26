@@ -37,6 +37,36 @@ void main() {
     TopBannerHeaderBackground.debugImageProvider = null;
   });
 
+  testWidgets('missing banner uses the current theme surface', (tester) async {
+    final service = _TrackingService();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.light(),
+        darkTheme: ThemeData.dark(),
+        themeMode: ThemeMode.dark,
+        home: SizedBox(
+          height: kToolbarHeight,
+          child: TopBannerHeaderBackground(
+            banner: null,
+            service: service,
+          ),
+        ),
+      ),
+    );
+
+    final context = tester.element(find.byType(TopBannerHeaderBackground));
+    final background = tester.widget<ColoredBox>(
+      find.descendant(
+        of: find.byType(TopBannerHeaderBackground),
+        matching: find.byType(ColoredBox),
+      ),
+    );
+    expect(background.color, Theme.of(context).colorScheme.surface);
+    expect(background.color, isNot(Colors.white));
+    expect(service.impressions, 0);
+  });
+
   testWidgets(
       'ready image is shown and impression is sent once across rebuilds',
       (tester) async {

@@ -523,6 +523,7 @@ test('token registration reassigns same device to B session; late A delete canno
   let device: any;
   const prisma: any = {
     $queryRaw: async () => [],
+    user: { findUnique: async () => ({ pushNotificationsEnabled: true }) },
     userSession: { findFirst: async ({ where }: any) => ({ id: where.id, createdAt: new Date(where.id === 'session-A' ? '2026-01-01' : '2026-02-01') }) },
     userDevice: {
       findUnique: async () => device ? { ...device, session: { createdAt: new Date(device.sessionId === 'session-A' ? '2026-01-01' : '2026-02-01') } } : null,
@@ -541,4 +542,95 @@ test('token registration reassigns same device to B session; late A delete canno
   await service.unregisterDevice({ userId: 'A' } as never, 'same');
   await assert.rejects(() => service.registerDevice({ userId: 'A', sessionId: 'session-A' } as never, { token: 'same', platform: 'ios' }), /newer session/);
   assert.equal(device.userId, 'B'); assert.equal(device.sessionId, 'session-B'); assert.equal(device.isActive, true);
+});
+
+test('switching push off persists the choice and deactivates existing device tokens', async () => {
+  let enabled = true;
+  let deactivatedFor: string | null = null;
+  const prisma: any = {
+    user: {
+      findUnique: async () => ({ pushNotificationsEnabled: enabled }),
+      update: async ({ data }: any) => {
+        enabled = data.pushNotificationsEnabled;
+        return { pushNotificationsEnabled: enabled };
+      },
+    },
+    userDevice: {
+      updateMany: async ({ where }: any) => {
+        deactivatedFor = where.userId;
+        return { count: 1 };
+      },
+    },
+  };
+  const service = new NotificationsService({} as never, prisma, {} as never);
+  const user = { userId: 'user-A' } as never;
+  assert.deepEqual(await service.getPushPreference(user, 'user-A'), { enabled: true });
+  assert.deepEqual(await service.setPushPreference(user, false, 'user-A'), { enabled: false });
+  assert.equal(deactivatedFor, 'user-A');
+  assert.deepEqual(await service.getPushPreference(user, 'user-A'), { enabled: false });
+  await assert.rejects(() => service.setPushPreference(user, true, 'user-B'), /another user/);
+  assert.equal(enabled, false);
+});
+
+test('chat push only selects devices whose owner has push enabled', async () => {
+  let capturedWhere: any;
+  const prisma: any = {
+    userDevice: {
+      findMany: async ({ where }: any) => {
+        capturedWhere = where;
+        return [];
+      },
+    },
+  };
+  const service = new NotificationsService({} as never, prisma, {} as never);
+  await service.sendChatMessagePush({
+    recipientId: 'recipient-A',
+    message: { id: 'message-A', text: 'test' },
+    chat: { id: 'chat-A' },
+  });
+  assert.equal(capturedWhere.userId, 'recipient-A');
+  assert.deepEqual(capturedWhere.user, { pushNotificationsEnabled: true });
+});
+
+test('Android chat push uses FCM and preserves the notification payload for tap navigation', async () => {
+  const fcmCalls: any[] = [];
+  const prisma: any = {
+    userDevice: {
+      findMany: async () => [{
+        userId: 'recipient-A',
+        deviceToken: 'android-fcm-token',
+        platform: DevicePlatform.ANDROID,
+      }],
+    },
+  };
+  const service = new NotificationsService(
+    { send: async () => { throw new Error('APNs must not be used for Android'); } } as never,
+    prisma,
+    {} as never,
+    {
+      send: async (push: any) => {
+        fcmCalls.push(push);
+        return { sent: true, status: 200 };
+      },
+    } as never,
+  );
+  (service as any).canonicalBadgeCount = async () => 0;
+
+  await service.sendChatMessagePush({
+    recipientId: 'recipient-A',
+    message: {
+      id: 'message-A',
+      chatId: 'chat-A',
+      senderId: 'sender-A',
+      text: 'Новое сообщение',
+      createdAt: baseDate.toISOString(),
+    },
+    chat: { id: 'chat-A' },
+    unreadTotal: 1,
+  });
+
+  assert.equal(fcmCalls.length, 1);
+  assert.equal(fcmCalls[0].token, 'android-fcm-token');
+  assert.equal(fcmCalls[0].recipientId, 'recipient-A');
+  assert.equal(fcmCalls[0].notification.payload.chatId, 'chat-A');
 });

@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var NotificationsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotificationsService = void 0;
@@ -16,13 +19,15 @@ const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
 const apns_service_1 = require("../apns/apns.service");
 const chats_gateway_1 = require("../chats/chats.gateway");
+const fcm_service_1 = require("../fcm/fcm.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const excludedInAppNotificationTypes = [client_1.NotificationType.CHAT_MESSAGE];
 let NotificationsService = NotificationsService_1 = class NotificationsService {
-    constructor(apnsService, prisma, chatsGateway) {
+    constructor(apnsService, prisma, chatsGateway, fcmService) {
         this.apnsService = apnsService;
         this.prisma = prisma;
         this.chatsGateway = chatsGateway;
+        this.fcmService = fcmService;
         this.logger = new common_1.Logger(NotificationsService_1.name);
     }
     toType(type) {
@@ -165,6 +170,39 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
             items: items.map((item) => this.serialize(item)),
         };
     }
+    assertPushPreferenceOwner(authUser, userId) {
+        if (userId !== authUser.userId) {
+            throw new common_1.ForbiddenException('Push preference belongs to another user');
+        }
+    }
+    async getPushPreference(authUser, userId) {
+        this.assertPushPreferenceOwner(authUser, userId);
+        const user = await this.prisma.user.findUnique({
+            where: { id: authUser.userId },
+            select: { pushNotificationsEnabled: true },
+        });
+        if (!user)
+            throw new common_1.NotFoundException('User not found');
+        return { enabled: user.pushNotificationsEnabled };
+    }
+    async setPushPreference(authUser, enabled, userId) {
+        this.assertPushPreferenceOwner(authUser, userId);
+        if (typeof enabled !== 'boolean') {
+            throw new common_1.BadRequestException('enabled must be a boolean');
+        }
+        const user = await this.prisma.user.update({
+            where: { id: authUser.userId },
+            data: { pushNotificationsEnabled: enabled },
+            select: { pushNotificationsEnabled: true },
+        });
+        if (!enabled) {
+            await this.prisma.userDevice.updateMany({
+                where: { userId: authUser.userId },
+                data: { isActive: false },
+            });
+        }
+        return { enabled: user.pushNotificationsEnabled };
+    }
     async sendToUser(body) {
         const userId = body.userId?.trim() ?? '';
         if (!userId) {
@@ -276,6 +314,13 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
             });
             if (!session)
                 throw new common_1.ForbiddenException('Push session is not active');
+            const user = await tx.user.findUnique({
+                where: { id: authUser.userId },
+                select: { pushNotificationsEnabled: true },
+            });
+            if (!user?.pushNotificationsEnabled) {
+                throw new common_1.ForbiddenException('Push notifications are disabled');
+            }
             const previous = await tx.userDevice.findUnique({
                 where: { deviceToken: token }, include: { session: true },
             });
@@ -379,6 +424,7 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                         userId: normalizedUserId,
                         isActive: true,
                         platform: client_1.DevicePlatform.IOS,
+                        user: { pushNotificationsEnabled: true },
                         session: { revokedAt: null, expiresAt: { gt: new Date() } },
                     },
                     select: { userId: true, deviceToken: true, platform: true },
@@ -514,7 +560,8 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         const devices = await this.prisma.userDevice.findMany({
             where: {
                 isActive: true,
-                platform: client_1.DevicePlatform.IOS,
+                platform: { in: [client_1.DevicePlatform.IOS, client_1.DevicePlatform.ANDROID] },
+                user: { pushNotificationsEnabled: true },
                 session: { revokedAt: null, expiresAt: { gt: new Date() } },
             },
             select: {
@@ -534,7 +581,8 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
             where: {
                 userId: normalizedUserId,
                 isActive: true,
-                platform: client_1.DevicePlatform.IOS,
+                platform: { in: [client_1.DevicePlatform.IOS, client_1.DevicePlatform.ANDROID] },
+                user: { pushNotificationsEnabled: true },
                 session: { revokedAt: null, expiresAt: { gt: new Date() } },
             },
             select: {
@@ -564,26 +612,37 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                     badges.set(device.userId, badge);
                 }
                 const absoluteBadge = await badge;
-                result = await this.apnsService.send({
-                    token: device.deviceToken,
-                    title,
-                    body,
-                    payload: { ...payload, recipientId: device.userId },
-                    badge: absoluteBadge,
-                });
+                result = device.platform === client_1.DevicePlatform.ANDROID
+                    ? await (this.fcmService?.send({
+                        token: device.deviceToken,
+                        title,
+                        body,
+                        notification,
+                        recipientId: device.userId,
+                        actionType: `${payload.actionType ?? ''}`,
+                    }) ?? Promise.resolve({ sent: false, status: 0, skipped: true }))
+                    : await this.apnsService.send({
+                        token: device.deviceToken,
+                        title,
+                        body,
+                        payload: { ...payload, recipientId: device.userId },
+                        badge: absoluteBadge,
+                    });
             }
             catch (error) {
                 if (!unexpectedPushFailureLogged) {
-                    this.logger.warn(`APNs push skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`);
+                    this.logger.warn(`Push delivery skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`);
                     unexpectedPushFailureLogged = true;
                 }
                 return;
             }
             if (!result.sent &&
-                (result.status === 400 || result.status === 410) &&
-                (result.reason === 'BadDeviceToken' ||
-                    result.reason === 'Unregistered' ||
-                    result.reason === 'DeviceTokenNotForTopic')) {
+                (((result.status === 400 || result.status === 410) &&
+                    (result.reason === 'BadDeviceToken' ||
+                        result.reason === 'Unregistered' ||
+                        result.reason === 'DeviceTokenNotForTopic')) ||
+                    result.reason === 'UNREGISTERED' ||
+                    result.reason === 'INVALID_ARGUMENT')) {
                 await this.deactivateDevice(device);
             }
         }));
@@ -598,8 +657,10 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
 exports.NotificationsService = NotificationsService;
 exports.NotificationsService = NotificationsService = NotificationsService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(3, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [apns_service_1.ApnsService,
         prisma_service_1.PrismaService,
-        chats_gateway_1.ChatsGateway])
+        chats_gateway_1.ChatsGateway,
+        fcm_service_1.FcmService])
 ], NotificationsService);
 //# sourceMappingURL=notifications.service.js.map

@@ -1044,6 +1044,32 @@ class ListingsService {
     return updated;
   }
 
+  Future<Listing?> updateListingVideo({
+    required String listingId,
+    String? videoUrl,
+  }) async {
+    final response = await _api.update(
+      listingId,
+      {'video_url': videoUrl?.trim() ?? ''},
+    );
+    final updated = _extractListingFromResponse(response);
+    if (updated != null) {
+      _upsertListingInCaches(updated);
+      _emitRefresh(clearCaches: false);
+    }
+    return updated;
+  }
+
+  Future<ListingVideo> resolveListingVideo(String url) async {
+    final response = await _api.resolveVideo(url.trim());
+    final video = ListingVideo.fromAny(response);
+    if (video == null) {
+      throw const FormatException(
+          'Не удалось открыть видео. Проверьте ссылку.');
+    }
+    return video;
+  }
+
   Future<Listing> uploadListingPhoto({
     required String listingId,
     required File file,

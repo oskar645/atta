@@ -166,6 +166,52 @@ void main() {
     },
   );
 
+  testWidgets('home VIP showcase uses graphite surface in dark mode',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: List<Listing>.generate(
+          20,
+          (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+        ),
+        hasMore: false,
+      ),
+      onGetVipListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'vip-1', title: 'VIP товар', hasVip: true),
+        ],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        themeMode: ThemeMode.dark,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _dragHomeUntilVisible(
+      tester,
+      find.byKey(const ValueKey('home_vip_showcase_surface')),
+    );
+
+    final surface = tester.widget<DecoratedBox>(
+      find.byKey(const ValueKey('home_vip_showcase_surface')),
+    );
+    final decoration = surface.decoration as BoxDecoration;
+    final gradient = decoration.gradient! as LinearGradient;
+
+    expect(gradient.colors, const <Color>[
+      Color(0xFF2B2F36),
+      Color(0xFF1F2228),
+    ]);
+    expect(
+      (decoration.border! as Border).top.color,
+      const Color(0xFF536B97),
+    );
+  });
+
   testWidgets(
     'home VIP preview exposes eleventh item and all button opens VIP screen',
     (tester) async {
@@ -1425,6 +1471,45 @@ void main() {
     expect(find.byType(FeedAdBanner), findsNothing);
   });
 
+  testWidgets('home header without top banner follows dark theme',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => const ListingsFeedPage(
+        items: <Listing>[],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        themeMode: ThemeMode.dark,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final context = tester.element(find.byType(HomeScreen));
+    final surface = Theme.of(context).colorScheme.surface;
+    expect(tester.widget<AppBar>(find.byType(AppBar)).backgroundColor, surface);
+
+    final circularActionSurfaces = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byType(AppBar),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>()
+        .where((decoration) => decoration.shape == BoxShape.circle)
+        .toList();
+    expect(circularActionSurfaces, hasLength(2));
+    expect(
+      circularActionSurfaces.every((decoration) => decoration.color == surface),
+      isTrue,
+    );
+  });
+
   testWidgets('active feed ad renders above active showcase', (tester) async {
     final listings = _FakeListingsService(
       onGetListingsPage: (_) async => ListingsFeedPage(
@@ -2035,6 +2120,7 @@ Widget _buildHomeTestApp({
   _FakeShowcaseService? showcase,
   FeedAdsService? feedAds,
   _FakeFavoritesService? favorites,
+  ThemeMode themeMode = ThemeMode.light,
 }) {
   return MultiProvider(
     providers: [
@@ -2055,6 +2141,9 @@ Widget _buildHomeTestApp({
     ],
     child: MaterialApp(
       navigatorObservers: <NavigatorObserver>[attaRouteObserver],
+      theme: ThemeData.light(),
+      darkTheme: ThemeData.dark(),
+      themeMode: themeMode,
       home: const HomeScreen(),
     ),
   );

@@ -99,4 +99,8 @@ export class CreateListingDto {
   @IsOptional()
   @IsArray()
   photo_urls?: string[];
+
+  @IsOptional()
+  @IsString()
+  video_url?: string;
 }

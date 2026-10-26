@@ -26,6 +26,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="false">
 
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="atta_messages" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -112,6 +116,14 @@
             </intent-filter>
 
         </activity>
+
+        <service
+            android:name=".AttaFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- Не удаляй: нужно для регистрации плагинов Flutter -->
         <meta-data

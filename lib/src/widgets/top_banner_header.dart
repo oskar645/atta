@@ -60,7 +60,7 @@ class _State extends State<TopBannerHeaderBackground> {
   Widget build(BuildContext context) {
     final b = widget.banner;
     if (b == null || b.imageUrl.isEmpty) {
-      return const ColoredBox(color: Colors.white);
+      return ColoredBox(color: Theme.of(context).colorScheme.surface);
     }
     final imageUrl = resolvePublicMediaUrl(
       b.imageUrl,
@@ -74,7 +74,9 @@ class _State extends State<TopBannerHeaderBackground> {
                 TopBannerHeaderBackground.debugImageProvider?.call(imageUrl) ??
                     CachedNetworkImageProvider(imageUrl),
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) =>
-                const ColoredBox(color: Colors.white)));
+            alignment: Alignment(0, b.imageAlignmentY),
+            errorBuilder: (_, __, ___) => ColoredBox(
+                  color: Theme.of(context).colorScheme.surface,
+                )));
   }
 }

@@ -96,7 +96,8 @@ abstract class _State<T extends StatefulWidget> extends State<T> {
 }
 
 class AdminZeroResultSearchesScreen extends StatefulWidget {
-  const AdminZeroResultSearchesScreen({super.key});
+  const AdminZeroResultSearchesScreen({super.key, this.allSearches = false});
+  final bool allSearches;
   @override
   State<AdminZeroResultSearchesScreen> createState() => _SearchState();
 }
@@ -128,9 +129,12 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
   }
 
   @override
-  Future<Map<String, dynamic>> request() => context
-      .read<AdminService>()
-      .zeroResultSearches(period: period, search: search.text, cursor: cursor);
+  Future<Map<String, dynamic>> request() => widget.allSearches
+      ? context
+          .read<AdminService>()
+          .allSearches(period: period, search: search.text, cursor: cursor)
+      : context.read<AdminService>().zeroResultSearches(
+          period: period, search: search.text, cursor: cursor);
 
   @override
   Future<void> load() async {
@@ -142,9 +146,12 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
       hasMore = true;
     });
     try {
-      final data = await context
-          .read<AdminService>()
-          .zeroResultSearches(period: period, search: search.text, limit: 30);
+      final admin = context.read<AdminService>();
+      final data = widget.allSearches
+          ? await admin.allSearches(
+              period: period, search: search.text, limit: 30)
+          : await admin.zeroResultSearches(
+              period: period, search: search.text, limit: 30);
       if (!mounted || requestGeneration != generation) return;
       setState(() {
         items = _analyticsItems(data);
@@ -167,8 +174,18 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
     final pageCursor = cursor;
     setState(() => loadingMore = true);
     try {
-      final data = await context.read<AdminService>().zeroResultSearches(
-          period: period, search: search.text, limit: 30, cursor: pageCursor);
+      final admin = context.read<AdminService>();
+      final data = widget.allSearches
+          ? await admin.allSearches(
+              period: period,
+              search: search.text,
+              limit: 30,
+              cursor: pageCursor)
+          : await admin.zeroResultSearches(
+              period: period,
+              search: search.text,
+              limit: 30,
+              cursor: pageCursor);
       if (!mounted || requestGeneration != generation) return;
       final next = _analyticsItems(data);
       final seen = items.map((x) => '${x['normalized_query']}').toSet();
@@ -187,7 +204,9 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('Поиски без результата')),
+      appBar: AppBar(
+          title: Text(
+              widget.allSearches ? 'Все поиски' : 'Поиски без результата')),
       body: Column(children: [
         _Header(period, change),
         Padding(
@@ -235,8 +254,9 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
                                 return Card(
                                     child: ListTile(
                                   title: Text('${x['query']}'),
-                                  subtitle: Text(
-                                      'Последний поиск: ${_date(x['last_searched_at'])}'),
+                                  subtitle: Text(widget.allSearches
+                                      ? 'С результатом: ${x['with_results']} · Последний: ${_date(x['last_searched_at'])}'
+                                      : 'Последний поиск: ${_date(x['last_searched_at'])}'),
                                   trailing: Text('${x['count']}',
                                       style: const TextStyle(
                                           fontSize: 18,

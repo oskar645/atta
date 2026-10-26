@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { once } from 'events';
 
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -9,6 +10,7 @@ import { ListAdminBonusAnalyticsDto } from './dto/list-admin-bonus-analytics.dto
 import { AdminRegistrationStatsDto } from './dto/admin-registration-stats.dto';
 import { ListAdminListingsDto } from './dto/list-admin-listings.dto';
 import { ListAdminPointsPurchasesDto } from './dto/list-admin-points-purchases.dto';
+import { ListRaffleParticipantsDto } from './dto/list-raffle-participants.dto';
 import { ListAdminPromotionsDto } from './dto/list-admin-promotions.dto';
 import { ListAdminBlocksDto } from './dto/list-admin-blocks.dto';
 import { ListAdminWalletTransactionsDto } from './dto/list-admin-wallet-transactions.dto';
@@ -37,6 +39,16 @@ export class AdminController {
   @Get('analytics/zero-result-searches')
   getZeroResultSearches(@Query() query: AdminAnalyticsPeriodDto) {
     return this.adminService.getZeroResultSearches(query);
+  }
+
+  @Get('analytics/all-searches')
+  getAllSearches(@Query() query: AdminAnalyticsPeriodDto) {
+    return this.adminService.getAllSearches(query);
+  }
+
+  @Get('analytics/repeated-messages')
+  getRepeatedMessages() {
+    return this.adminService.getRepeatedMessages();
   }
 
   @Get('analytics/popular-categories')
@@ -181,6 +193,67 @@ export class AdminController {
   @Get('analytics/bonuses')
   getBonusAnalytics(@Query() query: ListAdminBonusAnalyticsDto) {
     return this.adminService.getBonusAnalytics(query);
+  }
+
+  @Get('raffle/summary')
+  getRaffleSummary(@Query() query: ListRaffleParticipantsDto) {
+    return this.adminService.getRaffleSummary(query);
+  }
+
+  @Get('raffle/participants')
+  listRaffleParticipants(@Query() query: ListRaffleParticipantsDto) {
+    return this.adminService.listRaffleParticipants(query);
+  }
+
+  @Get('raffle/export')
+  async exportRaffle(
+    @Query() query: ListRaffleParticipantsDto,
+    @Query('format') format: string,
+    @Res() response: any,
+  ) {
+    if (format !== 'participants' && format !== 'tickets') {
+      response.status(400).json({ message: 'Некорректный формат выгрузки' });
+      return;
+    }
+    const summary = await this.adminService.getRaffleSummary(query);
+    response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    response.setHeader('Content-Disposition', `attachment; filename="raffle-${format}.csv"`);
+    const csv = (value: unknown) => {
+      const raw = String(value ?? '');
+      const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
+    const write = async (fields: unknown[]) => {
+      if (!response.write(fields.map(csv).join(';') + '\r\n')) await once(response, 'drain');
+    };
+    response.write('\uFEFF');
+    await write(['Период', summary.from, summary.to]);
+    await write(['Цена билета, ₽', summary.ticketPriceRub]);
+    await write(['Уникальных участников', summary.participants]);
+    await write(['Всего билетов', summary.tickets]);
+    await write(['Сумма пополнений участников, ₽', summary.amountRub]);
+    await write([]);
+    await write(format === 'tickets'
+      ? ['№ билета', 'Имя', 'Телефон']
+      : ['№', 'Имя', 'Телефон', 'Сумма, ₽', 'Билетов', 'Остаток, ₽', 'Первое пополнение', 'Последнее пополнение']);
+    let cursor: string | undefined;
+    let number = 0;
+    do {
+      const page = await this.adminService.listRaffleParticipants({
+        from: query.from, to: query.to,
+        ticketPrice: query.ticketPrice, limit: 100, cursor,
+      });
+      for (const item of page.items) {
+        if (format === 'tickets') {
+          for (let i = 0; i < item.tickets; i++) await write([++number, item.name, item.phone]);
+        } else {
+          await write([++number, item.name, item.phone, item.totalRub, item.tickets,
+            item.remainderRub, item.firstAt, item.lastAt]);
+        }
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    response.end();
   }
 
   @Get('payments/points-purchases/summary')

@@ -174,6 +174,38 @@ void main() {
     expect(titleTop, lessThan(priceTop));
   });
 
+  testWidgets('video is the second gallery item and photos keep their order',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            photoUrls: const [
+              'https://example.com/1.jpg',
+              'https://example.com/2.jpg'
+            ],
+            video: const ListingVideo(
+              provider: 'vk',
+              originalUrl: 'https://vk.com/video-1_2',
+              videoId: '-1_2',
+              playbackUrl: 'https://vk.com/video_ext.php?oid=-1&id=2',
+              thumbnailUrl: 'https://example.com/video.jpg',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('1/3'), findsOneWidget);
+    expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
+
+    await tester.drag(find.byType(PageView), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('2/3'), findsOneWidget);
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+  });
+
   testWidgets('owner can open sell faster even when listing cannot be promoted',
       (tester) async {
     await tester.pumpWidget(
@@ -637,6 +669,8 @@ Listing _listingFixture({
   String subcategory = 'Седан',
   String? clothesSize,
   String? oemPartNumber,
+  List<String> photoUrls = const <String>[],
+  ListingVideo? video,
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': 'listing-1',
@@ -654,7 +688,8 @@ Listing _listingFixture({
     'phone_hidden': false,
     'city': 'Москва',
     'delivery': <String, dynamic>{'pickup': true},
-    'photo_urls': const <String>[],
+    'photo_urls': photoUrls,
+    'video': video?.toMap(),
     'view_count': 3,
     'status': status,
     'rejection_reason': '',

@@ -202,6 +202,7 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
               child: TextField(
                 key: const ValueKey('showcase_search_field'),
                 controller: _searchController,
+                textCapitalization: TextCapitalization.sentences,
                 textInputAction: TextInputAction.search,
                 onChanged: _onSearchChanged,
                 onSubmitted: _submitSearch,

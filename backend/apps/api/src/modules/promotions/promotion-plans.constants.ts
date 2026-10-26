@@ -16,7 +16,7 @@ export const PROMOTION_PLANS = {
     title: 'Витрина ATTA',
     description:
       'Ваше объявление появится в специальном блоке на главной странице.',
-    costBonus: 230,
+    costBonus: 200,
     durationMs: 24 * 60 * 60 * 1000,
     walletReason: WalletTransactionReason.PROMOTION_SHOWCASE,
   },
@@ -25,7 +25,7 @@ export const PROMOTION_PLANS = {
     title: 'Поднятие',
     description:
       'Объявление поднимается выше в ленте, чтобы его увидело больше пользователей.',
-    costBonus: 35,
+    costBonus: 25,
     durationMs: 24 * 60 * 60 * 1000,
     walletReason: WalletTransactionReason.PROMOTION_BUMP,
   },
@@ -33,7 +33,7 @@ export const PROMOTION_PLANS = {
     type: PromotionType.VIP,
     title: 'VIP',
     description: 'Объявление выделяется и становится заметнее.',
-    costBonus: 150,
+    costBonus: 125,
     durationMs: 2 * 24 * 60 * 60 * 1000,
     walletReason: WalletTransactionReason.PROMOTION_VIP,
   },

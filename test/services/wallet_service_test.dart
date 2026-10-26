@@ -218,7 +218,7 @@ Map<String, dynamic> _walletMap({required int balance}) {
     'balance': balance,
     'max_balance': null,
     'welcome_bonus': 250,
-    'daily_bonus_amount': 15,
+    'daily_bonus_amount': 10,
     'can_claim_daily_bonus': false,
     'days_until_next_accrual': 0,
     'seconds_until_next_accrual': 0,

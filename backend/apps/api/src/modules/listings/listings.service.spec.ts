@@ -1302,7 +1302,8 @@ function buildVipInterleavedRawRows(
 ) {
   const natural = [...listings].sort(compareNaturalListings);
   const vipPromotedAtById = new Map<string, Date>();
-  for (const listing of natural) {
+  for (const [naturalIndex, listing] of natural.entries()) {
+    if (naturalIndex < 10) continue;
     const promotedAt = promotedIds?.[listing.id] != null
       ? new Date(promotedIds[listing.id]!)
       : promotionActivatedAt(listing);
@@ -3068,6 +3069,51 @@ test('public feed vip interleave mode starts with 10 ordinary listings then alte
   ));
 });
 
+test('buying VIP keeps a naturally new listing in place, then moves it to VIP slots as newer listings arrive', async () => {
+  const fresh = createApprovedListing(uuidFromNumber(610), '2026-07-03T15:00:00.000Z');
+  const older = Array.from({ length: 12 }, (_, index) =>
+    createApprovedListing(uuidFromNumber(611 + index), `2026-07-03T14:${(59 - index).toString().padStart(2, '0')}:00.000Z`),
+  );
+  const withVip = {
+    ...fresh,
+    promotions: [createPromotion(PromotionType.VIP, '2026-07-03T15:01:00.000Z')],
+  };
+  const before = await createRawFeedHarness([fresh, ...older]).service.findAll({ feedMode: 'vip_interleave_v1', limit: 30 });
+  const after = await createRawFeedHarness([withVip, ...older]).service.findAll({ feedMode: 'vip_interleave_v1', limit: 30 });
+  assert.equal(before.items[0]?.id, fresh.id);
+  assert.equal(after.items[0]?.id, fresh.id);
+
+  const newer = Array.from({ length: 10 }, (_, index) =>
+    createApprovedListing(uuidFromNumber(630 + index), `2026-07-04T14:${(59 - index).toString().padStart(2, '0')}:00.000Z`),
+  );
+  const later = await createRawFeedHarness([...newer, withVip, ...older]).service.findAll({ feedMode: 'vip_interleave_v1', limit: 40 });
+  assert.equal(later.items[10]?.id, fresh.id);
+});
+
+test('new VIP does not disturb ordinary listings, BUMP positions, or older VIP slots', async () => {
+  const natural = createFreshListings(30).map((listing, index) => ({
+    ...listing,
+    id: uuidFromNumber(1500 - index),
+    promotions: index === 4
+      ? [createPromotion(PromotionType.VIP, '2026-07-02T13:00:00.000Z')]
+      : index === 7 || index === 23
+        ? [createPromotion(PromotionType.BUMP, `2026-07-02T12:${index}:00.000Z`)]
+        : index === 26
+          ? [createPromotion(PromotionType.VIP, '2026-07-02T14:00:00.000Z')]
+          : [],
+  }));
+  const { service, rawCalls } = createRawFeedHarness(natural);
+  const response = await service.findAll({ feedMode: 'vip_interleave_v1', limit: 40 });
+  const ids = response.items.map((item: { id: string }) => item.id);
+
+  assert.deepEqual(ids.slice(0, 10), natural.slice(0, 10).map((listing) => listing.id));
+  assert.equal(ids[10], natural[26]!.id);
+  assert.equal(ids[11], natural[23]!.id);
+  assert.equal(ids.length, natural.length);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.match(rawCalls[0]!.text, /CASE WHEN natural_rank > \$\d+\s+THEN vip_purchased_at ELSE NULL END AS vip_promoted_at/);
+});
+
 test('public feed vip interleave mode rotates VIP order and keeps cursor pages unique', async () => {
   const ordinary = Array.from({ length: 24 }, (_, index) =>
     createApprovedListing(
@@ -4528,7 +4574,7 @@ test('BUMP ordinary pool protects head, spaces bumps, rotates refreshes and pins
     promotions: index === 1 || index === 25 || index === 30 || index === 35
       ? [createPromotion(PromotionType.BUMP, `2026-07-02T12:${index}:00.000Z`)] : [],
   }));
-  const vip = { ...createFreshListings(1)[0]!, id: uuidFromNumber(800), promotions: [
+  const vip = { ...createApprovedListing(uuidFromNumber(800), '2020-07-01T10:00:00.000Z'), promotions: [
     createPromotion(PromotionType.VIP, '2026-07-02T13:00:00.000Z'),
     createPromotion(PromotionType.BUMP, '2026-07-02T14:00:00.000Z'),
   ] };

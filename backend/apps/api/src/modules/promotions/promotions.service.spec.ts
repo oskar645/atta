@@ -260,13 +260,13 @@ function createShowcaseService(options?: {
   };
 }
 
-test('old VIP client without quantity keeps 150 bonuses and 48 hours', async () => {
+test('old VIP client without quantity uses 125 bonuses and keeps 48 hours', async () => {
   const { service, createdPromotions, spent } = createService();
 
   await service.promoteListing('listing-1', authUser, { type: 'vip' });
 
-  assert.equal(spent[0]?.amount, 150);
-  assert.equal(createdPromotions[0]?.costBonus, 150);
+  assert.equal(spent[0]?.amount, 125);
+  assert.equal(createdPromotions[0]?.costBonus, 125);
   assert.equal(
     createdPromotions[0]!.endsAt.getTime() -
       createdPromotions[0]!.startsAt.getTime(),
@@ -274,13 +274,13 @@ test('old VIP client without quantity keeps 150 bonuses and 48 hours', async () 
   );
 });
 
-test('old showcase client without quantity keeps 230 bonuses and 24 hours', async () => {
+test('old showcase client without quantity uses 200 bonuses and keeps 24 hours', async () => {
   const { service, createdPromotions, spent } = createService();
 
   await service.promoteListing('listing-1', authUser, { type: 'showcase' });
 
-  assert.equal(spent[0]?.amount, 230);
-  assert.equal(createdPromotions[0]?.costBonus, 230);
+  assert.equal(spent[0]?.amount, 200);
+  assert.equal(createdPromotions[0]?.costBonus, 200);
   assert.equal(
     createdPromotions[0]!.endsAt.getTime() -
       createdPromotions[0]!.startsAt.getTime(),
@@ -296,8 +296,8 @@ test('VIP quantity multiplies existing 48-hour periods and price', async () => {
     days: 3,
   });
 
-  assert.equal(spent[0]?.amount, 450);
-  assert.equal(createdPromotions[0]?.costBonus, 450);
+  assert.equal(spent[0]?.amount, 375);
+  assert.equal(createdPromotions[0]?.costBonus, 375);
   assert.equal(spent[0]?.metadata.quantity, 3);
   assert.equal(
     createdPromotions[0]!.endsAt.getTime() -
@@ -314,8 +314,8 @@ test('showcase quantity multiplies 24-hour days and price', async () => {
     days: 5,
   });
 
-  assert.equal(spent[0]?.amount, 1150);
-  assert.equal(createdPromotions[0]?.costBonus, 1150);
+  assert.equal(spent[0]?.amount, 1000);
+  assert.equal(createdPromotions[0]?.costBonus, 1000);
   assert.equal(spent[0]?.metadata.quantity, 5);
   assert.equal(
     createdPromotions[0]!.endsAt.getTime() -
@@ -347,7 +347,7 @@ test('promotion quantity outside 1..30 is rejected before spending', async () =>
 });
 
 test('insufficient bonuses uses multiplied price and does not activate', async () => {
-  const { service, createdPromotions, spent } = createService({ balance: 449 });
+  const { service, createdPromotions, spent } = createService({ balance: 374 });
 
   await assert.rejects(
     () => service.promoteListing('listing-1', authUser, {

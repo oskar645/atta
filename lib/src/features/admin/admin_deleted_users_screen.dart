@@ -10,6 +10,11 @@ class AdminDeletedUsersScreen extends StatefulWidget {
 }
 
 class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
+  final _scroll = ScrollController();
+  String? _cursor;
+  bool _hasMore = false;
+  bool _loadingMore = false;
+  int _generation = 0;
   static const periods = {
     'today': 'Сегодня',
     '7d': '7 дней',
@@ -25,19 +30,33 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(() {
+      if (_scroll.position.extentAfter < 300) _loadMore();
+    });
     _load();
   }
 
+  @override
+  void dispose() {
+    _generation++;
+    _scroll.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    final generation = ++_generation;
     setState(() {
       loading = true;
       error = null;
+      _cursor = null;
+      _hasMore = false;
+      _loadingMore = false;
     });
     try {
       final result = await context
           .read<AdminService>()
           .deletedUsers(period: period, limit: 100);
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         total = result['total'] is num
             ? (result['total'] as num).toInt()
@@ -46,15 +65,39 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
+        _cursor = result['nextCursor']?.toString();
+        _hasMore = result['hasMore'] == true && (_cursor ?? '').isNotEmpty;
         loading = false;
       });
     } catch (e) {
-      if (mounted) {
+      if (mounted && generation == _generation) {
         setState(() {
           error = '$e';
           loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (loading || _loadingMore || !_hasMore || _cursor == null) return;
+    final generation = _generation;
+    final cursor = _cursor;
+    setState(() => _loadingMore = true);
+    try {
+      final result = await context.read<AdminService>().deletedUsers(
+            period: period, limit: 100, cursor: cursor);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        items.addAll((result['items'] as List? ?? const [])
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item)));
+        _cursor = result['nextCursor']?.toString();
+        _hasMore = result['hasMore'] == true && (_cursor ?? '').isNotEmpty;
+        _loadingMore = false;
+      });
+    } catch (_) {
+      if (mounted && generation == _generation) setState(() => _loadingMore = false);
     }
   }
 
@@ -102,11 +145,15 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
                           : RefreshIndicator(
                               onRefresh: _load,
                               child: ListView.separated(
+                                controller: _scroll,
                                 padding: const EdgeInsets.all(12),
-                                itemCount: items.length,
+                                itemCount: items.length + (_loadingMore ? 1 : 0),
                                 separatorBuilder: (_, __) =>
                                     const Divider(height: 1),
                                 itemBuilder: (context, index) {
+                                  if (index == items.length) {
+                                    return const Center(child: CircularProgressIndicator());
+                                  }
                                   final item = items[index];
                                   return ListTile(
                                     dense: true,

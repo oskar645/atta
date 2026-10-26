@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "109842831880",
+    "project_id": "atta-market-push",
+    "storage_bucket": "atta-market-push.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:109842831880:android:7abc3bbf82d3b4cfdacfbd",
+        "android_client_info": {
+          "package_name": "online.attomarket.atta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDvdWoJkGsM6vy24-2HOHKdmijV-bsKYEA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

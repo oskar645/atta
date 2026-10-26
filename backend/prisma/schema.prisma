@@ -185,6 +185,7 @@ model User {
   emailVerifiedAt         DateTime?                   @map("email_verified_at") @db.Timestamptz(3)
   phone                   String?                     @unique
   phoneVerified           Boolean                     @default(false)
+  pushNotificationsEnabled Boolean                    @default(true) @map("push_notifications_enabled")
   displayName             String                      @default("") @map("display_name")
   name                    String                      @default("")
   avatarUrl               String?                     @map("avatar_url")
@@ -457,6 +458,7 @@ model Listing {
   clothesSize             String?                     @map("clothes_size")
   oemPartNumber           String?                     @map("oem_part_number")
   oemPartNumberNormalized String?                     @map("oem_part_number_normalized")
+  video                   Json?
   status                  ListingStatus               @default(PENDING)
   rejectionReason         String?                     @map("rejection_reason")
   moderationNote          String?                     @map("moderation_note")
@@ -596,6 +598,31 @@ model ZeroResultSearch {
   @@index([createdAt])
   @@index([normalizedQuery, createdAt])
   @@map("zero_result_searches")
+}
+
+/// Anonymous settled searches, including those with results.
+model SearchAttempt {
+  id              String   @id @default(uuid()) @db.Uuid
+  attemptId       String   @unique @map("attempt_id") @db.Uuid
+  query           String
+  normalizedQuery String   @map("normalized_query")
+  resultCount     Int      @map("result_count")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([createdAt])
+  @@index([normalizedQuery, createdAt])
+  @@map("search_attempts")
+}
+
+/// Admin-only deletion audit. The public user tombstone stays anonymized.
+model DeletedUserIdentity {
+  userId      String   @id @map("user_id") @db.Uuid
+  displayName String   @map("display_name")
+  phone       String?
+  deletedAt   DateTime @map("deleted_at") @db.Timestamptz(3)
+
+  @@map("deleted_user_identities")
 }
 
 model Favorite {
@@ -886,6 +913,7 @@ model TopBanner {
   imageUrl        String           @map("image_url")
   imageBucket     String           @default("feed-ads") @map("image_bucket")
   imageKey        String?          @map("image_key")
+  imageAlignmentY Float            @default(0) @map("image_alignment_y")
   targetUrl       String           @default("") @map("target_url")
   enabled         Boolean          @default(false)
   startAt         DateTime         @map("start_at")
@@ -966,7 +994,9 @@ model Payment {
   user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, creditedAt])
   @@index([provider, status])
+  @@index([provider, status, creditedAt])
   @@index([providerPaymentId, status])
   @@map("payments")
 }

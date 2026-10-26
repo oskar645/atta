@@ -1,3 +1,4 @@
+import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/utils/vehicle_specs.dart';
 import 'package:flutter/material.dart';
 
@@ -92,6 +93,7 @@ class _CarParametersScreenState extends State<CarParametersScreen> {
           TextField(
             controller: widget.mileageController,
             keyboardType: TextInputType.number,
+            inputFormatters: [PriceThousandsInputFormatter()],
             decoration: InputDecoration(
               label: _fieldLabel('Пробег (необязательно)'),
             ),

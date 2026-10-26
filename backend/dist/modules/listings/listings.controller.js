@@ -24,6 +24,7 @@ const update_listing_dto_1 = require("./dto/update-listing.dto");
 const increment_listing_view_dto_1 = require("./dto/increment-listing-view.dto");
 const record_search_attempt_dto_1 = require("./dto/record-search-attempt.dto");
 const listings_service_1 = require("./listings.service");
+const listing_video_1 = require("./listing-video");
 let ListingsController = class ListingsController {
     constructor(listingsService, rateLimitService) {
         this.listingsService = listingsService;
@@ -55,6 +56,9 @@ let ListingsController = class ListingsController {
     }
     recordSearchAttempt(dto) {
         return this.listingsService.recordSearchAttempt(dto);
+    }
+    resolveVideo(url) {
+        return (0, listing_video_1.resolveListingVideo)(url ?? '');
     }
     findVip(limit, cursor, category, search) {
         return this.listingsService.findVipListings({
@@ -130,6 +134,14 @@ __decorate([
     __metadata("design:paramtypes", [record_search_attempt_dto_1.RecordSearchAttemptDto]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "recordSearchAttempt", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('video/preview'),
+    __param(0, (0, common_1.Body)('url')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], ListingsController.prototype, "resolveVideo", null);
 __decorate([
     (0, common_1.Get)('vip'),
     __param(0, (0, common_1.Query)('limit')),

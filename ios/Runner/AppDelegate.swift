@@ -77,6 +77,14 @@ import UserNotifications
     completionHandler()
   }
 
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    completionHandler([.banner, .list, .sound, .badge])
+  }
+
   private func handlePushMethod(call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "unregister":
@@ -101,10 +109,6 @@ import UserNotifications
   }
 
   private func requestToken(result: @escaping FlutterResult) {
-    if let token = currentDeviceToken {
-      result(token)
-      return
-    }
     tokenResult = result
     UNUserNotificationCenter.current().requestAuthorization(
       options: [.alert, .badge, .sound]
@@ -124,6 +128,7 @@ import UserNotifications
       }
       guard granted else {
         DispatchQueue.main.async {
+          self.currentDeviceToken = nil
           self.tokenResult?(nil)
           self.tokenResult = nil
         }

@@ -21,6 +21,7 @@ class _FakeApi extends TopBannersApi {
         'id': id,
         'title': id,
         'image_url': 'https://cdn.example/$id.jpg',
+        'image_alignment_y': 0.5,
         'target_url': '',
         'enabled': true,
         'start_at': '2026-09-01T00:00:00Z',
@@ -62,6 +63,7 @@ void main() {
     final first = await firstSession.selectForColdStart();
     final rebuilt = await firstSession.selectForColdStart();
     expect(first?.id, 'a');
+    expect(first?.imageAlignmentY, 0.5);
     expect(rebuilt?.id, 'a');
     expect(api.afterIds, ['']);
 

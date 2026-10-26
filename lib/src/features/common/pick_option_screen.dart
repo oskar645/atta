@@ -34,6 +34,7 @@ class _PickOptionScreenState extends State<PickOptionScreen> {
           Padding(
             padding: const EdgeInsets.all(12),
             child: TextField(
+              textCapitalization: TextCapitalization.sentences,
               decoration: const InputDecoration(
                 prefixIcon: Icon(Icons.search),
                 hintText: 'Поиск',

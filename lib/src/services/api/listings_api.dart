@@ -85,6 +85,15 @@ class ListingsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> resolveVideo(String url) async {
+    final response = await client.post(
+      '/listings/video/preview',
+      authorized: true,
+      body: {'url': url},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> update(
     String id,
     Map<String, dynamic> body,

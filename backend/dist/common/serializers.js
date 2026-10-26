@@ -336,6 +336,7 @@ const serializeListing = (listing, options) => {
         clothes_type: listing.clothesType,
         clothes_size: listing.clothesSize ?? null,
         oem_part_number: listing.oemPartNumber ?? null,
+        video: listing.video == null ? null : (0, exports.normalizeJsonRecord)(listing.video),
         photo_urls: listing.photos?.map((photo) => (0, exports.normalizeStoredMediaUrl)(photo.publicUrl, {
             category: 'listings',
             providerHint: photo.storageBucket,

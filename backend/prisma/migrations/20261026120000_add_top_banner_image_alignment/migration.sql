@@ -1,0 +1,2 @@
+ALTER TABLE "top_banners"
+ADD COLUMN "image_alignment_y" DOUBLE PRECISION NOT NULL DEFAULT 0;

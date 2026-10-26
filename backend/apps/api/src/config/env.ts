@@ -67,6 +67,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === 'true'),
+  FCM_SERVICE_ACCOUNT_PATH: z.string().optional().default(''),
   ADMIN_PHONE_NUMBERS: z.string().optional().default(''),
   WALLET_TIME_ZONE: z.string().min(1).default('Europe/Moscow'),
   YOOKASSA_SHOP_ID: z.string().optional().default('1425242'),

@@ -18,6 +18,7 @@ class MediaPreviewBox extends StatelessWidget {
     this.placeholderLabel,
     this.icon = Icons.image_outlined,
     this.errorIcon = Icons.broken_image_outlined,
+    this.alignment = Alignment.center,
     @visibleForTesting this.debugImageProvider,
   });
 
@@ -32,6 +33,7 @@ class MediaPreviewBox extends StatelessWidget {
   final String? placeholderLabel;
   final IconData icon;
   final IconData errorIcon;
+  final Alignment alignment;
   final ImageProvider? debugImageProvider;
 
   @override
@@ -100,7 +102,7 @@ class MediaPreviewBox extends StatelessWidget {
                 ? Image.network(
                     resolvedUrl,
                     fit: BoxFit.cover,
-                    alignment: Alignment.center,
+                    alignment: alignment,
                     webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
                     loadingBuilder: (context, child, loadingProgress) {
                       if (loadingProgress == null) return child;
@@ -129,7 +131,7 @@ class MediaPreviewBox extends StatelessWidget {
                     imageBuilder: (_, imageProvider) =>
                         _coverImage(imageProvider),
                     fit: BoxFit.cover,
-                    alignment: Alignment.center,
+                    alignment: alignment,
                     placeholder: (_, __) => _fallback(
                       context,
                       placeholderLabel ?? 'Загрузка фото...',
@@ -160,7 +162,7 @@ class MediaPreviewBox extends StatelessWidget {
       child: Image(
         image: imageProvider,
         fit: BoxFit.cover,
-        alignment: Alignment.center,
+        alignment: alignment,
       ),
     );
   }
