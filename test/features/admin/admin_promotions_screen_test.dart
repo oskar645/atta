@@ -6,15 +6,52 @@ import 'package:provider/provider.dart';
 
 void main() {
   testWidgets('admin promotions screen renders', (tester) async {
+    tester.view.physicalSize = const Size(900, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await _pumpScreen(tester, _FakeAdminService());
 
-    expect(find.text('Продвижения'), findsOneWidget);
+    expect(find.text('Продвижение'), findsOneWidget);
+    expect(find.text('Обзор продвижения'), findsOneWidget);
+    expect(find.text('Покупки продвижения'), findsOneWidget);
     expect(find.text('Bike'), findsOneWidget);
-    expect(
-      find.text(
-          'Платежи пока не подключены. Сейчас учитываются только бонусы.'),
-      findsOneWidget,
+    expect(find.text('Car'), findsOneWidget);
+    expect(find.text('Покупки продвижения сейчас оплачиваются бонусами.'),
+        findsOneWidget);
+
+    final first = tester.getTopLeft(
+      find.byKey(const ValueKey('adminPromotionCard-promo-1')),
     );
+    final second = tester.getTopLeft(
+      find.byKey(const ValueKey('adminPromotionCard-promo-2')),
+    );
+    expect(second.dx, greaterThan(first.dx));
+    expect(second.dy, first.dy);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('promotion purchases stay compact in two columns on phone',
+      (tester) async {
+    tester.view.physicalSize = const Size(320, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpScreen(tester, _FakeAdminService());
+
+    final firstFinder =
+        find.byKey(const ValueKey('adminPromotionCard-promo-1'));
+    final secondFinder =
+        find.byKey(const ValueKey('adminPromotionCard-promo-2'));
+    final first = tester.getRect(firstFinder);
+    final second = tester.getRect(secondFinder);
+
+    expect(second.left, greaterThan(first.left));
+    expect(second.top, first.top);
+    expect(first.width, lessThan(150));
+    expect(first.height, lessThan(180));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('cancel promotion success with refresh failure is neutral',
@@ -23,7 +60,16 @@ void main() {
 
     await _pumpScreen(tester, admin);
 
-    await tester.drag(find.byType(ListView), const Offset(0, -180));
+    final actions = find.byKey(
+      const ValueKey('adminPromotionActions-promo-1'),
+    );
+    await tester.scrollUntilVisible(
+      actions,
+      350,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(actions);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Отключить'));
     await tester.pumpAndSettle();
@@ -92,11 +138,25 @@ class _FakeAdminService extends AdminService {
                 'status': 'active',
                 'listingId': 'listing-1',
                 'listingTitle': 'Bike',
+                'listingPrice': 120000,
                 'userName': 'Seller',
                 'costBonus': 50,
                 'timeRemainingSeconds': 3600,
                 'impressionsCount': 10,
                 'clicksCount': 2,
+              },
+              <String, dynamic>{
+                'promotionId': 'promo-2',
+                'type': 'vip',
+                'status': 'expired',
+                'listingId': 'listing-2',
+                'listingTitle': 'Car',
+                'listingPrice': 2500000,
+                'userName': 'Owner',
+                'costBonus': 100,
+                'timeRemainingSeconds': 0,
+                'impressionsCount': 30,
+                'clicksCount': 5,
               },
             ],
     };
@@ -111,6 +171,10 @@ class _FakeAdminService extends AdminService {
       'activeBumpCount': 0,
       'activeVipCount': 0,
       'activeTurboCount': 0,
+      'totalBonusSpentToday': 150,
+      'totalBonusSpentThisMonth': 450,
+      'totalShowcaseImpressions': 40,
+      'totalShowcaseClicks': 7,
     };
   }
 

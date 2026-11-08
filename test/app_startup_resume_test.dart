@@ -294,6 +294,32 @@ void main() {
     expect(presence.recoverAfterResumeCalls, 1);
     expect(chats.handleResumeCalls, 1);
   });
+
+  testWidgets(
+      'admin realtime event refreshes attention globally and reconnect resubscribes',
+      (tester) async {
+    final auth = _FakeAuthService(
+      currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+    );
+    final admin = _FakeAdminService();
+    final socket = _FakeChatSocketService();
+
+    await tester.pumpWidget(
+      _buildTestApp(auth: auth, admin: admin, socket: socket),
+    );
+    await tester.pump();
+    final initialRefreshes = admin.refreshCalls;
+
+    socket.emitAdminDashboardChanged(<String>['listings']);
+    socket.emitAdminDashboardChanged(<String>['listings']);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(admin.refreshCalls, initialRefreshes + 1);
+
+    final initialSubscriptions = socket.subscriptionCalls;
+    socket.emitConnected();
+    await tester.pump();
+    expect(socket.subscriptionCalls, initialSubscriptions + 1);
+  });
 }
 
 Widget _buildTestApp({
@@ -304,6 +330,7 @@ Widget _buildTestApp({
   _FakeNotificationsService? notifications,
   _FakeAdminService? admin,
   _FakePresenceService? presence,
+  ChatSocketService? socket,
   NavigatorObserver? navigatorObserver,
 }) {
   return MultiProvider(
@@ -321,7 +348,7 @@ Widget _buildTestApp({
       ),
       Provider<ProfileService>.value(value: ProfileService()),
       Provider<WalletService>.value(value: _FakeWalletService()),
-      Provider<ChatSocketService>.value(value: ChatSocketService()),
+      Provider<ChatSocketService>.value(value: socket ?? ChatSocketService()),
       Provider<ChatService>.value(value: chats ?? _FakeChatService()),
       Provider<ReviewsService>.value(value: ReviewsService()),
       Provider<SupportService>.value(value: _FakeSupportService()),
@@ -532,6 +559,34 @@ class _FakeAdminService extends AdminService {
   Future<void> refreshAdminAttention({bool force = false}) async {
     refreshCalls += 1;
   }
+}
+
+class _FakeChatSocketService extends ChatSocketService {
+  final StreamController<ChatSocketEvent> _events =
+      StreamController<ChatSocketEvent>.broadcast();
+  final StreamController<bool> _connections =
+      StreamController<bool>.broadcast();
+  int subscriptionCalls = 0;
+
+  @override
+  Stream<ChatSocketEvent> get events => _events.stream;
+
+  @override
+  Stream<bool> get connectionChanges => _connections.stream;
+
+  @override
+  void ensureAdminDashboardSubscription() {
+    subscriptionCalls += 1;
+  }
+
+  void emitAdminDashboardChanged(List<String> scopes) {
+    _events.add(ChatSocketEvent(
+      'admin.dashboard.changed',
+      <String, dynamic>{'scopes': scopes},
+    ));
+  }
+
+  void emitConnected() => _connections.add(true);
 }
 
 class _FakeSupportService extends SupportService {

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
-void downloadRaffleCsv(Uint8List bytes, String fileName) {
+void downloadRaffleCsv(Uint8List bytes, String fileName,
+    {String mimeType = 'text/csv;charset=utf-8'}) {
   throw UnsupportedError('Web download is unavailable');
 }

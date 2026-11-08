@@ -202,6 +202,7 @@ function createService(overrides?: {
   queryRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
   executeRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
   findReviews?: (args?: Record<string, unknown>) => Promise<unknown[]>;
+  dashboardSignal?: { changed: (...scopes: string[]) => void };
 }) {
   const prisma = {
     user: {
@@ -352,6 +353,9 @@ function createService(overrides?: {
       expirePromotionsByTime: async () => undefined,
       enrichListing: () => ({}),
     } as never,
+    undefined,
+    undefined,
+    overrides?.dashboardSignal as never,
   );
 }
 
@@ -1611,6 +1615,8 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     owner: listingOwner(),
     photos: [listingPhoto()],
   };
+  const dashboardScopes: string[][] = [];
+  const adminPushes: Array<Record<string, unknown>> = [];
   const prisma = {
     listing: {
       findUnique: async () => savedListing,
@@ -1647,6 +1653,14 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     prisma as never,
     {} as never,
     {} as never,
+    undefined,
+    undefined,
+    { changed: (...scopes: string[]) => dashboardScopes.push(scopes) } as never,
+    {
+      createAdminEventNotifications: async (params: Record<string, unknown>) => {
+        adminPushes.push(params);
+      },
+    } as never,
   );
 
   const response = await service.update('listing-1', ownerUser, {
@@ -1673,6 +1687,13 @@ test('owner edit of approved listing sends it back to moderation', async () => {
     },
   ]);
   assert.equal(response.listing.status, 'pending');
+  assert.deepEqual(dashboardScopes, [['listings']]);
+  assert.equal(adminPushes.length, 1);
+  assert.equal(adminPushes[0]?.['eventKey']?.toString().startsWith('admin_moderation:listing-1:'), true);
+  assert.deepEqual(adminPushes[0]?.['payload'], {
+    actionType: 'admin_moderation_new',
+    listingId: 'listing-1',
+  });
 });
 
 test('update can add, change and clear OEM for auto parts listings', async () => {
@@ -1742,7 +1763,11 @@ test('update can add, change and clear OEM for auto parts listings', async () =>
 
 test('mark sold works through explicit archive endpoint', async () => {
   let updateArgs: Record<string, unknown> | undefined;
+  const dashboardScopes: string[][] = [];
   const service = createService({
+    dashboardSignal: {
+      changed: (...scopes) => dashboardScopes.push(scopes),
+    },
     findUnique: async () => ({
       id: 'listing-1',
       ownerId: ownerUser.userId,
@@ -1793,6 +1818,7 @@ test('mark sold works through explicit archive endpoint', async () => {
     (updateArgs?.data as Record<string, unknown>).status,
     ListingStatus.SOLD,
   );
+  assert.deepEqual(dashboardScopes, [['listings']]);
 });
 
 test('archive without sale works through explicit archive endpoint', async () => {
@@ -1922,7 +1948,11 @@ test('owner archive remains forbidden for sold and deleted listings', async () =
 
 test('create uses owner phone when dto phone is empty', async () => {
   let createArgs: Record<string, unknown> | undefined;
+  const dashboardScopes: string[][] = [];
   const service = createService({
+    dashboardSignal: {
+      changed: (...scopes) => dashboardScopes.push(scopes),
+    },
     create: async (args) => {
       createArgs = args;
       return {
@@ -1996,6 +2026,7 @@ test('create uses owner phone when dto phone is empty', async () => {
 
   assert.equal((createArgs?.data as Record<string, unknown>).phone, '79281234567');
   assert.equal(response.listing.phone, '79281234567');
+  assert.deepEqual(dashboardScopes, [['listings']]);
 });
 
 test('create stores optional clothes size only for clothes listings', async () => {
@@ -3810,6 +3841,8 @@ test('valid old create plus later photo upload remains pending-compatible', asyn
     subcategory: 'Легковые автомобили',
     status: ListingStatus.PENDING,
     publishedAt: null,
+    phone: '+79990000000',
+    city: 'Грозный',
     photos: [],
     owner: listingOwner(),
   };
@@ -3845,6 +3878,8 @@ test('valid old create plus later photo upload remains pending-compatible', asyn
     $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
       handler(prisma),
   };
+  const dashboardScopes: string[][] = [];
+  const adminPushes: Array<Record<string, unknown>> = [];
   const service = new ListingsService(
     prisma as never,
     {
@@ -3857,6 +3892,14 @@ test('valid old create plus later photo upload remains pending-compatible', asyn
       }),
     } as never,
     {} as never,
+    undefined,
+    undefined,
+    { changed: (...scopes: string[]) => dashboardScopes.push(scopes) } as never,
+    {
+      createAdminEventNotifications: async (params: Record<string, unknown>) => {
+        adminPushes.push(params);
+      },
+    } as never,
   );
 
   const response = await service.uploadPhoto(
@@ -3871,6 +3914,8 @@ test('valid old create plus later photo upload remains pending-compatible', asyn
 
   assert.equal(response.listing.status, 'pending');
   assert.equal(response.listing.photo_urls.length, 1);
+  assert.deepEqual(dashboardScopes, [['listings']]);
+  assert.equal(adminPushes.length, 1);
 });
 
 function createPendingPatchService(initial: Record<string, any>) {

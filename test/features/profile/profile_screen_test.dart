@@ -111,7 +111,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
   });
 
-  testWidgets('member since is immediate after cold start and scoped to account',
+  testWidgets(
+      'member since is immediate after cold start and scoped to account',
       (tester) async {
     Widget account(String uid, DateTime createdAt) => _wrapProfile(
           walletService: _ProfileWalletSuccessService(),

@@ -11,6 +11,7 @@ type FcmPush = {
   notification: Record<string, unknown>;
   recipientId: string;
   actionType: string;
+  supportsDataOnly?: boolean;
 };
 
 export type FcmSendResult = {
@@ -26,6 +27,36 @@ type ServiceAccount = {
   private_key: string;
   token_uri?: string;
 };
+
+export function buildAndroidFcmMessage(push: FcmPush) {
+  const legacyNotification = push.supportsDataOnly === true
+    ? {}
+    : {
+        notification: { title: push.title, body: push.body },
+      };
+  return {
+    message: {
+      token: push.token.trim(),
+      // Only clients which explicitly advertise the native data-only handler
+      // receive data-only messages. Unknown/old clients keep the system
+      // notification payload so background delivery remains visible.
+      ...legacyNotification,
+      data: {
+        notification: JSON.stringify(push.notification),
+        recipientId: push.recipientId,
+        actionType: push.actionType,
+        title: push.title,
+        body: push.body,
+      },
+      android: {
+        priority: 'HIGH',
+        ...(push.supportsDataOnly === true
+          ? {}
+          : { notification: { channel_id: 'atta_messages', sound: 'default' } }),
+      },
+    },
+  };
+}
 
 @Injectable()
 export class FcmService {
@@ -48,26 +79,7 @@ export class FcmService {
             authorization: `Bearer ${accessToken}`,
             'content-type': 'application/json',
           },
-          body: JSON.stringify({
-            message: {
-              token,
-              notification: { title: push.title, body: push.body },
-              data: {
-                notification: JSON.stringify(push.notification),
-                recipientId: push.recipientId,
-                actionType: push.actionType,
-                title: push.title,
-                body: push.body,
-              },
-              android: {
-                priority: 'HIGH',
-                notification: {
-                  channel_id: 'atta_messages',
-                  sound: 'default',
-                },
-              },
-            },
-          }),
+          body: JSON.stringify(buildAndroidFcmMessage({ ...push, token })),
         },
       );
       if (response.ok) return { sent: true, status: response.status };

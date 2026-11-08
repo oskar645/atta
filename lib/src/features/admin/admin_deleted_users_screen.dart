@@ -85,8 +85,9 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
     final cursor = _cursor;
     setState(() => _loadingMore = true);
     try {
-      final result = await context.read<AdminService>().deletedUsers(
-            period: period, limit: 100, cursor: cursor);
+      final result = await context
+          .read<AdminService>()
+          .deletedUsers(period: period, limit: 100, cursor: cursor);
       if (!mounted || generation != _generation) return;
       setState(() {
         items.addAll((result['items'] as List? ?? const [])
@@ -97,7 +98,9 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
         _loadingMore = false;
       });
     } catch (_) {
-      if (mounted && generation == _generation) setState(() => _loadingMore = false);
+      if (mounted && generation == _generation) {
+        setState(() => _loadingMore = false);
+      }
     }
   }
 
@@ -147,12 +150,14 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
                               child: ListView.separated(
                                 controller: _scroll,
                                 padding: const EdgeInsets.all(12),
-                                itemCount: items.length + (_loadingMore ? 1 : 0),
+                                itemCount:
+                                    items.length + (_loadingMore ? 1 : 0),
                                 separatorBuilder: (_, __) =>
                                     const Divider(height: 1),
                                 itemBuilder: (context, index) {
                                   if (index == items.length) {
-                                    return const Center(child: CircularProgressIndicator());
+                                    return const Center(
+                                        child: CircularProgressIndicator());
                                   }
                                   final item = items[index];
                                   return ListTile(

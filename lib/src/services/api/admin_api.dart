@@ -15,6 +15,31 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> dashboardMetrics(Set<String> scopes) async {
+    final response = await client.get(
+      '/admin/dashboard/metrics',
+      authorized: true,
+      queryParameters: {'scopes': scopes.join(',')},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> appDownloads() async {
+    final response = await client.get(
+      '/admin/dashboard/app-downloads',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> serverStatus() async {
+    final response = await client.get(
+      '/admin/server-status',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> zeroResultSearches(
       {String period = 'month',
       String search = '',
@@ -84,12 +109,18 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
-  Future<Map<String, dynamic>> userRegistrationStats({int? year}) async {
+  Future<Map<String, dynamic>> userRegistrationStats({
+    int? year,
+    String? from,
+    String? to,
+  }) async {
     final response = await client.get(
       '/admin/users/registration-stats',
       authorized: true,
       queryParameters: {
         if (year != null) 'year': '$year',
+        if (from != null) 'from': from,
+        if (to != null) 'to': to,
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -410,12 +441,16 @@ class AdminApi {
 
   Future<Map<String, dynamic>> bonusAnalytics({
     String? period,
+    String? from,
+    String? to,
   }) async {
     final response = await client.get(
       '/admin/analytics/bonuses',
       authorized: true,
       queryParameters: {
         if (period != null && period.trim().isNotEmpty) 'period': period.trim(),
+        if (from != null && from.trim().isNotEmpty) 'from': from.trim(),
+        if (to != null && to.trim().isNotEmpty) 'to': to.trim(),
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -449,6 +484,142 @@ class AdminApi {
             if (cursor != null) 'cursor': cursor
           }) as Map);
 
+  Future<Map<String, dynamic>> raffleTickets(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          int limit = 50,
+          String? cursor,
+          String? search}) async =>
+      Map<String, dynamic>.from(await client
+          .get('/admin/raffle/tickets', authorized: true, queryParameters: {
+        'from': from,
+        'to': to,
+        'ticketPrice': ticketPrice,
+        'limit': '$limit',
+        if (cursor != null) 'cursor': cursor,
+        if ((search ?? '').trim().isNotEmpty) 'search': search!.trim(),
+      }) as Map);
+
+  Future<Map<String, dynamic>> freezeRaffle({
+    required String from,
+    required String to,
+    required String ticketPrice,
+  }) async =>
+      Map<String, dynamic>.from(await client.post(
+        '/admin/raffle/freeze',
+        authorized: true,
+        body: {'from': from, 'to': to, 'ticketPrice': ticketPrice},
+      ) as Map);
+
+  Future<Map<String, dynamic>> raffleSnapshotParticipants({
+    required String snapshotId,
+    int limit = 30,
+    String? cursor,
+  }) async =>
+      Map<String, dynamic>.from(await client.get(
+        '/admin/raffle/participants',
+        authorized: true,
+        queryParameters: {
+          'snapshotId': snapshotId,
+          'limit': '$limit',
+          if (cursor != null) 'cursor': cursor,
+        },
+      ) as Map);
+
+  Future<Map<String, dynamic>> raffleSnapshotTickets({
+    required String snapshotId,
+    int limit = 50,
+    String? cursor,
+    String? search,
+  }) async =>
+      Map<String, dynamic>.from(await client.get(
+        '/admin/raffle/tickets',
+        authorized: true,
+        queryParameters: {
+          'snapshotId': snapshotId,
+          'limit': '$limit',
+          if (cursor != null) 'cursor': cursor,
+          if ((search ?? '').trim().isNotEmpty) 'search': search!.trim(),
+        },
+      ) as Map);
+
+  Future<String> raffleSnapshotExportToFile({
+    required String snapshotId,
+    required String format,
+  }) =>
+      client.downloadAuthorizedFile(
+        '/admin/raffle/export',
+        fileName: 'raffle-$format.csv',
+        queryParameters: {'snapshotId': snapshotId, 'format': format},
+      );
+
+  Future<Uint8List> raffleSnapshotExport({
+    required String snapshotId,
+    required String format,
+  }) =>
+      client.getAuthorizedBytes(
+        '/admin/raffle/export',
+        queryParameters: {'snapshotId': snapshotId, 'format': format},
+      );
+
+  Future<String> raffleSnapshotPrintPdfToFile({required String snapshotId}) =>
+      client.downloadAuthorizedFile(
+        '/admin/raffle/print.pdf',
+        fileName: 'raffle-tickets.pdf',
+        queryParameters: {'snapshotId': snapshotId},
+      );
+
+  Future<Uint8List> raffleSnapshotPrintPdf({required String snapshotId}) =>
+      client.getAuthorizedBytes(
+        '/admin/raffle/print.pdf',
+        queryParameters: {'snapshotId': snapshotId},
+      );
+
+  Future<Uint8List> rafflePrintPdfRange({
+    required String from,
+    required String to,
+    required String ticketPrice,
+    required String fromTicket,
+    required String toTicket,
+    String? snapshotId,
+  }) =>
+      client.getAuthorizedBytes('/admin/raffle/print.pdf', queryParameters: {
+        if (snapshotId != null)
+          'snapshotId': snapshotId
+        else ...{
+          'from': from,
+          'to': to,
+          'ticketPrice': ticketPrice,
+        },
+        'fromTicket': fromTicket,
+        'toTicket': toTicket,
+      });
+
+  Future<String> rafflePrintPdfRangeToFile({
+    required String from,
+    required String to,
+    required String ticketPrice,
+    required String fromTicket,
+    required String toTicket,
+    String? snapshotId,
+  }) =>
+      client.downloadAuthorizedFile(
+        '/admin/raffle/print.pdf',
+        fileName: 'raffle-tickets-$fromTicket-$toTicket.pdf',
+        queryParameters: {
+          if (snapshotId != null)
+            'snapshotId': snapshotId
+          else ...{
+            'from': from,
+            'to': to,
+            'ticketPrice': ticketPrice,
+          },
+          'fromTicket': fromTicket,
+          'toTicket': toTicket,
+        },
+      );
+
   Future<Uint8List> raffleExport(
           {required String from,
           required String to,
@@ -473,6 +644,28 @@ class AdminApi {
             'to': to,
             'ticketPrice': ticketPrice,
             'format': format
+          });
+
+  Future<Uint8List> rafflePrintPdf(
+          {required String from,
+          required String to,
+          required String ticketPrice}) =>
+      client.getAuthorizedBytes('/admin/raffle/print.pdf', queryParameters: {
+        'from': from,
+        'to': to,
+        'ticketPrice': ticketPrice,
+      });
+
+  Future<String> rafflePrintPdfToFile(
+          {required String from,
+          required String to,
+          required String ticketPrice}) =>
+      client.downloadAuthorizedFile('/admin/raffle/print.pdf',
+          fileName: 'raffle-tickets.pdf',
+          queryParameters: {
+            'from': from,
+            'to': to,
+            'ticketPrice': ticketPrice,
           });
 
   Future<Map<String, dynamic>> pointsPurchasesSummary({

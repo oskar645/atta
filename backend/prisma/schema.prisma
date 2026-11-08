@@ -217,6 +217,7 @@ model User {
   dailyVisits             AppDailyVisit[]
   platformActivity        AnalyticsPlatformActivity[]
   notifications           UserNotification[]
+  adminPushDeliveries     AdminPushDelivery[]
   reportsFiled            Report[]                    @relation("ReportReporter")
   reportsOwned            Report[]                    @relation("ReportOwner")
   reportsHandled          Report[]                    @relation("ReportHandledBy")
@@ -232,6 +233,7 @@ model User {
   promotions              Promotion[]
   listingRaiseCampaigns   ListingRaiseCampaign[]
   payments                Payment[]
+  raffleSnapshotsCreated  RaffleSnapshot[]            @relation("RaffleSnapshotCreatedBy")
   blocks                  UserBlock[]                 @relation("UserBlocks")
   blocksIssued            UserBlock[]                 @relation("UserBlocksIssued")
   blocksLifted            UserBlock[]                 @relation("UserBlocksLifted")
@@ -418,6 +420,7 @@ model UserDevice {
   sessionId   String?        @map("session_id") @db.Uuid
   appVersion  String?        @map("app_version")
   buildNumber String?        @map("build_number")
+  supportsAndroidDataOnlyPush Boolean? @map("supports_android_data_only_push")
   locale      String?
   isActive    Boolean        @default(true) @map("is_active")
   lastSeenAt  DateTime       @default(now()) @map("last_seen_at")
@@ -426,6 +429,7 @@ model UserDevice {
   user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   session UserSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  adminPushDeliveries AdminPushDelivery[]
 
   @@index([userId, isActive])
   @@map("user_devices")
@@ -805,10 +809,34 @@ model UserNotification {
   isRead    Boolean           @default(false) @map("is_read")
   createdAt DateTime          @default(now()) @map("created_at")
   user      User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adminPushDeliveries AdminPushDelivery[]
 
   @@index([userId, isRead, createdAt])
   @@index([scope, createdAt])
   @@map("user_notifications")
+}
+
+model AdminPushDelivery {
+  id             String           @id @default(uuid()) @db.Uuid
+  notificationId String           @map("notification_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  deviceId       String           @map("device_id") @db.Uuid
+  status         String           @default("pending")
+  attempts       Int              @default(0)
+  nextAttemptAt  DateTime         @default(now()) @map("next_attempt_at")
+  lockedUntil    DateTime?        @map("locked_until")
+  lastError      String?          @map("last_error")
+  deliveredAt    DateTime?        @map("delivered_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  notification   UserNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device         UserDevice       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, deviceId])
+  @@index([status, nextAttemptAt, lockedUntil])
+  @@index([userId, createdAt])
+  @@map("admin_push_deliveries")
 }
 
 model Report {
@@ -853,6 +881,7 @@ model SupportTicket {
   unreadForUser   Boolean               @default(false) @map("unread_for_user")
   userBlockId     String?               @map("user_block_id") @db.Uuid
   isBlockAppeal   Boolean               @default(false) @map("is_block_appeal")
+  createIdempotencyKey String?          @unique @map("create_idempotency_key")
   createdAt       DateTime              @default(now()) @map("created_at")
   updatedAt       DateTime              @updatedAt @map("updated_at")
   user            User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -875,12 +904,30 @@ model SupportMessage {
   senderUserId   String?           @map("sender_user_id") @db.Uuid
   text           String
   idempotencyKey String?           @unique @map("idempotency_key")
+  readAt         DateTime?         @map("read_at")
+  editedAt       DateTime?         @map("edited_at")
+  editedByUserId String?           @map("edited_by_user_id") @db.Uuid
+  deletedAt      DateTime?         @map("deleted_at")
+  deletedByUserId String?          @map("deleted_by_user_id") @db.Uuid
   createdAt      DateTime          @default(now()) @map("created_at")
   ticket         SupportTicket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   senderUser     User?             @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+  revisions      SupportMessageRevision[]
 
   @@index([ticketId, createdAt])
   @@map("support_messages")
+}
+
+model SupportMessageRevision {
+  id           String         @id @default(uuid()) @db.Uuid
+  messageId    String         @map("message_id") @db.Uuid
+  editorUserId String         @map("editor_user_id") @db.Uuid
+  previousText String         @map("previous_text")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  message      SupportMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, createdAt])
+  @@map("support_message_revisions")
 }
 
 model FeedAd {
@@ -974,6 +1021,7 @@ model WalletTransaction {
 
   @@index([userId])
   @@index([walletId])
+  @@index([type, reason, createdAt])
   @@map("wallet_transactions")
 }
 
@@ -984,6 +1032,8 @@ model Payment {
   providerPaymentId String?         @unique @map("provider_payment_id")
   idempotencyKey    String          @unique @map("idempotency_key")
   amountRub         Decimal         @map("amount_rub") @db.Decimal(12, 2)
+  refundedAmountRub Decimal         @default(0) @map("refunded_amount_rub") @db.Decimal(12, 2)
+  isTest            Boolean         @default(false) @map("is_test")
   pointsAmount      Int             @map("points_amount")
   currency          String          @default("RUB")
   status            PaymentStatus   @default(PENDING)
@@ -999,6 +1049,44 @@ model Payment {
   @@index([provider, status, creditedAt])
   @@index([providerPaymentId, status])
   @@map("payments")
+}
+
+model RaffleSnapshot {
+  id                String                      @id @default(uuid()) @db.Uuid
+  from              DateTime                    @db.Timestamptz(3)
+  to                DateTime                    @db.Timestamptz(3)
+  ticketPriceRub    Decimal                     @map("ticket_price_rub") @db.Decimal(12, 2)
+  participantsCount Int                         @map("participants_count")
+  ticketsCount      BigInt                      @map("tickets_count")
+  amountRub         Decimal                     @map("amount_rub") @db.Decimal(18, 2)
+  fingerprint       String                      @unique
+  createdById       String                      @map("created_by_id") @db.Uuid
+  createdAt         DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdBy         User                        @relation("RaffleSnapshotCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  participants      RaffleSnapshotParticipant[]
+
+  @@index([createdAt])
+  @@map("raffle_snapshots")
+}
+
+model RaffleSnapshotParticipant {
+  id            String         @id @default(uuid()) @db.Uuid
+  snapshotId    String         @map("snapshot_id") @db.Uuid
+  userId        String         @map("user_id") @db.Uuid
+  name          String
+  phone         String
+  totalRub      Decimal        @map("total_rub") @db.Decimal(18, 2)
+  tickets       BigInt
+  remainderRub  Decimal        @map("remainder_rub") @db.Decimal(18, 2)
+  firstAt       DateTime       @map("first_at") @db.Timestamptz(3)
+  lastAt        DateTime       @map("last_at") @db.Timestamptz(3)
+  firstTicket   BigInt         @map("first_ticket")
+  lastTicket    BigInt         @map("last_ticket")
+  snapshot      RaffleSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, userId])
+  @@index([snapshotId, firstTicket, lastTicket])
+  @@map("raffle_snapshot_participants")
 }
 
 model Referral {
@@ -1144,4 +1232,20 @@ model AnalyticsListingOpen {
 
   @@index([registered, openedAt])
   @@map("analytics_listing_opens")
+}
+
+// Durable normalized cache of official App Store / Google Play daily reports.
+model AppDownloadDailyStat {
+  id             String   @id @default(uuid()) @db.Uuid
+  platform       String
+  reportDate     DateTime @map("report_date") @db.Date
+  downloads      Int
+  sourceMetric   String   @map("source_metric")
+  sourceTimeZone String   @map("source_time_zone")
+  lastSyncedAt   DateTime @map("last_synced_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([platform, reportDate])
+  @@map("app_download_daily_stats")
 }

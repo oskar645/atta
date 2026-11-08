@@ -6,6 +6,7 @@ import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/support_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:flutter/foundation.dart';
@@ -15,14 +16,23 @@ import 'package:uuid/uuid.dart';
 class SupportService {
   SupportService({
     SupportApi? api,
+    ChatSocketService? socketService,
     Duration messagePollInterval = const Duration(seconds: 45),
     Duration adminPollInterval = const Duration(seconds: 45),
   })  : _api = api ?? SupportApi(_apiClient),
+        _socketService = socketService,
         _messagePollInterval = messagePollInterval,
-        _adminPollInterval = adminPollInterval;
+        _adminPollInterval = adminPollInterval {
+    _socketSub = _socketService?.events.listen(_handleSocketEvent);
+    _connectionSub =
+        _socketService?.connectionChanges.listen(_handleConnectionChange);
+  }
 
   final Uuid _uuid = const Uuid();
   final SupportApi _api;
+  final ChatSocketService? _socketService;
+  StreamSubscription<ChatSocketEvent>? _socketSub;
+  StreamSubscription<bool>? _connectionSub;
   final Duration _messagePollInterval;
   final Duration _adminPollInterval;
   final Map<String, List<Map<String, dynamic>>> _messageCache =
@@ -36,6 +46,7 @@ class SupportService {
   final Map<String, Future<List<Map<String, dynamic>>>>
       _messageRefreshInFlight = <String, Future<List<Map<String, dynamic>>>>{};
   final Set<String> _missingTicketIds = <String>{};
+  final Set<String> _readReceiptsInFlight = <String>{};
   List<Map<String, dynamic>> _adminTicketsCache =
       const <Map<String, dynamic>>[];
   StreamController<List<Map<String, dynamic>>>? _adminTicketsController;
@@ -46,6 +57,8 @@ class SupportService {
   DateTime? _lastAdminTicketsRefreshAt;
   String? _adminTicketsNextCursor;
   bool _adminTicketsHasMore = true;
+  int _sessionGeneration = 0;
+  String? _activeUserUid;
 
   static final TokenStorage _tokenStorage = TokenStorage();
   static final ApiClient _apiClient = ApiClient(tokenStorage: _tokenStorage);
@@ -55,6 +68,15 @@ class SupportService {
   Map<String, String> _hiddenAdminTickets = <String, String>{};
   String? _hiddenAdminTicketsOwnerUid;
 
+  void activateUserSession(String uid) {
+    final normalized = uid.trim();
+    if (normalized.isEmpty) return;
+    if (_activeUserUid != normalized) {
+      resetSession();
+      _activeUserUid = normalized;
+    }
+  }
+
   void activateAdminSession({required bool isAdmin}) {
     _adminSessionActive = isAdmin;
     if (!isAdmin) {
@@ -63,6 +85,8 @@ class SupportService {
   }
 
   void resetSession() {
+    _sessionGeneration++;
+    _activeUserUid = null;
     for (final poller in _messagePollers.values) {
       poller.cancel();
     }
@@ -71,12 +95,62 @@ class SupportService {
     _ticketUsesAdminEndpoint.clear();
     _messageCache.clear();
     _missingTicketIds.clear();
+    _readReceiptsInFlight.clear();
+    _messageRefreshInFlight.clear();
     _adminTicketsPoller?.cancel();
     _adminTicketsPoller = null;
     _resetAdminState();
     _adminSessionActive = false;
     _hiddenAdminTickets = <String, String>{};
     _hiddenAdminTicketsOwnerUid = null;
+  }
+
+  Future<void> dispose() async {
+    await _socketSub?.cancel();
+    await _connectionSub?.cancel();
+    resetSession();
+    for (final controller in _messageControllers.values) {
+      await controller.close();
+    }
+    await _adminTicketsController?.close();
+  }
+
+  void _handleSocketEvent(ChatSocketEvent event) {
+    if (event.name != 'support.changed') return;
+    final ticketId = (event.payload['ticketId'] ?? '').toString().trim();
+    if (ticketId.isEmpty) return;
+    if (_messageCache.containsKey(ticketId) ||
+        (_messageListenerCounts[ticketId] ?? 0) > 0) {
+      unawaited(_refreshAfterRealtime(ticketId));
+    }
+    if (_adminSessionActive) {
+      unawaited(_refreshAdminTicketsAfterRealtime());
+    }
+  }
+
+  void _handleConnectionChange(bool connected) {
+    if (!connected) return;
+    for (final ticketId in _messageListenerCounts.keys.toList()) {
+      unawaited(_refreshAfterRealtime(ticketId));
+    }
+    if (_adminSessionActive) {
+      unawaited(_refreshAdminTicketsAfterRealtime());
+    }
+  }
+
+  Future<void> _refreshAfterRealtime(String ticketId) async {
+    try {
+      await _refreshMessages(
+        ticketId,
+        useAdminEndpoint: _ticketUsesAdminEndpoint[ticketId] == true,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _refreshAdminTicketsAfterRealtime() async {
+    try {
+      await refreshAdminTickets(force: true);
+    } catch (_) {}
   }
 
   List<Map<String, dynamic>> peekMessages(String ticketId) {
@@ -114,7 +188,9 @@ class SupportService {
     required String name,
     required String text,
     File? imageFile,
+    String? operationId,
   }) async {
+    final generation = _sessionGeneration;
     _debugSource('Support source: Timeweb');
     final optimisticImageUrl =
         imageFile == null ? '' : 'file://${imageFile.path}';
@@ -123,11 +199,13 @@ class SupportService {
       name: name,
       text: text,
       imageUrl: uploadedImageUrl.isEmpty ? null : uploadedImageUrl,
+      idempotencyKey:
+          (operationId ?? '').trim().isEmpty ? _uuid.v4() : operationId!.trim(),
     );
     final rawTicket = response['ticket'];
     final ticketId =
         (rawTicket is Map ? rawTicket['id'] : null)?.toString() ?? '';
-    if (ticketId.isNotEmpty) {
+    if (ticketId.isNotEmpty && generation == _sessionGeneration) {
       final items = _extractItems(response);
       final seeded = items.isNotEmpty
           ? items
@@ -147,12 +225,13 @@ class SupportService {
   Future<String> createBlockAppeal({
     required String text,
   }) async {
+    final generation = _sessionGeneration;
     _debugSource('Support source: Timeweb block appeal');
     final response = await _api.createBlockAppeal(text: text);
     final rawTicket = response['ticket'];
     final ticketId =
         (rawTicket is Map ? rawTicket['id'] : null)?.toString() ?? '';
-    if (ticketId.isNotEmpty) {
+    if (ticketId.isNotEmpty && generation == _sessionGeneration) {
       final items = _extractItems(response);
       if (items.isNotEmpty) {
         _publishMessages(ticketId, items);
@@ -166,10 +245,14 @@ class SupportService {
     required String text,
     File? imageFile,
     String? existingMessageId,
+    String? operationId,
   }) async {
+    final generation = _sessionGeneration;
     _debugSource('Support source: Timeweb');
     final localImageUrl = imageFile == null ? '' : 'file://${imageFile.path}';
     final localMessageId = (existingMessageId ?? '').trim();
+    final stableOperationId =
+        (operationId ?? '').trim().isEmpty ? _uuid.v4() : operationId!.trim();
     final optimistic = _buildOptimisticMessage(
       ticketId: ticketId,
       text: text,
@@ -177,6 +260,7 @@ class SupportService {
       imageUrl: localImageUrl,
       localImagePath: imageFile?.path,
       messageId: localMessageId.isEmpty ? null : localMessageId,
+      operationId: stableOperationId,
     );
     final currentMessages =
         _messageCache[ticketId] ?? const <Map<String, dynamic>>[];
@@ -202,7 +286,9 @@ class SupportService {
         ticketId: ticketId,
         text: text,
         imageUrl: uploadedImageUrl.isEmpty ? null : uploadedImageUrl,
+        idempotencyKey: stableOperationId,
       );
+      if (generation != _sessionGeneration) return;
       final item = response['item'];
       if (item is Map) {
         _publishMessages(
@@ -217,6 +303,7 @@ class SupportService {
         );
       }
     } catch (error) {
+      if (generation != _sessionGeneration) rethrow;
       _markMessageFailed(
         ticketId,
         optimistic['id'].toString(),
@@ -354,12 +441,17 @@ class SupportService {
   Future<void> adminReply({
     required String ticketId,
     required String text,
+    String? operationId,
   }) async {
+    final generation = _sessionGeneration;
     _debugSource('Support source: Timeweb');
+    final stableOperationId =
+        (operationId ?? '').trim().isEmpty ? _uuid.v4() : operationId!.trim();
     final optimistic = _buildOptimisticMessage(
       ticketId: ticketId,
       text: text,
       sender: 'admin',
+      operationId: stableOperationId,
     );
     _publishMessages(
       ticketId,
@@ -367,8 +459,12 @@ class SupportService {
           <Map<String, dynamic>>[optimistic]),
     );
     try {
-      final response =
-          await _api.adminSendMessage(ticketId: ticketId, text: text);
+      final response = await _api.adminSendMessage(
+        ticketId: ticketId,
+        text: text,
+        idempotencyKey: stableOperationId,
+      );
+      if (generation != _sessionGeneration) return;
       final item = response['item'];
       if (item is Map) {
         _publishMessages(
@@ -381,6 +477,7 @@ class SupportService {
         );
       }
     } catch (error) {
+      if (generation != _sessionGeneration) rethrow;
       _markMessageFailed(
         ticketId,
         optimistic['id'].toString(),
@@ -418,7 +515,11 @@ class SupportService {
           .toList(),
     );
     if (sender == 'admin') {
-      await adminReply(ticketId: ticketId, text: text);
+      await adminReply(
+        ticketId: ticketId,
+        text: text,
+        operationId: (target['client_operation_id'] ?? '').toString(),
+      );
       return;
     }
     await sendMessage(
@@ -426,11 +527,112 @@ class SupportService {
       text: text,
       imageFile: localImagePath.isEmpty ? null : File(localImagePath),
       existingMessageId: messageId,
+      operationId: (target['client_operation_id'] ?? '').toString(),
     );
   }
 
   Future<void> markReadByAdmin(String ticketId) async {
+    final generation = _sessionGeneration;
     _debugSource('Support source: Timeweb');
+    final normalizedTicketId = ticketId.trim();
+    if (normalizedTicketId.isEmpty || !await _canUseAdminEndpoints()) return;
+    final response = await _api.adminMarkRead(normalizedTicketId);
+    if (generation != _sessionGeneration) return;
+    final rawTicket = response['ticket'];
+    final updatedTicket = rawTicket is Map
+        ? rawTicket.map((key, value) => MapEntry(key.toString(), value))
+        : null;
+    _adminTicketsCache = _adminTicketsCache.map((item) {
+      if ((item['id'] ?? '').toString() != normalizedTicketId) return item;
+      return updatedTicket ??
+          <String, dynamic>{...item, 'unread_for_admin': false};
+    }).toList(growable: false);
+    _lastAdminTicketsRefreshAt = DateTime.now();
+    _adminTicketsControllerFor().add(
+      List<Map<String, dynamic>>.from(_adminTicketsCache),
+    );
+  }
+
+  Future<void> markAdminMessagesRead(
+    String ticketId,
+    List<Map<String, dynamic>> messages,
+  ) async {
+    final generation = _sessionGeneration;
+    for (final message in messages) {
+      if ((message['sender'] ?? '').toString() != 'admin' ||
+          (message['read_at'] ?? '').toString().trim().isNotEmpty ||
+          (message['deleted_at'] ?? '').toString().trim().isNotEmpty) {
+        continue;
+      }
+      final messageId = (message['id'] ?? '').toString().trim();
+      final receiptKey = '$ticketId:$messageId';
+      if (messageId.isEmpty || !_readReceiptsInFlight.add(receiptKey)) continue;
+      try {
+        final response = await _api.markMessageRead(
+          ticketId: ticketId,
+          messageId: messageId,
+        );
+        if (generation != _sessionGeneration) return;
+        final item = response['item'];
+        if (item is Map) {
+          _publishMessages(
+            ticketId,
+            _mergeMessages(
+              _messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+              <Map<String, dynamic>>[_normalizeMessageMap(item)],
+            ),
+          );
+        }
+      } catch (_) {
+        _readReceiptsInFlight.remove(receiptKey);
+      }
+    }
+  }
+
+  Future<void> editAdminMessage({
+    required String ticketId,
+    required String messageId,
+    required String text,
+  }) async {
+    final generation = _sessionGeneration;
+    final response = await _api.adminEditMessage(
+      ticketId: ticketId,
+      messageId: messageId,
+      text: text,
+    );
+    if (generation != _sessionGeneration) return;
+    final item = response['item'];
+    if (item is Map) {
+      _publishMessages(
+        ticketId,
+        _mergeMessages(
+          _messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+          <Map<String, dynamic>>[_normalizeMessageMap(item)],
+        ),
+      );
+    }
+  }
+
+  Future<void> deleteAdminMessage({
+    required String ticketId,
+    required String messageId,
+  }) async {
+    final generation = _sessionGeneration;
+    final response = await _api.adminDeleteMessage(
+      ticketId: ticketId,
+      messageId: messageId,
+    );
+    if (generation != _sessionGeneration) return;
+    final item = response['item'];
+    if (item is Map) {
+      _publishMessages(
+        ticketId,
+        _mergeMessages(
+          _messageCache[ticketId] ?? const <Map<String, dynamic>>[],
+          <Map<String, dynamic>>[_normalizeMessageMap(item)],
+        ),
+      );
+    }
   }
 
   Future<List<Map<String, dynamic>>> refreshMessages(String ticketId) async {
@@ -447,6 +649,7 @@ class SupportService {
     String ticketId, {
     required bool useAdminEndpoint,
   }) async {
+    final generation = _sessionGeneration;
     final normalizedTicketId = ticketId.trim();
     if (normalizedTicketId.isEmpty) return const <Map<String, dynamic>>[];
     if (_missingTicketIds.contains(normalizedTicketId)) {
@@ -465,6 +668,9 @@ class SupportService {
             ? await _api.adminTicket(normalizedTicketId)
             : await _api.getTicket(normalizedTicketId);
         final items = _extractItems(response);
+        if (generation != _sessionGeneration) {
+          return const <Map<String, dynamic>>[];
+        }
         _missingTicketIds.remove(normalizedTicketId);
         _ticketUsesAdminEndpoint[normalizedTicketId] = useAdminEndpoint;
         _publishMessages(
@@ -478,6 +684,9 @@ class SupportService {
           _messageCache[normalizedTicketId] ?? items,
         );
       } catch (error) {
+        if (generation != _sessionGeneration) {
+          return const <Map<String, dynamic>>[];
+        }
         if (error is ApiException && error.isNotFound) {
           _debugSource(
             'Support source: ticket $normalizedTicketId not found, stopping polling',
@@ -504,6 +713,7 @@ class SupportService {
   Future<List<Map<String, dynamic>>> refreshAdminTickets({
     bool force = false,
   }) async {
+    final generation = _sessionGeneration;
     if (!await _canUseAdminEndpoints()) {
       _resetAdminState();
       return const <Map<String, dynamic>>[];
@@ -521,6 +731,9 @@ class SupportService {
     final future = () async {
       final response = await _api.adminList(limit: 50);
       final items = await _filterHiddenAdminTickets(_extractItems(response));
+      if (generation != _sessionGeneration) {
+        return const <Map<String, dynamic>>[];
+      }
       _adminTicketsCache = List<Map<String, dynamic>>.from(items);
       _adminTicketsNextCursor =
           (response['nextCursor'] ?? response['next_cursor'])
@@ -557,6 +770,7 @@ class SupportService {
       _adminTicketsHasMore && _adminTicketsNextCursor != null;
 
   Future<List<Map<String, dynamic>>> loadMoreAdminTickets() async {
+    final generation = _sessionGeneration;
     final cursor = _adminTicketsNextCursor;
     if (!_adminTicketsHasMore || cursor == null) {
       return List<Map<String, dynamic>>.from(_adminTicketsCache);
@@ -566,6 +780,9 @@ class SupportService {
     final future = () async {
       final response = await _api.adminList(limit: 50, cursor: cursor);
       final incoming = await _filterHiddenAdminTickets(_extractItems(response));
+      if (generation != _sessionGeneration) {
+        return const <Map<String, dynamic>>[];
+      }
       final byId = <String, Map<String, dynamic>>{
         for (final item in _adminTicketsCache)
           (item['id'] ?? '').toString(): item,
@@ -797,6 +1014,7 @@ class SupportService {
     String imageUrl = '',
     String? localImagePath,
     String? messageId,
+    String? operationId,
   }) {
     return <String, dynamic>{
       'id': (messageId ?? '').trim().isNotEmpty
@@ -811,6 +1029,8 @@ class SupportService {
       'created_at': DateTime.now().toUtc().toIso8601String(),
       'is_local_only': true,
       'local_status': 'pending',
+      'client_operation_id':
+          (operationId ?? '').trim().isEmpty ? _uuid.v4() : operationId!.trim(),
     };
   }
 
@@ -937,31 +1157,25 @@ class SupportService {
     Set<String> removedIds = const <String>{},
   }) {
     final byId = <String, Map<String, dynamic>>{};
-    final signatureToId = <String, String>{};
+    final localIdByOperation = <String, String>{};
 
     void upsert(Map<String, dynamic> item) {
       final normalized = Map<String, dynamic>.from(item);
       final id = (normalized['id'] ?? '').toString();
       if (id.isEmpty || removedIds.contains(id)) return;
 
-      final signature = _messageSignature(normalized);
-      final existingIdForSignature = signatureToId[signature];
-      if (existingIdForSignature != null && existingIdForSignature != id) {
-        final existing = byId[existingIdForSignature];
-        if (existing != null) {
-          final merged = _preferSupportMessage(existing, normalized);
-          final mergedId = (merged['id'] ?? '').toString();
-          byId.remove(existingIdForSignature);
-          if (mergedId.isNotEmpty && !removedIds.contains(mergedId)) {
-            byId[mergedId] = merged;
-            signatureToId[signature] = mergedId;
-          }
-          return;
-        }
+      final operationId =
+          (normalized['client_operation_id'] ?? '').toString().trim();
+      if (normalized['is_local_only'] == true && operationId.isNotEmpty) {
+        localIdByOperation[operationId] = id;
+      } else if (operationId.isNotEmpty) {
+        final localId = localIdByOperation.remove(operationId);
+        if (localId != null && localId != id) byId.remove(localId);
       }
-
-      byId[id] = normalized;
-      signatureToId[signature] = id;
+      final existing = byId[id];
+      byId[id] = existing == null
+          ? normalized
+          : <String, dynamic>{...existing, ...normalized};
     }
 
     for (final item in current) {
@@ -977,56 +1191,12 @@ class SupportService {
             DateTime.fromMillisecondsSinceEpoch(0);
         final right = DateTime.tryParse((b['created_at'] ?? '').toString()) ??
             DateTime.fromMillisecondsSinceEpoch(0);
-        return right.compareTo(left);
+        final byTime = right.compareTo(left);
+        if (byTime != 0) return byTime;
+        return (b['id'] ?? '').toString().compareTo(
+              (a['id'] ?? '').toString(),
+            );
       });
     return merged;
-  }
-
-  String _messageSignature(Map<String, dynamic> item) {
-    final sender = (item['sender'] ?? '').toString().trim().toLowerCase();
-    final text = _pickMessageText(item);
-    final imageUrl = _pickImageUrl(item);
-    final createdAt = DateTime.tryParse(_pickCreatedAt(item))?.toUtc();
-    final normalizedCreatedAt = createdAt == null
-        ? ''
-        : DateTime.utc(
-            createdAt.year,
-            createdAt.month,
-            createdAt.day,
-            createdAt.hour,
-            createdAt.minute,
-            createdAt.second,
-          ).toIso8601String();
-    return [
-      sender,
-      text,
-      imageUrl.startsWith('file://') ? '' : imageUrl,
-      normalizedCreatedAt,
-    ].join('|');
-  }
-
-  Map<String, dynamic> _preferSupportMessage(
-    Map<String, dynamic> existing,
-    Map<String, dynamic> candidate,
-  ) {
-    final existingLocalOnly = existing['is_local_only'] == true;
-    final candidateLocalOnly = candidate['is_local_only'] == true;
-    if (existingLocalOnly && !candidateLocalOnly) {
-      return <String, dynamic>{...existing, ...candidate};
-    }
-    if (!existingLocalOnly && candidateLocalOnly) {
-      return <String, dynamic>{...candidate, ...existing};
-    }
-    final existingFailed =
-        (existing['local_status'] ?? '').toString() == 'failed';
-    final candidateFailed =
-        (candidate['local_status'] ?? '').toString() == 'failed';
-    if (existingFailed && !candidateFailed) {
-      return <String, dynamic>{...existing, ...candidate};
-    }
-    if (!existingFailed && candidateFailed) {
-      return <String, dynamic>{...candidate, ...existing};
-    }
-    return <String, dynamic>{...existing, ...candidate};
   }
 }

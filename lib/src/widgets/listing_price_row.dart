@@ -60,7 +60,7 @@ class ListingPriceRow extends StatelessWidget {
           const Icon(
             key: ValueKey('listing_price_down_arrow'),
             Icons.arrow_downward,
-            size: 9,
+            size: 15,
             weight: 800,
             opticalSize: 10,
             color: Colors.blue,

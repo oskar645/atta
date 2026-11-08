@@ -1,6 +1,5 @@
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
-import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -267,7 +266,7 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Продвижения')),
+      appBar: AppBar(title: const Text('Продвижение')),
       body: FutureBuilder<_AdminPromotionsData>(
         future: _future,
         builder: (context, snap) {
@@ -287,13 +286,18 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
             onRefresh: _refresh,
             child: ListView(
               controller: _scrollController,
-              padding: const EdgeInsets.all(12),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
               children: [
+                _PromotionOverview(summary: data.summary),
+                const SizedBox(height: 20),
                 Text(
-                  'Платежи пока не подключены. Сейчас учитываются только бонусы.',
-                  style: Theme.of(context).textTheme.bodyMedium,
+                  'Показать',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -329,6 +333,12 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                       onSelected: _setFilter,
                     ),
                     _AdminFilterChip(
+                      label: 'Турбо',
+                      value: 'turbo',
+                      current: _filter,
+                      onSelected: _setFilter,
+                    ),
+                    _AdminFilterChip(
                       label: 'Истёкшие',
                       value: 'expired',
                       current: _filter,
@@ -336,64 +346,45 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
+                const SizedBox(height: 22),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    _SummaryCard(
-                      title: 'Витрина',
-                      value: '${data.summary['activeShowcaseCount'] ?? 0}',
+                    Expanded(
+                      child: Text(
+                        'Покупки продвижения',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w900,
+                            ),
+                      ),
                     ),
-                    _SummaryCard(
-                      title: 'Поднятие',
-                      value: '${data.summary['activeBumpCount'] ?? 0}',
-                    ),
-                    _SummaryCard(
-                      title: 'VIP',
-                      value: '${data.summary['activeVipCount'] ?? 0}',
+                    Text(
+                      'Показано: ${data.items.length}',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                ...data.items.map(
-                  (item) => Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            (item['listingTitle'] ?? 'Объявление').toString(),
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'Тип: ${_promotionTypeLabel((item['type'] ?? '').toString())}',
-                          ),
-                          Text(
-                              'Пользователь: ${(item['userName'] ?? '').toString()}'),
-                          Text(
-                            'Цена: ${formatPrice((item['listingPrice'] as num?)?.toInt() ?? 0)} ₽',
-                          ),
-                          Text(
-                              'Бонусы: ${(item['costBonus'] ?? 0).toString()}'),
-                          Text('Осталось: ${_timeLeft(item)}'),
-                          Text(
-                              'Показы: ${(item['impressionsCount'] ?? 0).toString()}'),
-                          Text(
-                              'Клики: ${(item['clicksCount'] ?? 0).toString()}'),
-                          Text('Статус: ${(item['status'] ?? '').toString()}'),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              OutlinedButton(
-                                onPressed: () {
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    const gap = 8.0;
+                    final width = (constraints.maxWidth - gap) / 2;
+                    return Wrap(
+                      spacing: gap,
+                      runSpacing: gap,
+                      children: data.items
+                          .map(
+                            (item) => SizedBox(
+                              width: width,
+                              child: _PromotionPurchaseCard(
+                                key: ValueKey(
+                                  'adminPromotionCard-${item['promotionId']}',
+                                ),
+                                item: item,
+                                timeLeft: _timeLeft(item),
+                                onOpenListing: () {
                                   final listingId =
                                       (item['listingId'] ?? '').toString();
                                   if (listingId.isEmpty) return;
@@ -406,30 +397,32 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
                                     ),
                                   );
                                 },
-                                child: const Text('Открыть объявление'),
+                                onOpenUser: () => _showUserInfo(item),
+                                onCancel: (item['status'] ?? '').toString() ==
+                                        'active'
+                                    ? () => _cancelPromotion(
+                                          (item['promotionId'] ?? '')
+                                              .toString(),
+                                        )
+                                    : null,
                               ),
-                              OutlinedButton(
-                                onPressed: () => _showUserInfo(item),
-                                child: const Text('Открыть пользователя'),
-                              ),
-                              if ((item['status'] ?? '').toString() == 'active')
-                                FilledButton.tonal(
-                                  onPressed: () => _cancelPromotion(
-                                    (item['promotionId'] ?? '').toString(),
-                                  ),
-                                  child: const Text('Отключить'),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    );
+                  },
                 ),
                 if (data.items.isEmpty)
+                  _EmptyPromotionsView(filtered: _filter != 'all'),
+                if (_hasMore && !_loadingMore)
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Center(child: Text('Продвижений пока нет')),
+                    padding: EdgeInsets.only(top: 16),
+                    child: Center(
+                      child: Text(
+                        'Прокрутите ниже, чтобы загрузить ещё',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   ),
                 if (_loadingMore)
                   const Padding(
@@ -509,36 +502,501 @@ class _AdminFilterChip extends StatelessWidget {
   }
 }
 
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({
-    required this.title,
+class _PromotionOverview extends StatelessWidget {
+  const _PromotionOverview({required this.summary});
+
+  final Map<String, dynamic> summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final showcase = _intValue(summary['activeShowcaseCount']);
+    final bump = _intValue(summary['activeBumpCount']);
+    final vip = _intValue(summary['activeVipCount']);
+    final turbo = _intValue(summary['activeTurboCount']);
+    final activeTotal = showcase + bump + vip + turbo;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.primaryContainer.withValues(alpha: 0.48),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: colors.primary.withValues(alpha: 0.14),
+        ),
+      ),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: colors.primary,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.rocket_launch_rounded,
+                  color: colors.onPrimary,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Обзор продвижения',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w900,
+                          ),
+                    ),
+                    Text(
+                      'Сейчас активно: $activeTotal',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const gap = 10.0;
+              final width = (constraints.maxWidth - gap) / 2;
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  _OverviewMetric(
+                    width: width,
+                    label: 'Витрина',
+                    value: showcase,
+                    icon: Icons.storefront_outlined,
+                  ),
+                  _OverviewMetric(
+                    width: width,
+                    label: 'Поднятие',
+                    value: bump,
+                    icon: Icons.vertical_align_top_rounded,
+                  ),
+                  _OverviewMetric(
+                    width: width,
+                    label: 'VIP',
+                    value: vip,
+                    icon: Icons.workspace_premium_outlined,
+                  ),
+                  _OverviewMetric(
+                    width: width,
+                    label: 'Турбо',
+                    value: turbo,
+                    icon: Icons.bolt_rounded,
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 18,
+            runSpacing: 12,
+            children: [
+              _OverviewStat(
+                label: 'Списано сегодня',
+                value: '${_intValue(summary['totalBonusSpentToday'])} бонусов',
+              ),
+              _OverviewStat(
+                label: 'Списано за месяц',
+                value:
+                    '${_intValue(summary['totalBonusSpentThisMonth'])} бонусов',
+              ),
+              _OverviewStat(
+                label: 'Показы витрины',
+                value: '${_intValue(summary['totalShowcaseImpressions'])}',
+              ),
+              _OverviewStat(
+                label: 'Клики из витрины',
+                value: '${_intValue(summary['totalShowcaseClicks'])}',
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Покупки продвижения сейчас оплачиваются бонусами.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverviewMetric extends StatelessWidget {
+  const _OverviewMetric({
+    required this.width,
+    required this.label,
     required this.value,
+    required this.icon,
   });
 
-  final String title;
+  final double width;
+  final String label;
+  final int value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: colors.primary),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$value',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverviewStat extends StatelessWidget {
+  const _OverviewStat({required this.label, required this.value});
+
+  final String label;
   final String value;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 150,
-      child: Card(
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 132),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PromotionPurchaseCard extends StatelessWidget {
+  const _PromotionPurchaseCard({
+    super.key,
+    required this.item,
+    required this.timeLeft,
+    required this.onOpenListing,
+    required this.onOpenUser,
+    required this.onCancel,
+  });
+
+  final Map<String, dynamic> item;
+  final String timeLeft;
+  final VoidCallback onOpenListing;
+  final VoidCallback onOpenUser;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final type = (item['type'] ?? '').toString();
+    final status = (item['status'] ?? '').toString();
+    final active = status == 'active';
+
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: colors.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpenListing,
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title),
-              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: colors.secondaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                      _promotionTypeIcon(type),
+                      size: 17,
+                      color: colors.onSecondaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      (item['listingTitle'] ?? 'Объявление').toString(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13,
+                        height: 1.15,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: PopupMenuButton<String>(
+                      key: ValueKey(
+                        'adminPromotionActions-${item['promotionId']}',
+                      ),
+                      padding: EdgeInsets.zero,
+                      iconSize: 19,
+                      tooltip: 'Действия',
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'listing':
+                            onOpenListing();
+                            return;
+                          case 'user':
+                            onOpenUser();
+                            return;
+                          case 'cancel':
+                            onCancel?.call();
+                            return;
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'listing',
+                          child: Text('Открыть объявление'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'user',
+                          child: Text('Открыть пользователя'),
+                        ),
+                        if (onCancel != null)
+                          const PopupMenuItem(
+                            value: 'cancel',
+                            child: Text('Отключить'),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 5),
               Text(
-                value,
-                style: Theme.of(context).textTheme.headlineSmall,
+                (item['userName'] ?? 'Пользователь').toString(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _promotionTypeLabel(type),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: active ? colors.primary : colors.outline,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _promotionStatusLabel(status),
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: active ? colors.primary : colors.outline,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _CompactPromotionValue(
+                      icon: Icons.stars_rounded,
+                      value: '${_intValue(item['costBonus'])} б',
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: _CompactPromotionValue(
+                      icon: Icons.schedule_rounded,
+                      value: timeLeft,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
       ),
     );
+  }
+}
+
+class _CompactPromotionValue extends StatelessWidget {
+  const _CompactPromotionValue({required this.icon, required this.value});
+
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+      decoration: BoxDecoration(
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            size: 13,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyPromotionsView extends StatelessWidget {
+  const _EmptyPromotionsView({required this.filtered});
+
+  final bool filtered;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 36),
+      child: Column(
+        children: [
+          Icon(
+            Icons.rocket_launch_outlined,
+            size: 42,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            filtered
+                ? 'По этому фильтру покупок нет'
+                : 'Покупок продвижения пока нет',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+int _intValue(dynamic value) {
+  if (value is num) return value.toInt();
+  return int.tryParse((value ?? '').toString()) ?? 0;
+}
+
+IconData _promotionTypeIcon(String type) {
+  switch (type) {
+    case 'showcase':
+      return Icons.storefront_outlined;
+    case 'bump':
+      return Icons.vertical_align_top_rounded;
+    case 'vip':
+      return Icons.workspace_premium_outlined;
+    case 'turbo':
+      return Icons.bolt_rounded;
+    default:
+      return Icons.rocket_launch_outlined;
+  }
+}
+
+String _promotionStatusLabel(String status) {
+  switch (status) {
+    case 'active':
+      return 'Активно';
+    case 'expired':
+      return 'Завершено';
+    case 'cancelled':
+    case 'canceled':
+      return 'Отключено';
+    default:
+      return status.isEmpty ? '—' : status;
   }
 }
 

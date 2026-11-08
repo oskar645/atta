@@ -985,7 +985,8 @@ class BackendAuthService {
         ? null
         : DateTime.tryParse(emailVerifiedAtRaw);
     final createdAtRaw = pick(raw['createdAt']) ?? pick(raw['created_at']);
-    final createdAt = createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw);
+    final createdAt =
+        createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw);
 
     return AuthUser(
       uid: pick(raw['id']) ?? '',

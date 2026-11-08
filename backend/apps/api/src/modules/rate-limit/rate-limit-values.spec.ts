@@ -203,6 +203,7 @@ test('existing listing, chat, report, support, media and promotion limits are pr
       expected: { limit: 20, windowMs: 60 * 1000 },
       run: (rateLimit) =>
         new AdminSupportController({} as never, rateLimit as never).sendMessage(
+          authUser as never,
           'ticket-1',
           {} as never,
         ),

@@ -426,6 +426,221 @@ void main() {
         ]));
   });
 
+  test('first catalog brand LADA exposes complete legacy and current families',
+      () {
+    final models = autoModelsForBrand('LADA');
+    expect(kAutoBrandsPopular.first, 'LADA (ВАЗ)');
+    expect(
+        models,
+        containsAll(<String>[
+          '1111 Ока',
+          '2102',
+          '2103',
+          '2104',
+          '2105',
+          '2108',
+          '21099',
+          '2111',
+          '2113',
+          '2114',
+          '2115',
+          '2120 Надежда',
+          '2121 (4x4)',
+          '2131 (4x4)',
+          '2329',
+          'EL LADA',
+          'e-Largus',
+          'XRAY Cross',
+          'X-Cross 5',
+          'Azimut',
+        ]));
+    expect(models.toSet(), hasLength(models.length));
+    expect(models.last, kAutoCustomModelLabel);
+    expect(autoGenerationsForBrandModel('ВАЗ', 'Kalina'), <String>['I', 'II']);
+    expect(autoGenerationsForBrandModel('LADA', '2120 Надежда'),
+        <String>['I', 'I рестайлинг']);
+  });
+
+  test('mandatory vehicle brands are available without canonical duplicates',
+      () {
+    const mandatoryBrands = <String>[
+      'Audi',
+      'BMW',
+      'Changan',
+      'Chery',
+      'Chevrolet',
+      'Dodge',
+      'Ford',
+      'GAC',
+      'Geely',
+      'Hongqi',
+      'Hyundai',
+      'Jeep',
+      'Kia',
+      'Lexus',
+      'Li Auto',
+      'Mazda',
+      'Mercedes-Benz',
+      'Mitsubishi',
+      'Nissan',
+      'Opel',
+      'Toyota',
+      'Volkswagen',
+      'Volvo',
+      'Zeekr',
+      'LADA (ВАЗ)',
+      'ВИС',
+      'ГАЗ',
+      'УАЗ',
+    ];
+
+    expect(kAutoBrandsPopular, containsAll(mandatoryBrands));
+    expect(kAutoBrandsPopular.toSet(), hasLength(kAutoBrandsPopular.length));
+    expect(canonicalAutoBrand('LiXiang'), 'Li Auto');
+    expect(canonicalAutoBrand('ВАЗ'), 'LADA (ВАЗ)');
+  });
+
+  test('Toyota catalog keeps manual fallback and generations for every model',
+      () {
+    final models = autoModelsForBrand('Toyota');
+    expect(
+        models,
+        containsAll(<String>[
+          'Aqua',
+          'Avalon',
+          'Caldina',
+          'Celica',
+          'Corolla Fielder',
+          'Crown Majesta',
+          'Hilux Surf',
+          'Land Cruiser Cygnus',
+          'MR2',
+          'Prius PHV',
+          'Sequoia',
+          'Sienna',
+          'Sprinter Trueno',
+          'Wish',
+          'Yaris Cross',
+          'bZ4X',
+          '4Runner',
+          '2000GT',
+          'Mirai',
+          'SD',
+          'SF',
+          'Supra',
+          'Tacoma',
+          'Tundra',
+          'Vellfire',
+        ]));
+    expect(models.toSet(), hasLength(models.length));
+    expect(models.last, kAutoCustomModelLabel);
+    expect(models, contains('Camry Solara'));
+    expect(models, isNot(contains('Solara')),
+        reason: 'Solara must not duplicate existing Camry Solara');
+    for (final model in models.where((item) => item != kAutoCustomModelLabel)) {
+      expect(
+        autoGenerationsForBrandModel('Toyota', model),
+        isNotEmpty,
+        reason: 'Toyota $model must expose at least one generation',
+      );
+    }
+  });
+
+  test(
+      'VIS catalog exposes confirmed families without treating bodies as models',
+      () {
+    final models = autoModelsForBrand('ВИС');
+    expect(models, containsAll(<String>['1705', '2345', '2346', '2349']));
+    expect(models.toSet(), hasLength(models.length));
+    expect(models.last, kAutoCustomModelLabel);
+    expect(autoGenerationsForBrandModel('ВИС', '2346'),
+        <String>['I', 'I рестайлинг']);
+  });
+
+  test('broad catalog pass exposes confirmed popular model families', () {
+    final expected = <String, List<String>>{
+      'Audi': ['A1', 'Q4 e-tron', 'R8'],
+      'BMW': ['8 Series', 'i3', 'iX3'],
+      'Chevrolet': ['Corvette', 'Spark', 'Traverse'],
+      'Ford': ['Bronco', 'EcoSport', 'Tourneo Custom'],
+      'Honda': ['Integra', 'Legend', 'Prelude'],
+      'Hyundai': ['Getz', 'Ioniq 5', 'Kona'],
+      'Kia': ['EV6', 'Niro', 'Stinger'],
+      'Mazda': ['Demio', 'RX-7', 'CX-60'],
+      'Nissan': ['GT-R', 'Skyline', 'Terrano'],
+      'Opel': ['Kadett', 'Omega', 'Vivaro'],
+      'Volkswagen': ['Amarok', 'ID.4', 'Touran'],
+      'Volvo': ['C30', 'EX30', 'XC70'],
+      'ГАЗ': ['21 Волга', '3110 Волга', 'Volga Siber'],
+      'УАЗ': ['3151', '3162 Simbir', '469'],
+    };
+
+    for (final entry in expected.entries) {
+      final models = autoModelsForBrand(entry.key);
+      expect(models, containsAll(entry.value), reason: entry.key);
+      expect(models.toSet(), hasLength(models.length), reason: entry.key);
+      expect(models.last, kAutoCustomModelLabel, reason: entry.key);
+    }
+  });
+
+  test(
+      'previously generation-empty brands now expose generations for all models',
+      () {
+    const auditedBrands = <String>[
+      'Audi',
+      'BMW',
+      'Changan',
+      'Chery',
+      'Chevrolet',
+      'Citroen',
+      'Dodge',
+      'Exeed',
+      'Ford',
+      'GAC',
+      'Geely',
+      'Haval',
+      'Honda',
+      'Hongqi',
+      'Hyundai',
+      'Infiniti',
+      'Jeep',
+      'Jetour',
+      'Kia',
+      'Lexus',
+      'Li Auto',
+      'Mazda',
+      'Mercedes-Benz',
+      'Mitsubishi',
+      'Nissan',
+      'Omoda',
+      'Opel',
+      'Peugeot',
+      'Porsche',
+      'Renault',
+      'Skoda',
+      'Subaru',
+      'Suzuki',
+      'Tank',
+      'Volkswagen',
+      'Volvo',
+      'Zeekr',
+      'ГАЗ',
+      'УАЗ',
+    ];
+
+    for (final brand in auditedBrands) {
+      final models = autoModelsForBrand(brand)
+          .where((model) => model != kAutoCustomModelLabel);
+      for (final model in models) {
+        expect(
+          autoGenerationsForBrandModel(brand, model),
+          isNotEmpty,
+          reason: '$brand $model must expose at least one generation',
+        );
+      }
+    }
+  });
+
   test('expanded transport catalog exposes critical models and generations',
       () {
     expect(autoModelsForBrand('Changan'), contains('UNI-Z'));

@@ -59,3 +59,7 @@ backend/.env.*
 
 # Firebase server credentials (never commit private service-account keys)
 /backend/secrets/
+
+# Machine-local artifacts accidentally produced at the repository root
+/firepit-log.txt
+/package-lock.json

@@ -4,6 +4,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -21,6 +22,7 @@ import { compare, hash } from 'bcryptjs';
 import { randomBytes, randomUUID } from 'crypto';
 
 import { env } from '../../config/env';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
 import { resolveReferralUserId } from '../../common/referral-code';
 import { parseAdminPhoneNumbers } from '../../config/env';
@@ -69,6 +71,7 @@ export class AuthService {
     private readonly walletService: WalletService,
     private readonly userBlocksService: UserBlocksService,
     private readonly accountDeletion: AccountDeletionService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   async signup(payload: SignupDto) {
@@ -118,6 +121,7 @@ export class AuthService {
       };
     });
     await this.ensureWalletBootstrapSafely(user.id);
+    this.adminDashboardSignal?.changed('users', 'usage');
 
     return this.buildAuthResponse(user, session.auth);
   }
@@ -258,6 +262,7 @@ export class AuthService {
         session: createdSession,
       };
     });
+    this.adminDashboardSignal?.changed('users', 'usage');
 
     return this.buildAuthResponse(userWithAdmin, session.auth);
   }

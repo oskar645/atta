@@ -62,6 +62,13 @@ class NotificationNavigationService {
       debugOpenAdminReportsOverride;
 
   @visibleForTesting
+  static Future<void> Function(
+    BuildContext,
+    int,
+    Map<String, dynamic>,
+  )? debugOpenAdminSectionOverride;
+
+  @visibleForTesting
   static Future<void> Function(BuildContext, Map<String, dynamic>)?
       debugOpenListingsOverride;
 
@@ -74,6 +81,7 @@ class NotificationNavigationService {
     debugOpenSupportOverride = null;
     debugOpenReviewOverride = null;
     debugOpenAdminReportsOverride = null;
+    debugOpenAdminSectionOverride = null;
     debugOpenListingsOverride = null;
   }
 
@@ -104,6 +112,15 @@ class NotificationNavigationService {
     Map<String, dynamic> notification,
     Map<String, dynamic> payload,
   ) {
+    final explicitAction =
+        (payload['actionType'] ?? payload['action_type'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+    if (explicitAction == 'admin_moderation_new' ||
+        explicitAction == 'admin_support_new') {
+      return explicitAction;
+    }
     final notificationType =
         (notification['type'] ?? '').toString().trim().toLowerCase();
     final payloadStatus = (payload['status'] ??
@@ -298,6 +315,12 @@ class NotificationNavigationService {
       case 'admin_report_new':
         await _openAdminReports(context, payload);
         return;
+      case 'admin_moderation_new':
+        await _openAdminSection(context, payload, tabIndex: 1);
+        return;
+      case 'admin_support_new':
+        await _openAdminSection(context, payload, tabIndex: 2);
+        return;
       default:
         return;
     }
@@ -320,7 +343,9 @@ class NotificationNavigationService {
             actionType == 'message' ||
             actionType == 'chat' ||
             _supportActionTypes.contains(actionType) ||
-            actionType == 'admin_report_new');
+            actionType == 'admin_report_new' ||
+            actionType == 'admin_moderation_new' ||
+            actionType == 'admin_support_new');
   }
 
   static bool _shouldOnlyMarkAsViewed(
@@ -343,7 +368,9 @@ class NotificationNavigationService {
         actionType == 'chat_message' ||
         actionType == 'message' ||
         actionType == 'chat' ||
-        actionType == 'admin_report_new') {
+        actionType == 'admin_report_new' ||
+        actionType == 'admin_moderation_new' ||
+        actionType == 'admin_support_new') {
       return false;
     }
     final payload = payloadForNotification(notification);
@@ -603,6 +630,31 @@ class NotificationNavigationService {
     _rememberOpenedAction(actionKey);
   }
 
+  static Future<void> _openAdminSection(
+    BuildContext context,
+    Map<String, dynamic> payload, {
+    required int tabIndex,
+  }) async {
+    final auth = context.read<AuthService>();
+    final me = auth.currentUser;
+    if (me == null || me.isAdmin != true) return;
+    final admin = context.read<AdminService>();
+    if (!await admin.isAdminOnce(me.uid) || !context.mounted) return;
+    final override = debugOpenAdminSectionOverride;
+    if (override != null) {
+      await override(context, tabIndex, payload);
+      return;
+    }
+    final actionKey = 'admin_section:$tabIndex';
+    if (_shouldSkipDuplicateOpen(actionKey)) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AdminScreen(initialTabIndex: tabIndex),
+      ),
+    );
+    _rememberOpenedAction(actionKey);
+  }
+
   static Future<void> _openMyListings(
     BuildContext context,
     Map<String, dynamic> payload, {
@@ -621,8 +673,8 @@ class NotificationNavigationService {
     final tabIndex = switch (actionType) {
       'listing_approved' || 'moderation_approved' => 0,
       'listing_archived' => 2,
-      'listing_rejected' || 'moderation_rejected' || 'listing_deleted' => 3,
-      'listing_sold' => 4,
+      'listing_rejected' || 'moderation_rejected' => 1,
+      'listing_deleted' || 'listing_sold' => 2,
       _ => 0,
     };
     final actionKey = 'my_listings:$tabIndex:$listingId';

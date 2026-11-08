@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
@@ -15,6 +16,7 @@ import {
 } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   WALLET_DAILY_BONUS_AMOUNT,
@@ -54,6 +56,7 @@ export class WalletService {
     private readonly prisma: PrismaService,
     @Inject(WALLET_NOW_PROVIDER)
     private readonly nowProvider: WalletNowProvider = () => new Date(),
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   async getWallet(authUser: AuthenticatedUser) {
@@ -325,7 +328,8 @@ export class WalletService {
       throw new BadRequestException('Bonus amount must be positive');
     }
 
-    return this.runInTransaction(async (transaction) => {
+    let createdSpend = false;
+    const result = await this.runInTransaction(async (transaction) => {
       const wallet = await this.ensureWalletForUser(userId, transaction);
       await this.lockWalletRow(transaction, userId);
       if (idempotencyKey) {
@@ -378,9 +382,12 @@ export class WalletService {
           metadata: this.buildTransactionMetadata(metadata),
         },
       });
+      createdSpend = true;
 
       return updatedWallet;
     }, tx);
+    if (createdSpend && tx == null) this.adminDashboardSignal?.changed('wallet');
+    return result;
   }
 
   async resolveSpendReason(

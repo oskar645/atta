@@ -42,6 +42,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",
     "@aws-sdk/lib-storage": "^3.1075.0",
+    "@fontsource/roboto": "^5.3.0",
     "@nestjs/common": "^10.4.2",
     "@nestjs/core": "^10.4.2",
     "@nestjs/jwt": "^10.2.0",
@@ -56,6 +57,7 @@
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",
     "nodemailer": "^10.0.10",
+    "pdfkit": "^0.20.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "socket.io": "^4.8.0",
@@ -66,6 +68,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.7.4",
     "@types/nodemailer": "^8.0.2",
+    "@types/pdfkit": "^0.17.7",
     "prisma": "^5.18.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",

@@ -17,6 +17,7 @@ import 'package:atta/src/utils/media_url.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/utils/share_texts.dart';
 import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:atta/src/widgets/skeletons.dart';
@@ -539,6 +540,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  boxShadow: attaSoftShadows(context),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1165,6 +1167,8 @@ class _ProfileWalletCard extends StatelessWidget {
     final borderColor =
         isDark ? accent.withValues(alpha: 0.42) : const Color(0xFFB9DFFF);
     return Material(
+      elevation: 0.75,
+      shadowColor: attaSoftShadowColor(context),
       color: cardColor,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),

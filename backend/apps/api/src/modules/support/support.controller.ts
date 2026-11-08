@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -23,6 +24,7 @@ import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { ListAdminSupportTicketsDto } from './dto/list-admin-support-tickets.dto';
 import { SendSupportMessageDto } from './dto/send-support-message.dto';
+import { UpdateSupportMessageDto } from './dto/update-support-message.dto';
 import { SupportService } from './support.service';
 import { CreatePublicSupportTicketDto, PublicSupportMessageDto } from './dto/public-support.dto';
 
@@ -112,6 +114,7 @@ export class SupportController {
       subject: body.subject,
       text: body.text,
       imageUrl: body.imageUrl ?? body.image_url,
+      idempotencyKey: body.idempotencyKey,
     });
   }
 
@@ -161,7 +164,17 @@ export class SupportController {
       ticketId,
       body.text,
       body.imageUrl ?? body.image_url,
+      body.idempotencyKey,
     );
+  }
+
+  @Patch('tickets/:id/messages/:messageId/read')
+  markMessageRead(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) ticketId: string,
+    @Param('messageId', new ParseUUIDPipe()) messageId: string,
+  ) {
+    return this.supportService.markMessageReadByUser(authUser, ticketId, messageId);
   }
 
   @Patch('tickets/:id/close')
@@ -191,8 +204,14 @@ export class AdminSupportController {
     return this.supportService.getTicketForAdmin(ticketId);
   }
 
+  @Patch(':id/read')
+  markRead(@Param('id', new ParseUUIDPipe()) ticketId: string) {
+    return this.supportService.markReadByAdmin(ticketId);
+  }
+
   @Post(':id/messages')
   async sendMessage(
+    @CurrentUser() authUser: AuthenticatedUser,
     @Param('id', new ParseUUIDPipe()) ticketId: string,
     @Body() body: SendSupportMessageDto,
   ) {
@@ -201,10 +220,36 @@ export class AdminSupportController {
       windowMs: 60 * 1000,
     });
     return this.supportService.sendMessageAsAdmin(
+      authUser,
       ticketId,
       body.text,
       body.imageUrl ?? body.image_url,
+      body.idempotencyKey,
     );
+  }
+
+  @Patch(':id/messages/:messageId')
+  editMessage(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) ticketId: string,
+    @Param('messageId', new ParseUUIDPipe()) messageId: string,
+    @Body() body: UpdateSupportMessageDto,
+  ) {
+    return this.supportService.editMessageAsAdmin(
+      authUser,
+      ticketId,
+      messageId,
+      body.text,
+    );
+  }
+
+  @Delete(':id/messages/:messageId')
+  deleteMessage(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('id', new ParseUUIDPipe()) ticketId: string,
+    @Param('messageId', new ParseUUIDPipe()) messageId: string,
+  ) {
+    return this.supportService.deleteMessageAsAdmin(authUser, ticketId, messageId);
   }
 
   @Post('contact-user')

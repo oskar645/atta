@@ -31,6 +31,7 @@ test('admin list excludes hidden reports', async () => {
 
 test('hide marks report hidden without deleting it', async () => {
   const updates: Array<Record<string, any>> = [];
+  const dashboardScopes: string[][] = [];
   const service = new ReportsService(
     {
       report: {
@@ -61,6 +62,7 @@ test('hide marks report hidden without deleting it', async () => {
       },
     } as any,
     {} as any,
+    { changed: (...scopes: string[]) => dashboardScopes.push(scopes) } as any,
   );
 
   const result = await service.hide('report-1', { userId: 'admin-1' } as any);
@@ -68,6 +70,7 @@ test('hide marks report hidden without deleting it', async () => {
   assert.equal(updates[0]?.['data']?.['status'], 'hidden');
   assert.equal(result.hidden, true);
   assert.equal(result.item.status, 'hidden');
+  assert.deepEqual(dashboardScopes, [['reports']]);
 });
 
 test('create derives listing owner from backend listing lookup', async () => {

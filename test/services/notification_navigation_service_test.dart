@@ -284,6 +284,91 @@ void main() {
     expect(notifications.markPersonalReadCalls, 1);
     expect(listingsOpenCount, 1);
   });
+
+  testWidgets('admin moderation push opens existing moderation tab',
+      (tester) async {
+    final openedTabs = <int>[];
+    NotificationNavigationService.debugOpenAdminSectionOverride =
+        (_, tabIndex, __) async => openedTabs.add(tabIndex);
+    final context = await _pumpHarness(
+      tester,
+      auth: _FakeAuthService(
+        currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+      ),
+      admin: _FakeAdminService(isAdmin: true),
+    );
+
+    await NotificationNavigationService.handleNotificationTap(
+      context,
+      <String, dynamic>{
+        'id': 'admin-moderation-1',
+        'type': 'moderation',
+        'scope': 'personal',
+        'payload': <String, dynamic>{
+          'actionType': 'admin_moderation_new',
+          'listingId': 'listing-1',
+        },
+      },
+    );
+    expect(openedTabs, <int>[1]);
+  });
+
+  testWidgets('admin support push opens existing support tab', (tester) async {
+    final openedTabs = <int>[];
+    NotificationNavigationService.debugOpenAdminSectionOverride =
+        (_, tabIndex, __) async => openedTabs.add(tabIndex);
+    final context = await _pumpHarness(
+      tester,
+      auth: _FakeAuthService(
+        currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+      ),
+      admin: _FakeAdminService(isAdmin: true),
+    );
+
+    await NotificationNavigationService.handleNotificationTap(
+      context,
+      <String, dynamic>{
+        'id': 'admin-support-1',
+        'type': 'support',
+        'scope': 'personal',
+        'payload': <String, dynamic>{
+          'actionType': 'admin_support_new',
+          'ticketId': 'ticket-1',
+        },
+      },
+    );
+
+    expect(openedTabs, <int>[2]);
+  });
+
+  testWidgets('admin push navigation is blocked for a regular user',
+      (tester) async {
+    var opens = 0;
+    NotificationNavigationService.debugOpenAdminSectionOverride =
+        (_, __, ___) async => opens += 1;
+    final context = await _pumpHarness(
+      tester,
+      auth: _FakeAuthService(
+        currentUser: const AuthUser(uid: 'user-1', isAdmin: false),
+      ),
+      admin: _FakeAdminService(isAdmin: false),
+    );
+
+    await NotificationNavigationService.handleNotificationTap(
+      context,
+      <String, dynamic>{
+        'id': 'admin-support-regular-user',
+        'type': 'support',
+        'scope': 'personal',
+        'payload': <String, dynamic>{
+          'actionType': 'admin_support_new',
+          'ticketId': 'ticket-1',
+        },
+      },
+    );
+
+    expect(opens, 0);
+  });
 }
 
 Future<BuildContext> _pumpHarness(
@@ -346,15 +431,17 @@ Map<String, dynamic> _supportNotification() => <String, dynamic>{
 class _FakeAuthService extends AuthService {
   _FakeAuthService({
     this.isAuthenticatedValue = true,
-  });
+    AuthUser? currentUser = const AuthUser(uid: 'user-1'),
+  }) : _currentUser = currentUser;
 
   final bool isAuthenticatedValue;
+  final AuthUser? _currentUser;
 
   @override
   bool get isAuthenticated => isAuthenticatedValue;
 
   @override
-  AuthUser? get currentUser => const AuthUser(uid: 'user-1');
+  AuthUser? get currentUser => _currentUser;
 }
 
 class _FakeNotificationsService extends NotificationsService {
@@ -401,6 +488,9 @@ class _FakeAdminService extends AdminService {
 
   @override
   Stream<bool> streamIsAdmin(String uid) => Stream<bool>.value(isAdmin);
+
+  @override
+  Future<bool> isAdminOnce(String uid) async => isAdmin;
 }
 
 class _TestNavigatorObserver extends NavigatorObserver {

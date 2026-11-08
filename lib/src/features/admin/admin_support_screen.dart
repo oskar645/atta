@@ -5,6 +5,7 @@ import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/ru_phone.dart';
@@ -408,7 +409,7 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
     }
   }
 
-  /// 4 быстрых кнопки: короткие названия + длинный текст (вставляем в поле)
+  /// Короткие названия + длинный текст (вставляем в поле без автоотправки).
   final List<Map<String, String>> _quickReplies = const [
     {
       'label': 'Приветствие',
@@ -433,6 +434,11 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
       'text':
           'Готово ✅ Мы исправили/проверили ситуацию. Пожалуйста, попробуйте ещё раз. '
               'Если проблема повторится — напишите нам сюда, мы сразу продолжим.',
+    },
+    {
+      'label': 'На модерации',
+      'text':
+          'Здравствуйте! 👋 Ваше объявление находится на модерации. После проверки и одобрения оно автоматически появится в приложении ATTA. Благодарим за ожидание!',
     },
   ];
 
@@ -485,6 +491,122 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
       TextPosition(offset: _text.text.length),
     );
     setState(() {});
+  }
+
+  bool _canManageMessage(Map<String, dynamic> message) {
+    final currentUid =
+        context.read<AuthService?>()?.currentUser?.uid.trim() ?? '';
+    return currentUid.isNotEmpty &&
+        (message['sender'] ?? '').toString() == 'admin' &&
+        (message['sender_user_id'] ?? '').toString() == currentUid &&
+        (message['deleted_at'] ?? '').toString().trim().isEmpty &&
+        (message['local_status'] ?? '').toString().trim().isEmpty;
+  }
+
+  Future<void> _editMessage(Map<String, dynamic> message) async {
+    final controller = TextEditingController(
+      text: (message['text'] ?? '').toString(),
+    );
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Изменить сообщение'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          minLines: 2,
+          maxLines: 6,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || value == null || value.trim().isEmpty) {
+      return;
+    }
+    try {
+      await context.read<SupportService>().editAdminMessage(
+            ticketId: widget.ticketId,
+            messageId: (message['id'] ?? '').toString(),
+            text: value,
+          );
+    } catch (error) {
+      if (mounted) {
+        showAppSnack(context, 'Не удалось изменить сообщение: $error',
+            isError: true);
+      }
+    }
+  }
+
+  Future<void> _deleteMessage(Map<String, dynamic> message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить сообщение?'),
+        content: const Text(
+            'У пользователя вместо текста появится «Сообщение удалено». '),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    try {
+      await context.read<SupportService>().deleteAdminMessage(
+            ticketId: widget.ticketId,
+            messageId: (message['id'] ?? '').toString(),
+          );
+    } catch (error) {
+      if (mounted) {
+        showAppSnack(context, 'Не удалось удалить сообщение: $error',
+            isError: true);
+      }
+    }
+  }
+
+  Future<void> _showMessageActions(Map<String, dynamic> message) async {
+    if (!_canManageMessage(message)) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Изменить'),
+              onTap: () => Navigator.of(sheetContext).pop('edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Удалить'),
+              onTap: () => Navigator.of(sheetContext).pop('delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'edit') await _editMessage(message);
+    if (action == 'delete') await _deleteMessage(message);
   }
 
   DateTime _parseCreatedAt(dynamic raw) {
@@ -614,6 +736,14 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                     final text = (m['text'] ?? '').toString();
                     final imageUrl = (m['image_url'] ?? '').toString().trim();
                     final isAdmin = sender == 'admin';
+                    final deleted =
+                        (m['deleted_at'] ?? '').toString().trim().isNotEmpty;
+                    final edited =
+                        (m['edited_at'] ?? '').toString().trim().isNotEmpty;
+                    final read =
+                        (m['read_at'] ?? '').toString().trim().isNotEmpty;
+                    final failed =
+                        (m['local_status'] ?? '').toString() == 'failed';
                     final createdAt = _parseCreatedAt(m['created_at']);
                     final nextCreatedAt = i + 1 < items.length
                         ? _parseCreatedAt(items[i + 1]['created_at'])
@@ -644,51 +774,114 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
                           alignment: isAdmin
                               ? Alignment.centerRight
                               : Alignment.centerLeft,
-                          child: Container(
-                            margin: const EdgeInsets.symmetric(vertical: 4),
-                            padding: EdgeInsets.all(imageUrl.isEmpty ? 10 : 6),
-                            constraints: const BoxConstraints(maxWidth: 320),
-                            decoration: BoxDecoration(
-                              color: isAdmin
-                                  ? Theme.of(context)
-                                      .colorScheme
-                                      .primaryContainer
-                                  : Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHighest,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                if (imageUrl.isNotEmpty)
-                                  _messageImage(imageUrl),
-                                if (text.trim().isNotEmpty) ...[
+                          child: GestureDetector(
+                            onLongPress: _canManageMessage(m)
+                                ? () => _showMessageActions(m)
+                                : null,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              padding:
+                                  EdgeInsets.all(imageUrl.isEmpty ? 10 : 6),
+                              constraints: const BoxConstraints(maxWidth: 320),
+                              decoration: BoxDecoration(
+                                color: isAdmin
+                                    ? Theme.of(context)
+                                        .colorScheme
+                                        .primaryContainer
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
                                   if (imageUrl.isNotEmpty)
-                                    const SizedBox(height: 8),
-                                  Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Padding(
-                                      padding: EdgeInsets.symmetric(
-                                        horizontal: imageUrl.isEmpty ? 0 : 6,
+                                    _messageImage(imageUrl),
+                                  if (deleted)
+                                    const Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: Text(
+                                        'Сообщение удалено',
+                                        style: TextStyle(
+                                            fontStyle: FontStyle.italic),
                                       ),
-                                      child: Text(text),
+                                    )
+                                  else if (text.trim().isNotEmpty) ...[
+                                    if (imageUrl.isNotEmpty)
+                                      const SizedBox(height: 8),
+                                    Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: imageUrl.isEmpty ? 0 : 6,
+                                        ),
+                                        child: Text(text),
+                                      ),
                                     ),
-                                  ),
-                                ],
-                                const SizedBox(height: 4),
-                                Text(
-                                  _formatTime(createdAt),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .labelSmall
-                                      ?.copyWith(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .outline,
+                                  ],
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (failed)
+                                        Text(
+                                          'Не отправлено · ',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall
+                                              ?.copyWith(
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .error),
+                                        ),
+                                      if (edited && !deleted)
+                                        Text(
+                                          'Изменено · ',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall,
+                                        ),
+                                      Text(
+                                        _formatTime(createdAt),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .outline,
+                                            ),
                                       ),
-                                ),
-                              ],
+                                      if (isAdmin && !failed) ...[
+                                        const SizedBox(width: 4),
+                                        Icon(
+                                          read ? Icons.done_all : Icons.done,
+                                          size: 16,
+                                          color: read
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .primary
+                                              : Theme.of(context)
+                                                  .colorScheme
+                                                  .outline,
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  if (failed)
+                                    TextButton(
+                                      onPressed: () => context
+                                          .read<SupportService>()
+                                          .retryMessage(
+                                            ticketId: widget.ticketId,
+                                            messageId:
+                                                (m['id'] ?? '').toString(),
+                                          ),
+                                      child: const Text('Повторить'),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),

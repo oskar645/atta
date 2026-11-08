@@ -1314,6 +1314,166 @@ void main() {
     );
   });
 
+  test('composite archive page keeps archived and sold rows in cache',
+      () async {
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'archive-1',
+          status: 'archived',
+          ownerId: 'user-1',
+        ),
+        _listingMap(
+          const <String>[],
+          id: 'sold-1',
+          status: 'sold',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final first = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived', 'sold'},
+      forceRefresh: true,
+    );
+    final second = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived', 'sold'},
+      forceRefresh: true,
+    );
+
+    expect(
+      first.items.map((item) => item.id),
+      unorderedEquals(<String>['archive-1', 'sold-1']),
+    );
+    expect(
+      second.items.map((item) => item.id),
+      unorderedEquals(<String>['archive-1', 'sold-1']),
+    );
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'archived', 'sold'}).map((item) => item.id),
+      unorderedEquals(<String>['archive-1', 'sold-1']),
+    );
+    expect(
+      api.myListingsQueries.map((query) => query['status']).toSet(),
+      <String>{'archived', 'sold'},
+    );
+  });
+
+  test('composite archive pagination respects limit and deduplicates pages',
+      () async {
+    final api = _FakeListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        for (var index = 0; index < 3; index++)
+          _listingMap(
+            const <String>[],
+            id: 'archive-$index',
+            status: 'archived',
+            ownerId: 'user-1',
+          ),
+        for (var index = 0; index < 3; index++)
+          _listingMap(
+            const <String>[],
+            id: 'sold-$index',
+            status: 'sold',
+            ownerId: 'user-1',
+          ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    final first = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived', 'sold'},
+      limit: 4,
+      forceRefresh: true,
+    );
+    final second = await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived', 'sold'},
+      limit: 4,
+      cursor: first.nextCursor,
+    );
+    final allIds = <String>{
+      ...first.items.map((item) => item.id),
+      ...second.items.map((item) => item.id),
+    };
+
+    expect(first.items, hasLength(4));
+    expect(first.hasMore, isTrue);
+    expect(first.nextCursor, isNotEmpty);
+    expect(second.items, hasLength(2));
+    expect(second.hasMore, isFalse);
+    expect(allIds, hasLength(6));
+    expect(
+      service
+          .peekMyListingsByStatuses(statuses: const {'archived', 'sold'})
+          .map((item) => item.id)
+          .toSet(),
+      allIds,
+    );
+  });
+
+  test('stale paged response cannot overwrite a newer listing update',
+      () async {
+    final api = _SwitchableDelayedMyListingsApi(
+      myListItems: <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'archive-current',
+          status: 'archived',
+          ownerId: 'user-1',
+        ),
+      ],
+    );
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+    await service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived'},
+    );
+
+    final delayed = Completer<Map<String, dynamic>>();
+    api.delayedResponse = delayed;
+    final staleRequest = service.getMyListingsPageByStatuses(
+      'user-1',
+      statuses: const {'archived'},
+      forceRefresh: true,
+    );
+    service.applyExternalListingUpdate(
+      Listing.fromMap(
+        _listingMap(
+          const <String>[],
+          id: 'sold-new',
+          status: 'sold',
+          ownerId: 'user-1',
+        ),
+      ),
+    );
+    delayed.complete(<String, dynamic>{
+      'items': <Map<String, dynamic>>[
+        _listingMap(
+          const <String>[],
+          id: 'archive-stale',
+          status: 'archived',
+          ownerId: 'user-1',
+        ),
+      ],
+      'hasMore': false,
+      'nextCursor': null,
+    });
+    await staleRequest;
+
+    expect(
+      service.peekMyListingsByStatuses(
+          statuses: const {'archived', 'sold'}).map((item) => item.id),
+      unorderedEquals(<String>['archive-current', 'sold-new']),
+    );
+  });
+
   test('archive after paged my listings load moves listing between statuses',
       () async {
     await TokenStorage().saveSession(
@@ -1947,6 +2107,26 @@ class _DelayedMyListingsApi extends _FakeListingsApi {
   }) {
     myListingsCalls += 1;
     return responseCompleter.future;
+  }
+}
+
+class _SwitchableDelayedMyListingsApi extends _FakeListingsApi {
+  _SwitchableDelayedMyListingsApi({required super.myListItems});
+
+  Completer<Map<String, dynamic>>? delayedResponse;
+
+  @override
+  Future<Map<String, dynamic>> myListings({
+    String? status,
+    int? limit,
+    String? cursor,
+  }) {
+    final delayed = delayedResponse;
+    if (delayed != null) {
+      myListingsCalls += 1;
+      return delayed.future;
+    }
+    return super.myListings(status: status, limit: limit, cursor: cursor);
   }
 }
 

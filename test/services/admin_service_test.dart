@@ -139,6 +139,29 @@ void main() {
     await Future.wait<void>(<Future<void>>[first, second]);
   });
 
+  test('response from a previous session cannot restore admin attention',
+      () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+    );
+    final gate = Completer<void>();
+    final api = _FakeAdminApi()..gate = gate;
+    final service = AdminService(api: api)..bindAdminUser('admin-1');
+
+    final refresh = service.refreshAdminAttention(force: true);
+    await Future<void>.delayed(Duration.zero);
+    service.resetSession();
+    gate.complete();
+    await refresh;
+
+    expect(await service.streamPendingModerationCount().first, 0);
+    expect(await service.streamOpenReportsCount().first, 0);
+    expect(await service.streamUnreadSupportForAdminCount().first, 0);
+  });
+
   test('network failure applies attention refresh cooldown', () async {
     final tokenStorage = TokenStorage();
     await tokenStorage.saveSession(
@@ -191,6 +214,46 @@ void main() {
     expect(await service.streamPendingModerationCount().first, 3);
     expect(await service.streamOpenReportsCount().first, 0);
     expect(await service.streamUnreadSupportForAdminCount().first, 0);
+  });
+
+  test('count decrease with no newer item does not relight a seen section',
+      () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+    );
+    final api = _FakeAdminApi();
+    final service = AdminService(api: api)..bindAdminUser('admin-1');
+
+    await service.refreshAdminAttention(force: true);
+    await service.markSectionSeen(AdminService.moderationSection);
+    api.pendingItems = <Map<String, dynamic>>[api.pendingItems.last];
+    await service.refreshAdminAttention(force: true);
+
+    expect(await service.streamPendingModerationCount().first, 0);
+  });
+
+  test('late marker load for admin A cannot overwrite active admin B',
+      () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'atta.admin.section_seen:admin-1':
+          '{"moderation":"2026-07-03T11:00:00.000Z|listing-2"}',
+    });
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'admin-2', isAdmin: true),
+    );
+    final service = AdminService(api: _FakeAdminApi());
+    service.bindAdminUser('admin-1');
+    service.bindAdminUser('admin-2');
+
+    await service.refreshAdminAttention(force: true);
+
+    expect(await service.streamPendingModerationCount().first, 2);
   });
 
   test('referral searches use separate cache keys and force refresh', () async {

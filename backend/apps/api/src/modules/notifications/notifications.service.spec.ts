@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { DevicePlatform, NotificationScope, NotificationType } from '@prisma/client';
+import {
+  DevicePlatform,
+  NotificationScope,
+  NotificationType,
+  UserStatus,
+} from '@prisma/client';
 
 import { NotificationsService } from './notifications.service';
 
@@ -231,6 +236,79 @@ test('createSystemNotification emits personal realtime event for recipient only'
   assert.equal(emitted.length, 1);
   assert.equal(emitted[0].userId, 'user-42');
   assert.equal(emitted[0].notification['scope'], 'personal');
+});
+
+test('admin event notification targets only active admins and deduplicates by event key', async () => {
+  const createdFor: string[] = [];
+  const existingKeys = new Set<string>();
+  let adminWhere: Record<string, unknown> | undefined;
+  const userNotification = {
+    findFirst: async ({ where }: Record<string, any>) =>
+      existingKeys.has(`${where.userId}:${where.payload.equals}`)
+        ? { id: 'existing' }
+        : null,
+    create: async ({ data }: Record<string, any>) => {
+      const eventKey = data.payload.adminEventKey as string;
+      existingKeys.add(`${data.userId}:${eventKey}`);
+      createdFor.push(data.userId);
+      return {
+        id: `notification-${data.userId}`,
+        userId: data.userId,
+        scope: NotificationScope.PERSONAL,
+        title: data.title,
+        body: data.body,
+        isRead: false,
+        createdAt: baseDate,
+        type: data.type,
+        payload: data.payload,
+      };
+    },
+  };
+  const prisma = {
+    user: {
+      findMany: async ({ where }: Record<string, any>) => {
+        adminWhere = where;
+        return [{ id: 'admin-1' }, { id: 'admin-2' }];
+      },
+      findUnique: async () => ({ lastNotificationsSeenAt: baseDate }),
+    },
+    userNotification,
+    userDevice: { findMany: async () => [] },
+    chat: { aggregate: async () => ({ _sum: {} }) },
+    $transaction: async (handler: (tx: unknown) => Promise<unknown>) =>
+      handler({
+        userNotification,
+        userDevice: { findMany: async () => [] },
+        adminPushDelivery: {
+          createMany: async () => ({ count: 0 }),
+          updateMany: async () => ({ count: 0 }),
+        },
+        $executeRaw: async () => 1,
+        $queryRaw: async () => [],
+      }),
+  };
+  const service = new NotificationsService(
+    {} as never,
+    prisma as never,
+    { emitNotificationNew: () => undefined } as never,
+  );
+  const params = {
+    eventKey: 'admin_moderation:listing-1:revision-1',
+    title: 'ATTA — Модерация',
+    body: 'Новое объявление ожидает проверки.',
+    type: NotificationType.MODERATION,
+    payload: {
+      actionType: 'admin_moderation_new',
+      listingId: 'listing-1',
+    },
+  };
+
+  await service.createAdminEventNotifications(params);
+  await service.createAdminEventNotifications(params);
+
+  assert.deepEqual(createdFor, ['admin-1', 'admin-2']);
+  assert.equal(adminWhere?.status, UserStatus.ACTIVE);
+  assert.deepEqual(adminWhere?.adminProfile, { is: { isAdmin: true } });
 });
 
 test('chat message push sends absolute APNs badge count', async () => {
@@ -633,4 +711,102 @@ test('Android chat push uses FCM and preserves the notification payload for tap 
   assert.equal(fcmCalls[0].token, 'android-fcm-token');
   assert.equal(fcmCalls[0].recipientId, 'recipient-A');
   assert.equal(fcmCalls[0].notification.payload.chatId, 'chat-A');
+});
+
+test('durable admin push retries a transient failure and then marks delivery complete', async () => {
+  let claims = 0;
+  let sends = 0;
+  const updates: any[] = [];
+  const notification = {
+    id: 'notification-1',
+    userId: 'admin-1',
+    scope: NotificationScope.PERSONAL,
+    title: 'ATTA',
+    body: 'Новое обращение',
+    isRead: false,
+    createdAt: baseDate,
+    type: NotificationType.SUPPORT,
+    payload: { actionType: 'admin_support_new' },
+  };
+  const device = {
+    id: 'device-1',
+    userId: 'admin-1',
+    deviceToken: 'android-1',
+    platform: DevicePlatform.ANDROID,
+    supportsAndroidDataOnlyPush: true,
+  };
+  const tx = {
+    $queryRaw: async () => (claims++ < 2 ? [{ id: 'delivery-1' }] : []),
+    adminPushDelivery: { updateMany: async () => ({ count: 1 }) },
+  };
+  const prisma: any = {
+    $transaction: async (callback: (value: typeof tx) => Promise<unknown>) =>
+      callback(tx),
+    adminPushDelivery: {
+      findFirst: async () => ({
+        id: 'delivery-1',
+        userId: 'admin-1',
+        attempts: sends + 1,
+        notification,
+        device,
+      }),
+      update: async ({ data }: any) => {
+        updates.push(data);
+        return {};
+      },
+      updateMany: async () => ({ count: 1 }),
+    },
+  };
+  const service = new NotificationsService(
+    {} as never,
+    prisma,
+    {} as never,
+    {
+      send: async () => {
+        sends += 1;
+        return sends === 1
+          ? { sent: false, status: 503, reason: 'UNAVAILABLE' }
+          : { sent: true, status: 200 };
+      },
+    } as never,
+  );
+  (service as any).canonicalBadgeCount = async () => 0;
+
+  await service.drainAdminPushDeliveries();
+  await service.drainAdminPushDeliveries();
+
+  assert.equal(sends, 2);
+  assert.equal(updates[0].status, 'pending');
+  assert.equal(updates[1].status, 'delivered');
+});
+
+test('durable admin push cancels a delivery when admin or session was revoked', async () => {
+  let sends = 0;
+  const cancellations: any[] = [];
+  const tx = {
+    $queryRaw: async () => [{ id: 'delivery-revoked' }],
+    adminPushDelivery: { updateMany: async () => ({ count: 1 }) },
+  };
+  const prisma: any = {
+    $transaction: async (callback: (value: typeof tx) => Promise<unknown>) =>
+      callback(tx),
+    adminPushDelivery: {
+      findFirst: async () => null,
+      updateMany: async ({ data }: any) => {
+        cancellations.push(data);
+        return { count: 1 };
+      },
+    },
+  };
+  const service = new NotificationsService(
+    {} as never,
+    prisma,
+    {} as never,
+    { send: async () => { sends += 1; return { sent: true, status: 200 }; } } as never,
+  );
+
+  await service.drainAdminPushDeliveries();
+
+  assert.equal(sends, 0);
+  assert.equal(cancellations[0].status, 'cancelled');
 });

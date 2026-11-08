@@ -100,6 +100,36 @@ void main() {
     expect(factory.createdSockets.single.connectCalls, 1);
   });
 
+  test(
+      'admin dashboard subscription is unique per socket and restored after reconnect',
+      () async {
+    final storage = TokenStorage();
+    await _saveSession(storage);
+    final factory = _FakeSocketFactory(autoConnect: true);
+    final service = ChatSocketService(
+      tokenStorage: storage,
+      socketFactory: factory.create,
+    );
+
+    await service.connect();
+    service.ensureAdminDashboardSubscription();
+    service.ensureAdminDashboardSubscription();
+    expect(
+      factory.createdSockets.single.emittedEvents
+          .where((event) => event == 'analytics.subscribe'),
+      hasLength(1),
+    );
+
+    await service.disconnect();
+    await service.connect();
+    service.ensureAdminDashboardSubscription();
+    expect(
+      factory.createdSockets.last.emittedEvents
+          .where((event) => event == 'analytics.subscribe'),
+      hasLength(1),
+    );
+  });
+
   test('socket.io options force a fresh manager and keep manual reconnect', () {
     final options = ChatSocketService.buildSocketOptionsForTesting(
       <String, dynamic>{'token': 'access-token'},

@@ -6,15 +6,18 @@ import assert from 'node:assert/strict';
 import { BadRequestException } from '@nestjs/common';
 import {
   ListingStatus,
+  PaymentProvider,
+  PaymentStatus,
   ReferralRewardStatus,
   UserStatus,
+  WalletTransactionReason,
   WalletTransactionType,
 } from '@prisma/client';
 
 import { buildReferralCode } from '../../common/referral-code';
 import { LISTING_DRAFT_TITLE_PLACEHOLDER } from '../../common/listing-publication';
 import { AdminGuard } from '../auth/admin.guard';
-import { AdminService } from './admin.service';
+import { AdminService, moscowCalendarBounds } from './admin.service';
 
 const adminUser = {
   userId: 'admin-1',
@@ -206,11 +209,16 @@ test('users list excludes soft-deleted users', async () => {
 test('dashboard stats count spent wallet points for last 30 days', async () => {
   let capturedUserCountWhere: Record<string, unknown> | undefined;
   let capturedWalletAggregateWhere: Record<string, unknown> | undefined;
+  const listingCountWheres: Array<Record<string, any>> = [];
+  let zeroResultSearchWhere: any;
 
   const service = new AdminService(
     {
       listing: {
-        count: async () => 0,
+        count: async (args?: any) => {
+          listingCountWheres.push(args?.where ?? {});
+          return 0;
+        },
         findMany: async () => [],
       },
       user: {
@@ -225,7 +233,12 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
       supportTicket: { count: async () => 0 },
       report: { count: async () => 0 },
       feedAd: { count: async () => 0 },
-      zeroResultSearch: { count: async () => 0 },
+      zeroResultSearch: {
+        count: async (args: any) => {
+          zeroResultSearchWhere = args.where;
+          return 0;
+        },
+      },
       searchAttempt: { count: async () => 0 },
       walletTransaction: {
         aggregate: async (args: Record<string, unknown>) => {
@@ -233,8 +246,13 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
             (args['where'] as Record<string, unknown> | undefined);
           return { _sum: { amount: 415 } };
         },
+        groupBy: async () => [],
       },
-      $queryRaw: async () => [
+      payment: {
+        aggregate: async () => ({ _sum: { amountRub: null } }),
+      },
+      $queryRaw: async () => {
+        return [
         {
           count: BigInt(0),
           total_amount_rub: '0',
@@ -242,7 +260,8 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
           purchases_count: BigInt(0),
           unique_buyers_count: BigInt(0),
         },
-      ],
+        ];
+      },
     } as any,
     { countToday: async () => 0, listToday: async () => ({ items: [] }) } as any,
     {} as any,
@@ -257,7 +276,9 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
     } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
   );
 
-  const result = await service.getDashboardStats();
+  const result = await service.getDashboardStats(
+    new Date('2027-01-01T00:01:00+03:00'),
+  );
 
   assert.equal(result.stats.spentPoints30d, 415);
   assert.deepEqual(capturedUserCountWhere, {
@@ -275,6 +296,216 @@ test('dashboard stats count spent wallet points for last 30 days', async () => {
       ?.['gte'],
     'object',
   );
+  const sales30dWhere = listingCountWheres.find(
+    (where) => where.status === ListingStatus.SOLD && where.archivedAt,
+  );
+  assert.ok(sales30dWhere?.archivedAt.gte instanceof Date);
+  assert.equal(
+    listingCountWheres.some(
+      (where) => where.status === ListingStatus.SOLD && where.updatedAt,
+    ),
+    false,
+  );
+  assert.equal(
+    zeroResultSearchWhere.createdAt.gte.toISOString(),
+    '2026-12-31T21:00:00.000Z',
+  );
+});
+
+test('Moscow calendar bounds cross day, month and year at Moscow midnight', () => {
+  const before = moscowCalendarBounds(new Date('2026-12-31T20:59:00.000Z'));
+  const midnight = moscowCalendarBounds(new Date('2026-12-31T21:00:00.000Z'));
+  const after = moscowCalendarBounds(new Date('2026-12-31T21:01:00.000Z'));
+
+  assert.equal(before.year, 2026);
+  assert.equal(before.month, 12);
+  assert.equal(midnight.year, 2027);
+  assert.equal(midnight.month, 1);
+  assert.equal(after.year, 2027);
+  assert.equal(after.dayStart.toISOString(), '2026-12-31T21:00:00.000Z');
+  assert.equal(after.monthStart.toISOString(), '2026-12-31T21:00:00.000Z');
+  assert.equal(after.yearStart.toISOString(), '2026-12-31T21:00:00.000Z');
+});
+
+test('dashboard revenue uses credited successful YooKassa payments and Moscow calendar days', async () => {
+  const wheres: any[] = [];
+  const totals = ['1250.50', '8400.00', '29100.25'];
+  const service = new AdminService(
+    {
+      payment: {
+        aggregate: async (args: any) => {
+          wheres.push(args.where);
+          return { _sum: { amountRub: totals[wheres.length - 1] } };
+        },
+      },
+    } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    undefined, {} as any,
+  );
+  const now = new Date('2027-01-10T10:00:00.000Z');
+
+  const result = await service.getDashboardRevenue(now);
+
+  assert.deepEqual(result, {
+    todayRub: 1250.5,
+    days7Rub: 8400,
+    days30Rub: 29100.25,
+  });
+  assert.deepEqual(
+    wheres.map((where) => where.creditedAt.gte.toISOString()),
+    [
+      '2027-01-09T21:00:00.000Z',
+      '2027-01-03T21:00:00.000Z',
+      '2026-12-11T21:00:00.000Z',
+    ],
+  );
+  for (const where of wheres) {
+    assert.equal(where.provider, PaymentProvider.YOOKASSA);
+    assert.equal(where.status, PaymentStatus.SUCCEEDED);
+    assert.equal(where.currency, 'RUB');
+    assert.equal(where.creditedAt.lte, now);
+  }
+});
+
+test('dashboard promotions count only successful promotion spends by real type', async () => {
+  let capturedWhere: any;
+  const service = new AdminService(
+    {
+      walletTransaction: {
+        groupBy: async (args: any) => {
+          capturedWhere = args.where;
+          return [
+            {
+              reason: WalletTransactionReason.PROMOTION_BUMP,
+              _count: { _all: 2 },
+              _sum: { amount: 50 },
+            },
+            {
+              reason: WalletTransactionReason.PROMOTION_VIP,
+              _count: { _all: 1 },
+              _sum: { amount: 125 },
+            },
+          ];
+        },
+      },
+    } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    undefined, {} as any,
+  );
+
+  const result = await service.getDashboardPromotions(
+    new Date('2027-01-01T00:01:00+03:00'),
+  );
+
+  assert.deepEqual(result, {
+    byType: { bump: 2, vip: 1, showcase: 0, turbo: 0 },
+    total: 3,
+    pointsSpent: 175,
+  });
+  assert.equal(capturedWhere.type, WalletTransactionType.SPEND);
+  assert.deepEqual(capturedWhere.reason.in, [
+    WalletTransactionReason.PROMOTION_BUMP,
+    WalletTransactionReason.PROMOTION_VIP,
+    WalletTransactionReason.PROMOTION_SHOWCASE,
+    WalletTransactionReason.PROMOTION_TURBO,
+  ]);
+  assert.equal(
+    capturedWhere.createdAt.gte.toISOString(),
+    '2026-12-31T21:00:00.000Z',
+  );
+});
+
+test('targeted payments and promotions scopes return both new dashboard blocks', async () => {
+  const service = new AdminService(
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    undefined, {} as any,
+  );
+  (service as any).getPointsPurchasesSummary = async () => ({
+    purchasesCount: 2,
+  });
+  (service as any).getDashboardRevenue = async () => ({ todayRub: 1250 });
+  (service as any).getDashboardPromotions = async () => ({ total: 11 });
+
+  const result = await service.getDashboardMetrics(
+    'payments,promotions',
+    new Date('2027-01-01T10:00:00.000Z'),
+  );
+
+  assert.deepEqual(result.scopes, ['payments', 'promotions']);
+  assert.deepEqual(result.stats, {
+    pointsPurchasesMonth: { purchasesCount: 2 },
+    revenue: { todayRub: 1250 },
+    promotionsToday: { total: 11 },
+  });
+});
+
+test('admin month and day ranges use Moscow boundaries while week stays rolling', () => {
+  const service = new AdminService(
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    undefined,
+    {} as any,
+  );
+  const now = new Date('2026-12-31T21:01:00.000Z');
+  const month = (service as any).resolveAnalyticsRange({ period: 'month' }, now);
+  const day = (service as any).resolveAnalyticsRange({ period: 'day' }, now);
+  const week = (service as any).resolveAnalyticsRange({ period: 'week' }, now);
+  const purchases = (service as any).resolvePointsPurchasesRange({}, now);
+
+  assert.equal(month.gte.toISOString(), '2026-12-31T21:00:00.000Z');
+  assert.equal(day.gte.toISOString(), '2026-12-31T21:00:00.000Z');
+  assert.equal(
+    week.gte.toISOString(),
+    new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  );
+  assert.equal(purchases.fromDate.toISOString(), '2026-12-31T21:00:00.000Z');
+});
+
+test('promotion day and month summary use Moscow calendar boundaries', async () => {
+  const countWheres: any[] = [];
+  const aggregateWheres: any[] = [];
+  const service = new AdminService(
+    {
+      promotion: {
+        updateMany: async () => ({ count: 0 }),
+        count: async (args: any) => {
+          countWheres.push(args.where);
+          return 0;
+        },
+        aggregate: async (args: any) => {
+          aggregateWheres.push(args.where);
+          return { _sum: { costBonus: 0, impressionsCount: 0, clicksCount: 0 } };
+        },
+      },
+    } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    undefined,
+    {} as any,
+  );
+  const now = new Date('2026-12-31T21:01:00.000Z');
+
+  await service.getPromotionsSummary(now);
+
+  assert.ok(
+    countWheres.some(
+      (where) =>
+        where.endsAt?.gte?.toISOString() === '2026-12-31T21:00:00.000Z',
+    ),
+  );
+  assert.ok(
+    aggregateWheres.some(
+      (where) =>
+        where.createdAt?.gte?.toISOString() === '2026-12-31T21:00:00.000Z',
+    ),
+  );
 });
 
 test('admin registration stats aggregate users by selected year without personal data', async () => {
@@ -285,6 +516,7 @@ test('admin registration stats aggregate users by selected year without personal
   const firstCreatedAt = new Date(Date.UTC(previousYear, 5, 10));
   const queryYears: number[] = [];
   const countRanges: Array<{ gte: Date; lt: Date }> = [];
+  let earliestUserWhere: unknown = 'not-called';
 
   const service = new AdminService(
     {
@@ -299,7 +531,10 @@ test('admin registration stats aggregate users by selected year without personal
           }
           return 9;
         },
-        findFirst: async () => ({ createdAt: firstCreatedAt }),
+        findFirst: async (args: any) => {
+          earliestUserWhere = args.where;
+          return { createdAt: firstCreatedAt };
+        },
       },
       $queryRaw: async (
         strings: TemplateStringsArray,
@@ -346,8 +581,25 @@ test('admin registration stats aggregate users by selected year without personal
   const previousStats = await service.getUserRegistrationStats({
     year: previousYear,
   });
+  for (const futureYear of [2027, 2028, 2030, 2035, 2050, 2100, 2101]) {
+    const futureStats = await service.getUserRegistrationStats({
+      year: futureYear,
+    });
+    assert.equal(futureStats.year, futureYear);
+  }
 
-  assert.deepEqual(queryYears, [currentYear, previousYear]);
+  assert.deepEqual(queryYears, [
+    currentYear,
+    previousYear,
+    2027,
+    2028,
+    2030,
+    2035,
+    2050,
+    2100,
+    2101,
+  ]);
+  assert.equal(earliestUserWhere, undefined);
   assert.ok(
     countRanges.some(
       (range) =>
@@ -357,6 +609,8 @@ test('admin registration stats aggregate users by selected year without personal
   );
   assert.equal(currentStats.total_users, 9);
   assert.equal(currentStats.todayCount, 1);
+  assert.equal(currentStats.yesterday_count, 1);
+  assert.equal(currentStats.last_7_days_count, 2);
   assert.equal(currentStats.current_month_count, 2);
   assert.deepEqual(currentStats.available_years, [previousYear, currentYear]);
   assert.equal(currentStats.months[0].month, currentMonth);
@@ -372,6 +626,10 @@ test('admin registration stats aggregate users by selected year without personal
   assert.equal(previousStats.months[0].count, 4);
   assert.equal(previousStats.months.at(-1)?.month, 6);
   assert.equal(previousStats.months.at(-1)?.count, 1);
+  await assert.rejects(
+    () => service.getUserRegistrationStats({ year: 9999 }),
+    BadRequestException,
+  );
   const serialized = JSON.stringify(currentStats);
   assert.equal(serialized.includes('phone'), false);
   assert.equal(serialized.includes('email'), false);
@@ -404,6 +662,8 @@ test('admin registration stats returns empty months without users', async () => 
 
   assert.equal(stats.total_users, 0);
   assert.equal(stats.todayCount, 0);
+  assert.equal(stats.yesterday_count, 0);
+  assert.equal(stats.last_7_days_count, 0);
   assert.equal(stats.current_month_count, 0);
   assert.deepEqual(stats.months, []);
 });
@@ -681,7 +941,8 @@ test('raffle summary uses successful credited purchases and ticket totals', asyn
   assert.equal(result.amountRub, 1700);
   assert.equal(result.ticketPriceRub, '2100');
   assert.match(sql, /FLOOR\(total_rub \/ /);
-  assert.match(sql, /HAVING SUM\(p\."amount_rub"\) >= /);
+  assert.match(sql, /HAVING SUM\(p\."amount_rub" - p\."refunded_amount_rub"\) >= /);
+  assert.match(sql, /p\."is_test" = false/);
   assert.match(sql, /GROUP BY p\."user_id"/);
   assert.equal(parameters.filter((value) => String(value) === '2100').length, 2);
   assert.ok(parameters.includes('SUCCEEDED'));
@@ -710,6 +971,35 @@ test('raffle participant page keeps one row per user and full admin phone', asyn
   assert.equal(result.nextCursor, null);
 });
 
+test('raffle ticket page expands only a bounded page with stable ticket numbers', async () => {
+  let sql = '';
+  const service = new AdminService(
+    { $queryRaw: async (query: { strings: string[] }) => {
+      sql = query.strings.join(' ');
+      return [
+        { ticket_no: 41n, user_id: '11111111-1111-4111-8111-111111111111',
+          display_name: 'Иван', name: '', phone: '+79991112233' },
+        { ticket_no: 42n, user_id: '11111111-1111-4111-8111-111111111111',
+          display_name: 'Иван', name: '', phone: '+79991112233' },
+        { ticket_no: 43n, user_id: '22222222-2222-4222-8222-222222222222',
+          display_name: 'Анна', name: '', phone: '+79994445566' },
+      ];
+    } } as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any,
+  );
+  const result = await service.listRaffleTickets({
+    from: '2026-08-01T00:00:00.000Z', to: '2026-08-31T23:59:59.999Z',
+    ticketPrice: '500', limit: 2, cursor: '40',
+  });
+
+  assert.deepEqual(result.items.map((item) => item.ticketNumber), ['41', '42']);
+  assert.equal(result.nextCursor, '42');
+  assert.match(sql, /generate_series/);
+  assert.match(sql, /SUM\(ticket_count\) OVER/);
+  assert.match(sql, /LIMIT/);
+});
+
 test('raffle rejects zero, negative, missing and fractional ticket prices before querying', async () => {
   const service = new AdminService(
     { $queryRaw: async () => { throw new Error('Database must not be queried'); } } as any,
@@ -726,6 +1016,48 @@ test('raffle rejects zero, negative, missing and fractional ticket prices before
       BadRequestException,
     );
   }
+});
+
+test('raffle freeze is atomic and repeated request returns the same snapshot', async () => {
+  const snapshot = {
+    id: '11111111-1111-4111-8111-111111111111',
+    from: new Date('2026-10-01T00:00:00.000Z'),
+    to: new Date('2026-10-31T23:59:59.999Z'),
+    ticketPriceRub: { toString: () => '1000' },
+    participantsCount: 2,
+    ticketsCount: 5n,
+    amountRub: { toString: () => '5200' },
+    createdAt: new Date('2026-11-01T00:00:00.000Z'),
+  };
+  let existing: typeof snapshot | null = null;
+  let inserts = 0;
+  const transaction = {
+    raffleSnapshot: {
+      findUnique: async () => existing,
+      create: async () => { existing = snapshot; return snapshot; },
+    },
+    $executeRaw: async () => { inserts += 1; return 1; },
+  };
+  const prisma = {
+    raffleSnapshot: { findUnique: async () => existing },
+    $transaction: async (handler: (client: typeof transaction) => Promise<unknown>) => handler(transaction),
+  };
+  const service = new AdminService(
+    prisma as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any,
+  );
+  const query = {
+    from: '2026-10-01T00:00:00.000Z',
+    to: '2026-10-31T23:59:59.999Z',
+    ticketPrice: '1000',
+  };
+
+  const first = await service.freezeRaffle(query, adminUser);
+  const repeated = await service.freezeRaffle(query, adminUser);
+
+  assert.equal(first.snapshotId, snapshot.id);
+  assert.equal(repeated.snapshotId, snapshot.id);
+  assert.equal(inserts, 2);
 });
 
 test('points purchases list masks phone and returns cursor for next page', async () => {

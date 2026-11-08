@@ -8,6 +8,7 @@ import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -52,49 +53,37 @@ class MyListingsScreen extends StatefulWidget {
 }
 
 class _MyListingsScreenState extends State<MyListingsScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   static const double _bottomCreateButtonReserve = 92;
   static const double _scrollDirectionThreshold = 28;
   static const _tabs = <_MyListingsTabConfig>[
     _MyListingsTabConfig(
       title: 'Активные',
-      statuses: {'approved'},
+      statuses: {'approved', 'pending'},
       emptyText: 'Нет активных объявлений',
     ),
     _MyListingsTabConfig(
-      title: 'На модерации',
-      statuses: {'pending'},
-      emptyText: 'Нет объявлений на модерации',
-    ),
-    _MyListingsTabConfig(
-      title: 'В архиве',
-      statuses: {'archived'},
-      emptyText: 'Нет архивных объявлений',
-    ),
-    _MyListingsTabConfig(
-      title: 'Отклонённые',
+      title: 'Ждут действия',
       statuses: {'rejected'},
-      emptyText: 'Нет отклонённых объявлений',
+      emptyText: 'Нет объявлений, требующих действия',
     ),
     _MyListingsTabConfig(
-      title: 'Проданные',
-      statuses: {'sold'},
-      emptyText: 'Нет проданных объявлений',
-    ),
-    _MyListingsTabConfig(
-      title: 'Удалённые',
-      statuses: {'deleted'},
-      emptyText: 'Нет удалённых объявлений',
+      title: 'Архив',
+      statuses: {'archived', 'sold'},
+      emptyText: 'Нет архивных объявлений',
     ),
   ];
 
   late final TabController _tab;
+  StreamSubscription<void>? _countsRefreshSub;
+  Map<int, int> _tabCounts = const <int, int>{};
   bool _showCreateButton = true;
   double _scrollDirectionDistance = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _debugMyListingsLog('RUNTIME_SCREEN_INIT');
     _debugMyListingsLog(
       'init screen=${identityHashCode(this)} initialTab=${widget.initialTabIndex}',
@@ -105,12 +94,20 @@ class _MyListingsScreenState extends State<MyListingsScreen>
       initialIndex: widget.initialTabIndex.clamp(0, _tabs.length - 1),
     );
     _tab.addListener(_handleTabChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final service = context.read<ListingsService>();
+      _countsRefreshSub = service.refreshes.listen((_) => _syncTabCounts());
+      unawaited(_loadTabCounts());
+    });
   }
 
   @override
   void dispose() {
     _debugMyListingsLog('dispose screen=${identityHashCode(this)}');
+    WidgetsBinding.instance.removeObserver(this);
     _tab.removeListener(_handleTabChanged);
+    _countsRefreshSub?.cancel();
     _tab.dispose();
     super.dispose();
   }
@@ -129,6 +126,39 @@ class _MyListingsScreenState extends State<MyListingsScreen>
     _debugMyListingsLog(
       'tabChanged screen=${identityHashCode(this)} index=${_tab.index} changing=${_tab.indexIsChanging}',
     );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_loadTabCounts());
+    }
+  }
+
+  Future<void> _loadTabCounts() async {
+    final uid = context.read<AuthService>().currentUser?.uid.trim() ?? '';
+    if (uid.isEmpty) return;
+    await context.read<ListingsService>().refreshMyListings(uid);
+    if (!mounted) return;
+    _syncTabCounts();
+  }
+
+  void _syncTabCounts() {
+    if (!mounted) return;
+    final service = context.read<ListingsService>();
+    final next = <int, int>{
+      for (final entry in _tabs.asMap().entries)
+        entry.key: service
+            .peekMyListingsByStatuses(statuses: entry.value.statuses)
+            .length,
+    };
+    if (_sameCounts(_tabCounts, next)) return;
+    setState(() => _tabCounts = next);
+  }
+
+  bool _sameCounts(Map<int, int> current, Map<int, int> next) {
+    if (current.length != next.length) return false;
+    return next.entries.every((entry) => current[entry.key] == entry.value);
   }
 
   void _setCreateButtonVisible(bool visible) {
@@ -176,8 +206,21 @@ class _MyListingsScreenState extends State<MyListingsScreen>
         title: const Text('Мои объявления'),
         bottom: TabBar(
           controller: _tab,
-          isScrollable: true,
-          tabs: _tabs.map((tab) => Tab(text: tab.title)).toList(),
+          isScrollable: false,
+          labelColor: Theme.of(context).colorScheme.primary,
+          indicatorColor: Theme.of(context).colorScheme.primary,
+          tabs: _tabs
+              .asMap()
+              .entries
+              .map(
+                (entry) => Tab(
+                  child: _TabLabel(
+                    title: entry.value.title,
+                    count: _tabCounts[entry.key] ?? 0,
+                  ),
+                ),
+              )
+              .toList(),
         ),
         actions: [
           IconButton(
@@ -233,6 +276,125 @@ class _MyListingsScreenState extends State<MyListingsScreen>
   }
 }
 
+class _TabLabel extends StatelessWidget {
+  const _TabLabel({required this.title, required this.count});
+
+  final String title;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(title, maxLines: 1),
+            if (count > 0) ...[
+              const SizedBox(width: 4),
+              Text(
+                '$count',
+                key: ValueKey('my_listings_tab_count:$title'),
+                maxLines: 1,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ListingActionButton extends StatelessWidget {
+  const _ListingActionButton({
+    required this.label,
+    required this.onPressed,
+    this.icon,
+  });
+
+  final String label;
+  final VoidCallback? onPressed;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 20),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                style: const TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AsyncListingActionButton extends StatefulWidget {
+  const _AsyncListingActionButton({
+    required this.label,
+    required this.onPressed,
+    this.icon,
+  });
+
+  final String label;
+  final Future<void> Function()? onPressed;
+  final IconData? icon;
+
+  @override
+  State<_AsyncListingActionButton> createState() =>
+      _AsyncListingActionButtonState();
+}
+
+class _AsyncListingActionButtonState extends State<_AsyncListingActionButton> {
+  bool _running = false;
+
+  Future<void> _run() async {
+    if (_running || widget.onPressed == null) return;
+    setState(() => _running = true);
+    try {
+      await widget.onPressed!();
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ListingActionButton(
+      label: widget.label,
+      icon: widget.icon,
+      onPressed: widget.onPressed == null || _running ? null : _run,
+    );
+  }
+}
+
 class _MyListingsTabConfig {
   const _MyListingsTabConfig({
     required this.title,
@@ -271,7 +433,10 @@ class _TimewebMyListingsTab extends StatefulWidget {
 class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   static const Duration _resumeRefreshCooldown = Duration(seconds: 5);
+  static const int _maxAutomaticLoadMorePages = 3;
   late Future<List<Listing>> _future;
+  final ScrollController _scrollController = ScrollController();
+  final Set<String> _requestedPageCursors = <String>{};
   StreamSubscription<void>? _refreshSub;
   List<Listing>? _items;
   bool _loadedOnce = false;
@@ -283,6 +448,8 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
   double? _lastLoadMoreTriggerPixels;
   bool _didAutoOpenInitialListing = false;
   DateTime? _lastRefreshAt;
+  int _loadSerial = 0;
+  int _automaticLoadMorePages = 0;
 
   void _showLoadErrorSnack() {
     if (!mounted) return;
@@ -341,6 +508,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
     );
     WidgetsBinding.instance.removeObserver(this);
     _refreshSub?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -368,6 +536,22 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
   Future<List<Listing>> _load({bool reset = true}) async {
     final hadItems = (_items ?? const <Listing>[]).isNotEmpty;
     final listings = context.read<ListingsService>();
+    final requestSerial = ++_loadSerial;
+    final requestCursor = reset ? null : _nextCursor?.trim();
+    if (reset) {
+      _requestedPageCursors.clear();
+      _automaticLoadMorePages = 0;
+    } else if (requestCursor == null ||
+        requestCursor.isEmpty ||
+        !_requestedPageCursors.add(requestCursor)) {
+      if (mounted) {
+        setState(() {
+          _hasMore = false;
+          _nextCursor = null;
+        });
+      }
+      return List<Listing>.from(_items ?? const <Listing>[]);
+    }
     _debugMyListingsLog(
       'MyListings load start user=${widget.userId} statuses=${widget.statuses.join(",")}',
     );
@@ -376,27 +560,33 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
         widget.userId,
         statuses: widget.statuses,
         limit: 20,
-        cursor: reset ? null : _nextCursor,
+        cursor: requestCursor,
         forceRefresh: reset && hadItems,
       );
-      final items = reset ? page.items : _appendListings(_items, page.items);
-      final loadError = listings.lastMyListingsErrorForUser(widget.userId);
-      if (mounted) {
-        setState(() {
-          _replaceLocalItems(
-            items,
-            reason: reset ? 'load reset' : 'load append',
-            source: '_load',
-          );
-          _nextCursor = page.nextCursor;
-          _hasMore = page.hasMore && (page.nextCursor ?? '').trim().isNotEmpty;
-          _errorText = !hadItems && loadError != null
-              ? 'Не удалось загрузить объявления. Попробуйте снова.'
-              : null;
-          _loading = false;
-          _loadedOnce = true;
-        });
+      if (!mounted || requestSerial != _loadSerial) {
+        return List<Listing>.from(_items ?? const <Listing>[]);
       }
+      final items = reset ? page.items : _appendListings(_items, page.items);
+      final nextCursor = page.nextCursor?.trim();
+      final repeatedCursor = nextCursor != null &&
+          nextCursor.isNotEmpty &&
+          nextCursor == requestCursor;
+      final loadError = listings.lastMyListingsErrorForUser(widget.userId);
+      setState(() {
+        _replaceLocalItems(
+          items,
+          reason: reset ? 'load reset' : 'load append',
+          source: '_load',
+        );
+        _nextCursor = repeatedCursor ? null : nextCursor;
+        _hasMore =
+            page.hasMore && !repeatedCursor && (nextCursor ?? '').isNotEmpty;
+        _errorText = !hadItems && loadError != null
+            ? 'Не удалось загрузить объявления. Попробуйте снова.'
+            : null;
+        _loading = false;
+        _loadedOnce = true;
+      });
       _lastRefreshAt = DateTime.now();
       _debugMyListingsLog(
         items.isEmpty
@@ -404,8 +594,15 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
             : 'MyListings load success count=${items.length}',
       );
       _maybeAutoOpenListing(items);
+      _scheduleShortListLoadMore();
       return items;
     } catch (error) {
+      if (!reset && requestCursor != null) {
+        _requestedPageCursors.remove(requestCursor);
+      }
+      if (!mounted || requestSerial != _loadSerial) {
+        return List<Listing>.from(_items ?? const <Listing>[]);
+      }
       if (mounted) {
         setState(() {
           _loading = false;
@@ -498,8 +695,29 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
         setState(() {
           _isLoadingMore = false;
         });
+        _scheduleShortListLoadMore();
       }
     }
+  }
+
+  void _scheduleShortListLoadMore() {
+    if (!_hasMore ||
+        _isLoadingMore ||
+        _automaticLoadMorePages >= _maxAutomaticLoadMorePages) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_hasMore ||
+          _isLoadingMore ||
+          _automaticLoadMorePages >= _maxAutomaticLoadMorePages ||
+          !_scrollController.hasClients ||
+          _scrollController.position.maxScrollExtent > 1) {
+        return;
+      }
+      _automaticLoadMorePages += 1;
+      unawaited(_loadMore());
+    });
   }
 
   bool _handleScroll(ScrollNotification notification) {
@@ -675,6 +893,8 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
             child: ListView.separated(
+              controller: _scrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.fromLTRB(
                 12,
                 12,
@@ -689,8 +909,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
                 }
                 return _MyListingTile(
                   listing: items[i],
-                  showFavoriteCount: widget.statuses.length == 1 &&
-                      widget.statuses.contains('approved'),
+                  showFavoriteCount: items[i].normalizedStatus == 'approved',
                 );
               },
             ),
@@ -810,7 +1029,10 @@ class _ListingsTab extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPadding),
             itemCount: items.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _MyListingTile(listing: items[i]),
+            itemBuilder: (_, i) => _MyListingTile(
+              listing: items[i],
+              showFavoriteCount: items[i].normalizedStatus == 'approved',
+            ),
           ),
         );
       },
@@ -870,15 +1092,14 @@ class _MyListingTile extends StatelessWidget {
     final currentUserId = context.read<AuthService>().currentUser?.uid ?? '';
     final photo = listing.photoUrls.isNotEmpty ? listing.photoUrls.first : null;
     final canResubmit = listing.canOwnerResubmit;
-    final resubmitLabel = listing.normalizedStatus == 'rejected'
-        ? 'Отправить на модерацию'
-        : 'Опубликовать снова';
+    const resubmitLabel = 'Опубликовать снова';
     final canEdit = listing.canOwnerEdit;
     final normalizedStatus = listing.normalizedStatus;
     final canArchive = normalizedStatus == 'approved';
     final showSecondaryAction = canResubmit || canArchive;
     final secondaryLabel = canResubmit ? resubmitLabel : 'Снять с публикации';
     final archiveNote = listing.archiveNote.trim();
+    final statusPresentation = _statusPresentation(context, listing);
     final isOwner = listing.ownerId.trim() == currentUserId.trim();
     _debugMyListingsLog(
       'widget=_MyListingTile listingId=${listing.id} '
@@ -889,230 +1110,223 @@ class _MyListingTile extends StatelessWidget {
       'canOwnerResubmit=${listing.canOwnerResubmit}',
     );
 
-    return InkWell(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ListingDetailScreen(listingId: listing.id),
-        ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: attaSoftShadows(context),
       ),
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: listing.hasVipPromotion
-                ? vipBorderColor(context)
-                : Theme.of(context).colorScheme.outlineVariant,
-            width: listing.hasVipPromotion ? 1.25 : 1,
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ListingDetailScreen(listingId: listing.id),
           ),
         ),
-        child: Column(
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(
-                    width: 92,
-                    height: 69,
-                    child: Stack(
-                      fit: StackFit.expand,
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: listing.hasVipPromotion
+                  ? vipBorderColor(context)
+                  : Theme.of(context).colorScheme.outlineVariant,
+              width: listing.hasVipPromotion ? 1.25 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      width: 92,
+                      height: 69,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          (photo?.trim().isNotEmpty ?? false)
+                              ? MediaPreviewBox(
+                                  imageUrl: photo!,
+                                  categoryHint: 'listings',
+                                  width: 92,
+                                  height: 69,
+                                  borderRadius: 12,
+                                )
+                              : Container(
+                                  width: 92,
+                                  height: 69,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.image_outlined),
+                                ),
+                          ListingPromotionBadges(
+                            showVip: listing.hasVipPromotion,
+                            showBump: listing.hasBumpPromotion,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        (photo?.trim().isNotEmpty ?? false)
-                            ? MediaPreviewBox(
-                                imageUrl: photo!,
-                                categoryHint: 'listings',
-                                width: 92,
-                                height: 69,
-                                borderRadius: 12,
-                              )
-                            : Container(
-                                width: 92,
-                                height: 69,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .surfaceContainerHighest,
-                                alignment: Alignment.center,
-                                child: const Icon(Icons.image_outlined),
-                              ),
-                        ListingPromotionBadges(
-                          showVip: listing.hasVipPromotion,
-                          showBump: listing.hasBumpPromotion,
+                        Text(
+                          listing.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                        const SizedBox(height: 6),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            key: ValueKey('my_listing_status:${listing.id}'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusPresentation.background,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              statusPresentation.label,
+                              style: TextStyle(
+                                color: statusPresentation.foreground,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${formatPrice(listing.price)} ₽',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Flexible(
+                              fit: FlexFit.loose,
+                              child: Text(
+                                'Просмотров: ${listing.viewCount}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (showFavoriteCount) ...[
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.favorite_border,
+                                key: ValueKey(
+                                  'my_listing_favorite_icon:${listing.id}',
+                                ),
+                                size: 14,
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${listing.favoriteCount}',
+                                key: ValueKey(
+                                  'my_listing_favorite_count:${listing.id}',
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.person_outline,
+                                key: ValueKey(
+                                  'my_listing_followers_icon:${listing.id}',
+                                ),
+                                size: 14,
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
+                              const SizedBox(width: 4),
+                              StreamBuilder<int>(
+                                stream: context
+                                    .read<FollowService>()
+                                    .streamFollowersCount(listing.ownerId),
+                                builder: (context, snapshot) {
+                                  final count = snapshot.data ?? 0;
+                                  return Text(
+                                    '$count',
+                                    key: ValueKey(
+                                      'my_listing_followers_count:${listing.id}',
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ],
+                        ),
+                        if (archiveNote.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            archiveNote,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context).colorScheme.outline,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        listing.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${formatPrice(listing.price)} ₽',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Flexible(
-                            fit: FlexFit.loose,
-                            child: Text(
-                              'Просмотров: ${listing.viewCount}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (showFavoriteCount) ...[
-                            const SizedBox(width: 6),
-                            Icon(
-                              Icons.favorite_border,
-                              key: ValueKey(
-                                'my_listing_favorite_icon:${listing.id}',
-                              ),
-                              size: 14,
-                              color: Theme.of(context).colorScheme.outline,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${listing.favoriteCount}',
-                              key: ValueKey(
-                                'my_listing_favorite_count:${listing.id}',
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Icon(
-                              Icons.person_outline,
-                              key: ValueKey(
-                                'my_listing_followers_icon:${listing.id}',
-                              ),
-                              size: 14,
-                              color: Theme.of(context).colorScheme.outline,
-                            ),
-                            const SizedBox(width: 4),
-                            StreamBuilder<int>(
-                              stream: context
-                                  .read<FollowService>()
-                                  .streamFollowersCount(listing.ownerId),
-                              builder: (context, snapshot) {
-                                final count = snapshot.data ?? 0;
-                                return Text(
-                                  '$count',
-                                  key: ValueKey(
-                                    'my_listing_followers_count:${listing.id}',
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Статус: ${_statusLabel(normalizedStatus)}',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.outline,
+                ],
+              ),
+              if (_canSellFaster) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => SellFasterScreen(listing: listing),
                         ),
-                      ),
-                      if (archiveNote.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          archiveNote,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context).colorScheme.outline,
-                          ),
-                        ),
-                      ],
-                    ],
+                      );
+                    },
+                    icon: const Icon(Icons.bolt_outlined),
+                    label: const Text('Продать быстрее'),
                   ),
                 ),
               ],
-            ),
-            if (_canSellFaster) ...[
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => SellFasterScreen(listing: listing),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.bolt_outlined),
-                  label: const Text('Продать быстрее'),
-                ),
-              ),
-            ],
-            if (canEdit || showSecondaryAction) ...[
-              const SizedBox(height: 8),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final secondarySpacing = showSecondaryAction ? 8.0 : 0.0;
-                  final actionCount = showSecondaryAction ? 2 : 1;
-                  final actionWidth =
-                      (constraints.maxWidth - secondarySpacing) / actionCount;
-                  final isCompact = actionWidth < 168;
-                  final editFontSize = isCompact ? 12.0 : 14.0;
-                  final archiveFontSize = isCompact ? 11.0 : 12.0;
-
-                  return Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: canEdit
-                              ? () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(
-                                      builder: (_) => EditListingScreen(
-                                        listingId: listing.id,
-                                      ),
+              if (canEdit || showSecondaryAction) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _AsyncListingActionButton(
+                        label: 'Редактировать',
+                        icon: Icons.edit,
+                        onPressed: canEdit
+                            ? () async {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => EditListingScreen(
+                                      listingId: listing.id,
                                     ),
-                                  );
-                                }
-                              : null,
-                          style: isCompact
-                              ? OutlinedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
                                   ),
-                                )
-                              : null,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.edit),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                child: Text(
-                                  'Редактировать',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: editFontSize),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                                );
+                              }
+                            : null,
                       ),
-                      if (showSecondaryAction) ...[
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: canResubmit
-                                ? () async {
+                    ),
+                    if (showSecondaryAction) ...[
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _AsyncListingActionButton(
+                          label: secondaryLabel,
+                          onPressed: canResubmit
+                              ? () async {
+                                  try {
                                     await svc.resubmitListing(
                                       listingId: listing.id,
                                     );
@@ -1124,54 +1338,104 @@ class _MyListingTile extends StatelessWidget {
                                         ),
                                       ),
                                     );
-                                  }
-                                : () async {
-                                    await runListingArchiveFlow(
-                                      context,
-                                      listingId: listing.id,
-                                      listingsService: svc,
+                                  } catch (_) {
+                                    if (!context.mounted) return;
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Не удалось отправить объявление. Проверьте данные и попробуйте снова.',
+                                        ),
+                                      ),
                                     );
-                                  },
-                            style: OutlinedButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 6),
-                            ),
-                            child: Text(
-                              secondaryLabel,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: archiveFontSize),
-                            ),
-                          ),
+                                  }
+                                }
+                              : () async {
+                                  await runListingArchiveFlow(
+                                    context,
+                                    listingId: listing.id,
+                                    listingsService: svc,
+                                  );
+                                },
                         ),
-                      ],
+                      ),
                     ],
-                  );
-                },
-              ),
+                  ],
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
   }
 
-  String _statusLabel(String status) {
-    switch (status) {
+  _ListingStatusPresentation _statusPresentation(
+    BuildContext context,
+    Listing listing,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    switch (listing.normalizedStatus) {
       case 'approved':
-        return 'Активно';
+        return const _ListingStatusPresentation(
+          label: 'Активно',
+          background: Color(0xFFE4F6EA),
+          foreground: Color(0xFF16713A),
+        );
       case 'pending':
-        return 'На модерации';
+        return const _ListingStatusPresentation(
+          label: 'На проверке',
+          background: Color(0xFFFFEAC7),
+          foreground: Color(0xFF9A5700),
+        );
       case 'rejected':
-        return 'Отклонённые';
+        return _ListingStatusPresentation(
+          label: 'Требуется действие',
+          background: colors.errorContainer,
+          foreground: colors.onErrorContainer,
+        );
       case 'sold':
-        return 'Проданные';
+        return const _ListingStatusPresentation(
+          label: 'Продано',
+          background: Color(0xFFE4F6EA),
+          foreground: Color(0xFF16713A),
+        );
       case 'deleted':
-        return 'Удалённые';
+        return _ListingStatusPresentation(
+          label: 'Удалено',
+          background: colors.errorContainer,
+          foreground: colors.onErrorContainer,
+        );
       case 'archived':
-        return 'В архиве';
+        if (listing.isAdminArchived) {
+          return _ListingStatusPresentation(
+            label: 'Удалено модератором',
+            background: colors.errorContainer,
+            foreground: colors.onErrorContainer,
+          );
+        }
+        return _ListingStatusPresentation(
+          label: 'Снято',
+          background: colors.surfaceContainerHighest,
+          foreground: colors.onSurfaceVariant,
+        );
       default:
-        return status;
+        return _ListingStatusPresentation(
+          label: listing.status,
+          background: colors.surfaceContainerHighest,
+          foreground: colors.onSurfaceVariant,
+        );
     }
   }
+}
+
+class _ListingStatusPresentation {
+  const _ListingStatusPresentation({
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  final String label;
+  final Color background;
+  final Color foreground;
 }

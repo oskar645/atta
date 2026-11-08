@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
@@ -13,6 +15,7 @@ import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 class SupportScreen extends StatefulWidget {
@@ -55,33 +58,108 @@ class _SupportScreenState extends State<SupportScreen> {
   bool _loadingTicket = true;
   String? _loadError;
   Stream<List<Map<String, dynamic>>>? _messagesStream;
+  Future<void>? _initialLoadFuture;
+  int _loadGeneration = 0;
+  Timer? _draftSaveTimer;
+  late final String _ownerUid;
 
   @override
   void initState() {
     super.initState();
+    _ownerUid = context.read<AuthService>().currentUser?.uid ?? '';
     final draft = widget.initialDraftText?.trim() ?? '';
     if (draft.isNotEmpty) {
       _text.text = draft;
     }
-    _loadMyTicket();
+    _initialLoadFuture = _loadMyTicket();
+    _text.addListener(_scheduleDraftSave);
+    unawaited(_restoreLocalDraft());
   }
 
   @override
   void dispose() {
+    _draftSaveTimer?.cancel();
+    unawaited(_saveLocalDraft());
     _text.dispose();
     super.dispose();
+  }
+
+  String get _draftPrefsKey => 'support_draft_v2:$_ownerUid';
+
+  void _scheduleDraftSave() {
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = Timer(
+      const Duration(milliseconds: 250),
+      () => unawaited(_saveLocalDraft()),
+    );
+  }
+
+  Future<void> _saveLocalDraft() async {
+    if (_ownerUid.isEmpty) return;
+    final currentText = _text.text;
+    final currentMessages = _draftMessages
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+    final prefs = await SharedPreferences.getInstance();
+    final payload = <String, dynamic>{
+      'text': currentText,
+      'messages': currentMessages,
+    };
+    if (currentText.trim().isEmpty && currentMessages.isEmpty) {
+      await prefs.remove(_draftPrefsKey);
+      return;
+    }
+    await prefs.setString(_draftPrefsKey, jsonEncode(payload));
+  }
+
+  Future<void> _restoreLocalDraft() async {
+    if (_ownerUid.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_draftPrefsKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map || !mounted) return;
+      final restoredText = (decoded['text'] ?? '').toString();
+      final restoredMessages = decoded['messages'];
+      setState(() {
+        if (_text.text.trim().isEmpty && restoredText.trim().isNotEmpty) {
+          _text.text = restoredText;
+        }
+        if (_draftMessages.isEmpty && restoredMessages is List) {
+          _draftMessages.addAll(
+            restoredMessages
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item)),
+          );
+        }
+      });
+    } catch (_) {
+      await prefs.remove(_draftPrefsKey);
+    }
+  }
+
+  Future<void> _clearLocalDraft() async {
+    if (_ownerUid.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_draftPrefsKey);
   }
 
   Future<void> _loadMyTicket() async {
     final auth = context.read<AuthService>();
     final support = context.read<SupportService>();
     final uid = auth.currentUser!.uid;
+    final generation = ++_loadGeneration;
     final initialTicketId = widget.initialTicketId?.trim() ?? '';
 
     if (initialTicketId.isNotEmpty) {
       try {
         await support.refreshMessages(initialTicketId);
-        if (!mounted) return;
+        if (!mounted ||
+            generation != _loadGeneration ||
+            context.read<AuthService>().currentUser?.uid != uid) {
+          return;
+        }
         setState(() {
           _ticketId = initialTicketId;
           _messagesStream = support.streamMessages(initialTicketId);
@@ -89,7 +167,7 @@ class _SupportScreenState extends State<SupportScreen> {
           _loadError = null;
         });
       } catch (_) {
-        if (!mounted) return;
+        if (!mounted || generation != _loadGeneration) return;
         setState(() {
           _loadingTicket = false;
           _loadError = 'Обращение в поддержку не найдено.';
@@ -100,7 +178,11 @@ class _SupportScreenState extends State<SupportScreen> {
 
     try {
       final existing = await support.getOrCreateMyTicketId(uid: uid);
-      if (!mounted) return;
+      if (!mounted ||
+          generation != _loadGeneration ||
+          context.read<AuthService>().currentUser?.uid != uid) {
+        return;
+      }
       setState(() {
         _ticketId = existing;
         _messagesStream =
@@ -109,7 +191,7 @@ class _SupportScreenState extends State<SupportScreen> {
         _loadError = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _loadingTicket = false;
         _loadError = _supportErrorText(error);
@@ -132,6 +214,10 @@ class _SupportScreenState extends State<SupportScreen> {
   }
 
   Future<void> _send() async {
+    if (_loadingTicket) {
+      await _initialLoadFuture;
+      if (!mounted || _loadingTicket || _loadError != null) return;
+    }
     final text = _text.text.trim();
     final image = _selectedImage;
     if (text.isEmpty && image == null) {
@@ -146,6 +232,7 @@ class _SupportScreenState extends State<SupportScreen> {
     final support = context.read<SupportService>();
     final auth = context.read<AuthService>();
     final localId = 'local-${_uuid.v4()}';
+    final operationId = _uuid.v4();
 
     setState(() {
       _sending = true;
@@ -163,12 +250,14 @@ class _SupportScreenState extends State<SupportScreen> {
           'local_image_path': image?.path,
           'created_at': DateTime.now().toUtc().toIso8601String(),
           'local_status': 'pending',
+          'client_operation_id': operationId,
         };
         if (mounted) {
           setState(() {
             _draftMessages.insert(0, draft);
             _selectedImage = null;
           });
+          unawaited(_saveLocalDraft());
         }
 
         final name = await _getMyName();
@@ -177,13 +266,19 @@ class _SupportScreenState extends State<SupportScreen> {
           name: name,
           text: text,
           imageFile: image == null ? null : File(image.path),
+          operationId: operationId,
         );
+        if (createdTicketId.trim().isEmpty) {
+          throw const FormatException('Сервер не вернул номер обращения');
+        }
         if (!mounted) return;
+        _loadGeneration += 1;
         setState(() {
           _ticketId = createdTicketId;
           _messagesStream = support.streamMessages(createdTicketId);
           _draftMessages.clear();
         });
+        await _clearLocalDraft();
         return;
       }
 
@@ -196,6 +291,7 @@ class _SupportScreenState extends State<SupportScreen> {
         ticketId: _ticketId!,
         text: text,
         imageFile: image == null ? null : File(image.path),
+        operationId: operationId,
       );
     } catch (error) {
       if (!mounted) return;
@@ -211,6 +307,7 @@ class _SupportScreenState extends State<SupportScreen> {
             break;
           }
         });
+        unawaited(_saveLocalDraft());
       } else {
         showAppSnack(context, _supportErrorText(error), isError: true);
       }
@@ -249,6 +346,7 @@ class _SupportScreenState extends State<SupportScreen> {
         name: name,
         text: text,
         imageFile: localImagePath.isEmpty ? null : File(localImagePath),
+        operationId: (message['client_operation_id'] ?? '').toString(),
       );
       if (!mounted) return;
       setState(() {
@@ -256,6 +354,7 @@ class _SupportScreenState extends State<SupportScreen> {
         _messagesStream = support.streamMessages(createdTicketId);
         _draftMessages.clear();
       });
+      await _clearLocalDraft();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -271,6 +370,7 @@ class _SupportScreenState extends State<SupportScreen> {
           };
         }
       });
+      unawaited(_saveLocalDraft());
     }
   }
 
@@ -538,7 +638,12 @@ class _SupportScreenState extends State<SupportScreen> {
               ],
             );
           }
-          return _buildMessageList(snap.data!);
+          final items = snap.data!;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || _ticketId == null) return;
+            unawaited(support.markAdminMessagesRead(_ticketId!, items));
+          });
+          return _buildMessageList(items);
         },
       );
     }
@@ -571,7 +676,8 @@ class _SupportScreenState extends State<SupportScreen> {
                 children: [
                   IconButton(
                     tooltip: 'Добавить фото',
-                    onPressed: _sending ? null : _openAttachMenu,
+                    onPressed:
+                        _sending || _loadingTicket ? null : _openAttachMenu,
                     icon: const Icon(Icons.add_photo_alternate_outlined),
                   ),
                   Expanded(
@@ -610,12 +716,13 @@ class _SupportScreenState extends State<SupportScreen> {
                           ),
                         ),
                       ),
-                      onSubmitted: (_) => _sending ? null : _send(),
+                      onSubmitted: (_) =>
+                          _sending || _loadingTicket ? null : _send(),
                     ),
                   ),
                   const SizedBox(width: 8),
                   FilledButton(
-                    onPressed: _sending ? null : _send,
+                    onPressed: _sending || _loadingTicket ? null : _send,
                     style: FilledButton.styleFrom(
                       minimumSize: const Size(52, 52),
                       shape: const CircleBorder(),
@@ -655,10 +762,13 @@ class _SupportMessageBubble extends StatelessWidget {
   bool get _isMine => (message['sender'] ?? '').toString() == 'user';
   bool get _failed => (message['local_status'] ?? '').toString() == 'failed';
   bool get _pending => (message['local_status'] ?? '').toString() == 'pending';
+  bool get _deleted =>
+      (message['deleted_at'] ?? '').toString().trim().isNotEmpty;
+  bool get _edited => (message['edited_at'] ?? '').toString().trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
-    final text = _messageText(message);
+    final text = _deleted ? 'Сообщение удалено' : _messageText(message);
     final imageUrl = (message['image_url'] ?? '').toString().trim();
     final hasImage = imageUrl.isNotEmpty;
     final scheme = Theme.of(context).colorScheme;
@@ -750,6 +860,16 @@ class _SupportMessageBubble extends StatelessWidget {
                 ),
               ],
             ),
+            if (_edited && !_deleted)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  'Изменено',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: secondaryTextColor,
+                      ),
+                ),
+              ),
             if (_failed && onRetry != null) ...[
               if ((message['error_text'] ?? '').toString().trim().isNotEmpty)
                 Padding(

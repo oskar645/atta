@@ -59,6 +59,8 @@ export class NotificationsController {
       build_number?: string;
       buildNumber?: string;
       locale?: string;
+      supports_android_data_only_push?: boolean;
+      supportsAndroidDataOnlyPush?: boolean;
     },
   ) {
     return this.notificationsService.registerDevice(authUser, {
@@ -68,6 +70,8 @@ export class NotificationsController {
       appVersion: body.app_version ?? body.appVersion,
       buildNumber: body.build_number ?? body.buildNumber,
       locale: body.locale,
+      supportsAndroidDataOnlyPush:
+        body.supports_android_data_only_push ?? body.supportsAndroidDataOnlyPush,
     });
   }
 

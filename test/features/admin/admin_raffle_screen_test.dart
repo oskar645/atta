@@ -12,6 +12,7 @@ class _FakeRaffleAdminService extends AdminService {
   final bool fail;
   final bool paged;
   final List<String> requestedPrices = [];
+  final List<String?> requestedTicketSearches = [];
 
   @override
   Future<Map<String, dynamic>> raffleSummary(
@@ -55,10 +56,40 @@ class _FakeRaffleAdminService extends AdminService {
           : null,
     };
   }
+
+  @override
+  Future<Map<String, dynamic>> raffleTickets(
+      {required String from,
+      required String to,
+      required String ticketPrice,
+      int limit = 50,
+      String? cursor,
+      String? search}) async {
+    requestedTicketSearches.add(search);
+    return {
+      'items': empty
+          ? []
+          : [
+              {
+                'ticketNumber': cursor == null ? '1' : '51',
+                'name': 'Иван Иванов',
+                'phone': '+79991112233',
+              },
+              {
+                'ticketNumber': cursor == null ? '2' : '52',
+                'name': 'Иван Иванов',
+                'phone': '+79991112233',
+              },
+            ],
+      'nextCursor': paged && cursor == null ? '50' : null,
+    };
+  }
 }
 
 void main() {
   Future<void> openScreen(WidgetTester tester, AdminService service) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(Provider<AdminService>.value(
       value: service,
       child: MaterialApp(
@@ -73,19 +104,23 @@ void main() {
     await openScreen(tester, _FakeRaffleAdminService());
     expect(find.text('Цена одного билета, ₽'), findsOneWidget);
     expect(find.text('1 билет = 500 ₽'), findsOneWidget);
-    expect(find.text('Дата начала: 01.10.2026'), findsOneWidget);
-    expect(find.text('Дата окончания: 02.10.2026'), findsOneWidget);
-    expect(find.text('Скачать участников CSV'), findsOneWidget);
-    expect(find.text('Скачать билеты для печати CSV'), findsOneWidget);
+    expect(find.text('Дата начала'), findsOneWidget);
+    expect(find.text('01.10.2026'), findsOneWidget);
+    expect(find.text('Дата окончания'), findsOneWidget);
+    expect(find.text('02.10.2026'), findsOneWidget);
     await tester.tap(find.text('Показать участников'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Уникальных участников: 1'), findsOneWidget);
-    expect(find.text('Цена билета: 500 ₽'), findsOneWidget);
-    expect(find.text('Всего билетов: 2'), findsOneWidget);
+    expect(find.text('Участники'), findsWidgets);
+    expect(find.text('Всего билетов'), findsOneWidget);
+    expect(find.text('Сумма'), findsOneWidget);
+    expect(find.text('Скачать список'), findsOneWidget);
+    expect(find.text('Печать PDF'), findsOneWidget);
+    expect(find.text('Копировать'), findsOneWidget);
+    expect(find.text('Поделиться'), findsOneWidget);
     expect(find.textContaining('Иван Иванов'), findsOneWidget);
     expect(find.textContaining('остаток 200 ₽'), findsOneWidget);
-    await tester.tap(find.text('Дата окончания: 02.10.2026'));
+    await tester.tap(find.text('02.10.2026'));
     await tester.pumpAndSettle();
     expect(find.byType(DatePickerDialog), findsOneWidget);
     expect(find.text('Дата окончания розыгрыша'), findsOneWidget);
@@ -146,12 +181,44 @@ void main() {
     await tester.tap(calculate);
     await tester.pumpAndSettle();
     expect(admin.requestedPrices, ['2100', '2100']);
-    expect(find.text('Цена билета: 2100 ₽'), findsOneWidget);
     await tester.enterText(field, '1000');
     await tester.pump();
-    expect(find.text('Цена билета: 2100 ₽'), findsNothing);
+    expect(find.text('Всего билетов'), findsNothing);
     await tester.tap(calculate);
     await tester.pumpAndSettle();
     expect(admin.requestedPrices, ['2100', '2100', '1000', '1000']);
+  });
+
+  testWidgets(
+      'ticket view shows every ticket and searches without accumulating pages',
+      (tester) async {
+    final admin = _FakeRaffleAdminService(paged: true);
+    await openScreen(tester, admin);
+    await tester.tap(find.text('Показать участников'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Все билеты'),
+      300,
+      scrollable: find
+          .descendant(
+              of: find.byType(ListView), matching: find.byType(Scrollable))
+          .first,
+    );
+    await tester.tap(find.text('Все билеты'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Билет №1'), findsOneWidget);
+    expect(find.text('Билет №2'), findsOneWidget);
+    expect(find.text('Поиск по имени, телефону или № билета'), findsOneWidget);
+    await tester.tap(find.text('Дальше'));
+    await tester.pumpAndSettle();
+    expect(find.text('Билет №51'), findsOneWidget);
+    expect(find.text('Билет №1'), findsNothing);
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Поиск по имени, телефону или № билета'),
+        '#2');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(admin.requestedTicketSearches.last, '#2');
   });
 }

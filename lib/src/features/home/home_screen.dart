@@ -36,6 +36,7 @@ import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/services/search_attempt_analytics.dart';
 import 'package:atta/src/services/showcase_service.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
@@ -108,8 +109,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with RouteAware, WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen> with RouteAware {
   static const int _feedPageSize = 20;
   static const int _vipPreviewPageSize = 20;
   static const Duration _showcaseStaleAfter = Duration(minutes: 5);
@@ -193,7 +193,6 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _bumpListings = context.read<ListingsService>();
     _searchAnalytics =
         SearchAttemptAnalytics(_bumpListings.recordSearchAttempt);
@@ -236,7 +235,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _networkRecoverySub?.cancel();
     _feedRetryTimer?.cancel();
     _searchDebounce?.cancel();
@@ -275,13 +273,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (!mounted) return;
       setState(() => _showWebInstallAction = true);
     });
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      unawaited(_recoverFeedAfterTransportChange());
-    }
   }
 
   Future<void> _recoverFeedAfterTransportChange() async {
@@ -972,47 +963,63 @@ class _HomeScreenState extends State<HomeScreen>
                     _CategoryRow(
                         selected: _category, onSelect: _selectCategory),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-                      child: TextField(
-                        controller: _searchCtrl,
-                        textCapitalization: TextCapitalization.sentences,
-                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search),
-                          suffixIcon: IconButton(
-                            tooltip: 'Фильтры',
-                            onPressed: _openFilters,
-                            icon: const Icon(Icons.tune),
-                          ),
-                          hintText: hint,
-                          isDense: true,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(
-                                color: Theme.of(context).dividerColor),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(
-                              color: Theme.of(context).colorScheme.primary,
-                              width: 1.6,
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: attaSoftShadows(context),
+                        ),
+                        child: SizedBox(
+                          height: 48,
+                          child: TextField(
+                            key: const ValueKey('home_search_field'),
+                            controller: _searchCtrl,
+                            textCapitalization: TextCapitalization.sentences,
+                            onTapOutside: (_) =>
+                                FocusScope.of(context).unfocus(),
+                            decoration: InputDecoration(
+                              filled: true,
+                              fillColor: Theme.of(context).brightness ==
+                                      Brightness.light
+                                  ? Colors.white
+                                  : Theme.of(context).scaffoldBackgroundColor,
+                              prefixIcon: const Icon(Icons.search),
+                              suffixIcon: IconButton(
+                                tooltip: 'Фильтры',
+                                onPressed: _openFilters,
+                                icon: const Icon(Icons.tune),
+                              ),
+                              hintText: hint,
+                              isDense: true,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                    color: Theme.of(context).dividerColor),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  width: 1.6,
+                                ),
+                              ),
                             ),
+                            onChanged: (v) {
+                              _searchAnalytics.queryChanged(v);
+                              _searchDebounce?.cancel();
+                              _searchDebounce =
+                                  Timer(const Duration(milliseconds: 400), () {
+                                if (!mounted) return;
+                                setState(() => _search = v.trim());
+                                _persistFilters();
+                                unawaited(_reloadFeed(reset: true));
+                              });
+                            },
                           ),
                         ),
-                        onChanged: (v) {
-                          _searchAnalytics.queryChanged(v);
-                          _searchDebounce?.cancel();
-                          _searchDebounce =
-                              Timer(const Duration(milliseconds: 400), () {
-                            if (!mounted) return;
-                            setState(() => _search = v.trim());
-                            _persistFilters();
-                            unawaited(_reloadFeed(reset: true));
-                          });
-                        },
                       ),
                     ),
                   ],
@@ -2664,6 +2671,9 @@ class _CategoryRow extends StatelessWidget {
             onSelected: (_) => onSelect(c),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             visualDensity: VisualDensity.compact,
+            elevation: 0.5,
+            pressElevation: 1,
+            shadowColor: attaSoftShadowColor(context),
           );
         },
       ),

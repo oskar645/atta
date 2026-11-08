@@ -31,6 +31,37 @@ function restoreGlobals() {
 
 test.afterEach(restoreGlobals);
 
+test('refund webhook stores confirmed partial refund without rewriting wallet history', async () => {
+  (env as { YOOKASSA_SHOP_ID: string }).YOOKASSA_SHOP_ID = '1425242';
+  (env as { YOOKASSA_SECRET_KEY: string }).YOOKASSA_SECRET_KEY = 'secret';
+  global.fetch = (async () => ({
+    ok: true,
+    json: async () => ({
+      id: 'yk-payment-refund', status: 'succeeded', test: false,
+      amount: { value: '1000.00', currency: 'RUB' },
+      refunded_amount: { value: '250.00', currency: 'RUB' },
+      metadata: { paymentId: 'local-refund', userId: 'user-1' },
+    }),
+  }) as Response) as typeof fetch;
+  let updateData: Record<string, any> | undefined;
+  const service = new PaymentsService({
+    payment: {
+      findUnique: async () => ({
+        id: 'local-refund', userId: 'user-1', providerPaymentId: 'yk-payment-refund',
+        amountRub: { toFixed: () => '1000.00' }, pointsAmount: 1000, currency: 'RUB',
+      }),
+      update: async (args: Record<string, any>) => { updateData = args.data; },
+    },
+  } as any, {} as any);
+
+  await service.handleYookassaWebhook({
+    event: 'refund.succeeded', object: { payment_id: 'yk-payment-refund' },
+  });
+
+  assert.equal(updateData?.refundedAmountRub.toFixed(2), '250.00');
+  assert.equal(updateData?.isTest, false);
+});
+
 test('createYookassaPayment creates local payment and returns only safe fields', async () => {
   (env as { YOOKASSA_SHOP_ID: string }).YOOKASSA_SHOP_ID = '1425242';
   (env as { YOOKASSA_SECRET_KEY: string }).YOOKASSA_SECRET_KEY = 'secret';
@@ -148,8 +179,9 @@ test('repeated succeeded webhook does not accrue points again', async () => {
               pointsAmount: 100,
               currency: 'RUB',
             }),
-            update: async () => {
-              throw new Error('payment should not be updated');
+            update: async (args: Record<string, any>) => {
+              assert.equal(args.data.refundedAmountRub.toFixed(2), '0.00');
+              return args.data;
             },
           },
         }),
@@ -190,6 +222,7 @@ test('status endpoint syncs succeeded YooKassa payment and accrues once', async 
 
   const payment = paymentFixture();
   let accrueCalls = 0;
+  const dashboardScopes: string[][] = [];
   const service = new PaymentsService(
     {
       payment: {
@@ -215,6 +248,7 @@ test('status endpoint syncs succeeded YooKassa payment and accrues once', async 
         bonusBalance: 325,
       }),
     } as any,
+    { changed: (...scopes: string[]) => dashboardScopes.push(scopes) } as any,
   );
 
   const result = await service.getPaymentStatus(
@@ -226,6 +260,7 @@ test('status endpoint syncs succeeded YooKassa payment and accrues once', async 
   assert.equal(result.credited, true);
   assert.equal(result.balance, 325);
   assert.equal(accrueCalls, 1);
+  assert.deepEqual(dashboardScopes, [['payments']]);
 });
 
 test('concurrent webhook and status sync accrue purchased points once', async () => {
@@ -355,6 +390,7 @@ test('status endpoint syncs canceled payment without accrual', async () => {
 
   const payment = paymentFixture();
   let accrueCalls = 0;
+  const dashboardScopes: string[][] = [];
   const service = new PaymentsService(
     {
       payment: {
@@ -371,6 +407,7 @@ test('status endpoint syncs canceled payment without accrual', async () => {
         accrueCalls += 1;
       },
     } as any,
+    { changed: (...scopes: string[]) => dashboardScopes.push(scopes) } as any,
   );
 
   const result = await service.getPaymentStatus(
@@ -380,6 +417,7 @@ test('status endpoint syncs canceled payment without accrual', async () => {
 
   assert.equal(result.status, 'canceled');
   assert.equal(accrueCalls, 0);
+  assert.deepEqual(dashboardScopes, []);
 });
 
 test('status endpoint rejects succeeded payment with amount mismatch', async () => {

@@ -14,6 +14,8 @@ import { JwtService } from '@nestjs/jwt';
 import { Server, Socket } from 'socket.io';
 
 import { AnalyticsSignal } from '../usage-analytics/analytics-signal';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
+import { SupportRealtimeSignal } from '../../common/support-realtime-signal';
 import { normalizeRussianPhone } from '../../common/phone';
 import { parseAdminPhoneNumbers } from '../../config/env';
 import { env, parseCorsOrigins } from '../../config/env';
@@ -42,11 +44,15 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     private readonly prisma: PrismaService,
     private readonly accountDeletion: AccountDeletionService,
     @Optional() private readonly analyticsSignal?: AnalyticsSignal,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
+    @Optional() private readonly supportRealtimeSignal?: SupportRealtimeSignal,
   ) {}
 
   private unsubscribeDeletion?: () => void;
 
   private unsubscribeAnalytics?: () => void;
+  private unsubscribeAdminDashboard?: () => void;
+  private unsubscribeSupportRealtime?: () => void;
   private analyticsTimer?: ReturnType<typeof setTimeout>;
 
   private async isAnalyticsAdmin(client: Socket) {
@@ -77,7 +83,50 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
   }
 
+  private async notifyAdminDashboard(scopes: string[]) {
+    for (const client of this.server?.sockets?.sockets?.values() ?? []) {
+      if (!client.rooms.has('admin:analytics')) continue;
+      try {
+        if (await this.isAnalyticsAdmin(client)) {
+          client.emit('admin.dashboard.changed', { scopes });
+        } else {
+          await client.leave('admin:analytics');
+        }
+      } catch {
+        await client.leave('admin:analytics');
+      }
+    }
+  }
+
+  private async notifySupportAdmins(event: Record<string, unknown>) {
+    for (const client of this.server?.sockets?.sockets?.values() ?? []) {
+      if (!client.rooms.has('admin:analytics')) continue;
+      try {
+        if (await this.isAnalyticsAdmin(client)) {
+          client.emit('support.changed', event);
+        } else {
+          await client.leave('admin:analytics');
+        }
+      } catch {
+        await client.leave('admin:analytics');
+      }
+    }
+  }
+
   onModuleInit() {
+    this.unsubscribeSupportRealtime = this.supportRealtimeSignal?.subscribe(
+      (event) => {
+        if (event.userId) {
+          this.server?.to(`user:${event.userId}`).emit('support.changed', event);
+        }
+        void this.notifySupportAdmins(event).catch(() => undefined);
+      },
+    );
+    this.unsubscribeAdminDashboard = this.adminDashboardSignal?.subscribe(
+      (scopes) => {
+        void this.notifyAdminDashboard(scopes).catch(() => undefined);
+      },
+    );
     this.unsubscribeAnalytics = this.analyticsSignal?.subscribe(() => {
       if (this.analyticsTimer) return;
       this.analyticsTimer = setTimeout(() => {
@@ -94,6 +143,8 @@ export class ChatsGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   onModuleDestroy() {
     this.unsubscribeDeletion?.();
     this.unsubscribeAnalytics?.();
+    this.unsubscribeAdminDashboard?.();
+    this.unsubscribeSupportRealtime?.();
     if (this.analyticsTimer) clearTimeout(this.analyticsTimer);
   }
 

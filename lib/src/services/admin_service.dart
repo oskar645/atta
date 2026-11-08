@@ -53,7 +53,11 @@ class AdminService {
   final Map<String, AdminSectionSnapshot> _sectionSnapshots =
       <String, AdminSectionSnapshot>{};
   Future<void>? _seenMarkersLoadInFlight;
+  String? _seenMarkersLoadOwnerUid;
+  int? _seenMarkersLoadGeneration;
   Future<void>? _attentionRefreshInFlight;
+  bool _attentionForceRequested = false;
+  int _stateGeneration = 0;
   DateTime? _lastAttentionNetworkFailureAt;
 
   static const Duration _defaultCacheTtl = Duration(seconds: 15);
@@ -72,19 +76,27 @@ class AdminService {
     if (_activeAdminUid == normalized && _seenMarkersLoadInFlight == null) {
       return;
     }
+    if (_activeAdminUid != normalized) {
+      _stateGeneration++;
+    }
     _activeAdminUid = normalized;
     unawaited(_ensureSeenMarkersLoaded());
   }
 
   void resetSession() {
+    _stateGeneration++;
     _sessionActive = false;
     _cache.clear();
     _lastAdminResolvedUser = null;
     _lastAdminResolvedAt = null;
     _lastAttentionRefreshAt = null;
     _attentionRefreshInFlight = null;
+    _attentionForceRequested = false;
     _lastAttentionNetworkFailureAt = null;
     _activeAdminUid = null;
+    _seenMarkersLoadInFlight = null;
+    _seenMarkersLoadOwnerUid = null;
+    _seenMarkersLoadGeneration = null;
     _seenMarkers = <String, String>{};
     _sectionSnapshots.clear();
     _emitSectionBadgeCounts();
@@ -155,7 +167,12 @@ class AdminService {
   Future<void> refreshAdminAttention({bool force = false}) async {
     final existing = _attentionRefreshInFlight;
     if (existing != null) {
-      return existing;
+      if (!force) return existing;
+      _attentionForceRequested = true;
+      await existing;
+      if (!_attentionForceRequested) return;
+      _attentionForceRequested = false;
+      return refreshAdminAttention(force: true);
     }
     final future = _refreshAdminAttentionInternal(force: force);
     _attentionRefreshInFlight = future;
@@ -169,6 +186,8 @@ class AdminService {
   }
 
   Future<void> _refreshAdminAttentionInternal({required bool force}) async {
+    final stateGeneration = _stateGeneration;
+    final sessionGeneration = _tokenStorage.sessionGeneration;
     if (!_sessionActive) {
       return;
     }
@@ -201,6 +220,11 @@ class AdminService {
         reports(forceRefresh: force),
         support(forceRefresh: force),
       ]);
+      if (stateGeneration != _stateGeneration ||
+          sessionGeneration != _tokenStorage.sessionGeneration ||
+          !_sessionActive) {
+        return;
+      }
       _updateSnapshotFromResponse(moderationSection, results[0]);
       _updateSnapshotFromResponse(reportsSection, results[1]);
       _updateSnapshotFromResponse(supportSection, results[2]);
@@ -235,6 +259,12 @@ class AdminService {
   Future<Map<String, dynamic>> dashboardStats({bool forceRefresh = false}) =>
       _cached('dashboardStats', _api.dashboardStats,
           forceRefresh: forceRefresh);
+  Future<Map<String, dynamic>> dashboardMetrics(Set<String> scopes) =>
+      _api.dashboardMetrics(scopes);
+  Future<Map<String, dynamic>> appDownloads({bool forceRefresh = false}) =>
+      _cached('appDownloads', _api.appDownloads,
+          forceRefresh: forceRefresh, ttl: const Duration(minutes: 5));
+  Future<Map<String, dynamic>> serverStatus() => _api.serverStatus();
   Future<Map<String, dynamic>> zeroResultSearches(
           {String period = 'month',
           String search = '',
@@ -284,11 +314,13 @@ class AdminService {
 
   Future<Map<String, dynamic>> userRegistrationStats({
     int? year,
+    String? from,
+    String? to,
     bool forceRefresh = false,
   }) =>
       _cached(
-        'userRegistrationStats:${year ?? 'current'}',
-        () => _api.userRegistrationStats(year: year),
+        'userRegistrationStats:${year ?? 'current'}:${from ?? ''}:${to ?? ''}',
+        () => _api.userRegistrationStats(year: year, from: from, to: to),
         forceRefresh: forceRefresh,
       );
 
@@ -446,11 +478,13 @@ class AdminService {
 
   Future<Map<String, dynamic>> bonusAnalytics({
     String? period,
+    String? from,
+    String? to,
     bool forceRefresh = false,
   }) =>
       _cached(
-        'bonusAnalytics:${period ?? 'default'}',
-        () => _api.bonusAnalytics(period: period),
+        'bonusAnalytics:${period ?? 'default'}:${from ?? ''}:${to ?? ''}',
+        () => _api.bonusAnalytics(period: period, from: from, to: to),
         forceRefresh: forceRefresh,
       );
   Future<Map<String, dynamic>> raffleSummary(
@@ -472,6 +506,95 @@ class AdminService {
           limit: limit,
           cursor: cursor);
 
+  Future<Map<String, dynamic>> raffleTickets(
+          {required String from,
+          required String to,
+          required String ticketPrice,
+          int limit = 50,
+          String? cursor,
+          String? search}) =>
+      _api.raffleTickets(
+          from: from,
+          to: to,
+          ticketPrice: ticketPrice,
+          limit: limit,
+          cursor: cursor,
+          search: search);
+
+  Future<Map<String, dynamic>> freezeRaffle({
+    required String from,
+    required String to,
+    required String ticketPrice,
+  }) =>
+      _api.freezeRaffle(from: from, to: to, ticketPrice: ticketPrice);
+
+  Future<Map<String, dynamic>> raffleSnapshotParticipants({
+    required String snapshotId,
+    int limit = 30,
+    String? cursor,
+  }) =>
+      _api.raffleSnapshotParticipants(
+          snapshotId: snapshotId, limit: limit, cursor: cursor);
+
+  Future<Map<String, dynamic>> raffleSnapshotTickets({
+    required String snapshotId,
+    int limit = 50,
+    String? cursor,
+    String? search,
+  }) =>
+      _api.raffleSnapshotTickets(
+          snapshotId: snapshotId, limit: limit, cursor: cursor, search: search);
+
+  Future<String> raffleSnapshotExportToFile({
+    required String snapshotId,
+    required String format,
+  }) =>
+      _api.raffleSnapshotExportToFile(snapshotId: snapshotId, format: format);
+
+  Future<Uint8List> raffleSnapshotExport({
+    required String snapshotId,
+    required String format,
+  }) =>
+      _api.raffleSnapshotExport(snapshotId: snapshotId, format: format);
+
+  Future<String> raffleSnapshotPrintPdfToFile({required String snapshotId}) =>
+      _api.raffleSnapshotPrintPdfToFile(snapshotId: snapshotId);
+
+  Future<Uint8List> raffleSnapshotPrintPdf({required String snapshotId}) =>
+      _api.raffleSnapshotPrintPdf(snapshotId: snapshotId);
+
+  Future<Uint8List> rafflePrintPdfRange({
+    required String from,
+    required String to,
+    required String ticketPrice,
+    required String fromTicket,
+    required String toTicket,
+    String? snapshotId,
+  }) =>
+      _api.rafflePrintPdfRange(
+          from: from,
+          to: to,
+          ticketPrice: ticketPrice,
+          fromTicket: fromTicket,
+          toTicket: toTicket,
+          snapshotId: snapshotId);
+
+  Future<String> rafflePrintPdfRangeToFile({
+    required String from,
+    required String to,
+    required String ticketPrice,
+    required String fromTicket,
+    required String toTicket,
+    String? snapshotId,
+  }) =>
+      _api.rafflePrintPdfRangeToFile(
+          from: from,
+          to: to,
+          ticketPrice: ticketPrice,
+          fromTicket: fromTicket,
+          toTicket: toTicket,
+          snapshotId: snapshotId);
+
   Future<Uint8List> raffleExport(
           {required String from,
           required String to,
@@ -487,6 +610,18 @@ class AdminService {
           required String format}) =>
       _api.raffleExportToFile(
           from: from, to: to, ticketPrice: ticketPrice, format: format);
+
+  Future<Uint8List> rafflePrintPdf(
+          {required String from,
+          required String to,
+          required String ticketPrice}) =>
+      _api.rafflePrintPdf(from: from, to: to, ticketPrice: ticketPrice);
+
+  Future<String> rafflePrintPdfToFile(
+          {required String from,
+          required String to,
+          required String ticketPrice}) =>
+      _api.rafflePrintPdfToFile(from: from, to: to, ticketPrice: ticketPrice);
 
   Future<Map<String, dynamic>> pointsPurchasesSummary({
     String? from,
@@ -762,6 +897,7 @@ class AdminService {
     required String fallbackStatus,
     Map<String, dynamic>? listing,
   }) {
+    _stateGeneration++;
     final normalized = <String, dynamic>{
       'id': listingId,
       'status': fallbackStatus,
@@ -838,29 +974,39 @@ class AdminService {
   }
 
   Future<void> _ensureSeenMarkersLoaded() async {
+    final uid = _activeAdminUid?.trim() ?? '';
+    final generation = _stateGeneration;
     final existing = _seenMarkersLoadInFlight;
-    if (existing != null) {
+    if (existing != null &&
+        _seenMarkersLoadOwnerUid == uid &&
+        _seenMarkersLoadGeneration == generation) {
       return existing;
     }
-    final future = _loadSeenMarkers();
+    final future = _loadSeenMarkers(uid, generation);
     _seenMarkersLoadInFlight = future;
+    _seenMarkersLoadOwnerUid = uid;
+    _seenMarkersLoadGeneration = generation;
     try {
       await future;
     } finally {
       if (identical(_seenMarkersLoadInFlight, future)) {
         _seenMarkersLoadInFlight = null;
+        _seenMarkersLoadOwnerUid = null;
+        _seenMarkersLoadGeneration = null;
       }
     }
   }
 
-  Future<void> _loadSeenMarkers() async {
-    final uid = _activeAdminUid?.trim() ?? '';
+  Future<void> _loadSeenMarkers(String uid, int generation) async {
     if (uid.isEmpty) {
-      _seenMarkers = <String, String>{};
+      if (_activeAdminUid == null && generation == _stateGeneration) {
+        _seenMarkers = <String, String>{};
+      }
       return;
     }
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('$_seenPrefsKeyPrefix:$uid')?.trim() ?? '';
+    if (generation != _stateGeneration || _activeAdminUid != uid) return;
     if (raw.isEmpty) {
       _seenMarkers = <String, String>{};
       return;
@@ -881,13 +1027,16 @@ class AdminService {
 
   Future<void> _saveSeenMarkers() async {
     final uid = _activeAdminUid?.trim() ?? '';
+    final generation = _stateGeneration;
     if (uid.isEmpty) {
       return;
     }
+    final encoded = jsonEncode(_seenMarkers);
     final prefs = await SharedPreferences.getInstance();
+    if (generation != _stateGeneration || _activeAdminUid != uid) return;
     await prefs.setString(
       '$_seenPrefsKeyPrefix:$uid',
-      jsonEncode(_seenMarkers),
+      encoded,
     );
   }
 
@@ -905,8 +1054,14 @@ class AdminService {
     final items = _extractItems(value);
     switch (section) {
       case moderationSection:
-        _sectionSnapshots[section] =
-            _buildSectionSnapshot(items, (item) => true);
+        final rawCount = value['pendingModeration'] ??
+            value['pending_moderation'] ??
+            value['total'];
+        _sectionSnapshots[section] = _buildSectionSnapshot(
+          items,
+          (item) => true,
+          countOverride: _nonNegativeInt(rawCount),
+        );
         break;
       case reportsSection:
         _sectionSnapshots[section] = _buildSectionSnapshot(
@@ -916,9 +1071,11 @@ class AdminService {
         );
         break;
       case supportSection:
+        final rawCount = value['unreadForAdmin'] ?? value['unread_for_admin'];
         _sectionSnapshots[section] = _buildSectionSnapshot(
           items,
           (item) => item['unread_for_admin'] == true,
+          countOverride: _nonNegativeInt(rawCount),
         );
         break;
     }
@@ -926,10 +1083,12 @@ class AdminService {
 
   AdminSectionSnapshot _buildSectionSnapshot(
     List<Map<String, dynamic>> items,
-    bool Function(Map<String, dynamic> item) include,
-  ) {
+    bool Function(Map<String, dynamic> item) include, {
+    int? countOverride,
+  }) {
     final filtered = items.where(include).toList(growable: false);
-    if (filtered.isEmpty) {
+    final count = countOverride ?? filtered.length;
+    if (count <= 0) {
       return const AdminSectionSnapshot(count: 0, marker: '');
     }
     var latestMarker = '';
@@ -943,9 +1102,16 @@ class AdminService {
       }
     }
     return AdminSectionSnapshot(
-      count: filtered.length,
-      marker: '${filtered.length}|$latestMarker',
+      count: count,
+      marker: latestMarker,
     );
+  }
+
+  int? _nonNegativeInt(dynamic raw) {
+    if (raw == null) return null;
+    final value = raw is num ? raw.toInt() : int.tryParse(raw.toString());
+    if (value == null) return null;
+    return value < 0 ? 0 : value;
   }
 
   int _unreadCountFor(String section) {
@@ -954,10 +1120,21 @@ class AdminService {
       return 0;
     }
     final seenMarker = _seenMarkers[section]?.trim() ?? '';
-    if (seenMarker.isNotEmpty && seenMarker == snapshot.marker) {
+    final normalizedSeenMarker = _normalizeSeenMarker(seenMarker);
+    if (normalizedSeenMarker.isNotEmpty &&
+        snapshot.marker.isNotEmpty &&
+        snapshot.marker.compareTo(normalizedSeenMarker) <= 0) {
       return 0;
     }
     return snapshot.count;
+  }
+
+  String _normalizeSeenMarker(String marker) {
+    final pieces = marker.split('|');
+    if (pieces.length >= 3 && int.tryParse(pieces.first) != null) {
+      return pieces.skip(1).join('|');
+    }
+    return marker;
   }
 
   bool get _hasAttention =>
@@ -989,7 +1166,10 @@ class AdminService {
     String key,
     Future<Map<String, dynamic>> Function() loader, {
     bool forceRefresh = false,
+    Duration ttl = _defaultCacheTtl,
   }) async {
+    final stateGeneration = _stateGeneration;
+    final sessionGeneration = _tokenStorage.sessionGeneration;
     if (!_sessionActive) {
       throw const ApiException(
         'Требуется авторизация',
@@ -1003,8 +1183,7 @@ class AdminService {
       return entry!.inFlight!;
     }
     if (!forceRefresh && entry != null) {
-      if (entry.value != null &&
-          now.difference(entry.updatedAt) < _defaultCacheTtl) {
+      if (entry.value != null && now.difference(entry.updatedAt) < ttl) {
         return entry.value!;
       }
     }
@@ -1017,6 +1196,11 @@ class AdminService {
     );
     try {
       final value = await future;
+      if (stateGeneration != _stateGeneration ||
+          sessionGeneration != _tokenStorage.sessionGeneration ||
+          !_sessionActive) {
+        return value;
+      }
       _cache[key] = _AdminCacheEntry(
         updatedAt: DateTime.now(),
         value: value,
@@ -1033,6 +1217,10 @@ class AdminService {
       }
       return value;
     } on ApiException catch (error) {
+      if (stateGeneration != _stateGeneration ||
+          sessionGeneration != _tokenStorage.sessionGeneration) {
+        rethrow;
+      }
       if (error.statusCode == 403) {
         await _handleAdminForbidden(endpoint: key, error: error);
         throw const ApiException(
@@ -1048,6 +1236,10 @@ class AdminService {
       }
       rethrow;
     } catch (_) {
+      if (stateGeneration != _stateGeneration ||
+          sessionGeneration != _tokenStorage.sessionGeneration) {
+        rethrow;
+      }
       if (entry != null) {
         _cache[key] = entry;
       } else {

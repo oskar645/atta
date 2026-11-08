@@ -51,6 +51,28 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
+  testWidgets('photo content starts three pixels below the app bar',
+      (tester) async {
+    await tester.pumpWidget(_buildTestApp());
+    await tester.pumpAndSettle();
+
+    final body = tester.widget<ListView>(
+      find.byKey(const ValueKey('listing_detail_body')),
+    );
+    expect(body.padding, const EdgeInsets.fromLTRB(12, 3, 12, 20));
+    expect(
+      tester
+          .getSize(
+            find.byKey(
+              const ValueKey('listing_detail_photo_bottom_gap'),
+            ),
+          )
+          .height,
+      10,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('similar listings error shows local retry only', (tester) async {
     await tester.pumpWidget(
       _buildTestApp(
@@ -602,11 +624,7 @@ void main() {
 }
 
 Finder _detailBodyListView() {
-  return find.byWidgetPredicate(
-    (widget) =>
-        widget is ListView &&
-        widget.padding == const EdgeInsets.fromLTRB(12, 12, 12, 20),
-  );
+  return find.byKey(const ValueKey('listing_detail_body'));
 }
 
 Future<void> _openDetailMenu(WidgetTester tester) async {

@@ -314,8 +314,7 @@ class _PlatformAnalyticsDetails extends StatefulWidget {
       _PlatformAnalyticsDetailsState();
 }
 
-class _PlatformAnalyticsDetailsState
-    extends State<_PlatformAnalyticsDetails> {
+class _PlatformAnalyticsDetailsState extends State<_PlatformAnalyticsDetails> {
   static const _periods = <String, String>{
     'today': 'Сегодня',
     'week': '7 дней',
@@ -351,8 +350,7 @@ class _PlatformAnalyticsDetailsState
           ),
           const SizedBox(height: 12),
           _platformCard('Активные пользователи', active),
-          _platformCard('Регистрации', registrations,
-              includeUnknown: true),
+          _platformCard('Регистрации', registrations, includeUnknown: true),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -364,7 +362,8 @@ class _PlatformAnalyticsDetailsState
                           TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 8),
                   if (versions.isEmpty)
-                    const Text('Данные начнут собираться после обновления приложения.')
+                    const Text(
+                        'Данные начнут собираться после обновления приложения.')
                   else
                     for (final item in versions)
                       ListTile(

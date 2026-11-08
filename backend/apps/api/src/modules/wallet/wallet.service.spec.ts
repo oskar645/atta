@@ -52,6 +52,7 @@ function createService(initial?: {
   supportedReasons?: WalletTransactionReason[];
   failWalletTransactionCreate?: boolean;
   failReferralCreate?: boolean;
+  dashboardSignal?: { changed: (...scopes: string[]) => void };
 }) {
   const wallet: WalletRecord = {
     id: 'wallet-1',
@@ -261,7 +262,11 @@ function createService(initial?: {
   };
 
   return {
-    service: new WalletService(prisma as never, () => now),
+    service: new WalletService(
+      prisma as never,
+      () => now,
+      initial?.dashboardSignal as never,
+    ),
     state: {
       wallet,
       transactions,
@@ -269,6 +274,22 @@ function createService(initial?: {
     },
   };
 }
+
+test('successful SPEND emits wallet dashboard scope after commit', async () => {
+  const calls: string[][] = [];
+  const { service } = createService({
+    wallet: { bonusBalance: 500 },
+    dashboardSignal: { changed: (...scopes) => calls.push(scopes) },
+  });
+
+  await service.spendBonus(
+    'user-1',
+    100,
+    WalletTransactionReason.RECURRING_BONUS,
+  );
+
+  assert.deepEqual(calls, [['wallet']]);
+});
 
 test('signup welcome bonus 200 is granted once on first wallet bootstrap', async () => {
   const { service, state } = createService();

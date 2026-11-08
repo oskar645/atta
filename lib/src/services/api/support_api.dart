@@ -42,6 +42,7 @@ class SupportApi {
     required String name,
     String text = '',
     String? imageUrl,
+    String? idempotencyKey,
   }) async {
     final normalizedText = text.trim();
     final response = await _client.post(
@@ -51,6 +52,8 @@ class SupportApi {
         'name': name,
         if (normalizedText.isNotEmpty) 'text': normalizedText,
         if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
+        if ((idempotencyKey ?? '').trim().isNotEmpty)
+          'idempotencyKey': idempotencyKey,
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -81,6 +84,7 @@ class SupportApi {
     required String ticketId,
     String text = '',
     String? imageUrl,
+    String? idempotencyKey,
   }) async {
     final normalizedText = text.trim();
     final response = await _client.post(
@@ -89,6 +93,8 @@ class SupportApi {
       body: {
         if (normalizedText.isNotEmpty) 'text': normalizedText,
         if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
+        if ((idempotencyKey ?? '').trim().isNotEmpty)
+          'idempotencyKey': idempotencyKey,
       },
     );
     return Map<String, dynamic>.from(response as Map);
@@ -130,10 +136,19 @@ class SupportApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> adminMarkRead(String ticketId) async {
+    final response = await _client.patch(
+      '/admin/support/$ticketId/read',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> adminSendMessage({
     required String ticketId,
     String text = '',
     String? imageUrl,
+    String? idempotencyKey,
   }) async {
     final normalizedText = text.trim();
     final response = await _client.post(
@@ -142,7 +157,44 @@ class SupportApi {
       body: {
         if (normalizedText.isNotEmpty) 'text': normalizedText,
         if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
+        if ((idempotencyKey ?? '').trim().isNotEmpty)
+          'idempotencyKey': idempotencyKey,
       },
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> markMessageRead({
+    required String ticketId,
+    required String messageId,
+  }) async {
+    final response = await _client.patch(
+      '/support/tickets/$ticketId/messages/$messageId/read',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> adminEditMessage({
+    required String ticketId,
+    required String messageId,
+    required String text,
+  }) async {
+    final response = await _client.patch(
+      '/admin/support/$ticketId/messages/$messageId',
+      authorized: true,
+      body: {'text': text.trim()},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> adminDeleteMessage({
+    required String ticketId,
+    required String messageId,
+  }) async {
+    final response = await _client.delete(
+      '/admin/support/$ticketId/messages/$messageId',
+      authorized: true,
     );
     return Map<String, dynamic>.from(response as Map);
   }

@@ -1,8 +1,9 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ListingStatus, Prisma, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { RedisService } from '../redis/redis.service';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 
 const DELETED_NAME = 'Удалённый пользователь';
 
@@ -17,6 +18,7 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly redis: RedisService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   onDeleted(listener: (userId: string) => void) {
@@ -123,6 +125,13 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
         throw error;
       }
     }
+    this.adminDashboardSignal?.changed(
+      'users',
+      'presence',
+      'visits',
+      'listings',
+      'usage',
+    );
 
     // Failures beyond this boundary must never turn committed deletion into an API failure.
     for (const listener of this.listeners) {

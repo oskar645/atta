@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, HttpException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, Optional } from '@nestjs/common';
 import { PhoneVerification, Prisma } from '@prisma/client';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { PhoneVerificationService } from '../phone-verification/phone-verification.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
@@ -47,6 +48,7 @@ export class PasswordlessService {
     private readonly phoneVerification: PhoneVerificationService,
     private readonly rateLimit: RateLimitService,
     private readonly auth: AuthService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   async start(phone: string, source?: { ip?: string; deviceId?: string; userAgent?: string }, referral?: { referralCode?: string; referralId?: string }) {
@@ -132,12 +134,12 @@ export class PasswordlessService {
   async complete(payload: PasswordlessCompleteDto) {
     const id = this.parse(payload.registrationToken);
     await this.rateLimit.consumeOrThrow(`passwordless:complete:${id}`, { limit: 6, windowMs: 60_000 });
-    return this.transaction(async (tx) => {
+    const result = await this.transaction(async (tx) => {
       const { verification, capability } = await this.lockAndValidate(
         tx, id, payload.registrationToken, 'registration',
       );
       if (capability.state === 'consumed') {
-        return this.replayResponse(capability);
+        return { response: this.replayResponse(capability), created: false };
       }
       if (verification.status !== 'CONFIRMED') throw this.invalid();
       if (payload.legalDocumentVersion && payload.legalDocumentVersion !== LEGAL_DOCUMENT_VERSION) {
@@ -146,14 +148,20 @@ export class PasswordlessService {
       // Separate challenges for the same phone serialize too. Legacy signup races are
       // handled by the unique constraint and a fresh transaction below.
       await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${verification.phone}, 0))::text`;
+      const existedBefore = await tx.user.findUnique({
+        where: { phone: verification.phone },
+        select: { id: true },
+      });
       const response = await this.auth.authenticatePasswordless(verification.phone, tx, {
         ...payload, referralCode: capability.referralCode, referralId: capability.referralId,
         verificationId: verification.id,
       });
       if (!response) throw this.invalid();
       await this.consume(tx, verification, capability, response);
-      return response;
+      return { response, created: existedBefore == null };
     });
+    if (result.created) this.adminDashboardSignal?.changed('users', 'usage');
+    return result.response;
   }
 
   private async transaction<T>(handler: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {

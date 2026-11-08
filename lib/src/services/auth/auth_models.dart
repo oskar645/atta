@@ -127,7 +127,8 @@ class AuthUser {
         ? null
         : DateTime.tryParse(emailVerifiedAtRaw);
     final createdAtRaw = pickText(const ['createdAt', 'created_at']);
-    final createdAt = createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw);
+    final createdAt =
+        createdAtRaw == null ? null : DateTime.tryParse(createdAtRaw);
 
     return AuthUser(
       uid: pickText(const ['uid', 'id']) ?? '',

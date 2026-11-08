@@ -82,6 +82,7 @@ class PushNotificationService {
         token: token,
         platform: _platformName,
         locale: Platform.localeName,
+        supportsAndroidDataOnlyPush: Platform.isAndroid,
       );
       if (!current()) return;
       _registeredToken = token;

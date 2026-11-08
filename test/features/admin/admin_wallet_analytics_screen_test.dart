@@ -64,6 +64,8 @@ class _FakeAdminWalletService extends AdminService {
   @override
   Future<Map<String, dynamic>> bonusAnalytics({
     String? period,
+    String? from,
+    String? to,
     bool forceRefresh = false,
   }) async {
     return <String, dynamic>{

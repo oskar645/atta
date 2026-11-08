@@ -1,5 +1,6 @@
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/utils/moscow_calendar.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -93,18 +94,24 @@ class _AdminPointsPurchasesScreenState
     final admin = context.read<AdminService>();
     final range = _effectiveRange();
     final search = _searchController.text.trim();
+    final from = switch (_period) {
+      'day' || 'month' || 'custom' => moscowDateStartUtc(range.start),
+      _ => range.start.toUtc(),
+    };
+    final to =
+        _period == 'custom' ? moscowDateEndUtc(range.end) : range.end.toUtc();
     try {
       final summaryFuture = reset
           ? admin.pointsPurchasesSummary(
-              from: range.start.toUtc().toIso8601String(),
-              to: range.end.toUtc().toIso8601String(),
+              from: from.toIso8601String(),
+              to: to.toIso8601String(),
               search: search,
               forceRefresh: true,
             )
           : Future<Map<String, dynamic>>.value(_summary);
       final listFuture = admin.pointsPurchases(
-        from: range.start.toUtc().toIso8601String(),
-        to: range.end.toUtc().toIso8601String(),
+        from: from.toIso8601String(),
+        to: to.toIso8601String(),
         search: search,
         limit: _pageLimit,
         cursor: reset ? null : _nextCursor,
@@ -174,7 +181,7 @@ class _AdminPointsPurchasesScreenState
     final now = DateTime.now();
     final picked = await showDateRangePicker(
       context: context,
-      firstDate: DateTime(2025),
+      firstDate: DateTime(2000),
       lastDate: now.add(const Duration(days: 1)),
       initialDateRange: _customRange ??
           DateTimeRange(

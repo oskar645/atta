@@ -8,6 +8,7 @@ import { AppModule } from './app.module';
 import { configureTrustProxy } from './common/trust-proxy';
 import { env, parseCorsOrigins } from './config/env';
 import { StorageService } from './modules/storage/storage.service';
+import { recordHttpRequest } from './common/server-metrics';
 
 const express = require('express') as {
   static: (path: string) => unknown;
@@ -31,6 +32,11 @@ async function bootstrap() {
   );
 
   app.use((req: any, res: any, next: () => void) => {
+    const startedAt = process.hrtime.bigint();
+    res.once('finish', () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      recordHttpRequest(res.statusCode, durationMs);
+    });
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');

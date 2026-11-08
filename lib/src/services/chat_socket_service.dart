@@ -193,6 +193,7 @@ class ChatSocketService {
   bool _disconnectRequested = false;
   final bool _disposed = false;
   bool _lastConnectionValue = false;
+  bool _adminDashboardSubscribed = false;
   DateTime? _lastConnectAttemptAt;
   DateTime? _lastFailureLoggedAt;
   String? _serverDisconnectBlockedUserId;
@@ -254,7 +255,16 @@ class ChatSocketService {
           event.authGeneration == _tokenStorage.sessionGeneration));
   Stream<PresenceSnapshot> get presenceUpdates => _presence.stream;
   Stream<bool> get connectionChanges => _connected.stream;
-  void subscribeAnalytics() => _socket?.emit('analytics.subscribe');
+  void subscribeAnalytics() => ensureAdminDashboardSubscription();
+
+  void ensureAdminDashboardSubscription() {
+    final socket = _socket;
+    if (socket == null || !socket.connected || _adminDashboardSubscribed) {
+      return;
+    }
+    socket.emit('analytics.subscribe');
+    _adminDashboardSubscribed = true;
+  }
 
   bool get isConnected => _socket?.connected == true;
   bool get canSendPresenceHeartbeat => isConnected;
@@ -554,6 +564,7 @@ class ChatSocketService {
           return;
         }
         _socket = socket;
+        _adminDashboardSubscribed = false;
         _disconnecting = false;
         _reconnectAttempt = 0;
         _clearServerReconnectBlock();
@@ -607,6 +618,7 @@ class ChatSocketService {
 
       for (final eventName in const [
         'analytics_updated',
+        'admin.dashboard.changed',
         'message.new',
         'message.sent',
         'message.delivered',
@@ -615,6 +627,7 @@ class ChatSocketService {
         'message.hidden',
         'typing.changed',
         'notification.new',
+        'support.changed',
         'chat.updated',
         'unread.changed',
         'presence.changed',
@@ -700,6 +713,7 @@ class ChatSocketService {
     _resetServerDisconnectBackoff();
     final socket = _socket;
     _socket = null;
+    _adminDashboardSubscribed = false;
     _socketOwnerUserId = null;
     _emitConnection(false);
     _debugLog('Socket disconnect requested');
@@ -1219,6 +1233,7 @@ class ChatSocketService {
     _cancelStableConnectionTimer();
     final ownerUserId = _socketOwnerUserId;
     _socket = null;
+    _adminDashboardSubscribed = false;
     _socketOwnerUserId = null;
     _emitConnection(false);
     _debugLog(

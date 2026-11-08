@@ -119,6 +119,7 @@ function createService(options?: {
     bonusBalance: options?.balance ?? 10_000,
   };
   const existingPromotion = options?.existingPromotion ?? null;
+  const dashboardScopes: string[][] = [];
 
   const tx = {
     $executeRaw: async () => null,
@@ -186,9 +187,10 @@ function createService(options?: {
     prisma as any,
     walletService as any,
     { debounce: async () => true } as any,
+    { changed: (...scopes: string[]) => dashboardScopes.push(scopes) } as any,
   );
 
-  return { service, createdPromotions, spent };
+  return { service, createdPromotions, spent, dashboardScopes };
 }
 
 function createShowcaseService(options?: {
@@ -261,7 +263,7 @@ function createShowcaseService(options?: {
 }
 
 test('old VIP client without quantity uses 125 bonuses and keeps 48 hours', async () => {
-  const { service, createdPromotions, spent } = createService();
+  const { service, createdPromotions, spent, dashboardScopes } = createService();
 
   await service.promoteListing('listing-1', authUser, { type: 'vip' });
 
@@ -272,6 +274,7 @@ test('old VIP client without quantity uses 125 bonuses and keeps 48 hours', asyn
       createdPromotions[0]!.startsAt.getTime(),
     48 * 60 * 60 * 1000,
   );
+  assert.deepEqual(dashboardScopes, [['wallet', 'promotions']]);
 });
 
 test('old showcase client without quantity uses 200 bonuses and keeps 24 hours', async () => {

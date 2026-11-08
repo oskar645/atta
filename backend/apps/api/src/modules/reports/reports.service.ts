@@ -1,10 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { NotificationType } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListAdminReportsDto } from './dto/list-admin-reports.dto';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 
 @Injectable()
 export class ReportsService {
@@ -13,6 +14,7 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   private pageLimit(value: number | undefined, fallback = 50) {
@@ -273,6 +275,7 @@ export class ReportsService {
         }),
       ),
     );
+    this.adminDashboardSignal?.changed('reports');
 
     return {
       source: 'timeweb',
@@ -308,6 +311,7 @@ export class ReportsService {
         closedAt: new Date(),
       },
     });
+    this.adminDashboardSignal?.changed('reports');
 
     return {
       source: 'timeweb',
@@ -340,6 +344,7 @@ export class ReportsService {
         closedAt: new Date(),
       },
     });
+    this.adminDashboardSignal?.changed('reports');
 
     return {
       source: 'timeweb',
@@ -402,6 +407,7 @@ export class ReportsService {
         reporter: true,
       },
     });
+    this.adminDashboardSignal?.changed('reports');
 
     return {
       source: 'timeweb',
@@ -433,6 +439,7 @@ export class ReportsService {
         closedAt: exists.closedAt ?? new Date(),
       },
     });
+    this.adminDashboardSignal?.changed('reports');
 
     return {
       source: 'timeweb',

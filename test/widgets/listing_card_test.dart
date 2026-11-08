@@ -9,6 +9,50 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 void main() {
+  testWidgets('listing card uses one subtle outer shadow', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 220,
+            height: 320,
+            child: ListingCard(
+              listing: _listing(),
+              isFav: false,
+              isSeen: false,
+              reviews: _FakeReviewsService(),
+              onToggleFav: (_) {},
+              onOpen: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final shadowDecorations = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(
+            of: find.byType(ListingCard),
+            matching: find.byType(DecoratedBox),
+          ),
+        )
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>()
+        .where(
+          (decoration) =>
+              decoration.boxShadow?.any(
+                (shadow) =>
+                    shadow.blurRadius == 8 &&
+                    shadow.spreadRadius == -1 &&
+                    shadow.offset == const Offset(0, 2),
+              ) ==
+              true,
+        );
+
+    expect(shadowDecorations, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('viewed badge is visible and readable', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -255,7 +299,7 @@ void main() {
     expect(previousPrice.style?.decoration, TextDecoration.lineThrough);
     expect(previousPrice.style?.fontSize, lessThan(8));
     expect(arrow.icon, Icons.arrow_downward);
-    expect(arrow.size, 9);
+    expect(arrow.size, 15);
     expect(arrow.weight, 800);
     expect(arrow.color, Colors.blue);
     expect(tester.takeException(), isNull);

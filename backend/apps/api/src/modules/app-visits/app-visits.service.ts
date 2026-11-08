@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { DevicePlatform, UserStatus } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { normalizeStoredMediaUrl, toIsoString } from '../../common/serializers';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { PrismaService } from '../prisma/prisma.service';
 import { WALLET_TIME_ZONE } from '../wallet/wallet.constants';
 
@@ -21,7 +22,10 @@ type TodayVisitRow = {
 export class AppVisitsService {
   private readonly onlineTtlMs = 2 * 60 * 1000;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
+  ) {}
 
   async markAppOpened(
     userId: string,
@@ -57,6 +61,7 @@ export class AppVisitsService {
           updated_at = CURRENT_TIMESTAMP
       `;
     }
+    this.adminDashboardSignal?.changed('visits', 'usage');
 
     return {
       source: 'timeweb',

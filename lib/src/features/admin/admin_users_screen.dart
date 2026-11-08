@@ -31,6 +31,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   bool _loadingMore = false;
   Object? _loadMoreError;
   int? _selectedStatsYear;
+  DateTimeRange? _selectedRegistrationRange;
   int _requestSerial = 0;
 
   static const Set<String> _protectedAdminPhones = <String>{
@@ -141,11 +142,19 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     int? year,
   }) {
     final statsYear = year ?? _selectedStatsYear;
+    final range = _selectedRegistrationRange;
     return context.read<AdminService>().userRegistrationStats(
           year: statsYear,
+          from: range == null ? null : _apiDate(range.start),
+          to: range == null ? null : _apiDate(range.end),
           forceRefresh: forceRefresh,
         );
   }
+
+  static String _apiDate(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
 
   Future<void> _reloadRegistrationStats({
     bool forceRefresh = false,
@@ -343,6 +352,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     }
   }
 
+  String _registrationDate(Map<String, dynamic> item) {
+    final raw = _value(item, const ['created_at', 'createdAt']);
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return 'Дата не указана';
+    final moscow = parsed.toUtc().add(const Duration(hours: 3));
+    return '${moscow.day.toString().padLeft(2, '0')}.'
+        '${moscow.month.toString().padLeft(2, '0')}.${moscow.year} · '
+        '${moscow.hour.toString().padLeft(2, '0')}:'
+        '${moscow.minute.toString().padLeft(2, '0')}';
+  }
+
   Future<void> _openUser(Map<String, dynamic> item) async {
     final userId = _value(item, const ['id']);
     if (userId.isEmpty) return;
@@ -446,6 +466,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     future: _registrationStatsFuture ??=
                         _loadRegistrationStats(),
                     selectedYear: _selectedStatsYear,
+                    selectedRange: _selectedRegistrationRange,
                     onRefresh: () => _reloadRegistrationStats(
                       forceRefresh: true,
                     ),
@@ -455,6 +476,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                         forceRefresh: true,
                         year: year,
                       );
+                    },
+                    onRangeChanged: (range) {
+                      setState(() => _selectedRegistrationRange = range);
+                      return _reloadRegistrationStats(forceRefresh: true);
                     },
                   )
                 : FutureBuilder<List<Map<String, dynamic>>>(
@@ -526,12 +551,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                                 item['isAdmin'] == true;
                             final isProtectedAdmin = _isProtectedAdmin(item);
                             return Card(
-                              margin: const EdgeInsets.only(bottom: 10),
+                              margin: const EdgeInsets.only(bottom: 8),
                               child: InkWell(
                                 borderRadius: BorderRadius.circular(12),
                                 onTap: _busy ? null : () => _openUser(item),
                                 child: Padding(
-                                  padding: const EdgeInsets.all(12),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    10,
+                                    8,
+                                    8,
+                                  ),
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
@@ -543,7 +573,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                                             fallbackText: name.isEmpty
                                                 ? 'Пользователь'
                                                 : name,
-                                            radius: 20,
+                                            radius: 18,
                                           ),
                                           const SizedBox(width: 10),
                                           Expanded(
@@ -572,80 +602,101 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                                               ],
                                             ),
                                           ),
-                                          const Icon(Icons.chevron_right),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        'Телефон: ${formatRussianPhone(_value(item, const [
-                                              'phone'
-                                            ]))}',
-                                      ),
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              'User ID: ${_value(item, const [
+                                          TextButton.icon(
+                                            key: ValueKey(
+                                              'copy-user-id-${_value(item, const [
                                                     'id'
                                                   ])}',
                                             ),
-                                          ),
-                                          IconButton(
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                            tooltip: 'Скопировать ID',
                                             onPressed: _busy
                                                 ? null
                                                 : () => _copyUserId(
                                                       _value(
                                                           item, const ['id']),
                                                     ),
-                                            icon: const Icon(Icons.copy,
-                                                size: 18),
+                                            style: TextButton.styleFrom(
+                                              minimumSize: const Size(0, 30),
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 7,
+                                              ),
+                                              tapTargetSize:
+                                                  MaterialTapTargetSize
+                                                      .shrinkWrap,
+                                              visualDensity:
+                                                  VisualDensity.compact,
+                                            ),
+                                            icon: const Icon(
+                                              Icons.copy_outlined,
+                                              size: 14,
+                                            ),
+                                            label: const Text(
+                                              'ID',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                          const Icon(
+                                            Icons.chevron_right,
+                                            size: 20,
                                           ),
                                         ],
                                       ),
-                                      Text(
-                                          'Дата регистрации: ${_value(item, const [
-                                            'created_at'
-                                          ])}'),
-                                      Text('Last seen: ${_value(item, const [
-                                            'last_seen',
-                                            'last_login_at'
-                                          ])}'),
-                                      Text('Admin: ${isAdmin ? 'да' : 'нет'}'),
-                                      if (isProtectedAdmin)
-                                        const Text('Защита: включена'),
-                                      const SizedBox(height: 10),
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: Wrap(
-                                          spacing: 8,
-                                          runSpacing: 8,
-                                          alignment: WrapAlignment.end,
-                                          children: [
-                                            FilledButton.tonalIcon(
-                                              onPressed: _busy
-                                                  ? null
-                                                  : () => _writeSupportMessage(
-                                                      item),
-                                              icon: const Icon(
-                                                  Icons.support_agent),
-                                              label: const Text('Написать'),
-                                            ),
-                                            OutlinedButton(
-                                              onPressed:
-                                                  _busy || isProtectedAdmin
-                                                      ? null
-                                                      : () => _deleteUser(item),
-                                              child: Text(
-                                                isProtectedAdmin
-                                                    ? 'Защищён'
-                                                    : 'Удалить',
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: _UserCompactInfo(
+                                              icon: Icons.phone_outlined,
+                                              text: formatRussianPhone(
+                                                _value(item, const ['phone']),
                                               ),
                                             ),
-                                          ],
-                                        ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: _UserCompactInfo(
+                                              icon: Icons.event_outlined,
+                                              text: _registrationDate(item),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        children: [
+                                          if (isAdmin) const _UserAdminBadge(),
+                                          const Spacer(),
+                                          IconButton(
+                                            tooltip: 'Написать пользователю',
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            onPressed: _busy
+                                                ? null
+                                                : () =>
+                                                    _writeSupportMessage(item),
+                                            icon: const Icon(
+                                              Icons.chat_bubble_outline,
+                                              size: 19,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            tooltip: isProtectedAdmin
+                                                ? 'Администратор защищён'
+                                                : 'Удалить пользователя',
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            onPressed: _busy || isProtectedAdmin
+                                                ? null
+                                                : () => _deleteUser(item),
+                                            icon: const Icon(
+                                              Icons.delete_outline,
+                                              size: 19,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),
@@ -664,18 +715,75 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   }
 }
 
+class _UserCompactInfo extends StatelessWidget {
+  const _UserCompactInfo({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: const Color(0xFF667085)),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            text.isEmpty ? 'Не указано' : text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF475467),
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UserAdminBadge extends StatelessWidget {
+  const _UserAdminBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF4FF),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Text(
+          'Администратор',
+          style: TextStyle(
+            color: Color(0xFF175CD3),
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _RegistrationStatsView extends StatefulWidget {
   const _RegistrationStatsView({
     required this.future,
     required this.selectedYear,
+    required this.selectedRange,
     required this.onRefresh,
     required this.onYearChanged,
+    required this.onRangeChanged,
   });
 
   final Future<Map<String, dynamic>> future;
   final int? selectedYear;
+  final DateTimeRange? selectedRange;
   final Future<void> Function() onRefresh;
   final Future<void> Function(int year) onYearChanged;
+  final Future<void> Function(DateTimeRange? range) onRangeChanged;
 
   @override
   State<_RegistrationStatsView> createState() => _RegistrationStatsViewState();
@@ -709,7 +817,16 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
         final totalUsers = _intValue(data['total_users']) ?? 0;
         final todayCount =
             _intValue(data['todayCount'] ?? data['today_count']) ?? 0;
+        final yesterdayCount = _intValue(data['yesterday_count']) ?? 0;
+        final last7DaysCount = _intValue(data['last_7_days_count']) ?? 0;
         final currentMonthCount = _intValue(data['current_month_count']) ?? 0;
+        final selectedYearCount = months.fold<int>(
+          0,
+          (total, row) => total + row.count,
+        );
+        final customRange = data['custom_range'];
+        final customRangeCount =
+            customRange is Map ? _intValue(customRange['count']) : null;
 
         final currentMonth = year == moscowNow.year ? moscowNow.month : 0;
         final selectedMonth =
@@ -718,10 +835,6 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
           (row) => row.month == selectedMonth,
           orElse: () => months.first,
         );
-        final bestRow = _bestMonth(months);
-        final bestMonthLabel = bestRow.count == 0
-            ? 'Нет данных'
-            : '${_monthName(bestRow.month)} · ${bestRow.count}';
         final compareText = _comparisonText(months, selectedRow.month);
 
         return RefreshIndicator(
@@ -778,8 +891,17 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
               _RegistrationSummaryCards(
                 totalUsers: totalUsers,
                 todayCount: todayCount,
+                yesterdayCount: yesterdayCount,
+                last7DaysCount: last7DaysCount,
                 currentMonthCount: currentMonthCount,
-                bestMonthLabel: bestMonthLabel,
+                selectedYear: year,
+                selectedYearCount: selectedYearCount,
+              ),
+              const SizedBox(height: 12),
+              _RegistrationRangeSelector(
+                range: widget.selectedRange,
+                count: customRangeCount,
+                onChanged: widget.onRangeChanged,
               ),
               const SizedBox(height: 18),
               _RegistrationYearChart(
@@ -812,12 +934,6 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
           ),
         );
       },
-    );
-  }
-
-  static _MonthRegistrationRow _bestMonth(List<_MonthRegistrationRow> months) {
-    return months.reduce(
-      (best, row) => row.count > best.count ? row : best,
     );
   }
 
@@ -950,14 +1066,20 @@ class _RegistrationSummaryCards extends StatelessWidget {
   const _RegistrationSummaryCards({
     required this.totalUsers,
     required this.todayCount,
+    required this.yesterdayCount,
+    required this.last7DaysCount,
     required this.currentMonthCount,
-    required this.bestMonthLabel,
+    required this.selectedYear,
+    required this.selectedYearCount,
   });
 
   final int totalUsers;
   final int todayCount;
+  final int yesterdayCount;
+  final int last7DaysCount;
   final int currentMonthCount;
-  final String bestMonthLabel;
+  final int selectedYear;
+  final int selectedYearCount;
 
   @override
   Widget build(BuildContext context) {
@@ -965,7 +1087,7 @@ class _RegistrationSummaryCards extends StatelessWidget {
       builder: (context, constraints) {
         final isCompact = constraints.maxWidth < 560;
         const spacing = 8.0;
-        final columns = isCompact ? 2 : 4;
+        final columns = isCompact ? 2 : 3;
         final cardWidth =
             (constraints.maxWidth - spacing * (columns - 1)) / columns;
         return Wrap(
@@ -975,7 +1097,7 @@ class _RegistrationSummaryCards extends StatelessWidget {
             _RegistrationSummaryCard(
               key: const ValueKey('registration-total-users-card'),
               width: cardWidth,
-              label: 'Всего пользователей',
+              label: 'Всего',
               value: '$totalUsers',
             ),
             _RegistrationSummaryCard(
@@ -985,20 +1107,122 @@ class _RegistrationSummaryCards extends StatelessWidget {
               value: '$todayCount',
             ),
             _RegistrationSummaryCard(
+              key: const ValueKey('registration-yesterday-card'),
+              width: cardWidth,
+              label: 'Вчера',
+              value: '$yesterdayCount',
+            ),
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-last-7-days-card'),
+              width: cardWidth,
+              label: 'За 7 дней',
+              value: '$last7DaysCount',
+            ),
+            _RegistrationSummaryCard(
               key: const ValueKey('registration-current-month-card'),
               width: cardWidth,
               label: 'В этом месяце',
               value: '$currentMonthCount',
             ),
             _RegistrationSummaryCard(
-              key: const ValueKey('registration-best-month-card'),
+              key: const ValueKey('registration-selected-year-card'),
               width: cardWidth,
-              label: 'Лучший месяц',
-              value: bestMonthLabel,
+              label: 'За $selectedYear',
+              value: '$selectedYearCount',
             ),
           ],
         );
       },
+    );
+  }
+}
+
+class _RegistrationRangeSelector extends StatelessWidget {
+  const _RegistrationRangeSelector({
+    required this.range,
+    required this.count,
+    required this.onChanged,
+  });
+
+  final DateTimeRange? range;
+  final int? count;
+  final Future<void> Function(DateTimeRange? range) onChanged;
+
+  static String _dateLabel(DateTime value) =>
+      '${value.day.toString().padLeft(2, '0')}.'
+      '${value.month.toString().padLeft(2, '0')}.${value.year}';
+
+  Future<void> _selectRange(BuildContext context) async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: today,
+      initialDateRange: range,
+      helpText: 'Регистрации за период',
+      cancelText: 'Отмена',
+      confirmText: 'Показать',
+      saveText: 'Показать',
+    );
+    if (selected != null) await onChanged(selected);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedRange = range;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9FC),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE3E8EF)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.date_range_outlined, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    selectedRange == null
+                        ? 'Выбрать период'
+                        : '${_dateLabel(selectedRange.start)} — '
+                            '${_dateLabel(selectedRange.end)}',
+                    key: const ValueKey('registration-custom-range-label'),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    selectedRange == null
+                        ? 'Посмотреть регистрации с даты по дату'
+                        : '${count ?? 0} ${_RegistrationStatsViewState._registrationsWord(count ?? 0)}',
+                    key: const ValueKey('registration-custom-range-count'),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF667085),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            if (selectedRange != null)
+              IconButton(
+                key: const ValueKey('registration-custom-range-clear'),
+                tooltip: 'Сбросить период',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => onChanged(null),
+                icon: const Icon(Icons.close, size: 18),
+              ),
+            TextButton(
+              key: const ValueKey('registration-custom-range-button'),
+              onPressed: () => _selectRange(context),
+              child: Text(selectedRange == null ? 'Выбрать' : 'Изменить'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

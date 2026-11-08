@@ -113,6 +113,102 @@ void main() {
     await sub.cancel();
   });
 
+  test('old user refresh cannot repopulate cache after account switch',
+      () async {
+    final gate = Completer<void>();
+    final api = _FakeSupportApi(
+      initialMessages: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'message-A',
+          'ticket_id': 'ticket-A',
+          'sender': 'admin',
+          'text': 'Только для A',
+          'created_at': '2026-06-13T09:00:00.000Z',
+        },
+      ],
+    )..onGetTicket = () => gate.future;
+    final service = SupportService(api: api)..activateUserSession('user-A');
+
+    final refresh = service.refreshMessages('ticket-A');
+    await Future<void>.delayed(Duration.zero);
+    service.activateUserSession('user-B');
+    gate.complete();
+    await refresh;
+
+    expect(service.peekMessages('ticket-A'), isEmpty);
+  });
+
+  test('old user send completion cannot publish into the new user session',
+      () async {
+    final gate = Completer<void>();
+    final api = _FakeSupportApi(
+      initialMessages: const <Map<String, dynamic>>[],
+    )..onSend = () => gate.future;
+    final service = SupportService(api: api)..activateUserSession('user-A');
+
+    final send = service.sendMessage(ticketId: 'ticket-A', text: 'Сообщение A');
+    await Future<void>.delayed(Duration.zero);
+    service.activateUserSession('user-B');
+    gate.complete();
+    await send;
+
+    expect(service.peekMessages('ticket-A'), isEmpty);
+  });
+
+  test('markReadByAdmin persists read state and updates cached ticket',
+      () async {
+    final api = _FakeSupportApi(
+      initialMessages: const <Map<String, dynamic>>[],
+    )..adminTickets = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'ticket-1',
+          'unread_for_admin': true,
+          'updated_at': '2026-06-13T10:00:00.000Z',
+        },
+      ];
+    final service = SupportService(api: api);
+    await _seedAdminSession();
+    service.activateAdminSession(isAdmin: true);
+    await service.refreshAdminTickets(force: true);
+    final states = <List<Map<String, dynamic>>>[];
+    final sub = service.streamTicketsForAdmin().listen(states.add);
+
+    await service.markReadByAdmin('ticket-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.adminMarkReadCalls, <String>['ticket-1']);
+    expect(states.last.single['unread_for_admin'], isFalse);
+    await sub.cancel();
+  });
+
+  test('user read receipt is sent only for unread admin messages', () async {
+    final api = _FakeSupportApi(
+      initialMessages: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'admin-1',
+          'ticket_id': 'ticket-1',
+          'sender': 'admin',
+          'text': 'Ответ',
+          'created_at': '2026-06-13T09:00:00.000Z',
+        },
+        <String, dynamic>{
+          'id': 'user-1',
+          'ticket_id': 'ticket-1',
+          'sender': 'user',
+          'text': 'Вопрос',
+          'created_at': '2026-06-13T08:00:00.000Z',
+        },
+      ],
+    );
+    final service = SupportService(api: api);
+    final items = await service.refreshMessages('ticket-1');
+
+    await service.markAdminMessagesRead('ticket-1', items);
+
+    expect(api.userReadCalls, <String>['admin-1']);
+    expect(service.peekMessages('ticket-1').first['read_at'], isNotEmpty);
+  });
+
   test('send failure does not clear history and marks message as failed',
       () async {
     final api = _FakeSupportApi(
@@ -484,6 +580,10 @@ void main() {
       messageId: (failed['id'] ?? '').toString(),
     );
 
+    expect(api.sentOperationIds, hasLength(2));
+    expect(api.sentOperationIds.first, isNotEmpty);
+    expect(api.sentOperationIds.last, api.sentOperationIds.first);
+
     final retried = service.peekMessages('ticket-1');
     expect(
       retried.where((item) => (item['text'] ?? '').toString() == 'Фото'),
@@ -518,8 +618,33 @@ void main() {
     expect(items.single['created_at'], '2026-06-13T09:00:00.000Z');
   });
 
-  test('admin reply plus refresh does not create duplicate sender message',
-      () async {
+  test('same timestamp uses server id as stable secondary order', () async {
+    final api = _FakeSupportApi(
+      initialMessages: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'message-a',
+          'ticket_id': 'ticket-1',
+          'sender': 'user',
+          'text': 'Одинаково',
+          'created_at': '2026-06-13T10:00:00.000Z',
+        },
+        <String, dynamic>{
+          'id': 'message-b',
+          'ticket_id': 'ticket-1',
+          'sender': 'user',
+          'text': 'Одинаково',
+          'created_at': '2026-06-13T10:00:00.000Z',
+        },
+      ],
+    );
+    final service = SupportService(api: api);
+
+    final items = await service.refreshMessages('ticket-1');
+
+    expect(items.map((item) => item['id']), <String>['message-b', 'message-a']);
+  });
+
+  test('different server ids with identical content stay visible', () async {
     final api =
         _FakeSupportApi(initialMessages: const <Map<String, dynamic>>[]);
     final service = SupportService(api: api);
@@ -546,7 +671,7 @@ void main() {
     final items = service.peekMessages('ticket-1');
     expect(
       items.where((item) => (item['text'] ?? '').toString() == 'Ответ админа'),
-      hasLength(1),
+      hasLength(2),
     );
   });
 }
@@ -581,6 +706,7 @@ class _FakeSupportApi extends SupportApi {
   final List<Map<String, dynamic>> _messages;
   final Map<String, List<Map<String, dynamic>>> _messagesByTicket;
   Future<void> Function()? onSend;
+  Future<void> Function()? onGetTicket;
   Object? adminListError;
   Object? sendError;
   int adminListCalls = 0;
@@ -589,11 +715,15 @@ class _FakeSupportApi extends SupportApi {
   final Set<String> missingTicketIds = <String>{};
   final Map<String, int> ticketCalls = <String, int>{};
   final List<String> adminTicketCalls = <String>[];
+  final List<String> adminMarkReadCalls = <String>[];
+  final List<String?> sentOperationIds = <String?>[];
+  final List<String> userReadCalls = <String>[];
   Future<void> Function()? onAdminSend;
   Future<void> Function()? onAdminTicket;
 
   @override
   Future<Map<String, dynamic>> getTicket(String ticketId) async {
+    await onGetTicket?.call();
     ticketCalls[ticketId] = (ticketCalls[ticketId] ?? 0) + 1;
     if (missingTicketIds.contains(ticketId)) {
       throw const ApiException(
@@ -611,7 +741,9 @@ class _FakeSupportApi extends SupportApi {
     required String ticketId,
     String text = '',
     String? imageUrl,
+    String? idempotencyKey,
   }) async {
+    sentOperationIds.add(idempotencyKey);
     await onSend?.call();
     if (sendError != null) {
       throw sendError!;
@@ -621,6 +753,8 @@ class _FakeSupportApi extends SupportApi {
       'ticket_id': ticketId,
       'sender': 'user',
       'text': text,
+      if ((idempotencyKey ?? '').trim().isNotEmpty)
+        'client_operation_id': idempotencyKey,
       if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
       'created_at': '2026-06-13T10:00:00.000Z',
     };
@@ -669,6 +803,7 @@ class _FakeSupportApi extends SupportApi {
     required String ticketId,
     String text = '',
     String? imageUrl,
+    String? idempotencyKey,
   }) async {
     await onAdminSend?.call();
     final item = <String, dynamic>{
@@ -676,6 +811,8 @@ class _FakeSupportApi extends SupportApi {
       'ticket_id': ticketId,
       'sender': 'admin',
       'text': text,
+      if ((idempotencyKey ?? '').trim().isNotEmpty)
+        'client_operation_id': idempotencyKey,
       if ((imageUrl ?? '').trim().isNotEmpty) 'image_url': imageUrl,
       'created_at': '2026-06-13T10:00:00.000Z',
     };
@@ -684,6 +821,34 @@ class _FakeSupportApi extends SupportApi {
     return <String, dynamic>{
       'item': item,
     };
+  }
+
+  @override
+  Future<Map<String, dynamic>> adminMarkRead(String ticketId) async {
+    adminMarkReadCalls.add(ticketId);
+    return <String, dynamic>{
+      'ticket': <String, dynamic>{
+        'id': ticketId,
+        'unread_for_admin': false,
+        'updated_at': '2026-06-13T10:00:00.000Z',
+      },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> markMessageRead({
+    required String ticketId,
+    required String messageId,
+  }) async {
+    userReadCalls.add(messageId);
+    final item = _messagesFor(ticketId).firstWhere(
+      (message) => (message['id'] ?? '').toString() == messageId,
+    );
+    final updated = <String, dynamic>{
+      ...item,
+      'read_at': '2026-06-13T10:05:00.000Z',
+    };
+    return <String, dynamic>{'item': updated};
   }
 
   List<Map<String, dynamic>> _messagesFor(String ticketId) {

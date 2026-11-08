@@ -34,6 +34,113 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
+  testWidgets('home search stays white in light theme and dark in dark theme',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => const ListingsFeedPage(
+        items: <Listing>[],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSize(find.byKey(const ValueKey('home_search_field'))).height,
+      48,
+    );
+    var field = tester.widget<TextField>(
+      find.byKey(const ValueKey('home_search_field')),
+    );
+    expect(field.decoration?.filled, isTrue);
+    expect(field.decoration?.fillColor, Colors.white);
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.byKey(const ValueKey('home_search_field')),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any((decoration) => decoration.boxShadow?.isNotEmpty == true),
+      isTrue,
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        themeMode: ThemeMode.dark,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    field = tester.widget<TextField>(
+      find.byKey(const ValueKey('home_search_field')),
+    );
+    expect(field.decoration?.fillColor, isNot(Colors.white));
+    expect(
+      field.decoration?.fillColor,
+      ThemeData.dark().scaffoldBackgroundColor,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('home feed keeps exact scroll position after app resume',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: List<Listing>.generate(
+          80,
+          (index) => _listing(
+            id: 'resume-listing-$index',
+            title: 'Объявление $index',
+          ),
+        ),
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.drag(
+      find.byType(CustomScrollView),
+      const Offset(0, -2400),
+    );
+    await tester.pumpAndSettle();
+
+    final feed = tester.widget<CustomScrollView>(find.byType(CustomScrollView));
+    final beforeResume = feed.controller!.offset;
+    expect(beforeResume, greaterThan(0));
+    expect(listings.requests, hasLength(1));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(listings.requests, hasLength(1));
+    expect(feed.controller!.offset, closeTo(beforeResume, 0.01));
+  });
+
   testWidgets(
     'home feed loads next page near bottom and does not duplicate showcase or listings',
     (tester) async {

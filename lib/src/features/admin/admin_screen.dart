@@ -15,6 +15,8 @@ import 'package:atta/src/features/admin/admin_raffle_screen.dart';
 import 'package:atta/src/features/admin/admin_promotions_screen.dart';
 import 'package:atta/src/features/admin/admin_reports_screen.dart';
 import 'package:atta/src/features/admin/admin_today_visits_screen.dart';
+import 'package:atta/src/features/admin/admin_server_status_screen.dart';
+import 'package:atta/src/features/admin/admin_app_downloads_screen.dart';
 import 'package:atta/src/features/admin/admin_users_screen.dart';
 import 'package:atta/src/features/admin/admin_wallet_analytics_screen.dart';
 import 'package:atta/src/features/admin/admin_marketplace_analytics_screens.dart';
@@ -25,6 +27,7 @@ import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/usage_analytics_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
@@ -39,11 +42,13 @@ class AdminScreen extends StatefulWidget {
     this.initialTabIndex = 0,
     this.initialReportId = '',
     this.usageAnalyticsLoad,
+    this.dashboardNow,
   });
 
   final int initialTabIndex;
   final String initialReportId;
   final Future<Map<String, dynamic>> Function()? usageAnalyticsLoad;
+  final DateTime Function()? dashboardNow;
 
   @override
   State<AdminScreen> createState() => _AdminScreenState();
@@ -241,7 +246,10 @@ class _AdminScreenState extends State<AdminScreen>
           body: TabBarView(
             controller: _tab,
             children: [
-              _DashboardTab(usageAnalyticsLoad: widget.usageAnalyticsLoad),
+              _DashboardTab(
+                usageAnalyticsLoad: widget.usageAnalyticsLoad,
+                now: widget.dashboardNow,
+              ),
               const _TimewebAdminListingsModerationTab(),
               const AdminSupportTab(),
               AdminReportsScreen(initialReportId: widget.initialReportId),
@@ -808,21 +816,171 @@ class _ModerationLoadingView extends StatelessWidget {
 // 0) ДАШБОРД
 // ----------------
 class _DashboardTab extends StatefulWidget {
-  const _DashboardTab({this.usageAnalyticsLoad});
+  const _DashboardTab({this.usageAnalyticsLoad, this.now});
 
   final Future<Map<String, dynamic>> Function()? usageAnalyticsLoad;
+  final DateTime Function()? now;
 
   @override
   State<_DashboardTab> createState() => _DashboardTabState();
 }
 
-class _DashboardTabState extends State<_DashboardTab> {
+Duration adminDashboardRefreshDelay(
+  DateTime utcNow, {
+  Duration maximumInterval = const Duration(minutes: 5),
+}) {
+  final moscowNow = utcNow.toUtc().add(const Duration(hours: 3));
+  final nextMoscowDayUtc = DateTime.utc(
+    moscowNow.year,
+    moscowNow.month,
+    moscowNow.day + 1,
+  ).subtract(const Duration(hours: 3));
+  final untilNextDay = nextMoscowDayUtc.difference(utcNow.toUtc());
+  if (untilNextDay <= Duration.zero) return const Duration(seconds: 1);
+  return untilNextDay < maximumInterval ? untilNextDay : maximumInterval;
+}
+
+class _DashboardTabState extends State<_DashboardTab>
+    with WidgetsBindingObserver {
   late Future<List<Map<String, dynamic>>> _timewebFuture;
+  Timer? _refreshTimer;
+  Timer? _realtimeDebounce;
+  Future<void>? _refreshInFlight;
+  Map<String, dynamic>? _dashboardSnapshot;
+  Map<String, dynamic>? _usageSnapshot;
+  StreamSubscription<ChatSocketEvent>? _socketEvents;
+  StreamSubscription<bool>? _socketConnection;
+  final Set<String> _pendingRealtimeScopes = <String>{};
+  bool _socketStateSeen = false;
+  bool _socketWasConnected = false;
+  bool _refreshAfterInFlight = false;
+  String? _refreshStartedMoscowDay;
+  int _appDownloadsRefreshToken = 0;
+
+  DateTime _nowUtc() => (widget.now?.call() ?? DateTime.now()).toUtc();
+
+  String _moscowDay(DateTime utcNow) {
+    final value = utcNow.toUtc().add(const Duration(hours: 3));
+    return '${value.year}-${value.month}-${value.day}';
+  }
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _timewebFuture = _loadTimewebDashboard();
+    _scheduleRefresh();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshTimewebDashboard());
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_socketEvents != null) return;
+    final socket = Provider.of<ChatSocketService?>(context, listen: false);
+    if (socket == null) return;
+    socket.subscribeAnalytics();
+    _socketEvents = socket.events.listen((event) {
+      if (event.name == 'presence.changed') {
+        _queueRealtime(<String>{'presence'});
+      } else if (event.name == 'analytics_updated') {
+        _queueRealtime(<String>{'usage'});
+      } else if (event.name == 'admin.dashboard.changed') {
+        final raw = event.payload['scopes'];
+        if (raw is List) {
+          _queueRealtime(raw.map((value) => value.toString()).toSet());
+        }
+      }
+    });
+    _socketConnection = socket.connectionChanges.listen((connected) {
+      if (connected) {
+        socket.subscribeAnalytics();
+        if (_socketStateSeen && !_socketWasConnected) {
+          unawaited(_refreshTimewebDashboard());
+        }
+      }
+      _socketStateSeen = true;
+      _socketWasConnected = connected;
+    });
+  }
+
+  void _queueRealtime(Set<String> scopes) {
+    if (scopes.isEmpty || !mounted) return;
+    _pendingRealtimeScopes.addAll(scopes);
+    _realtimeDebounce ??= Timer(const Duration(milliseconds: 600), () {
+      _realtimeDebounce = null;
+      final pending = Set<String>.from(_pendingRealtimeScopes);
+      _pendingRealtimeScopes.clear();
+      unawaited(_applyRealtimeScopes(pending));
+    });
+  }
+
+  Future<void> _applyRealtimeScopes(Set<String> scopes) async {
+    if (!mounted || scopes.isEmpty) return;
+    final shouldLoadUsage = scopes.remove('usage');
+    final futures = <Future<void>>[];
+    if (scopes.isNotEmpty) futures.add(_refreshDashboardMetrics(scopes));
+    if (shouldLoadUsage) futures.add(_refreshUsageBlock());
+    await Future.wait(futures);
+  }
+
+  Future<void> _refreshDashboardMetrics(Set<String> scopes) async {
+    try {
+      final response =
+          await context.read<AdminService>().dashboardMetrics(scopes);
+      final changedStats = Map<String, dynamic>.from(
+        response['stats'] as Map? ?? const <String, dynamic>{},
+      );
+      if (!mounted || changedStats.isEmpty || _dashboardSnapshot == null) {
+        return;
+      }
+      final dashboard = Map<String, dynamic>.from(_dashboardSnapshot!);
+      final stats = Map<String, dynamic>.from(
+        dashboard['stats'] as Map? ?? const <String, dynamic>{},
+      )..addAll(changedStats);
+      dashboard['stats'] = stats;
+      setState(() {
+        _dashboardSnapshot = dashboard;
+        _timewebFuture = Future.value(<Map<String, dynamic>>[
+          dashboard,
+          _usageSnapshot ?? <String, dynamic>{},
+        ]);
+      });
+    } catch (_) {
+      // The periodic/full reconciliation remains the fallback.
+    }
+  }
+
+  Future<void> _refreshUsageBlock() async {
+    try {
+      final usage = await (widget.usageAnalyticsLoad ??
+          UsageAnalyticsService.instance.dashboard)();
+      if (!mounted || _dashboardSnapshot == null) return;
+      setState(() {
+        _usageSnapshot = usage;
+        _timewebFuture = Future.value(<Map<String, dynamic>>[
+          _dashboardSnapshot!,
+          usage,
+        ]);
+      });
+    } catch (_) {
+      // The periodic/full reconciliation remains the fallback.
+    }
+  }
+
+  void _scheduleRefresh() {
+    _refreshTimer?.cancel();
+    if (!mounted) return;
+    _refreshTimer = Timer(
+      adminDashboardRefreshDelay(_nowUtc()),
+      () => unawaited(_refreshTimewebDashboard()),
+    );
   }
 
   Future<List<Map<String, dynamic>>> _loadTimewebDashboard({
@@ -835,15 +993,58 @@ class _DashboardTabState extends State<_DashboardTab> {
       context.read<AdminService>().dashboardStats(forceRefresh: forceRefresh),
       usageFuture,
     ]);
+    _dashboardSnapshot = results[0];
+    _usageSnapshot = results[1];
     return results;
   }
 
   Future<void> _refreshTimewebDashboard() async {
+    final running = _refreshInFlight;
+    if (running != null) {
+      if (_refreshStartedMoscowDay != _moscowDay(_nowUtc())) {
+        _refreshAfterInFlight = true;
+      }
+      await running;
+      return;
+    }
+    _refreshStartedMoscowDay = _moscowDay(_nowUtc());
+    final refresh = _performDashboardRefresh();
+    _refreshInFlight = refresh;
+    var runAgain = false;
+    try {
+      await refresh;
+    } finally {
+      if (identical(_refreshInFlight, refresh)) _refreshInFlight = null;
+      runAgain = _refreshAfterInFlight ||
+          _refreshStartedMoscowDay != _moscowDay(_nowUtc());
+      _refreshAfterInFlight = false;
+      _refreshStartedMoscowDay = null;
+    }
+    if (runAgain) {
+      await _refreshTimewebDashboard();
+    } else {
+      _scheduleRefresh();
+    }
+  }
+
+  Future<void> _performDashboardRefresh() async {
     final future = _loadTimewebDashboard(forceRefresh: true);
+    if (!mounted) return;
     setState(() {
       _timewebFuture = future;
+      _appDownloadsRefreshToken += 1;
     });
     await future;
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
+    _realtimeDebounce?.cancel();
+    _socketEvents?.cancel();
+    _socketConnection?.cancel();
+    super.dispose();
   }
 
   Future<int> _count(
@@ -1043,6 +1244,32 @@ class _DashboardTabState extends State<_DashboardTab> {
                     ),
                   ),
                 ),
+                KeyedSubtree(
+                  key: const Key('adminRevenueCard'),
+                  child: card(
+                    'Выручка',
+                    '›',
+                    Icons.account_balance_wallet_outlined,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AdminPointsPurchasesScreen(),
+                      ),
+                    ),
+                  ),
+                ),
+                KeyedSubtree(
+                  key: const Key('adminPromotionsCard'),
+                  child: card(
+                    'Продвижение',
+                    '›',
+                    Icons.rocket_launch_outlined,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AdminPromotionsScreen(),
+                      ),
+                    ),
+                  ),
+                ),
                 card('На модерации', '${read('pendingModeration')}',
                     Icons.shield),
                 card('Тикетов поддержки', '${read('supportTickets')}',
@@ -1108,6 +1335,23 @@ class _DashboardTabState extends State<_DashboardTab> {
                 const SizedBox(height: 8),
                 AdminUsageAnalytics(data: usage),
                 AdminPlatformAnalytics(data: usage),
+                const SizedBox(height: 8),
+                AdminAppDownloadsSummary(
+                  adminService: context.read<AdminService>(),
+                  refreshToken: _appDownloadsRefreshToken,
+                ),
+                const SizedBox(height: 8),
+                card(
+                  'Состояние сервера',
+                  'Открыть',
+                  Icons.monitor_heart_outlined,
+                  subtitle: 'Нагрузка, память, скорость и ошибки',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AdminServerStatusScreen(),
+                    ),
+                  ),
+                ),
               ],
             ),
           );

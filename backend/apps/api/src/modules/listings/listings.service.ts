@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import {
   ListingStatus,
+  NotificationType,
   Prisma,
   Promotion,
   PromotionType,
@@ -20,6 +21,8 @@ import {
   buildListingSearchWhere,
   normalizeOemPartNumber,
 } from '../../common/listing-search';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   LISTING_PUBLICATION_NOT_READY,
   isListingReadyForPublication,
@@ -155,6 +158,10 @@ type ListingPublicationCandidate = Pick<
   ListingWithPublicRelations,
   'title' | 'description' | 'category' | 'subcategory' | 'price' | 'city' | 'photos'
 >;
+
+type ModerationQueueCandidate = ListingPublicationCandidate & {
+  status: ListingStatus;
+};
 
 const PROTECTED_FEED_HEAD_SIZE = 10;
 const FREE_ARCHIVE_REPUBLISH_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -497,7 +504,44 @@ export class ListingsService {
       assertNotBlocked: async () => undefined,
     } as unknown as UserBlocksService,
     @Optional() private readonly savedSearchAlerts?: SavedSearchAlertsService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
+
+  private entersModerationQueue(
+    before: ModerationQueueCandidate | null,
+    after: ModerationQueueCandidate,
+  ) {
+    if (
+      after.status !== ListingStatus.PENDING ||
+      !isListingReadyForPublication(after)
+    ) {
+      return false;
+    }
+    return before == null ||
+      before.status !== ListingStatus.PENDING ||
+      !isListingReadyForPublication(before);
+  }
+
+  private async notifyAdminsOfModeration(listing: {
+    id: string;
+    updatedAt: Date;
+  }) {
+    try {
+      await this.notificationsService?.createAdminEventNotifications({
+        eventKey: `admin_moderation:${listing.id}:${listing.updatedAt.toISOString()}`,
+        title: 'ATTA — Модерация',
+        body: 'Новое объявление ожидает проверки.',
+        type: NotificationType.MODERATION,
+        payload: {
+          actionType: 'admin_moderation_new',
+          listingId: listing.id,
+        },
+      });
+    } catch {
+      // Administrative delivery must not roll back a completed listing write.
+    }
+  }
 
   async recordSearchAttempt(dto: RecordSearchAttemptDto) {
     const query = dto.query.normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 240);
@@ -521,6 +565,7 @@ export class ListingsService {
       await this.prisma.zeroResultSearch.deleteMany({
         where: { attemptId: dto.attemptId },
       });
+      this.adminDashboardSignal?.changed('searches');
       return { recorded: true };
     }
     await this.prisma.zeroResultSearch.upsert({
@@ -528,6 +573,7 @@ export class ListingsService {
       create: { attemptId: dto.attemptId, query, normalizedQuery },
       update: { query, normalizedQuery, createdAt: new Date() },
     });
+    this.adminDashboardSignal?.changed('searches');
     return { recorded: true };
   }
 
@@ -629,6 +675,10 @@ export class ListingsService {
 
     if (listing.status === ListingStatus.APPROVED) {
       await this.savedSearchAlerts?.notifyApprovedListing(listing.id);
+    }
+    this.adminDashboardSignal?.changed('listings');
+    if (this.entersModerationQueue(null, listing)) {
+      await this.notifyAdminsOfModeration(listing);
     }
     return {
       listing: serializeListing(listing, { includePrivateContact: true }),
@@ -1567,6 +1617,10 @@ export class ListingsService {
     if (updated.status === ListingStatus.APPROVED && listing.status !== ListingStatus.APPROVED) {
       await this.savedSearchAlerts?.notifyApprovedListing(updated.id);
     }
+    this.adminDashboardSignal?.changed('listings');
+    if (this.entersModerationQueue(listing, updated)) {
+      await this.notifyAdminsOfModeration(updated);
+    }
     return {
       listing: serializeListing(updated, { includePrivateContact: true }),
     };
@@ -1607,6 +1661,7 @@ export class ListingsService {
     });
 
     await this.storageService.deleteListingPhotosForListings([id]);
+    this.adminDashboardSignal?.changed('listings');
 
     return {
       listing: serializeListing(updated, { includePrivateContact: true }),
@@ -1679,6 +1734,7 @@ export class ListingsService {
       },
       include: listingInclude,
     });
+    this.adminDashboardSignal?.changed('listings');
 
     return {
       listing: serializeListing(updated, { includePrivateContact: true }),
@@ -1729,6 +1785,10 @@ export class ListingsService {
         include: listingInclude,
       });
     });
+    this.adminDashboardSignal?.changed('listings');
+    if (this.entersModerationQueue(listing, updated)) {
+      await this.notifyAdminsOfModeration(updated);
+    }
 
     return {
       listing: serializeListing(updated, { includePrivateContact: true }),
@@ -1834,6 +1894,9 @@ export class ListingsService {
         },
       });
     });
+    if (listing.viewCount === 0 && updated.viewCount > 0) {
+      this.adminDashboardSignal?.changed('listings');
+    }
 
     return {
       listing_id: listingId,
@@ -1971,6 +2034,11 @@ export class ListingsService {
       include: listingInclude,
     });
 
+    if (this.entersModerationQueue(listing, updated)) {
+      this.adminDashboardSignal?.changed('listings');
+      await this.notifyAdminsOfModeration(updated);
+    }
+
     return {
       source: 'timeweb',
       photo: {
@@ -2047,6 +2115,11 @@ export class ListingsService {
       where: { id: listingId },
       include: listingInclude,
     });
+
+    if (this.entersModerationQueue(listing, updated)) {
+      this.adminDashboardSignal?.changed('listings');
+      await this.notifyAdminsOfModeration(updated);
+    }
 
     return {
       source: 'timeweb',

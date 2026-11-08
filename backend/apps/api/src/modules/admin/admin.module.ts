@@ -10,6 +10,10 @@ import { UserBlocksModule } from '../user-blocks/user-blocks.module';
 import { SupportModule } from '../support/support.module';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
+import { AdminAppDownloadsController } from '../app-downloads/admin-app-downloads.controller';
+import { AdminAppDownloadsService } from '../app-downloads/admin-app-downloads.service';
+import { AppleAppDownloadsSource } from '../app-downloads/apple-app-downloads.source';
+import { GooglePlayDownloadsSource } from '../app-downloads/google-play-downloads.source';
 
 @Module({
   imports: [SavedSearchesModule,
@@ -21,8 +25,13 @@ import { AdminService } from './admin.service';
     SupportModule,
     UserBlocksModule,
   ],
-  controllers: [AdminController],
-  providers: [AdminService],
+  controllers: [AdminController, AdminAppDownloadsController],
+  providers: [
+    AdminService,
+    AdminAppDownloadsService,
+    AppleAppDownloadsSource,
+    GooglePlayDownloadsSource,
+  ],
   exports: [AdminService],
 })
 export class AdminModule {}

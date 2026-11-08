@@ -2,6 +2,8 @@ import type { AccountDeletionService } from '../auth/account-deletion.service';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
+import { SupportRealtimeSignal } from '../../common/support-realtime-signal';
 import { ChatsGateway } from './chats.gateway';
 
 class FakeSocket {
@@ -11,6 +13,7 @@ class FakeSocket {
   };
   data: Record<string, unknown> = {};
   joinedRooms: string[] = [];
+  rooms = new Set<string>();
   emitted: Array<{ event: string; payload: Record<string, unknown> }> = [];
   disconnected = false;
 
@@ -18,6 +21,11 @@ class FakeSocket {
 
   join(room: string) {
     this.joinedRooms.push(room);
+    this.rooms.add(room);
+  }
+
+  leave(room: string) {
+    this.rooms.delete(room);
   }
 
   emit(event: string, payload: Record<string, unknown>) {
@@ -28,6 +36,110 @@ class FakeSocket {
     this.disconnected = close;
   }
 }
+
+test('admin dashboard realtime is emitted only to reauthorized admins', async () => {
+  const signal = new AdminDashboardSignal();
+  const gateway = new ChatsGateway(
+    {} as never,
+    {} as never,
+    {
+      async verifyAsync(token: string) {
+        const userId = token === 'admin-token' ? 'admin-1' : 'user-1';
+        return { sub: userId, sessionId: `session-${userId}`, type: 'access' };
+      },
+    } as never,
+    {
+      userSession: {
+        async findFirst({ where }: { where: { userId: string } }) {
+          return {
+            userId: where.userId,
+            expiresAt: new Date(Date.now() + 60_000),
+          };
+        },
+      },
+      user: {
+        async findUnique({ where }: { where: { id: string } }) {
+          return {
+            phone: null,
+            adminProfile: where.id === 'admin-1' ? { isAdmin: true } : null,
+          };
+        },
+      },
+    } as never,
+    { onDeleted: () => () => false } as never,
+    undefined,
+    signal,
+  );
+  const admin = new FakeSocket('admin-socket');
+  admin.handshake.auth['token'] = 'admin-token';
+  admin.join('admin:analytics');
+  const regular = new FakeSocket('user-socket');
+  regular.handshake.auth['token'] = 'user-token';
+  regular.join('admin:analytics');
+  gateway.server = {
+    sockets: { sockets: new Map([[admin.id, admin], [regular.id, regular]]) },
+    in() { return { disconnectSockets() {} }; },
+    emit() {},
+  } as never;
+
+  gateway.onModuleInit();
+  signal.changed('users', 'listings');
+  signal.flush();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    admin.emitted.find((item) => item.event === 'admin.dashboard.changed')?.payload,
+    { scopes: ['users', 'listings'] },
+  );
+  assert.equal(
+    regular.emitted.some((item) => item.event === 'admin.dashboard.changed'),
+    false,
+  );
+  assert.equal(regular.rooms.has('admin:analytics'), false);
+  gateway.onModuleDestroy();
+  signal.onModuleDestroy();
+});
+
+test('support realtime removes an admin whose rights were revoked after joining', async () => {
+  const supportSignal = new SupportRealtimeSignal();
+  let isAdmin = true;
+  const gateway = new ChatsGateway(
+    {} as never,
+    {} as never,
+    { verifyAsync: async () => ({ sub: 'admin-1', sessionId: 'session-1', type: 'access' }) } as never,
+    {
+      userSession: { findFirst: async () => ({ userId: 'admin-1', expiresAt: new Date(Date.now() + 60_000) }) },
+      user: { findUnique: async () => ({ phone: null, adminProfile: isAdmin ? { isAdmin: true } : null }) },
+    } as never,
+    { onDeleted: () => () => false } as never,
+    undefined,
+    undefined,
+    supportSignal,
+  );
+  const socket = new FakeSocket('admin-socket');
+  socket.handshake.auth['token'] = 'admin-token';
+  socket.join('admin:analytics');
+  gateway.server = {
+    sockets: { sockets: new Map([[socket.id, socket]]) },
+    in() { return { disconnectSockets() {} }; },
+    emit() {},
+  } as never;
+  gateway.onModuleInit();
+
+  isAdmin = false;
+  supportSignal.changed({
+    ticketId: 'ticket-1',
+    userId: null,
+    messageId: 'message-1',
+    action: 'created',
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(socket.emitted.some((item) => item.event === 'support.changed'), false);
+  assert.equal(socket.rooms.has('admin:analytics'), false);
+  gateway.onModuleDestroy();
+  supportSignal.onModuleDestroy();
+});
 
 function createGateway({
   token = 'access-token',

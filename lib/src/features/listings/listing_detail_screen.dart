@@ -27,6 +27,7 @@ import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/wallet_service.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/listing_share_files.dart';
 import 'package:atta/src/utils/ru_phone.dart';
@@ -1096,10 +1097,11 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                 sellerAvatar: sellerAvatar,
               ),
               body: ListView(
+                key: const ValueKey('listing_detail_body'),
                 controller: _scrollController,
                 physics:
                     _listingDetailScrollPhysics(Theme.of(context).platform),
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
+                padding: const EdgeInsets.fromLTRB(12, 3, 12, 20),
                 children: [
                   if (status != 'approved')
                     Container(
@@ -1168,7 +1170,10 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                   ],
                   if (status != 'approved') const SizedBox(height: 12),
                   _Photos(photoUrls: listing.photoUrls, video: listing.video),
-                  const SizedBox(height: 14),
+                  const SizedBox(
+                    key: ValueKey('listing_detail_photo_bottom_gap'),
+                    height: 10,
+                  ),
                   Text(
                     listing.title,
                     style: const TextStyle(
@@ -2527,102 +2532,109 @@ class _PhotosState extends State<_Photos> {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          boxShadow: attaSoftShadows(context),
         ),
         child: const Center(
             child: Icon(Icons.image_not_supported_outlined, size: 48)),
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: AspectRatio(
-        aspectRatio: 4 / 3,
-        child: Stack(
-          children: [
-            DesktopWebPhotoNavigation(
-              currentIndex: _page,
-              photoCount: items.length,
-              onPrevious: () => _controller.previousPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              ),
-              onNext: () => _controller.nextPage(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-              ),
-              child: PageView.builder(
-                controller: _controller,
-                itemCount: items.length,
-                onPageChanged: (i) => setState(() => _page = i),
-                itemBuilder: (_, i) {
-                  final item = items[i];
-                  return GestureDetector(
-                    onTap: () async {
-                      if (item.video != null) {
-                        final uri = Uri.tryParse(item.video!.playbackUrl);
-                        if (uri != null) {
-                          final opened = await launchUrl(
-                            uri,
-                            mode: LaunchMode.inAppBrowserView,
-                          );
-                          if (!opened) {
-                            await launchUrl(uri,
-                                mode: LaunchMode.externalApplication);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: attaSoftShadows(context),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: AspectRatio(
+          aspectRatio: 4 / 3,
+          child: Stack(
+            children: [
+              DesktopWebPhotoNavigation(
+                currentIndex: _page,
+                photoCount: items.length,
+                onPrevious: () => _controller.previousPage(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                ),
+                onNext: () => _controller.nextPage(
+                  duration: const Duration(milliseconds: 300),
+                  curve: Curves.easeInOut,
+                ),
+                child: PageView.builder(
+                  controller: _controller,
+                  itemCount: items.length,
+                  onPageChanged: (i) => setState(() => _page = i),
+                  itemBuilder: (_, i) {
+                    final item = items[i];
+                    return GestureDetector(
+                      onTap: () async {
+                        if (item.video != null) {
+                          final uri = Uri.tryParse(item.video!.playbackUrl);
+                          if (uri != null) {
+                            final opened = await launchUrl(
+                              uri,
+                              mode: LaunchMode.inAppBrowserView,
+                            );
+                            if (!opened) {
+                              await launchUrl(uri,
+                                  mode: LaunchMode.externalApplication);
+                            }
                           }
+                          return;
                         }
-                        return;
-                      }
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => PhotoViewerScreen(
-                            photoUrls: photoUrls,
-                            initialIndex:
-                                i > 1 && widget.video != null ? i - 1 : i,
-                          ),
-                        ),
-                      );
-                    },
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        MediaPreviewBox(
-                          imageUrl: item.imageUrl,
-                          categoryHint: 'listings',
-                          borderRadius: 0,
-                        ),
-                        if (item.video != null)
-                          const Center(
-                            child: CircleAvatar(
-                              radius: 30,
-                              backgroundColor: Colors.black54,
-                              child: Icon(Icons.play_arrow_rounded,
-                                  color: Colors.white, size: 42),
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => PhotoViewerScreen(
+                              photoUrls: photoUrls,
+                              initialIndex:
+                                  i > 1 && widget.video != null ? i - 1 : i,
                             ),
                           ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-            Positioned(
-              right: 10,
-              bottom: 10,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(20),
+                        );
+                      },
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          MediaPreviewBox(
+                            imageUrl: item.imageUrl,
+                            categoryHint: 'listings',
+                            borderRadius: 0,
+                          ),
+                          if (item.video != null)
+                            const Center(
+                              child: CircleAvatar(
+                                radius: 30,
+                                backgroundColor: Colors.black54,
+                                child: Icon(Icons.play_arrow_rounded,
+                                    color: Colors.white, size: 42),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
-                child: Text(
-                  '${_page + 1}/${items.length}',
-                  style: const TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              Positioned(
+                right: 10,
+                bottom: 10,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${_page + 1}/${items.length}',
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

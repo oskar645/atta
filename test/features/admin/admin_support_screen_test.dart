@@ -273,6 +273,40 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('moderation quick reply fills input without sending',
+      (tester) async {
+    final support = _FakeSupportService();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<SupportService>.value(value: support),
+          Provider<ProfileService>.value(value: _FakeProfileService()),
+        ],
+        child: const MaterialApp(
+          home: AdminTicketScreen(
+            ticketId: 'ticket-1',
+            titleName: 'Пользователь',
+            userUid: 'user-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(-600, 0),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('На модерации'));
+    await tester.pump();
+
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(
+        field.controller?.text, contains('объявление находится на модерации'));
+    expect(support.adminReplyCalls, 0);
+  });
 }
 
 class _FakeSupportService extends SupportService {
@@ -291,6 +325,7 @@ class _FakeSupportService extends SupportService {
 
   final List<Map<String, dynamic>> _tickets;
   final List<String> hiddenTicketIds = <String>[];
+  int adminReplyCalls = 0;
   final StreamController<List<Map<String, dynamic>>> _controller =
       StreamController<List<Map<String, dynamic>>>.broadcast();
 
@@ -326,6 +361,15 @@ class _FakeSupportService extends SupportService {
 
   @override
   Future<void> markReadByAdmin(String ticketId) async {}
+
+  @override
+  Future<void> adminReply({
+    required String ticketId,
+    required String text,
+    String? operationId,
+  }) async {
+    adminReplyCalls += 1;
+  }
 }
 
 class _FakeProfileService extends ProfileService {

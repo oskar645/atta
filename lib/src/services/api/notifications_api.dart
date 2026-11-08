@@ -27,6 +27,7 @@ class NotificationsApi {
     String appVersion = '',
     String buildNumber = '',
     String locale = '',
+    bool supportsAndroidDataOnlyPush = false,
   }) async {
     final response = await client.post(
       '/notifications/devices',
@@ -38,6 +39,8 @@ class NotificationsApi {
         if (appVersion.trim().isNotEmpty) 'app_version': appVersion.trim(),
         if (buildNumber.trim().isNotEmpty) 'build_number': buildNumber.trim(),
         if (locale.trim().isNotEmpty) 'locale': locale.trim(),
+        if (platform.trim().toLowerCase() == 'android')
+          'supports_android_data_only_push': supportsAndroidDataOnlyPush,
       },
     );
     return Map<String, dynamic>.from(response as Map);

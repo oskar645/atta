@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:atta/src/features/admin/admin_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,211 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  test('dashboard scheduler refreshes at Moscow midnight before interval', () {
+    expect(
+      adminDashboardRefreshDelay(
+        DateTime.utc(2026, 12, 31, 20, 59),
+      ),
+      const Duration(minutes: 1),
+    );
+    expect(
+      adminDashboardRefreshDelay(
+        DateTime.utc(2026, 12, 31, 20, 50),
+      ),
+      const Duration(minutes: 5),
+    );
+  });
+
+  testWidgets('dashboard refreshes backend and usage after app resume',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    var usageCalls = 0;
+    Future<Map<String, dynamic>> loadUsage() async {
+      usageCalls += 1;
+      return _loadUsageAnalytics();
+    }
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: loadUsage),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(adminService.dashboardStatsCalls, 1);
+    expect(usageCalls, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 2);
+    expect(adminService.lastDashboardForceRefresh, isTrue);
+    expect(usageCalls, 2);
+  });
+
+  testWidgets('dashboard periodically refreshes all centralized data',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    var usageCalls = 0;
+    Future<Map<String, dynamic>> loadUsage() async {
+      usageCalls += 1;
+      return _loadUsageAnalytics();
+    }
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: loadUsage),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.pump(const Duration(minutes: 5));
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 2);
+    expect(usageCalls, 2);
+  });
+
+  testWidgets('dashboard coalesces realtime scopes and disposes listeners',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    final socket = _FakeDashboardSocketService();
+    var usageCalls = 0;
+    Future<Map<String, dynamic>> loadUsage() async {
+      usageCalls += 1;
+      return _loadUsageAnalytics();
+    }
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<ChatSocketService>.value(value: socket),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: loadUsage),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(socket.subscribeAnalyticsCalls, 1);
+    expect(socket.hasEventListener, isTrue);
+    socket.emitEvent('presence.changed');
+    socket.emitEvent('presence.changed');
+    socket.emitEvent('admin.dashboard.changed', <String, dynamic>{
+      'scopes': <String>['listings', 'searches'],
+    });
+    socket.emitEvent('analytics_updated');
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardMetricsCalls, 1);
+    expect(adminService.lastDashboardMetricScopes,
+        containsAll(<String>['presence', 'listings', 'searches']));
+    expect(usageCalls, 2);
+    expect(find.text('7'), findsWidgets);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(socket.hasEventListener, isFalse);
+    expect(socket.hasConnectionListener, isFalse);
+    await socket.close();
+  });
+
+  testWidgets('socket reconnect performs one full reconciliation refresh',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    final socket = _FakeDashboardSocketService();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<ChatSocketService>.value(value: socket),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    socket.emitConnection(false);
+    socket.emitConnection(true);
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 2);
+    expect(adminService.lastDashboardForceRefresh, isTrue);
+    expect(socket.subscribeAnalyticsCalls, 2);
+    await socket.close();
+  });
+
+  testWidgets('Moscow midnight queues refresh behind an in-flight request',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    final secondRefresh = Completer<Map<String, dynamic>>();
+    var now = DateTime.utc(2026, 12, 31, 20, 59, 50);
+    adminService.dashboardStatsHandler = (forceRefresh) {
+      if (adminService.dashboardStatsCalls == 2) return secondRefresh.future;
+      return Future<Map<String, dynamic>>.value(
+        adminService.dashboardResponse(),
+      );
+    };
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: MaterialApp(
+          home: AdminScreen(
+            usageAnalyticsLoad: _loadUsageAnalytics,
+            dashboardNow: () => now,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(adminService.dashboardStatsCalls, 2);
+    now = DateTime.utc(2026, 12, 31, 21);
+    await tester.pump(const Duration(seconds: 10));
+    secondRefresh.complete(adminService.dashboardResponse());
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 3);
+  });
+
   testWidgets('dashboard loads once and keeps platform analytics last',
       (tester) async {
     tester.view.physicalSize = const Size(900, 2400);
@@ -24,8 +230,7 @@ void main() {
           Provider<AdminService>.value(value: _FakeAdminService()),
           Provider<NotificationsService>.value(
               value: _FakeNotificationsService()),
-          Provider<SavedSearchService>.value(
-              value: _FakeSavedSearchService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
         ],
         child: const MaterialApp(
           home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
@@ -50,6 +255,35 @@ void main() {
     expect(find.text('Версии приложения'), findsOneWidget);
   });
 
+  testWidgets('app downloads is immediately before technical server status',
+      (tester) async {
+    tester.view.physicalSize = const Size(900, 8000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Загрузки приложений'), findsOneWidget);
+    expect(find.text('Состояние сервера'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text('Загрузки приложений')).dy,
+      lessThan(tester.getTopLeft(find.text('Состояние сервера')).dy),
+    );
+  });
+
   testWidgets('pulling dashboard down refreshes every dashboard block',
       (tester) async {
     final adminService = _FakeAdminService();
@@ -71,8 +305,7 @@ void main() {
           Provider<AdminService>.value(value: adminService),
           Provider<NotificationsService>.value(
               value: _FakeNotificationsService()),
-          Provider<SavedSearchService>.value(
-              value: _FakeSavedSearchService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
         ],
         child: MaterialApp(
           home: AdminScreen(usageAnalyticsLoad: loadUsage),
@@ -83,6 +316,7 @@ void main() {
 
     expect(adminService.dashboardStatsCalls, 1);
     expect(usageCalls, 1);
+    expect(adminService.appDownloadsCalls, 1);
 
     await tester.drag(find.byType(ListView).first, const Offset(0, 500));
     await tester.pumpAndSettle();
@@ -90,6 +324,7 @@ void main() {
     expect(adminService.dashboardStatsCalls, 2);
     expect(adminService.lastDashboardForceRefresh, isTrue);
     expect(usageCalls, 2);
+    expect(adminService.appDownloadsCalls, 2);
   });
 
   testWidgets(
@@ -132,6 +367,148 @@ void main() {
       expect(find.text('Покупки баллов'), findsWidgets);
     },
   );
+
+  testWidgets('dashboard keeps revenue and promotion as compact entry cards',
+      (tester) async {
+    tester.view.physicalSize = const Size(900, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('adminRevenueCard')), findsOneWidget);
+    expect(find.text('Выручка'), findsOneWidget);
+    expect(find.byKey(const Key('adminPromotionsCard')), findsOneWidget);
+    expect(find.text('Продвижение'), findsOneWidget);
+    expect(find.text('Продвижения сегодня'), findsNothing);
+    expect(find.text('8 400 ₽'), findsNothing);
+    expect(find.text('420 баллов'), findsNothing);
+    expect(find.text('Пользователей'), findsOneWidget);
+
+    await tester.tap(find.text('Выручка'));
+    await tester.pumpAndSettle();
+    expect(find.text('Покупки баллов'), findsWidgets);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Продвижение'));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Продвижение'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('payments and promotions realtime update only targeted blocks',
+      (tester) async {
+    final adminService = _FakeAdminService();
+    final socket = _FakeDashboardSocketService();
+    tester.view.physicalSize = const Size(900, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<ChatSocketService>.value(value: socket),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    socket.emitEvent('admin.dashboard.changed', <String, dynamic>{
+      'scopes': <String>['payments', 'promotions'],
+    });
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+
+    expect(adminService.dashboardStatsCalls, 1);
+    expect(adminService.dashboardMetricsCalls, 1);
+    expect(adminService.lastDashboardMetricScopes,
+        containsAll(<String>['payments', 'promotions']));
+    expect(find.text('9 999 ₽'), findsNothing);
+    expect(find.text('777 баллов'), findsNothing);
+    expect(find.text('Выручка'), findsOneWidget);
+    expect(find.text('Продвижение'), findsOneWidget);
+    expect(find.text('Пользователей'), findsOneWidget);
+    await socket.close();
+  });
+
+  testWidgets('compact financial entries fit a small screen', (tester) async {
+    final adminService = _FakeAdminService();
+    adminService.dashboardStatsHandler = (_) async {
+      final response = adminService.dashboardResponse();
+      final stats = response['stats'] as Map<String, dynamic>;
+      stats['revenue'] = <String, dynamic>{
+        'todayRub': 1234567890.25,
+        'days7Rub': 9876543210,
+        'days30Rub': 123456789012,
+      };
+      stats['promotionsToday'] = <String, dynamic>{
+        'byType': <String, dynamic>{
+          'bump': 1234567,
+          'vip': 2345678,
+          'showcase': 3456789,
+          'turbo': 4567890,
+        },
+        'total': 11604924,
+        'pointsSpent': 987654321,
+      };
+      return response;
+    };
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<AdminService>.value(value: adminService),
+          Provider<NotificationsService>.value(
+              value: _FakeNotificationsService()),
+          Provider<SavedSearchService>.value(value: _FakeSavedSearchService()),
+        ],
+        child: const MaterialApp(
+          home: AdminScreen(usageAnalyticsLoad: _loadUsageAnalytics),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).first, const Offset(0, -450));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Выручка'), findsOneWidget);
+    expect(find.text('1 234 567 890,25 ₽'), findsNothing);
+    await tester.drag(find.byType(ListView).first, const Offset(0, -250));
+    await tester.pumpAndSettle();
+    expect(find.text('Продвижение'), findsOneWidget);
+    expect(find.text('987 654 321 баллов'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'moderation keeps current list visible while status refresh is loading',
@@ -499,6 +876,11 @@ class _FakeAdminService extends AdminService {
   int unreadSupportStreamCalls = 0;
   int openReportsStreamCalls = 0;
   int dashboardStatsCalls = 0;
+  int dashboardMetricsCalls = 0;
+  int appDownloadsCalls = 0;
+  Set<String> lastDashboardMetricScopes = <String>{};
+  Future<Map<String, dynamic>> Function(bool forceRefresh)?
+      dashboardStatsHandler;
   bool lastDashboardForceRefresh = false;
   int _moderationBadgeCount = 2;
   int _supportBadgeCount = 0;
@@ -579,6 +961,43 @@ class _FakeAdminService extends AdminService {
       {bool forceRefresh = false}) async {
     dashboardStatsCalls += 1;
     lastDashboardForceRefresh = forceRefresh;
+    final handler = dashboardStatsHandler;
+    if (handler != null) return handler(forceRefresh);
+    return dashboardResponse();
+  }
+
+  @override
+  Future<Map<String, dynamic>> appDownloads({bool forceRefresh = false}) async {
+    appDownloadsCalls += 1;
+    return <String, dynamic>{
+      'ios': <String, dynamic>{
+        'status': 'ready',
+        'metricLabel': 'Первые загрузки',
+        'timeZone': 'UTC',
+        'today': 12,
+        'yesterday': 10,
+        'last7Days': 70,
+        'last30Days': 300,
+        'allTime': 1400,
+        'latestReportDate': '2026-11-05',
+        'lastUpdatedAt': '2026-11-05T08:10:00.000Z',
+      },
+      'android': <String, dynamic>{
+        'status': 'ready',
+        'metricLabel': 'Установки пользователями',
+        'timeZone': 'America/Los_Angeles',
+        'today': null,
+        'yesterday': 15,
+        'last7Days': 96,
+        'last30Days': 355,
+        'allTime': 1670,
+        'latestReportDate': '2026-11-04',
+        'lastUpdatedAt': '2026-11-05T09:00:00.000Z',
+      },
+    };
+  }
+
+  Map<String, dynamic> dashboardResponse() {
     return <String, dynamic>{
       'stats': <String, dynamic>{
         'users': 1,
@@ -597,11 +1016,57 @@ class _FakeAdminService extends AdminService {
           'totalPoints': 500,
           'purchasesCount': 2,
         },
+        'revenue': <String, dynamic>{
+          'todayRub': 1250,
+          'days7Rub': 8400,
+          'days30Rub': 29100.25,
+        },
+        'promotionsToday': <String, dynamic>{
+          'byType': <String, dynamic>{
+            'bump': 8,
+            'vip': 2,
+            'showcase': 1,
+            'turbo': 0,
+          },
+          'total': 11,
+          'pointsSpent': 420,
+        },
       },
       'daily': <String, dynamic>{
         'listings': <Map<String, dynamic>>[
           <String, dynamic>{'listings_new': 1},
         ],
+      },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> dashboardMetrics(Set<String> scopes) async {
+    dashboardMetricsCalls += 1;
+    lastDashboardMetricScopes = Set<String>.from(scopes);
+    return <String, dynamic>{
+      'scopes': scopes.toList(),
+      'stats': <String, dynamic>{
+        if (scopes.contains('presence')) 'onlineUsers': 7,
+        if (scopes.contains('listings')) 'listings': 3,
+        if (scopes.contains('searches')) 'allSearches': 9,
+        if (scopes.contains('payments'))
+          'revenue': <String, dynamic>{
+            'todayRub': 9999,
+            'days7Rub': 12000,
+            'days30Rub': 45000,
+          },
+        if (scopes.contains('promotions'))
+          'promotionsToday': <String, dynamic>{
+            'byType': <String, dynamic>{
+              'bump': 9,
+              'vip': 3,
+              'showcase': 2,
+              'turbo': 1,
+            },
+            'total': 15,
+            'pointsSpent': 777,
+          },
       },
     };
   }
@@ -714,3 +1179,36 @@ class _FakeAdminService extends AdminService {
 class _FakeNotificationsService extends NotificationsService {}
 
 class _FakeSavedSearchService extends SavedSearchService {}
+
+class _FakeDashboardSocketService extends ChatSocketService {
+  final StreamController<ChatSocketEvent> _eventController =
+      StreamController<ChatSocketEvent>.broadcast();
+  final StreamController<bool> _connectionController =
+      StreamController<bool>.broadcast();
+  int subscribeAnalyticsCalls = 0;
+
+  @override
+  Stream<ChatSocketEvent> get events => _eventController.stream;
+
+  @override
+  Stream<bool> get connectionChanges => _connectionController.stream;
+
+  @override
+  void subscribeAnalytics() {
+    subscribeAnalyticsCalls += 1;
+  }
+
+  bool get hasEventListener => _eventController.hasListener;
+  bool get hasConnectionListener => _connectionController.hasListener;
+
+  void emitEvent(String name, [Map<String, dynamic>? payload]) {
+    _eventController.add(ChatSocketEvent(name, payload ?? <String, dynamic>{}));
+  }
+
+  void emitConnection(bool connected) => _connectionController.add(connected);
+
+  Future<void> close() async {
+    await _eventController.close();
+    await _connectionController.close();
+  }
+}

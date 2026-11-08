@@ -210,8 +210,17 @@ class ListingsService {
   final Map<String, Future<MyListingsPage>> _myListingsPageInFlight =
       <String, Future<MyListingsPage>>{};
   int _myListingsCacheRevision = 0;
+  int _myListingsMutationRevision = 0;
 
   static const Duration _cacheTtl = Duration(seconds: 20);
+  static const Set<String> _allMyListingStatuses = <String>{
+    'approved',
+    'pending',
+    'rejected',
+    'archived',
+    'sold',
+    'deleted',
+  };
 
   Stream<void> get refreshes => _refreshController.stream;
 
@@ -637,12 +646,12 @@ class ListingsService {
           _myListingsCachedAt != null &&
           DateTime.now().difference(_myListingsCachedAt!) < _cacheTtl &&
           statusList.every(_myListingsConfirmedStatuses.contains)) {
-        return MyListingsPage(
-          items: cached
-              .where((item) => statuses.contains(item.normalizedStatus))
-              .toList(growable: false),
-          hasMore: false,
-        );
+        final matching = cached
+            .where((item) => statuses.contains(item.normalizedStatus))
+            .toList(growable: false);
+        if (matching.length <= limit) {
+          return MyListingsPage(items: matching, hasMore: false);
+        }
       }
     }
     final requestKey = [
@@ -664,6 +673,7 @@ class ListingsService {
       statusList: statusList,
       limit: limit,
       cursor: cursor,
+      expectedMutationRevision: _myListingsMutationRevision,
     );
     _myListingsPageInFlight[requestKey] = future;
     try {
@@ -681,40 +691,63 @@ class ListingsService {
     required List<String> statusList,
     required int limit,
     String? cursor,
+    required int expectedMutationRevision,
   }) async {
     var cursorState = _decodeMyListingsCursor(cursor);
     var statusIndex = cursorState.statusIndex.clamp(0, statusList.length - 1);
     String? statusCursor = cursorState.cursor;
     final collected = <Listing>[];
     final seen = <String>{};
+    final requestedPages = <String>{};
     String? nextCursor;
     var hasMore = false;
+    var requests = 0;
+    final maxRequests = limit + statusList.length;
 
-    while (statusIndex < statusList.length && collected.isEmpty) {
+    while (statusIndex < statusList.length && collected.length < limit) {
+      final requestMarker = '$statusIndex|${statusCursor ?? ''}';
+      if (!requestedPages.add(requestMarker) || requests >= maxRequests) {
+        hasMore = true;
+        nextCursor = _encodeMyListingsCursor(statusIndex, statusCursor);
+        break;
+      }
+      requests += 1;
+      final requestedStatus = statusList[statusIndex];
+      final isStatusFirstPage = statusCursor == null;
+      final remaining = limit - collected.length;
       final response = await _api.myListings(
-        status: statusList[statusIndex],
-        limit: limit,
+        status: requestedStatus,
+        limit: remaining,
         cursor: statusCursor,
       );
-      for (final item in _sanitizeMyListings(
+      final responseItems = _sanitizeMyListings(
         _extractItems(response),
         currentUserId: normalizedUid,
-      )) {
+      ).where((item) => item.normalizedStatus == requestedStatus).toList();
+      for (final item in responseItems) {
         if (statuses.contains(item.normalizedStatus) && seen.add(item.id)) {
           collected.add(item);
         }
       }
-      _cacheListings(collected);
+      final responseCursor = _extractNextCursor(response);
+      final statusHasMore = response['hasMore'] == true &&
+          responseCursor != null &&
+          responseCursor != statusCursor;
+      if (_myListingsMutationRevision == expectedMutationRevision) {
+        _cacheListings(responseItems);
+      }
       _syncMyListingsPageCache(
         normalizedUid,
-        statuses: statuses,
-        items: collected,
-        reset: (cursor ?? '').trim().isEmpty,
+        statuses: <String>{requestedStatus},
+        items: responseItems,
+        reset: isStatusFirstPage,
+        statusComplete: !statusHasMore,
+        expectedMutationRevision: expectedMutationRevision,
       );
-      final responseCursor = _extractNextCursor(response);
-      if (response['hasMore'] == true && responseCursor != null) {
+      if (statusHasMore) {
+        statusCursor = responseCursor;
         hasMore = true;
-        nextCursor = _encodeMyListingsCursor(statusIndex, responseCursor);
+        nextCursor = _encodeMyListingsCursor(statusIndex, statusCursor);
       } else {
         statusIndex += 1;
         statusCursor = null;
@@ -724,8 +757,21 @@ class ListingsService {
       }
     }
 
+    if (collected.length >= limit && nextCursor == null) {
+      hasMore = statusIndex < statusList.length || statusCursor != null;
+      if (hasMore) {
+        nextCursor = _encodeMyListingsCursor(statusIndex, statusCursor);
+      }
+    }
+
+    if (_myListingsMutationRevision != expectedMutationRevision) {
+      return MyListingsPage(
+        items: peekMyListingsByStatuses(statuses: statuses),
+        hasMore: false,
+      );
+    }
     return MyListingsPage(
-      items: collected,
+      items: _dedupeAndSortListings(collected),
       hasMore: hasMore,
       nextCursor: nextCursor,
     );
@@ -1686,6 +1732,7 @@ class ListingsService {
       _debugPrivateTab('MyListings load skipped reason=in_flight user=$uid');
       return existing;
     }
+    final expectedMutationRevision = _myListingsMutationRevision;
     final future = () async {
       _debugPrivateTab('MyListings load start user=$uid');
       try {
@@ -1716,6 +1763,9 @@ class ListingsService {
           collected,
           currentUserId: uid,
         );
+        if (_myListingsMutationRevision != expectedMutationRevision) {
+          return List<Listing>.from(_myListingsCache ?? const <Listing>[]);
+        }
         _cacheListings(items);
         final latestUser = requestedUserId.trim();
         if (latestUser == uid) {
@@ -1727,7 +1777,9 @@ class ListingsService {
               ..clear()
               ..addAll(statuses.map((status) => status.trim().toLowerCase()));
           } else {
-            _myListingsConfirmedStatuses.clear();
+            _myListingsConfirmedStatuses
+              ..clear()
+              ..addAll(_allMyListingStatuses);
           }
         }
         _lastMyListingsError = null;
@@ -1878,6 +1930,7 @@ class ListingsService {
     _lastMyListingsError = null;
     _lastMyListingsErrorUserId = null;
     _myListingsCacheRevision += 1;
+    _myListingsMutationRevision += 1;
   }
 
   void _cacheListings(List<Listing> items) {
@@ -1891,19 +1944,31 @@ class ListingsService {
     required Set<String> statuses,
     required List<Listing> items,
     required bool reset,
+    required bool statusComplete,
+    required int expectedMutationRevision,
   }) {
     final normalizedUid = uid.trim();
     if (normalizedUid.isEmpty || statuses.isEmpty) return;
+    if (_myListingsMutationRevision != expectedMutationRevision) return;
     if (_myListingsCacheUserId != null &&
         _myListingsCacheUserId != normalizedUid) {
       _clearMyListingsCache();
     }
 
     final existing = _myListingsCache ?? const <Listing>[];
+    final preserveConfirmedPartial = reset &&
+        !statusComplete &&
+        statuses.every(_myListingsConfirmedStatuses.contains);
     final next = <Listing>[];
     final seen = <String>{};
+    final incomingIds = items.map((item) => item.id).toSet();
     for (final item in existing) {
-      if (reset && statuses.contains(item.normalizedStatus)) continue;
+      if (reset &&
+          !preserveConfirmedPartial &&
+          statuses.contains(item.normalizedStatus)) {
+        continue;
+      }
+      if (incomingIds.contains(item.id)) continue;
       if (seen.add(item.id)) next.add(item);
     }
     for (final item in items) {
@@ -1930,9 +1995,15 @@ class ListingsService {
     _myListingsCache = replacement;
     _myListingsCachedAt = DateTime.now();
     _myListingsCacheUserId = normalizedUid;
-    _myListingsConfirmedStatuses.addAll(
-      statuses.map((status) => status.trim().toLowerCase()),
-    );
+    if (statusComplete) {
+      _myListingsConfirmedStatuses.addAll(
+        statuses.map((status) => status.trim().toLowerCase()),
+      );
+    } else if (!preserveConfirmedPartial) {
+      _myListingsConfirmedStatuses.removeAll(
+        statuses.map((status) => status.trim().toLowerCase()),
+      );
+    }
     _myListingsCacheRevision += 1;
   }
 
@@ -1971,6 +2042,7 @@ class ListingsService {
   }
 
   void _replaceListingInCollectionCaches(Listing listing) {
+    _myListingsMutationRevision += 1;
     if (_myListingsCache != null) {
       final currentUserId = _myListingsCacheUserId?.trim() ?? '';
       final includeInMyListings =

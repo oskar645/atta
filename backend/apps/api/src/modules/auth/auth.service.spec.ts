@@ -42,6 +42,7 @@ function createService(
       signAsync?: (payload: Record<string, unknown>) => Promise<string>;
       verifyAsync?: (token: string, options?: unknown) => Promise<Record<string, unknown>>;
     };
+    dashboardSignal?: { changed: (...scopes: string[]) => void };
   },
 ) {
   const prismaWithTransaction: Record<string, unknown> = {
@@ -84,6 +85,7 @@ function createService(
         throw new Error('Unexpected account deletion in this test');
       },
     } satisfies Pick<AccountDeletionService, 'deleteUser'> as unknown as AccountDeletionService,
+    overrides?.dashboardSignal as never,
   );
 }
 
@@ -656,6 +658,7 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
   });
   const bonusCalls: Array<{ userId: string; params: Record<string, unknown> }> =
     [];
+  const dashboardScopes: string[][] = [];
 
   const service = createService(
     {
@@ -693,6 +696,9 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
           return { applied: true };
         },
       },
+      dashboardSignal: {
+        changed: (...scopes) => dashboardScopes.push(scopes),
+      },
     },
   );
 
@@ -711,6 +717,7 @@ test('signupPhone accrues inviter bonus once for valid referral after successful
     bonusCalls[0]?.params.invitedUserId,
     'new-user-1',
   );
+  assert.deepEqual(dashboardScopes, [['users', 'usage']]);
 });
 
 test('signupPhone ignores invalid referral code and still completes registration', async () => {

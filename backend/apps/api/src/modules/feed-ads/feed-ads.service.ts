@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { FeedAdPlacement } from '@prisma/client';
 import { createHash } from 'crypto';
@@ -11,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { StorageService } from '../storage/storage.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 
 type FeedAdInput = Record<string, unknown>;
 type CounterSource = { ip?: string; userAgent?: string };
@@ -24,6 +26,7 @@ export class FeedAdsService {
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
     private readonly rateLimitService: RateLimitService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   private serialize(item: {
@@ -136,6 +139,7 @@ export class FeedAdsService {
         createdById: authUser.userId,
       },
     });
+    this.adminDashboardSignal?.changed('ads');
 
     return {
       source: 'timeweb',
@@ -166,6 +170,7 @@ export class FeedAdsService {
             : Number(body['duration_days'] ?? 0) || 0,
       },
     });
+    this.adminDashboardSignal?.changed('ads');
 
     return {
       source: 'timeweb',
@@ -201,6 +206,7 @@ export class FeedAdsService {
         expiresAt,
       },
     });
+    this.adminDashboardSignal?.changed('ads');
 
     return {
       source: 'timeweb',
@@ -216,6 +222,7 @@ export class FeedAdsService {
         isActive: false,
       },
     });
+    this.adminDashboardSignal?.changed('ads');
 
     return {
       source: 'timeweb',
@@ -229,6 +236,7 @@ export class FeedAdsService {
     await this.prisma.feedAd.delete({
       where: { id },
     });
+    this.adminDashboardSignal?.changed('ads');
 
     return {
       deleted: true,

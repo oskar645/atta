@@ -1,5 +1,6 @@
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/utils/moscow_calendar.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -54,11 +55,16 @@ class _AdminWalletAnalyticsScreenState
     final admin = context.read<AdminService>();
     final referralSearch = (search ?? _searchController.text).trim();
     final from = _period == 'custom'
-        ? _customRange?.start.toUtc().toIso8601String()
+        ? _customRange == null
+            ? null
+            : moscowDateStartUtc(_customRange!.start).toIso8601String()
         : null;
     final to = _period == 'custom'
-        ? _customRange?.end.toUtc().toIso8601String()
+        ? _customRange == null
+            ? null
+            : moscowDateEndUtc(_customRange!.end).toIso8601String()
         : null;
+    final apiPeriod = _period == 'custom' ? null : _period;
     final walletsResponse = appendReferrals
         ? Future<Map<String, dynamic>>.value({'items': _data?.wallets ?? []})
         : admin.wallets(forceRefresh: forceRefresh, limit: _pageLimit);
@@ -72,17 +78,22 @@ class _AdminWalletAnalyticsScreenState
           );
     final analyticsResponse = appendReferrals
         ? Future<Map<String, dynamic>>.value(_data?.analytics ?? {})
-        : admin.bonusAnalytics(period: _period, forceRefresh: forceRefresh);
+        : admin.bonusAnalytics(
+            period: apiPeriod,
+            from: from,
+            to: to,
+            forceRefresh: forceRefresh,
+          );
     final referralSummaryResponse = appendReferrals
         ? Future<Map<String, dynamic>>.value(_data?.referralSummary ?? {})
         : admin.referralSummary(
-            period: _period,
+            period: apiPeriod,
             from: from,
             to: to,
             forceRefresh: forceRefresh,
           );
     final referralsResponse = await admin.referrals(
-      period: _period,
+      period: apiPeriod,
       from: from,
       to: to,
       search: referralSearch,
@@ -199,7 +210,7 @@ class _AdminWalletAnalyticsScreenState
         );
     final picked = await showDateRangePicker(
       context: context,
-      firstDate: DateTime(2025),
+      firstDate: DateTime(2000),
       lastDate: now.add(const Duration(days: 1)),
       initialDateRange: initial,
     );

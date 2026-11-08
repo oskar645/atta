@@ -74,6 +74,10 @@ class AttaApp extends StatelessWidget {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B2D33)),
+      cardTheme: const CardThemeData(
+        elevation: 0.75,
+        shadowColor: Color(0x12000000),
+      ),
     );
 
     final darkBase = ThemeData(
@@ -82,6 +86,10 @@ class AttaApp extends StatelessWidget {
       colorScheme: ColorScheme.fromSeed(
         seedColor: const Color(0xFF2B2D33),
         brightness: Brightness.dark,
+      ),
+      cardTheme: const CardThemeData(
+        elevation: 0.5,
+        shadowColor: Color(0x29000000),
       ),
     );
 
@@ -128,7 +136,12 @@ class AttaApp extends StatelessWidget {
         ),
         Provider<ReviewsService>(create: (_) => ReviewsService()),
         Provider<SavedSearchService>(create: (_) => SavedSearchService()),
-        Provider<SupportService>(create: (_) => SupportService()),
+        Provider<SupportService>(
+          create: (context) => SupportService(
+            socketService: context.read<ChatSocketService>(),
+          ),
+          dispose: (_, service) => unawaited(service.dispose()),
+        ),
         Provider<ReportsService>(create: (_) => ReportsService()),
         Provider<AdminService>(create: (_) => AdminService()),
         Provider<PresenceService>(
@@ -325,6 +338,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     with WidgetsBindingObserver {
   StreamSubscription<AuthSessionEvent>? _authSub;
   StreamSubscription<ChatSocketEvent>? _socketSub;
+  StreamSubscription<bool>? _socketConnectionSub;
   StreamSubscription<void>? _networkRecoverySub;
   StreamSubscription<AttaDeepLink>? _deepLinkSub;
   Future<void>? _resumeSyncInFlight;
@@ -336,6 +350,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   String? _lastOpenedListingId;
   DateTime? _lastOpenedListingAt;
   DateTime? _lastAppOpenMarkedAt;
+  Timer? _adminAttentionSocketDebounce;
   late final AuthService _auth;
   late final AppBadgeService _badge;
   late final ChatSocketService _socket;
@@ -404,6 +419,8 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       final uid = _auth.currentUser?.uid;
       final didChangeUser = _activeUid != null && _activeUid != uid;
       if (uid == null || uid.isEmpty) {
+        _adminAttentionSocketDebounce?.cancel();
+        _adminAttentionSocketDebounce = null;
         _activeUid = null;
         _mainShellController?.selectTab(0);
         _walletService.resetSession();
@@ -449,6 +466,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       final isAdminUser = _auth.currentUser?.isAdmin == true;
       _walletService.activateSession(uid);
       _notifications.activateSession(uid);
+      _support.activateUserSession(uid);
       _runSoftStartupTask(
         () => _pushNotifications.bindForUser(
           api: _auth.notificationsApi,
@@ -458,8 +476,11 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       if (isAdminUser) {
         _admin.activateSession();
         _admin.bindAdminUser(uid);
+        _socket.ensureAdminDashboardSubscription();
         _runSoftStartupTask(() => _admin.refreshAdminAttention(force: false));
       } else {
+        _adminAttentionSocketDebounce?.cancel();
+        _adminAttentionSocketDebounce = null;
         _admin.resetSession();
       }
       _support.activateAdminSession(isAdmin: isAdminUser);
@@ -483,6 +504,11 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
       });
     });
     _socketSub = _socket.events.listen(_handleSocketEvent);
+    _socketConnectionSub = _socket.connectionChanges.listen((connected) {
+      if (connected && _auth.currentUser?.isAdmin == true) {
+        _socket.ensureAdminDashboardSubscription();
+      }
+    });
     _networkRecoverySub = _networkRecovery.recoveries.listen((_) {
       unawaited(_handleNetworkRecovered());
     });
@@ -495,8 +521,10 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   void dispose() {
     _authSub?.cancel();
     _socketSub?.cancel();
+    _socketConnectionSub?.cancel();
     _networkRecoverySub?.cancel();
     _deepLinkSub?.cancel();
+    _adminAttentionSocketDebounce?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -656,6 +684,30 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
   }
 
   void _handleSocketEvent(ChatSocketEvent event) {
+    if (event.name == 'admin.dashboard.changed') {
+      if (_auth.currentUser?.isAdmin != true || !mounted) return;
+      final rawScopes = event.payload['scopes'];
+      final scopes = rawScopes is List
+          ? rawScopes.map((value) => value.toString()).toSet()
+          : const <String>{};
+      if (scopes.isNotEmpty &&
+          !scopes.contains('listings') &&
+          !scopes.contains('support') &&
+          !scopes.contains('reports')) {
+        return;
+      }
+      _adminAttentionSocketDebounce?.cancel();
+      _adminAttentionSocketDebounce = Timer(
+        const Duration(milliseconds: 250),
+        () {
+          if (!mounted || _auth.currentUser?.isAdmin != true) return;
+          _runSoftStartupTask(
+            () => _admin.refreshAdminAttention(force: true),
+          );
+        },
+      );
+      return;
+    }
     if (event.name != 'notification.new') return;
     if (_auth.currentUser == null || !mounted) return;
 
@@ -750,6 +802,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     final isAdminUser = _auth.currentUser?.isAdmin == true;
     _walletService.activateSession(uid);
     _notifications.activateSession(uid);
+    _support.activateUserSession(uid);
     _runSoftStartupTask(
       () => _pushNotifications.bindForUser(
         api: _auth.notificationsApi,
@@ -759,6 +812,7 @@ class _SessionPresenceBinderState extends State<SessionPresenceBinder>
     if (isAdminUser) {
       _admin.activateSession();
       _admin.bindAdminUser(uid);
+      _socket.ensureAdminDashboardSubscription();
       _runSoftStartupTask(() => _admin.refreshAdminAttention(force: false));
     } else {
       _admin.resetSession();

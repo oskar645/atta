@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:atta/src/features/support/support_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
@@ -52,6 +55,37 @@ void main() {
     final textWidget = tester.widget<Text>(find.text('тест'));
     expect(textWidget.style?.color, const Color(0xFF17212F));
   });
+
+  testWidgets('first message waits for slow initial ticket lookup',
+      (tester) async {
+    final support = _ControlledSupportService();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ProfileService>.value(value: _FakeProfileService()),
+          Provider<SupportService>.value(value: support),
+        ],
+        child: const MaterialApp(home: SupportScreen()),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField), 'Первое сообщение');
+    final sendBeforeLoad =
+        tester.widget<FilledButton>(find.byType(FilledButton));
+    expect(sendBeforeLoad.onPressed, isNull);
+    expect(support.createCalls, 0);
+
+    support.lookup.complete(null);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(FilledButton));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(support.createCalls, 1);
+    expect(support.lastText, 'Первое сообщение');
+    expect(support.lastOperationId, isNotEmpty);
+  });
 }
 
 class _FakeAuthService extends AuthService {
@@ -67,7 +101,43 @@ class _DelayedSupportService extends SupportService {
   }
 }
 
-class _FakeProfileService extends ProfileService {}
+class _FakeProfileService extends ProfileService {
+  @override
+  Future<Map<String, dynamic>> getProfile(
+    String uid, {
+    bool forceRefresh = false,
+  }) async =>
+      <String, dynamic>{'displayName': 'Тест'};
+}
+
+class _ControlledSupportService extends SupportService {
+  final Completer<String?> lookup = Completer<String?>();
+  int createCalls = 0;
+  String lastText = '';
+  String lastOperationId = '';
+
+  @override
+  Future<String?> getOrCreateMyTicketId({required String uid}) => lookup.future;
+
+  @override
+  Future<String> createTicketAndSendFirstMessage({
+    required String uid,
+    required String name,
+    required String text,
+    File? imageFile,
+    String? operationId,
+  }) async {
+    createCalls += 1;
+    lastText = text;
+    lastOperationId = operationId ?? '';
+    return 'ticket-new';
+  }
+
+  @override
+  Stream<List<Map<String, dynamic>>> streamMessages(String ticketId) async* {
+    yield <Map<String, dynamic>>[];
+  }
+}
 
 class _LoadedSupportService extends SupportService {
   @override

@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
@@ -13,6 +14,7 @@ import {
 import { randomUUID } from 'crypto';
 
 import { env } from '../../config/env';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -31,6 +33,11 @@ type YooKassaPayment = {
     confirmation_url?: unknown;
   };
   metadata?: Record<string, unknown>;
+  test?: unknown;
+  refunded_amount?: {
+    value?: unknown;
+    currency?: unknown;
+  };
 };
 
 @Injectable()
@@ -40,6 +47,7 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   async createYookassaPayment(
@@ -200,17 +208,21 @@ export class PaymentsService {
 
   async handleYookassaWebhook(payload: unknown) {
     const event = this.getPayloadEvent(payload);
-    if (event !== 'payment.succeeded' && event !== 'payment.canceled') {
+    if (event !== 'payment.succeeded' && event !== 'payment.canceled' && event !== 'refund.succeeded') {
       return { ok: true };
     }
 
-    const providerPaymentId = this.getPayloadPaymentId(payload);
+    const providerPaymentId = event === 'refund.succeeded'
+      ? this.getPayloadRefundPaymentId(payload)
+      : this.getPayloadPaymentId(payload);
     if (!providerPaymentId) {
       throw new BadRequestException('Payment id is missing');
     }
 
     const actualPayment = await this.fetchYooKassaPayment(providerPaymentId);
-    if (event === 'payment.succeeded') {
+    if (event === 'refund.succeeded') {
+      await this.syncYooKassaRefund(providerPaymentId, actualPayment);
+    } else if (event === 'payment.succeeded') {
       await this.processSucceededYookassaPayment(providerPaymentId, actualPayment);
     } else {
       await this.processCanceledYookassaPayment(providerPaymentId, actualPayment);
@@ -259,7 +271,7 @@ export class PaymentsService {
     }
     const verified = await this.verifyActualPayment(providerPaymentId, actualPayment);
 
-    await this.prisma.$transaction(async (tx) => {
+    const credited = await this.prisma.$transaction(async (tx) => {
       await this.lockPaymentRow(tx, verified.paymentId);
       const payment = await tx.payment.findUnique({
         where: {
@@ -277,7 +289,14 @@ export class PaymentsService {
         payment.status === PaymentStatus.SUCCEEDED &&
         payment.creditedAt != null
       ) {
-        return;
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            refundedAmountRub: verified.refundedAmountRub,
+            isTest: verified.test,
+          },
+        });
+        return false;
       }
       if (
         !this.localPaymentMatchesVerified(payment, verified)
@@ -302,13 +321,34 @@ export class PaymentsService {
         data: {
           status: PaymentStatus.SUCCEEDED,
           creditedAt: new Date(),
+          isTest: verified.test,
+          refundedAmountRub: verified.refundedAmountRub,
           metadata: {
             source: 'wallet_top_up',
             providerPaymentId,
+            test: verified.test,
           },
         },
       });
+      return true;
     });
+    if (credited) this.adminDashboardSignal?.changed('payments');
+  }
+
+  private async syncYooKassaRefund(providerPaymentId: string, actualPayment: YooKassaPayment) {
+    const verified = await this.verifyActualPayment(providerPaymentId, actualPayment);
+    const payment = await this.prisma.payment.findUnique({ where: { providerPaymentId } });
+    if (!payment || !this.localPaymentMatchesVerified(payment, verified)) {
+      throw new BadRequestException('Payment metadata mismatch');
+    }
+    await this.prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        refundedAmountRub: verified.refundedAmountRub,
+        isTest: verified.test,
+      },
+    });
+    this.adminDashboardSignal?.changed('payments');
   }
 
   private async processCanceledYookassaPayment(
@@ -376,11 +416,21 @@ export class PaymentsService {
       throw new BadRequestException('Payment amount is invalid');
     }
 
+    const refundedValue = actualPayment.refunded_amount?.value;
+    const refundedCurrency = actualPayment.refunded_amount?.currency;
+    const refundedAmountRub = refundedValue == null ? 0 : Number(refundedValue);
+    if (!Number.isFinite(refundedAmountRub) || refundedAmountRub < 0 || refundedAmountRub > amountRub ||
+        (refundedCurrency != null && refundedCurrency !== YOOKASSA_CURRENCY)) {
+      throw new BadRequestException('Payment refund amount mismatch');
+    }
+
     return {
       paymentId,
       userId,
       amountValue: this.formatRubAmount(amountRub),
       pointsAmount: Math.round(amountRub * env.YOOKASSA_POINTS_PER_RUBLE),
+      test: actualPayment.test === true,
+      refundedAmountRub: new Prisma.Decimal(this.formatRubAmount(refundedAmountRub)),
     };
   }
 
@@ -524,6 +574,14 @@ export class PaymentsService {
     if (!object || typeof object !== 'object') return '';
     const id = (object as Record<string, unknown>).id;
     return typeof id === 'string' ? id.trim() : '';
+  }
+
+  private getPayloadRefundPaymentId(payload: unknown) {
+    if (!payload || typeof payload !== 'object') return '';
+    const object = (payload as Record<string, unknown>).object;
+    if (!object || typeof object !== 'object') return '';
+    const paymentId = (object as Record<string, unknown>).payment_id;
+    return typeof paymentId === 'string' ? paymentId.trim() : '';
   }
 
   private getRequiredString(value: unknown, message: string) {

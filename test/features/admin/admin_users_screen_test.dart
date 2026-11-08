@@ -16,7 +16,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Пользователь ATTA'), findsOneWidget);
-    expect(find.text('Телефон: +7 999 111 22 33'), findsOneWidget);
+    expect(find.text('+7 999 111 22 33'), findsOneWidget);
+    expect(find.text('user-1'), findsNothing);
+    expect(find.text('ID'), findsOneWidget);
+    expect(find.textContaining('Last seen'), findsNothing);
+    expect(find.textContaining('Admin:'), findsNothing);
     expect(adminService.usersCalls, 1);
     expect(adminService.registrationStatsCalls, 0);
   });
@@ -31,19 +35,25 @@ void main() {
     await tester.tap(find.text('Регистрации'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Всего пользователей'), findsOneWidget);
+    expect(find.text('Всего'), findsOneWidget);
     expect(find.text('Сегодня'), findsOneWidget);
+    expect(find.text('Вчера'), findsOneWidget);
+    expect(find.text('За 7 дней'), findsOneWidget);
     expect(find.text('В этом месяце'), findsOneWidget);
-    expect(find.text('Лучший месяц'), findsOneWidget);
+    expect(find.text('За ${_moscowNow().year}'), findsOneWidget);
+    expect(find.text('Выбрать период'), findsOneWidget);
     expect(find.text('Динамика за год'), findsOneWidget);
-    expect(find.text('Июнь · 54'), findsOneWidget);
     expect(find.byKey(const ValueKey('registration-total-users-card')),
         findsOneWidget);
     expect(
         find.byKey(const ValueKey('registration-today-card')), findsOneWidget);
     expect(find.byKey(const ValueKey('registration-current-month-card')),
         findsOneWidget);
-    expect(find.byKey(const ValueKey('registration-best-month-card')),
+    expect(find.byKey(const ValueKey('registration-yesterday-card')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('registration-last-7-days-card')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('registration-selected-year-card')),
         findsOneWidget);
     for (var month = 1; month <= 12; month += 1) {
       expect(
@@ -51,6 +61,11 @@ void main() {
         findsOneWidget,
       );
     }
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('registration-selected-month-summary')),
+      300,
+    );
+    await tester.pumpAndSettle();
     final selectedMonthSummary = tester.widget<Text>(
       find.byKey(const ValueKey('registration-selected-month-summary')),
     );
@@ -69,13 +84,25 @@ void main() {
     expect(find.textContaining('+12% к'), findsOneWidget);
     expect(adminService.registrationStatsCalls, 1);
 
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('registration-year-selector')),
+      -300,
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.text('${_moscowNow().year}').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('${_moscowNow().year - 1}').last);
     await tester.pumpAndSettle();
 
     expect(adminService.requestedYears.last, _moscowNow().year - 1);
-    expect(find.text('Май · 12'), findsOneWidget);
+    expect(find.text('За ${_moscowNow().year - 1}'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('registration-selected-year-card')),
+        matching: find.text('12'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('registration stats handles selected month comparison and zeros',
@@ -87,6 +114,10 @@ void main() {
     await tester.tap(find.text('Регистрации'));
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('registration-month-bar-3')),
+    );
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('registration-month-bar-3')));
     await tester.pumpAndSettle();
 
@@ -103,10 +134,6 @@ void main() {
 
   testWidgets('registration stats avoids overflow on a narrow phone',
       (tester) async {
-    final originalOnError = FlutterError.onError;
-    final details = <FlutterErrorDetails>[];
-    FlutterError.onError = details.add;
-    addTearDown(() => FlutterError.onError = originalOnError);
     await tester.binding.setSurfaceSize(const Size(320, 640));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -117,14 +144,14 @@ void main() {
     await tester.tap(find.text('Регистрации'));
     await tester.pumpAndSettle();
 
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('registration-month-bar-12')),
+      300,
+    );
+    await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('registration-month-bar-12')),
         findsOneWidget);
-    expect(
-      details
-          .where((detail) => detail.exceptionAsString().contains('overflowed'))
-          .toList(),
-      isEmpty,
-    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('registration stats handles loading and error states',
@@ -199,6 +226,8 @@ class _FakeAdminService extends AdminService {
   @override
   Future<Map<String, dynamic>> userRegistrationStats({
     int? year,
+    String? from,
+    String? to,
     bool forceRefresh = false,
   }) async {
     registrationStatsCalls += 1;
@@ -224,6 +253,8 @@ class _FakeAdminService extends AdminService {
         'available_years': <int>[currentYear - 1, currentYear],
         'total_users': 327,
         'todayCount': 7,
+        'yesterday_count': 5,
+        'last_7_days_count': 31,
         'current_month_count': 28,
         'months': <Map<String, dynamic>>[
           <String, dynamic>{'month': 5, 'count': 12},
@@ -235,6 +266,8 @@ class _FakeAdminService extends AdminService {
       'available_years': <int>[currentYear - 1, currentYear],
       'total_users': 327,
       'todayCount': 7,
+      'yesterday_count': 5,
+      'last_7_days_count': 31,
       'current_month_count': 28,
       'months': stats.entries
           .map(

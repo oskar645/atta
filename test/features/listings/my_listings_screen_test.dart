@@ -57,6 +57,89 @@ void main() {
     expect(find.text('Нет активных объявлений'), findsNothing);
   });
 
+  testWidgets('three tabs show real grouped counts and status badges',
+      (tester) async {
+    final listingsService = _GroupedListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('На модерации'), findsNothing);
+    expect(find.text('Отклонённые'), findsNothing);
+    expect(find.text('Проданные'), findsNothing);
+    expect(find.text('Удалённые'), findsNothing);
+    expect(find.text('Активные'), findsOneWidget);
+    expect(find.text('Ждут действия'), findsOneWidget);
+    expect(find.text('Архив'), findsOneWidget);
+    final activeCounter = find.byKey(
+      const ValueKey('my_listings_tab_count:Активные'),
+    );
+    expect(activeCounter, findsOneWidget);
+    expect(tester.widget<Text>(activeCounter).data, '2');
+    expect(tester.widget<TabBar>(find.byType(TabBar)).isScrollable, isFalse);
+    expect(find.text('На проверке'), findsOneWidget);
+
+    await tester.tap(find.text('Ждут действия'));
+    await tester.pumpAndSettle();
+    expect(find.text('Требуется действие'), findsOneWidget);
+    expect(find.text('Исправьте описание'), findsOneWidget);
+    expect(find.text('Опубликовать снова'), findsOneWidget);
+
+    await tester.tap(find.text('Архив'));
+    await tester.pumpAndSettle();
+    expect(find.text('Продано'), findsOneWidget);
+    expect(find.text('Снято'), findsOneWidget);
+    expect(find.text('Удалено модератором'), findsOneWidget);
+  });
+
+  testWidgets('fixed tabs fit compact widths and large text without scrolling',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    for (final width in [320.0, 360.0, 390.0, 430.0]) {
+      for (final textScale in [1.0, 1.5, 2.0]) {
+        await tester.binding.setSurfaceSize(Size(width, 800));
+        await tester.pumpWidget(
+          MultiProvider(
+            providers: [
+              Provider<AuthService>.value(value: _FakeAuthService()),
+              Provider<FollowService>.value(value: _FakeFollowService()),
+              Provider<ListingsService>.value(
+                value: _GroupedListingsService(),
+              ),
+            ],
+            child: MaterialApp(
+              home: MediaQuery(
+                data: MediaQueryData(
+                  size: Size(width, 800),
+                  textScaler: TextScaler.linear(textScale),
+                ),
+                child: const MyListingsScreen(),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+        expect(tabBar.isScrollable, isFalse);
+        expect(find.text('Активные'), findsOneWidget);
+        expect(find.text('Ждут действия'), findsOneWidget);
+        expect(find.text('Архив'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
   testWidgets('create listing button is available on every tab',
       (tester) async {
     final listingsService = _ListingsWithItemService();
@@ -75,12 +158,12 @@ void main() {
 
     expect(find.text('Разместить объявление'), findsOneWidget);
 
-    await tester.tap(find.text('На модерации'));
+    await tester.tap(find.text('Ждут действия'));
     await tester.pumpAndSettle();
     expect(find.text('Разместить объявление'), findsOneWidget);
 
-    await tester.ensureVisible(find.text('Удалённые'));
-    await tester.tap(find.text('Удалённые'), warnIfMissed: false);
+    await tester.ensureVisible(find.text('Архив'));
+    await tester.tap(find.text('Архив'), warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(find.text('Разместить объявление'), findsOneWidget);
   });
@@ -302,8 +385,7 @@ void main() {
     expect(find.text('Велосипед'), findsOneWidget);
   });
 
-  testWidgets('moderation archived deleted and sold tabs keep skeleton flow',
-      (tester) async {
+  testWidgets('action and archive tabs keep skeleton flow', (tester) async {
     final listingsService = _DelayedListingsService();
 
     await tester.pumpWidget(
@@ -319,28 +401,13 @@ void main() {
 
     expect(find.byType(SkeletonMyListingTile), findsWidgets);
 
-    await tester.tap(find.text('На модерации'));
+    await tester.tap(find.text('Ждут действия'));
     await tester.pump();
     expect(find.byType(SkeletonMyListingTile), findsWidgets);
 
-    await tester.tap(find.text('В архиве'));
-    await tester.pump();
-    expect(find.byType(SkeletonMyListingTile), findsWidgets);
-
-    await tester.ensureVisible(find.text('Отклонённые'));
-    await tester.tap(find.text('Отклонённые'));
-    await tester.pump();
-    expect(find.byType(SkeletonMyListingTile), findsWidgets);
-
-    await tester.ensureVisible(find.text('Удалённые'));
-    await tester.tap(find.text('Удалённые'), warnIfMissed: false);
-    await tester.pump();
-    expect(find.byType(SkeletonMyListingTile), findsWidgets);
-
-    await tester.ensureVisible(find.text('Проданные'));
-    await tester.tap(find.text('Проданные'));
+    await tester.tap(find.text('Архив'));
     await tester.pumpAndSettle();
-    expect(find.text('Нет проданных объявлений'), findsOneWidget);
+    expect(find.text('Нет архивных объявлений'), findsOneWidget);
   });
 
   testWidgets('switching tabs during first load does not show blank screen',
@@ -358,7 +425,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('На модерации'));
+    await tester.tap(find.text('Ждут действия'));
     await tester.pump();
     expect(find.byType(SkeletonMyListingTile), findsWidgets);
 
@@ -402,7 +469,7 @@ void main() {
     );
   });
 
-  testWidgets('bottom actions stay single-line at compact and wide widths',
+  testWidgets('bottom actions keep full text at compact and wide widths',
       (tester) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -425,20 +492,22 @@ void main() {
       final bottomButtons = find.byType(OutlinedButton);
 
       expect(editLabel.maxLines, 1);
-      expect(editLabel.overflow, TextOverflow.ellipsis);
+      expect(editLabel.softWrap, isFalse);
+      expect(editLabel.overflow, isNull);
       expect(archiveLabel.maxLines, 1);
-      expect(archiveLabel.overflow, TextOverflow.ellipsis);
+      expect(archiveLabel.softWrap, isFalse);
+      expect(archiveLabel.overflow, isNull);
+      expect(editLabel.style?.fontSize, 13);
+      expect(archiveLabel.style?.fontSize, 13);
       expect(
-        tester.getSize(bottomButtons.at(0)).height,
-        tester.getSize(bottomButtons.at(1)).height,
-      );
-      if (width < 430) {
-        expect(editLabel.style?.fontSize, 12);
-        expect(archiveLabel.style?.fontSize, 11);
-      } else {
-        expect(editLabel.style?.fontSize, 14);
-        expect(archiveLabel.style?.fontSize, 12);
-      }
+          tester.getSize(bottomButtons.at(0)).height, greaterThanOrEqualTo(46));
+      expect(
+          tester.getSize(bottomButtons.at(1)).height, greaterThanOrEqualTo(46));
+      final firstCenter = tester.getCenter(bottomButtons.at(0));
+      final secondCenter = tester.getCenter(bottomButtons.at(1));
+      expect(secondCenter.dy, firstCenter.dy);
+      expect(firstCenter.dx, lessThan(secondCenter.dx));
+      expect(tester.takeException(), isNull);
     }
   });
 
@@ -464,7 +533,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('В архиве'));
+    await tester.tap(find.text('Архив'));
     await tester.pumpAndSettle();
 
     expect(find.text('Архивное объявление'), findsOneWidget);
@@ -488,11 +557,52 @@ void main() {
     expect(find.text('Объявление отправлено на модерацию'), findsOneWidget);
     expect(find.text('Архивное объявление'), findsNothing);
 
-    await tester.tap(find.text('На модерации'));
+    await tester.tap(find.text('Активные'));
     await tester.pumpAndSettle();
 
     expect(find.text('Архивное объявление'), findsOneWidget);
-    expect(find.text('Статус: На модерации'), findsOneWidget);
+    expect(find.text('На проверке'), findsOneWidget);
+  });
+
+  testWidgets('resubmit ignores repeated tap and does not show false success',
+      (tester) async {
+    final listingsService = _FailingResubmitListingsService(
+      listing: _listing(
+        id: 'rejected-error',
+        title: 'Объявление с ошибкой',
+        status: 'rejected',
+        rejectionReason: 'Исправьте описание',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Ждут действия'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Опубликовать снова'));
+    await tester.tap(find.text('Опубликовать снова'));
+    await tester.pumpAndSettle();
+
+    expect(listingsService.resubmitRequests, 1);
+    expect(find.text('Объявление отправлено на модерацию'), findsNothing);
+    expect(
+      find.text(
+        'Не удалось отправить объявление. Проверьте данные и попробуйте снова.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Объявление с ошибкой'), findsOneWidget);
+    expect(find.text('Требуется действие'), findsOneWidget);
   });
 
   testWidgets(
@@ -518,11 +628,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('В архиве'));
+    await tester.tap(find.text('Архив'));
     await tester.pumpAndSettle();
 
     expect(find.text('Архив со статусом из API'), findsOneWidget);
-    expect(find.text('Статус: В архиве'), findsOneWidget);
+    expect(find.text('Снято'), findsOneWidget);
     expect(find.text('Редактировать'), findsOneWidget);
     expect(find.text('Опубликовать снова'), findsOneWidget);
   });
@@ -551,7 +661,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('В архиве'));
+    await tester.tap(find.text('Архив'));
     await tester.pumpAndSettle();
 
     expect(find.text('Архив модератора'), findsOneWidget);
@@ -673,7 +783,6 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('На модерации'));
     await tester.pumpAndSettle();
 
     expect(
@@ -700,7 +809,6 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('На модерации'));
     await tester.pumpAndSettle();
 
     expect(find.text('Продать быстрее'), findsNothing);
@@ -747,18 +855,14 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('На модерации'));
     await tester.pumpAndSettle();
     expect(find.text('Самокат'), findsOneWidget);
 
     await listingsService.approveCurrent();
     await tester.pump();
 
-    expect(find.text('Самокат'), findsNothing);
-
-    await tester.tap(find.text('Активные'));
-    await tester.pumpAndSettle();
     expect(find.text('Самокат'), findsOneWidget);
+    expect(find.text('Активно'), findsOneWidget);
   });
 
   testWidgets('my listings load more appends pages and keeps tabs independent',
@@ -783,12 +887,12 @@ void main() {
     expect(find.text('active-0'), findsOneWidget);
     expect(find.text('active-5'), findsNothing);
 
-    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.drag(find.byType(ListView).last, const Offset(0, -1800));
     await tester.pumpAndSettle();
     expect(listingsService.requestsFor('approved'), <String?>[null, 'a2']);
     expect(find.text('active-5'), findsOneWidget);
 
-    await tester.drag(find.byType(ListView).last, const Offset(0, -900));
+    await tester.drag(find.byType(ListView).last, const Offset(0, -1800));
     await tester.pumpAndSettle();
     expect(
       listingsService.requestsFor('approved'),
@@ -800,11 +904,33 @@ void main() {
       listingsService.requestsFor('approved'),
       <String?>[null, 'a2', 'a3'],
     );
-    await tester.tap(find.text('На модерации'));
+    await tester.tap(find.text('Ждут действия'));
     await tester.pumpAndSettle();
-    expect(listingsService.requestsFor('pending'), <String?>[null]);
-    expect(find.text('pending-0'), findsOneWidget);
+    expect(listingsService.requestsFor('rejected'), <String?>[null]);
     expect(find.text('active-0'), findsNothing);
+  });
+
+  testWidgets('short my listings page automatically loads the next page',
+      (tester) async {
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(390, 900));
+    final listingsService = _ShortPagedMyListingsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: listingsService),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(listingsService.requests, <String?>[null, 'short-2']);
+    expect(find.text('Короткая страница 1'), findsOneWidget);
+    expect(find.text('Короткая страница 2'), findsOneWidget);
   });
 }
 
@@ -934,6 +1060,58 @@ class _ListingsWithStatusItemService extends ListingsService {
     });
     _refreshes.add(null);
     return listing;
+  }
+}
+
+class _GroupedListingsService extends ListingsService {
+  final List<Listing> _items = <Listing>[
+    _listing(id: 'approved', title: 'Активное', status: 'approved'),
+    _listing(id: 'pending', title: 'Проверяемое', status: 'pending'),
+    _listing(
+      id: 'rejected',
+      title: 'На доработке',
+      status: 'rejected',
+      rejectionReason: 'Исправьте описание',
+    ),
+    _listing(id: 'sold', title: 'Проданное', status: 'sold'),
+    _listing(id: 'archived', title: 'Снятое', status: 'archived'),
+    _listing(
+      id: 'admin-archived',
+      title: 'Удалённое модератором',
+      status: 'archived',
+      moderatedBy: 'admin-1',
+      rejectionReason: 'Нарушение правил',
+    ),
+  ];
+
+  @override
+  Future<List<Listing>> refreshMyListings(String uid) async => _items;
+
+  @override
+  List<Listing> peekMyListingsByStatuses({required Set<String> statuses}) {
+    return _items
+        .where((item) => statuses.contains(item.normalizedStatus))
+        .toList();
+  }
+
+  @override
+  Future<List<Listing>> getMyListingsByStatuses(
+    String uid, {
+    required Set<String> statuses,
+    bool forceRefresh = false,
+  }) async {
+    return peekMyListingsByStatuses(statuses: statuses);
+  }
+}
+
+class _FailingResubmitListingsService extends _ListingsWithStatusItemService {
+  _FailingResubmitListingsService({required super.listing});
+
+  @override
+  Future<Listing?> resubmitListing({required String listingId}) async {
+    resubmitRequests += 1;
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    throw Exception('resubmit failed');
   }
 }
 
@@ -1359,20 +1537,14 @@ class _PagedMyListingsService extends ListingsService {
     String? cursor,
     bool forceRefresh = false,
   }) async {
-    final status = statuses.contains('pending') ? 'pending' : 'approved';
+    final status = statuses.contains('rejected')
+        ? 'rejected'
+        : statuses.contains('archived')
+            ? 'archived'
+            : 'approved';
     requests.putIfAbsent(status, () => <String?>[]).add(cursor);
-    if (status == 'pending') {
-      return MyListingsPage(
-        items: List<Listing>.generate(
-          6,
-          (index) => _listing(
-            id: 'pending-$index',
-            title: 'pending-$index',
-            status: 'pending',
-          ),
-        ),
-        hasMore: false,
-      );
+    if (status == 'rejected') {
+      return const MyListingsPage(items: <Listing>[], hasMore: false);
     }
     if (cursor == null) {
       return MyListingsPage(
@@ -1414,12 +1586,54 @@ class _PagedMyListingsService extends ListingsService {
   }
 }
 
+class _ShortPagedMyListingsService extends ListingsService {
+  final List<String?> requests = <String?>[];
+
+  @override
+  Future<MyListingsPage> getMyListingsPageByStatuses(
+    String uid, {
+    required Set<String> statuses,
+    int limit = 20,
+    String? cursor,
+    bool forceRefresh = false,
+  }) async {
+    if (!statuses.contains('approved')) {
+      return const MyListingsPage(items: <Listing>[], hasMore: false);
+    }
+    requests.add(cursor);
+    if (cursor == null) {
+      return MyListingsPage(
+        items: <Listing>[
+          _listing(
+            id: 'short-1',
+            title: 'Короткая страница 1',
+            status: 'approved',
+          ),
+        ],
+        hasMore: true,
+        nextCursor: 'short-2',
+      );
+    }
+    return MyListingsPage(
+      items: <Listing>[
+        _listing(
+          id: 'short-2',
+          title: 'Короткая страница 2',
+          status: 'approved',
+        ),
+      ],
+      hasMore: false,
+    );
+  }
+}
+
 Listing _listing({
   required String id,
   required String title,
   required String status,
   String ownerId = 'user-1',
   String? moderatedBy,
+  String rejectionReason = '',
 }) {
   return Listing.fromMap(<String, dynamic>{
     'id': id,
@@ -1438,7 +1652,7 @@ Listing _listing({
     'photo_urls': const <String>[],
     'view_count': 0,
     'status': status,
-    'rejection_reason': '',
+    'rejection_reason': rejectionReason,
     'moderated_by': moderatedBy,
     'can_promote': false,
     'created_at': '2026-06-20T10:00:00.000Z',

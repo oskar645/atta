@@ -116,7 +116,8 @@ class _DevicesApi extends NotificationsApi {
       String deviceUid = '',
       String appVersion = '',
       String buildNumber = '',
-      String locale = ''}) async {
+      String locale = '',
+      bool supportsAndroidDataOnlyPush = false}) async {
     registered.add((await storage.readCurrentUser())!.uid);
     return {};
   }

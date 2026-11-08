@@ -145,7 +145,9 @@ test('listing search sql normalizes code candidates inside JSON characteristics'
 });
 
 test('listing search sql uses trigram operator for bounded fuzzy text only', () => {
-  const fuzzySql = buildListingSearchSql('Toyta')!;
+  // `Toyta` is a curated exact alias for Toyota, so use an ordinary typo here
+  // to exercise the generic pg_trgm fallback rather than the alias path.
+  const fuzzySql = buildListingSearchSql('Velosped')!;
   const oemSql = buildListingSearchSql('81150-06C70')!;
 
   assert.match(fuzzySql.sql, /l\."title"\s+%/);

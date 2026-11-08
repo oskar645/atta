@@ -1,5 +1,6 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
 import { once } from 'events';
+import PDFDocument from 'pdfkit';
 
 import { AdminGuard } from '../auth/admin.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -34,6 +35,16 @@ export class AdminController {
   @Get('dashboard/stats')
   getDashboardStats() {
     return this.adminService.getDashboardStats();
+  }
+
+  @Get('dashboard/metrics')
+  getDashboardMetrics(@Query('scopes') scopes?: string) {
+    return this.adminService.getDashboardMetrics(scopes);
+  }
+
+  @Get('server-status')
+  getServerStatus() {
+    return this.adminService.getServerStatus();
   }
 
   @Get('analytics/zero-result-searches')
@@ -205,12 +216,25 @@ export class AdminController {
     return this.adminService.listRaffleParticipants(query);
   }
 
+  @Get('raffle/tickets')
+  listRaffleTickets(@Query() query: ListRaffleParticipantsDto) {
+    return this.adminService.listRaffleTickets(query);
+  }
+
+  @Post('raffle/freeze')
+  freezeRaffle(
+    @Body() query: ListRaffleParticipantsDto,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.adminService.freezeRaffle(query, authUser);
+  }
+
   @Get('raffle/export')
   async exportRaffle(
     @Query() query: ListRaffleParticipantsDto,
-    @Query('format') format: string,
     @Res() response: any,
   ) {
+    const format = query.format;
     if (format !== 'participants' && format !== 'tickets') {
       response.status(400).json({ message: 'Некорректный формат выгрузки' });
       return;
@@ -220,7 +244,7 @@ export class AdminController {
     response.setHeader('Content-Disposition', `attachment; filename="raffle-${format}.csv"`);
     const csv = (value: unknown) => {
       const raw = String(value ?? '');
-      const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+      const safe = /^[\u0000-\u0020]*[=+@-]/.test(raw) ? `'${raw}` : raw;
       return `"${safe.replace(/"/g, '""')}"`;
     };
     const write = async (fields: unknown[]) => {
@@ -239,13 +263,13 @@ export class AdminController {
     let cursor: string | undefined;
     let number = 0;
     do {
-      const page = await this.adminService.listRaffleParticipants({
-        from: query.from, to: query.to,
-        ticketPrice: query.ticketPrice, limit: 100, cursor,
-      });
-      for (const item of page.items) {
+      const page = format === 'tickets'
+        ? await this.adminService.listRaffleTickets({ ...query, limit: 100, cursor })
+        : await this.adminService.listRaffleParticipants({ ...query, limit: 100, cursor });
+      for (const itemValue of page.items) {
+        const item: any = itemValue;
         if (format === 'tickets') {
-          for (let i = 0; i < item.tickets; i++) await write([++number, item.name, item.phone]);
+          await write([item.ticketNumber, item.name, item.phone]);
         } else {
           await write([++number, item.name, item.phone, item.totalRub, item.tickets,
             item.remainderRub, item.firstAt, item.lastAt]);
@@ -254,6 +278,111 @@ export class AdminController {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     response.end();
+  }
+
+  @Get('raffle/print.pdf')
+  async printRaffleTickets(
+    @Query() query: ListRaffleParticipantsDto,
+    @Res() response: any,
+  ) {
+    // Validate the range and return the same summary printed in CSV exports.
+    const summary = await this.adminService.getRaffleSummary(query);
+    const totalTickets = BigInt(summary.tickets);
+    const fromTicket = BigInt(query.fromTicket ?? '1');
+    const toTicket = BigInt(query.toTicket ?? totalTickets.toString());
+    if (fromTicket < 1n || toTicket < fromTicket || toTicket > totalTickets) {
+      throw new BadRequestException('Некорректный диапазон билетов');
+    }
+    if (toTicket - fromTicket + 1n > 10_000n) {
+      throw new BadRequestException('Один PDF может содержать не более 10000 билетов');
+    }
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader('Content-Disposition', 'attachment; filename="raffle-tickets.pdf"');
+    const document = new PDFDocument({
+      size: 'A4',
+      margin: 18,
+      autoFirstPage: true,
+      bufferPages: false,
+    });
+    document.registerFont(
+      'RobotoCyrillic',
+      require.resolve('@fontsource/roboto/files/roboto-cyrillic-400-normal.woff'),
+    );
+    document.registerFont(
+      'RobotoLatin',
+      require.resolve('@fontsource/roboto/files/roboto-latin-400-normal.woff'),
+    );
+    document.on('error', (error) => response.destroy(error));
+    document.pipe(response);
+
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+    const margin = 18;
+    const gap = 8;
+    const columns = 2;
+    const rows = 4;
+    const ticketWidth = (pageWidth - margin * 2 - gap) / columns;
+    const ticketHeight = (pageHeight - margin * 2 - gap * (rows - 1)) / rows;
+    const fontFor = (value: string) => /[А-Яа-яЁё]/.test(value)
+      ? 'RobotoCyrillic'
+      : 'RobotoLatin';
+    let onPage = 0;
+    const drawTicket = (number: number, name: string, phone: string) => {
+      if (onPage >= columns * rows) {
+        document.addPage();
+        onPage = 0;
+      }
+      const column = onPage % columns;
+      const row = Math.floor(onPage / columns);
+      const x = margin + column * (ticketWidth + gap);
+      const y = margin + row * (ticketHeight + gap);
+      document.save()
+        .dash(4, { space: 3 })
+        .lineWidth(0.6)
+        .strokeColor('#8B95A5')
+        .rect(x, y, ticketWidth, ticketHeight)
+        .stroke()
+        .restore();
+      document.font('Helvetica-Bold').fontSize(13).fillColor('#0F5FFF')
+        .text('ATTA', x + 12, y + 12, { width: ticketWidth - 24 });
+      document.font('RobotoCyrillic').fontSize(8).fillColor('#5C667A')
+        .text('РОЗЫГРЫШ', x + 12, y + 29);
+      document.font('RobotoCyrillic').fontSize(10).fillColor('#111827')
+        .text('БИЛЕТ', x + 12, y + 51);
+      document.font('Helvetica-Bold').fontSize(22).fillColor('#111827')
+        .text(`#${number.toString().padStart(6, '0')}`, x + 12, y + 68);
+      document.font('RobotoCyrillic').fontSize(8).fillColor('#6B7280')
+        .text('Участник', x + 12, y + 105);
+      document.font(fontFor(name)).fontSize(10).fillColor('#111827')
+        .text(name, x + 12, y + 118, { width: ticketWidth - 24, ellipsis: true });
+      document.font('RobotoCyrillic').fontSize(8).fillColor('#6B7280')
+        .text('Телефон', x + 12, y + 143);
+      document.font('Helvetica').fontSize(10).fillColor('#111827')
+        .text(phone || '—', x + 12, y + 156);
+      document.font('RobotoCyrillic').fontSize(7).fillColor('#6B7280')
+        .text(
+          `${new Date(summary.from).toLocaleDateString('ru-RU')} — ${new Date(summary.to).toLocaleDateString('ru-RU')}`,
+          x + 12,
+          y + ticketHeight - 18,
+          { width: ticketWidth - 24, align: 'right' },
+        );
+      onPage += 1;
+    };
+
+    let cursor: string | undefined = (fromTicket - 1n).toString();
+    let finished = false;
+    do {
+      const page = await this.adminService.listRaffleTickets({ ...query, limit: 100, cursor });
+      for (const item of page.items) {
+        if (BigInt(item.ticketNumber) > toTicket) {
+          finished = true;
+          break;
+        }
+        drawTicket(Number(item.ticketNumber), item.name, item.phone);
+      }
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor && !finished);
+    document.end();
   }
 
   @Get('payments/points-purchases/summary')

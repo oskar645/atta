@@ -30,9 +30,11 @@ import { SavedSearchesModule } from './modules/saved-searches/saved-searches.mod
 import { ViewedListingsModule } from './modules/viewed-listings/viewed-listings.module';
 import { WalletModule } from './modules/wallet/wallet.module';
 import { TopBannersModule } from './modules/top-banners/top-banners.module';
+import { AdminDashboardRealtimeModule } from './common/admin-dashboard-realtime.module';
 
 @Module({
   imports: [
+    AdminDashboardRealtimeModule,
     PrismaModule,
     UsageAnalyticsModule,
     RateLimitModule,

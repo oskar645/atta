@@ -5,6 +5,7 @@ import {
   NotFoundException,
   OnModuleDestroy,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import {
   ListingRaiseCampaignStatus,
@@ -18,6 +19,7 @@ import {
 import { createHash } from 'crypto';
 
 import { buildListingSearchWhere } from '../../common/listing-search';
+import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { serializeListing, toIsoString } from '../../common/serializers';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -123,6 +125,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly walletService: WalletService,
     private readonly rateLimitService: RateLimitService,
+    @Optional() private readonly adminDashboardSignal?: AdminDashboardSignal,
   ) {}
 
   onModuleInit() {
@@ -360,6 +363,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         };
       },
     );
+    if (!alreadyActive) this.adminDashboardSignal?.changed('wallet', 'promotions');
 
     const freshListing = await this.prisma.listing.findUniqueOrThrow({
       where: {
@@ -692,7 +696,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
       plan.walletReason,
     );
 
-    const { promotion, updatedWallet } = await this.prisma.$transaction(
+    const { promotion, updatedWallet, createdSpend } = await this.prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`
           SELECT pg_advisory_xact_lock(
@@ -723,6 +727,7 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
                 userId: authUser.userId,
               },
             }),
+            createdSpend: false,
           };
         }
 
@@ -798,9 +803,11 @@ export class PromotionsService implements OnModuleInit, OnModuleDestroy {
         return {
           promotion,
           updatedWallet,
+          createdSpend: true,
         };
       },
     );
+    if (createdSpend) this.adminDashboardSignal?.changed('wallet', 'promotions');
 
     const freshListing = await this.prisma.listing.findUniqueOrThrow({
       where: {
