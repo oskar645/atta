@@ -75,6 +75,29 @@ void main() {
     expect(listings.getListingByIdCalls, 0);
   });
 
+  testWidgets('favorites bulk menu confirms and removes all in one action',
+      (tester) async {
+    final favorites = _InteractiveFavoritesService();
+    await tester.pumpWidget(_wrapFavorites(
+      favoritesService: favorites,
+      listingsService: _CachedListingsService(),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('favorites_bulk_menu')));
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить всё'), findsOneWidget);
+    expect(find.text('Удалить неактивные'), findsOneWidget);
+    await tester.tap(find.text('Удалить всё'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Да'));
+    await tester.pumpAndSettle();
+
+    expect(favorites.bulkRemoveCalls, 1);
+    expect(favorites.lastInactiveOnly, isFalse);
+    expect(find.text('Пока нет избранных объявлений'), findsOneWidget);
+  });
+
   testWidgets('approved favorite opens as before', (tester) async {
     await tester.pumpWidget(
       _wrapFavorites(
@@ -610,6 +633,8 @@ class _InteractiveFavoritesService extends FavoritesService {
   final StreamController<Set<String>> _controller =
       StreamController<Set<String>>.broadcast();
   final Set<String> _ids = <String>{'listing-1'};
+  int bulkRemoveCalls = 0;
+  bool? lastInactiveOnly;
 
   @override
   Set<String> peekFavoriteIds(String uid) => Set<String>.from(_ids);
@@ -668,6 +693,19 @@ class _InteractiveFavoritesService extends FavoritesService {
       _ids.remove(listingId);
     }
     _controller.add(Set<String>.from(_ids));
+  }
+
+  @override
+  Future<int> removeMany({
+    required String uid,
+    required bool inactiveOnly,
+  }) async {
+    bulkRemoveCalls += 1;
+    lastInactiveOnly = inactiveOnly;
+    final removed = _ids.length;
+    _ids.clear();
+    _controller.add(const <String>{});
+    return removed;
   }
 }
 

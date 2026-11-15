@@ -834,17 +834,20 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     final reviews = context.read<ReviewsService>();
     final notifications = context.read<NotificationsService>();
     final user = context.read<AuthService>().currentUser;
-    final headerSurface =
-        _hasTopBanner ? Colors.white : Theme.of(context).colorScheme.surface;
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final homeSurface =
+        isLight ? Colors.white : Theme.of(context).colorScheme.surface;
+    final headerSurface = _hasTopBanner ? Colors.white : homeSurface;
 
     // Search hint in Avito-like format: "Поиск в <локация>".
     final hint =
         _location.trim().isEmpty ? 'Поиск по названию' : 'Поиск в $_location';
 
     return Scaffold(
+      backgroundColor: homeSurface,
       appBar: AppBar(
         centerTitle: false,
-        backgroundColor: Theme.of(context).colorScheme.surface,
+        backgroundColor: homeSurface,
         surfaceTintColor: Colors.transparent,
         flexibleSpace: FutureBuilder<TopBanner?>(
           future: _topBanner,
@@ -957,7 +960,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           Column(
             children: [
               Container(
-                color: Theme.of(context).scaffoldBackgroundColor,
+                color: homeSurface,
                 child: Column(
                   children: [
                     _CategoryRow(
@@ -1580,6 +1583,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   FeedAd? _displayedAd;
   bool _adVisible = false;
   bool _trackingImpression = false;
+  bool _visibilityCheckScheduled = false;
 
   static const _gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
     crossAxisCount: 2,
@@ -1593,7 +1597,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     super.initState();
     _displayedAd = widget.ad;
     _scrollController.addListener(_scheduleVisibilityCheck);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+    _scheduleAdVisibilityCheck();
   }
 
   @override
@@ -1605,7 +1609,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     } else if (oldWidget.ad == null && _displayedAd == null) {
       _displayedAd = widget.ad;
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+    _scheduleAdVisibilityCheck();
   }
 
   @override
@@ -1620,7 +1624,18 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
         _scrollController.position.extentAfter < 900) {
       unawaited(widget.onLoadMore());
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+    _scheduleAdVisibilityCheck();
+  }
+
+  void _scheduleAdVisibilityCheck() {
+    if (_visibilityCheckScheduled) return;
+    _visibilityCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _visibilityCheckScheduled = false;
+      if (mounted) {
+        unawaited(_checkAdVisibility());
+      }
+    });
   }
 
   void scrollToTop() {
@@ -1691,7 +1706,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     }
     _displayedAd = ad;
     _adVisible = false;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkAdVisibility());
+    _scheduleAdVisibilityCheck();
   }
 
   Future<void> _openShowcaseItem(ShowcaseItem item) async {
@@ -1714,6 +1729,7 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
       userId: widget.userId,
       isSeen: widget.history.hasViewed(item.id),
       reviews: widget.reviews,
+      whiteSurfaceInLightTheme: true,
       onError: (error) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1853,11 +1869,16 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   }
 
   List<Widget> _buildListingSlivers(List<Listing> vipItems) {
-    const insertionIndex = 12;
-    final headCount = widget.items.length < insertionIndex
+    const firstInsertionIndex = 12;
+    const ordinaryItemsBeforeSecondShowcase = 40;
+    final headCount = widget.items.length < firstInsertionIndex
         ? widget.items.length
-        : insertionIndex;
-    final tailCount = widget.items.length - headCount;
+        : firstInsertionIndex;
+    final remainingAfterHead = widget.items.length - headCount;
+    final middleCount = remainingAfterHead < ordinaryItemsBeforeSecondShowcase
+        ? remainingAfterHead
+        : ordinaryItemsBeforeSecondShowcase;
+    final tailCount = remainingAfterHead - middleCount;
     final slivers = <Widget>[
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
@@ -1872,31 +1893,31 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     ];
 
     if (vipItems.isNotEmpty) {
+      slivers.add(_buildVipShowcaseSliver(vipItems));
+    }
+
+    if (middleCount > 0) {
       slivers.add(
-        SliverToBoxAdapter(
-          child: _VipShowcaseSection(
-            items: vipItems,
-            hasMore: widget.vipHasMore,
-            initialIndex: widget.vipInitialIndex,
-            favoritesService: widget.favs,
-            userId: widget.userId,
-            onOpenAll: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const VipShowcaseScreen(),
-                ),
-              );
-            },
-            onOpenItem: _openVipItem,
-            onLoadMore: widget.onLoadMoreVip,
-            onError: (error) {
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                    content: Text('Не удалось изменить избранное: $error')),
-              );
-            },
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          sliver: SliverGrid(
+            gridDelegate: _gridDelegate,
+            delegate: SliverChildBuilderDelegate(
+              (context, index) =>
+                  _buildCard(context, widget.items[headCount + index]),
+              childCount: middleCount,
+            ),
           ),
+        ),
+      );
+    }
+
+    if (vipItems.isNotEmpty &&
+        middleCount == ordinaryItemsBeforeSecondShowcase) {
+      slivers.add(
+        _buildVipShowcaseSliver(
+          vipItems,
+          keyPrefix: 'home_vip_showcase_secondary',
         ),
       );
     }
@@ -1908,8 +1929,10 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
           sliver: SliverGrid(
             gridDelegate: _gridDelegate,
             delegate: SliverChildBuilderDelegate(
-              (context, index) =>
-                  _buildCard(context, widget.items[headCount + index]),
+              (context, index) => _buildCard(
+                context,
+                widget.items[headCount + middleCount + index],
+              ),
               childCount: tailCount,
             ),
           ),
@@ -1918,6 +1941,37 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
     }
 
     return slivers;
+  }
+
+  Widget _buildVipShowcaseSliver(
+    List<Listing> vipItems, {
+    String keyPrefix = 'home_vip_showcase',
+  }) {
+    return SliverToBoxAdapter(
+      child: _VipShowcaseSection(
+        keyPrefix: keyPrefix,
+        items: vipItems,
+        hasMore: widget.vipHasMore,
+        initialIndex: widget.vipInitialIndex,
+        favoritesService: widget.favs,
+        userId: widget.userId,
+        onOpenAll: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const VipShowcaseScreen(),
+            ),
+          );
+        },
+        onOpenItem: _openVipItem,
+        onLoadMore: widget.onLoadMoreVip,
+        onError: (error) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось изменить избранное: $error')),
+          );
+        },
+      ),
+    );
   }
 }
 
@@ -2170,6 +2224,7 @@ class _ShowcaseCard extends StatelessWidget {
 
 class _VipShowcaseSection extends StatefulWidget {
   const _VipShowcaseSection({
+    required this.keyPrefix,
     required this.items,
     required this.hasMore,
     required this.initialIndex,
@@ -2181,6 +2236,7 @@ class _VipShowcaseSection extends StatefulWidget {
     this.onError,
   });
 
+  final String keyPrefix;
   final List<Listing> items;
   final bool hasMore;
   final int initialIndex;
@@ -2199,6 +2255,11 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
   final ScrollController _scrollController = ScrollController();
 
   static const double _loadMoreExtentAfter = 900;
+
+  bool get _isPrimary => widget.keyPrefix == 'home_vip_showcase';
+
+  String _key(String primary, String secondarySuffix) =>
+      _isPrimary ? primary : '${widget.keyPrefix}_$secondarySuffix';
 
   @override
   void initState() {
@@ -2265,10 +2326,10 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
     final headerColor = isDark ? const Color(0xFFE8EDF7) : vipBlueDark;
     final controlSurface = isDark ? const Color(0xFF353A43) : Colors.white;
     return Padding(
-      key: const ValueKey('home_vip_showcase_section'),
+      key: ValueKey(_key('home_vip_showcase_section', 'section')),
       padding: const EdgeInsets.fromLTRB(10, 2, 10, 10),
       child: DecoratedBox(
-        key: const ValueKey('home_vip_showcase_surface'),
+        key: ValueKey(_key('home_vip_showcase_surface', 'surface')),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -2324,9 +2385,10 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                         child: Row(
                           children: [
                             Container(
-                              key: const ValueKey(
+                              key: ValueKey(_key(
                                 'home_vip_showcase_icon_surface',
-                              ),
+                                'icon_surface',
+                              )),
                               width: 30,
                               height: 30,
                               decoration: BoxDecoration(
@@ -2395,7 +2457,10 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                         ),
                       ),
                       TextButton(
-                        key: const ValueKey('home_vip_showcase_all_button'),
+                        key: ValueKey(_key(
+                          'home_vip_showcase_all_button',
+                          'all_button',
+                        )),
                         onPressed: widget.onOpenAll,
                         style: TextButton.styleFrom(
                           foregroundColor: headerColor,
@@ -2433,7 +2498,11 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
                           child: _VipPreviewCard(
-                            key: ValueKey('home_vip_card:$index'),
+                            key: ValueKey(
+                              _isPrimary
+                                  ? 'home_vip_card:$index'
+                                  : '${widget.keyPrefix}_card:$index',
+                            ),
                             width: cardWidth,
                             listing: item,
                             favoritesService: widget.favoritesService,

@@ -132,6 +132,34 @@ export class ListingsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Post(':id/call-contact')
+  async getCallContact(
+    @Req() request: any,
+    @Param('id') id: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    await this.rateLimitService.consumeOrThrow(
+      `listing:call-contact:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`,
+      { limit: 60, windowMs: 60 * 60 * 1000 },
+    );
+    return this.listingsService.getCallContact(id, authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('owner/:ownerId/call-contact')
+  async getOwnerCallContact(
+    @Req() request: any,
+    @Param('ownerId') ownerId: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    await this.rateLimitService.consumeOrThrow(
+      `listing:owner-call-contact:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`,
+      { limit: 60, windowMs: 60 * 60 * 1000 },
+    );
+    return this.listingsService.getOwnerCallContact(ownerId, authUser);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Patch(':id')
   update(
     @Param('id') id: string,

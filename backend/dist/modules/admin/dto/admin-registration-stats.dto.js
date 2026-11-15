@@ -19,8 +19,17 @@ __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsInt)(),
     (0, class_validator_1.Min)(2000),
-    (0, class_validator_1.Max)(2100),
     (0, class_transformer_1.Type)(() => Number),
     __metadata("design:type", Number)
 ], AdminRegistrationStatsDto.prototype, "year", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.Matches)(/^\d{4}-\d{2}-\d{2}$/),
+    __metadata("design:type", String)
+], AdminRegistrationStatsDto.prototype, "from", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.Matches)(/^\d{4}-\d{2}-\d{2}$/),
+    __metadata("design:type", String)
+], AdminRegistrationStatsDto.prototype, "to", void 0);
 //# sourceMappingURL=admin-registration-stats.dto.js.map

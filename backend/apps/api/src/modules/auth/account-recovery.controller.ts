@@ -18,13 +18,23 @@ export class RecoveryEmailController {
   @Post('start')
   @UseGuards(JwtAuthGuard)
   start(@CurrentUser() user: AuthenticatedUser, @Body() body: StartRecoveryEmailDto, @Req() req: any) {
-    return this.recovery.startRecoveryEmail(user.userId, body.email, this.source(req));
+    return this.recovery.startRecoveryEmail(
+      user.userId,
+      body.email,
+      this.source(req),
+      user.sessionId,
+    );
   }
 
   @Post('verify')
   @UseGuards(JwtAuthGuard)
   verify(@CurrentUser() user: AuthenticatedUser, @Body() body: VerifyEmailCodeDto) {
-    return this.recovery.verifyRecoveryEmail(user.userId, body.challengeId, body.code);
+    return this.recovery.verifyRecoveryEmail(
+      user.userId,
+      body.challengeId,
+      body.code,
+      user.sessionId,
+    );
   }
 
   private source(req: any) {

@@ -33,4 +33,12 @@ class FavoritesApi {
     );
     return Map<String, dynamic>.from(response as Map);
   }
+
+  Future<Map<String, dynamic>> removeMany({required bool inactiveOnly}) async {
+    final response = await _client.delete(
+      '/favorites/bulk/${inactiveOnly ? 'inactive' : 'all'}',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
 }

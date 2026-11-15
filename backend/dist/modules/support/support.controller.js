@@ -22,6 +22,7 @@ const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const create_support_ticket_dto_1 = require("./dto/create-support-ticket.dto");
 const list_admin_support_tickets_dto_1 = require("./dto/list-admin-support-tickets.dto");
 const send_support_message_dto_1 = require("./dto/send-support-message.dto");
+const update_support_message_dto_1 = require("./dto/update-support-message.dto");
 const support_service_1 = require("./support.service");
 const public_support_dto_1 = require("./dto/public-support.dto");
 const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
@@ -108,6 +109,7 @@ let SupportController = class SupportController {
             subject: body.subject,
             text: body.text,
             imageUrl: body.imageUrl ?? body.image_url,
+            idempotencyKey: body.idempotencyKey,
         });
     }
     async createBlockAppeal(request, authUser, body) {
@@ -128,7 +130,10 @@ let SupportController = class SupportController {
             limit: 12,
             windowMs: 60 * 1000,
         });
-        return this.supportService.sendMessageAsUser(authUser, ticketId, body.text, body.imageUrl ?? body.image_url);
+        return this.supportService.sendMessageAsUser(authUser, ticketId, body.text, body.imageUrl ?? body.image_url, body.idempotencyKey);
+    }
+    markMessageRead(authUser, ticketId, messageId) {
+        return this.supportService.markMessageReadByUser(authUser, ticketId, messageId);
     }
     closeTicket(authUser, ticketId) {
         return this.supportService.closeTicketForUser(authUser, ticketId);
@@ -189,6 +194,15 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], SupportController.prototype, "sendMessage", null);
 __decorate([
+    (0, common_1.Patch)('tickets/:id/messages/:messageId/read'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Param)('messageId', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], SupportController.prototype, "markMessageRead", null);
+__decorate([
     (0, common_1.Patch)('tickets/:id/close'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
@@ -213,12 +227,21 @@ let AdminSupportController = class AdminSupportController {
     getTicket(ticketId) {
         return this.supportService.getTicketForAdmin(ticketId);
     }
-    async sendMessage(ticketId, body) {
+    markRead(ticketId) {
+        return this.supportService.markReadByAdmin(ticketId);
+    }
+    async sendMessage(authUser, ticketId, body) {
         await this.rateLimitService.consumeOrThrow(`support:admin:${ticketId}`, {
             limit: 20,
             windowMs: 60 * 1000,
         });
-        return this.supportService.sendMessageAsAdmin(ticketId, body.text, body.imageUrl ?? body.image_url);
+        return this.supportService.sendMessageAsAdmin(authUser, ticketId, body.text, body.imageUrl ?? body.image_url, body.idempotencyKey);
+    }
+    editMessage(authUser, ticketId, messageId, body) {
+        return this.supportService.editMessageAsAdmin(authUser, ticketId, messageId, body.text);
+    }
+    deleteMessage(authUser, ticketId, messageId) {
+        return this.supportService.deleteMessageAsAdmin(authUser, ticketId, messageId);
     }
     contactUser(body) {
         return this.supportService.openTicketForAdminContact({
@@ -249,13 +272,40 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AdminSupportController.prototype, "getTicket", null);
 __decorate([
-    (0, common_1.Post)(':id/messages'),
+    (0, common_1.Patch)(':id/read'),
     __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
-    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, send_support_message_dto_1.SendSupportMessageDto]),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], AdminSupportController.prototype, "markRead", null);
+__decorate([
+    (0, common_1.Post)(':id/messages'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, send_support_message_dto_1.SendSupportMessageDto]),
     __metadata("design:returntype", Promise)
 ], AdminSupportController.prototype, "sendMessage", null);
+__decorate([
+    (0, common_1.Patch)(':id/messages/:messageId'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Param)('messageId', new common_1.ParseUUIDPipe())),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, update_support_message_dto_1.UpdateSupportMessageDto]),
+    __metadata("design:returntype", void 0)
+], AdminSupportController.prototype, "editMessage", null);
+__decorate([
+    (0, common_1.Delete)(':id/messages/:messageId'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Param)('messageId', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", void 0)
+], AdminSupportController.prototype, "deleteMessage", null);
 __decorate([
     (0, common_1.Post)('contact-user'),
     __param(0, (0, common_1.Body)()),

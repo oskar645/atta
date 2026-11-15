@@ -52,7 +52,7 @@ test('passwordless / isolated PostgreSQL', { skip: !url }, async (t) => {
   };
   const service = new PasswordlessService(db as never, provider, rate, auth);
   const completeDto = (registrationToken: string) => ({ registrationToken, displayName: 'Synthetic signup',
-    acceptedLegal: true, acceptedPersonalData: true, acceptedMarketing: true, platform: 'IOS', legalDocumentVersion: '2026-09-12' });
+    acceptedLegal: true, acceptedPersonalData: true, acceptedMarketing: true, platform: 'IOS', legalDocumentVersion: '2026-11-09' });
   const start = (phone = nextPhone()) => service.start(phone);
   async function releaseCooldown(id: string) {
     const row = await db.phoneVerification.findUniqueOrThrow({ where: { id } });
@@ -125,7 +125,7 @@ test('passwordless / isolated PostgreSQL', { skip: !url }, async (t) => {
       assert.equal(await compare(phone, user.passwordHash), false);
       assert.deepEqual(await counts(user.id), { sessions: 1, wallets: 1, bonuses: 1, consents: 3 });
       const consents = await db.userConsent.findMany({ where: { userId: user.id } });
-      assert.ok(consents.every(c => c.acceptedAt && c.documentVersion === '2026-09-12' && c.platform === 'IOS'));
+      assert.ok(consents.every(c => c.acceptedAt && c.documentVersion === '2026-11-09' && c.platform === 'IOS'));
       const other = await registration();
       const otherResult = await service.complete(completeDto(other.checked.registrationToken));
       assert.notEqual((await db.user.findUniqueOrThrow({ where: { id: otherResult.auth.user_id } })).passwordHash, user.passwordHash);

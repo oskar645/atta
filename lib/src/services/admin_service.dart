@@ -850,6 +850,29 @@ class AdminService {
         fallbackStatus: 'deleted',
       );
 
+  Future<Map<String, dynamic>> permanentlyDeleteListing(
+    String listingId,
+  ) async {
+    final response = await _api.permanentlyDeleteListing(listingId);
+    if (response['deleted'] == true) {
+      _stateGeneration++;
+      for (final key in <String>[
+        'listings:all',
+        'listings:approved',
+        'listings:pending',
+        'listings:rejected',
+        'listings:sold',
+        'listings:archived',
+        'listings:deleted',
+      ]) {
+        _removeItemFromCache(key, listingId);
+      }
+      _updatePendingSnapshotFromCache();
+      _cache.remove('dashboardStats');
+    }
+    return response;
+  }
+
   List<Map<String, dynamic>> _extractItems(Map<String, dynamic> response) {
     final raw = response['items'];
     if (raw is! List) return const <Map<String, dynamic>>[];

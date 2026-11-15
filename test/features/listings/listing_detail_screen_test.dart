@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:atta/src/services/usage_analytics_service.dart';
 
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/features/wallet/wallet_screen.dart';
 import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/models/wallet.dart';
 import 'package:atta/src/services/admin_service.dart';
@@ -244,6 +245,35 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Продать быстрее'), findsOneWidget);
+  });
+
+  testWidgets('compact bonuses button keeps wallet navigation', (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            ownerId: 'user-1',
+            canPromote: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final buttonFinder = find.widgetWithText(FilledButton, 'Получить бонусы');
+    await tester.scrollUntilVisible(
+      buttonFinder,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(buttonFinder, findsOneWidget);
+    expect(tester.getSize(buttonFinder).height, lessThanOrEqualTo(40));
+
+    await tester.tap(buttonFinder);
+    await tester.pumpAndSettle();
+    expect(find.byType(WalletScreen), findsOneWidget);
   });
 
   testWidgets(
@@ -621,6 +651,70 @@ void main() {
     expect(bottomSafeArea.top, isFalse);
     expect(bottomSafeArea.bottom, isTrue);
   });
+
+  testWidgets('listing without contact hides call and keeps chat action',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(phone: ''),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Позвонить').hitTestable(), findsNothing);
+    expect(find.text('Написать'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Телефон: не указан'),
+      300,
+      scrollable: find.descendant(
+        of: _detailBodyListView(),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(find.text('Телефон: не указан'), findsOneWidget);
+  });
+
+  testWidgets('hidden listing phone keeps call and chat actions',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildTestApp(
+        listingsService: _FakeListingsService(
+          listing: _listingFixture(
+            phone: '',
+            phoneHidden: true,
+            hasCallContact: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Позвонить'), findsOneWidget);
+    expect(find.text('Написать'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Телефон: скрыт'),
+      300,
+      scrollable: find.descendant(
+        of: _detailBodyListView(),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    expect(find.text('Телефон: скрыт'), findsOneWidget);
+  });
+
+  testWidgets('call action resolves contact for the current listing',
+      (tester) async {
+    final listings = _FakeListingsService();
+    await tester.pumpWidget(_buildTestApp(listingsService: listings));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Позвонить'));
+    await tester.pumpAndSettle();
+
+    expect(listings.callContactRequests, <String>['listing-1']);
+  });
 }
 
 Finder _detailBodyListView() {
@@ -687,6 +781,9 @@ Listing _listingFixture({
   String subcategory = 'Седан',
   String? clothesSize,
   String? oemPartNumber,
+  String phone = '+79990000000',
+  bool phoneHidden = false,
+  bool? hasCallContact,
   List<String> photoUrls = const <String>[],
   ListingVideo? video,
 }) {
@@ -702,8 +799,9 @@ Listing _listingFixture({
     'clothes_size': clothesSize,
     'oem_part_number': oemPartNumber,
     'price': 1200000,
-    'phone': '+79990000000',
-    'phone_hidden': false,
+    'phone': phone,
+    'phone_hidden': phoneHidden,
+    if (hasCallContact != null) 'has_call_contact': hasCallContact,
     'city': 'Москва',
     'delivery': <String, dynamic>{'pickup': true},
     'photo_urls': photoUrls,
@@ -736,6 +834,9 @@ Listing _listingFixture({
 class _FakeAuthService extends AuthService {
   @override
   AuthUser? get currentUser => const AuthUser(uid: 'user-1');
+
+  @override
+  bool get isAuthenticated => true;
 }
 
 class _FakeAdminService extends AdminService {
@@ -754,6 +855,13 @@ class _FakeListingsService extends ListingsService {
   int getListingRequests = 0;
   int similarRequests = 0;
   int resubmitRequests = 0;
+  final List<String> callContactRequests = <String>[];
+
+  @override
+  Future<String> getCallContact(String listingId) async {
+    callContactRequests.add(listingId);
+    return '79990000000';
+  }
 
   @override
   Future<Listing?> getListingById(String id) async {

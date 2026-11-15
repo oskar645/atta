@@ -94,6 +94,49 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('home uses white light surface and keeps listing card shadow',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => ListingsFeedPage(
+        items: <Listing>[
+          _listing(id: 'white-card', title: 'Белая карточка'),
+        ],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final homeScaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(homeScaffold.backgroundColor, Colors.white);
+
+    final cardFinder = find.byType(ListingCard);
+    expect(cardFinder, findsOneWidget);
+    final cardMaterial = tester.widget<Material>(
+      find.descendant(of: cardFinder, matching: find.byType(Material)).first,
+    );
+    expect(cardMaterial.color, Colors.white);
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.descendant(
+              of: cardFinder,
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any((decoration) => decoration.boxShadow?.isNotEmpty == true),
+      isTrue,
+    );
+  });
+
   testWidgets('home feed keeps exact scroll position after app resume',
       (tester) async {
     final listings = _FakeListingsService(
@@ -270,6 +313,126 @@ void main() {
 
       await _dragHomeUntilVisible(tester, find.text('Товар 12'));
       expect(find.text('Товар 12'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'home reuses VIP showcase after 40 more ordinary listings',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 20000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final listings = _FakeListingsService(
+        onGetListingsPage: (_) async => ListingsFeedPage(
+          items: List<Listing>.generate(
+            60,
+            (index) => _listing(id: 'listing-$index', title: 'Товар $index'),
+          ),
+          hasMore: false,
+          nextCursor: null,
+        ),
+        onGetVipListingsPage: (_) async => ListingsFeedPage(
+          items: <Listing>[
+            _listing(id: 'vip-1', title: 'VIP товар', hasVip: true),
+          ],
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(listings.vipRequests, hasLength(1));
+
+      expect(
+        find.byKey(const ValueKey('home_vip_showcase_secondary_section')),
+        findsOneWidget,
+      );
+      expect(listings.vipRequests, hasLength(1));
+      final mountedGridCounts = tester
+          .widgetList<SliverGrid>(find.byType(SliverGrid))
+          .map((grid) => grid.delegate.estimatedChildCount)
+          .toList();
+      expect(mountedGridCounts, containsAllInOrder(<int?>[12, 40]));
+    },
+  );
+
+  testWidgets(
+    'second VIP showcase appears after pagination reaches 52 ordinary listings',
+    (tester) async {
+      final listings = _FakeListingsService(
+        onGetListingsPage: (request) async {
+          if (request.cursor == null) {
+            return ListingsFeedPage(
+              items: List<Listing>.generate(
+                40,
+                (index) =>
+                    _listing(id: 'listing-$index', title: 'Товар $index'),
+              ),
+              hasMore: true,
+              nextCursor: 'page-2',
+            );
+          }
+          return ListingsFeedPage(
+            items: List<Listing>.generate(
+              20,
+              (index) => _listing(
+                id: 'listing-${index + 40}',
+                title: 'Товар ${index + 40}',
+              ),
+            ),
+            hasMore: false,
+            nextCursor: null,
+          );
+        },
+        onGetVipListingsPage: (_) async => ListingsFeedPage(
+          items: <Listing>[
+            _listing(id: 'vip-1', title: 'VIP товар', hasVip: true),
+          ],
+          hasMore: false,
+          nextCursor: null,
+        ),
+      );
+
+      await tester.pumpWidget(
+        _buildHomeTestApp(
+          listings: listings,
+          showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('home_vip_showcase_secondary_section')),
+        findsNothing,
+      );
+
+      final feedView =
+          tester.widget<CustomScrollView>(find.byType(CustomScrollView));
+      feedView.controller!
+          .jumpTo(feedView.controller!.position.maxScrollExtent);
+      await tester.pumpAndSettle();
+
+      await tester.binding.setSurfaceSize(const Size(390, 20000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpAndSettle();
+
+      expect(listings.requests, hasLength(2));
+      expect(listings.vipRequests, hasLength(1));
+      expect(
+        find.byKey(const ValueKey('home_vip_showcase_secondary_section')),
+        findsOneWidget,
+      );
+      final gridCounts = tester
+          .widgetList<SliverGrid>(find.byType(SliverGrid))
+          .map((grid) => grid.delegate.estimatedChildCount)
+          .toList();
+      expect(gridCounts, <int?>[12, 40, 8]);
     },
   );
 
@@ -2290,7 +2453,7 @@ Future<void> _dragHomeUntilVisible(
   WidgetTester tester,
   Finder finder,
 ) async {
-  for (var attempt = 0; attempt < 10; attempt++) {
+  for (var attempt = 0; attempt < 20; attempt++) {
     if (finder.evaluate().isNotEmpty) {
       return;
     }

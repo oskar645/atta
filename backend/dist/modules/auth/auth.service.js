@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const account_deletion_service_1 = require("./account-deletion.service");
@@ -17,6 +20,7 @@ const client_1 = require("@prisma/client");
 const bcryptjs_1 = require("bcryptjs");
 const crypto_1 = require("crypto");
 const env_1 = require("../../config/env");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const phone_1 = require("../../common/phone");
 const referral_code_1 = require("../../common/referral-code");
 const env_2 = require("../../config/env");
@@ -27,13 +31,14 @@ const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const wallet_service_1 = require("../wallet/wallet.service");
 const legal_document_version_1 = require("./legal-document-version");
 let AuthService = class AuthService {
-    constructor(prisma, jwtService, storageService, walletService, userBlocksService, accountDeletion) {
+    constructor(prisma, jwtService, storageService, walletService, userBlocksService, accountDeletion, adminDashboardSignal) {
         this.prisma = prisma;
         this.jwtService = jwtService;
         this.storageService = storageService;
         this.walletService = walletService;
         this.userBlocksService = userBlocksService;
         this.accountDeletion = accountDeletion;
+        this.adminDashboardSignal = adminDashboardSignal;
     }
     async signup(payload) {
         const email = payload.email?.trim().toLowerCase();
@@ -43,7 +48,7 @@ let AuthService = class AuthService {
         const existingUser = await this.prisma.user.findFirst({
             where: {
                 OR: [
-                    { email },
+                    { email: { equals: email, mode: 'insensitive' } },
                     payload.phone?.trim() ? { phone: payload.phone.trim() } : undefined,
                 ].filter(Boolean),
             },
@@ -62,6 +67,7 @@ let AuthService = class AuthService {
                 data: {
                     id: (0, crypto_1.randomUUID)(),
                     email,
+                    registrationMethod: client_1.RegistrationMethod.EMAIL,
                     phone: payload.phone?.trim() || null,
                     displayName,
                     name: displayName,
@@ -79,6 +85,7 @@ let AuthService = class AuthService {
             };
         });
         await this.ensureWalletBootstrapSafely(user.id);
+        this.adminDashboardSignal?.changed('users', 'usage');
         return this.buildAuthResponse(user, session.auth);
     }
     async login(payload) {
@@ -86,15 +93,18 @@ let AuthService = class AuthService {
         if (!email) {
             throw new common_1.UnauthorizedException('Email login is required');
         }
-        const user = await this.prisma.user.findUnique({
+        const user = await this.prisma.user.findFirst({
             where: {
-                email,
+                email: { equals: email, mode: 'insensitive' },
             },
             include: {
                 adminProfile: true,
             },
         });
-        if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
+        if (!user ||
+            !user.emailVerifiedAt ||
+            user.deletedAt ||
+            user.status === client_1.UserStatus.DELETED) {
             throw new common_1.UnauthorizedException('Invalid login credentials');
         }
         const activeBlock = await this.userBlocksService.getActiveBlock(user.id);
@@ -156,6 +166,7 @@ let AuthService = class AuthService {
                     id: (0, crypto_1.randomUUID)(),
                     phone: normalizedPhone,
                     phoneVerified: true,
+                    registrationMethod: client_1.RegistrationMethod.PHONE,
                     displayName,
                     name: displayName,
                     passwordHash,
@@ -189,6 +200,7 @@ let AuthService = class AuthService {
                 session: createdSession,
             };
         });
+        this.adminDashboardSignal?.changed('users', 'usage');
         return this.buildAuthResponse(userWithAdmin, session.auth);
     }
     // Called only after the passwordless service locks and validates its capability.
@@ -222,6 +234,7 @@ let AuthService = class AuthService {
                 throw new common_1.BadRequestException('Display name is required');
             user = await tx.user.create({
                 data: { id: (0, crypto_1.randomUUID)(), phone, phoneVerified: true, displayName, name: displayName,
+                    registrationMethod: client_1.RegistrationMethod.PHONE,
                     passwordHash: await (0, bcryptjs_1.hash)((0, crypto_1.randomBytes)(32).toString('base64url'), 10) },
                 include: { adminProfile: true },
             });
@@ -232,6 +245,82 @@ let AuthService = class AuthService {
                 referralCode: registration.referralCode ?? '', referralId: registration.referralId ?? '',
                 verificationId: registration.verificationId, tx,
             });
+        }
+        const userWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
+        const session = await this.createSession(userWithAdmin, tx);
+        return this.buildAuthResponse(userWithAdmin, session.auth);
+    }
+    // Called only after EmailPasswordlessService has verified ownership of the
+    // normalized email and locked its challenge. It deliberately does not share
+    // the legacy email/password endpoints.
+    async authenticateEmailPasswordless(email, tx, registration) {
+        const now = new Date();
+        const identity = await tx.blockedIdentity.findFirst({
+            where: {
+                normalizedEmail: email,
+                liftedAt: null,
+                OR: [{ permanent: true }, { bannedUntil: { gt: now } }],
+            },
+        });
+        if (identity) {
+            throw this.createUnauthorizedError('EMAIL_BLOCKED', 'Этот email заблокирован');
+        }
+        await tx.$queryRaw `
+      SELECT id FROM users
+      WHERE lower(btrim(email)) = ${email}
+      FOR UPDATE
+    `;
+        let user = await tx.user.findFirst({
+            where: { email: { equals: email, mode: 'insensitive' } },
+            include: { adminProfile: true },
+        });
+        if (user) {
+            if (!user.emailVerifiedAt) {
+                throw new common_1.ConflictException({
+                    code: 'EMAIL_UNVERIFIED_ACCOUNT_EXISTS',
+                    message: 'Этот email уже используется. Обратитесь в поддержку.',
+                });
+            }
+            const block = await this.userBlocksService.getActiveBlock(user.id, tx);
+            user = await tx.user.findUniqueOrThrow({
+                where: { id: user.id },
+                include: { adminProfile: true },
+            });
+            if (user.deletedAt || user.status !== client_1.UserStatus.ACTIVE || block) {
+                throw this.createUnauthorizedError('ACCOUNT_BLOCKED', 'Аккаунт недоступен');
+            }
+            user = await tx.user.update({
+                where: { id: user.id },
+                data: { lastLoginAt: now },
+                include: { adminProfile: true },
+            });
+        }
+        else {
+            if (!registration)
+                return null;
+            this.assertRequiredSignupConsents(registration);
+            const displayName = registration.displayName.trim();
+            if (!displayName) {
+                throw new common_1.BadRequestException('Display name is required');
+            }
+            user = await tx.user.create({
+                data: {
+                    id: (0, crypto_1.randomUUID)(),
+                    email,
+                    emailVerifiedAt: now,
+                    phone: null,
+                    phoneVerified: false,
+                    registrationMethod: client_1.RegistrationMethod.EMAIL,
+                    displayName,
+                    name: displayName,
+                    passwordHash: await (0, bcryptjs_1.hash)((0, crypto_1.randomBytes)(32).toString('base64url'), 10),
+                },
+                include: { adminProfile: true },
+            });
+            await this.recordSignupConsents(user.id, registration, tx);
+            await this.walletService.ensureWalletAndBonuses(user.id, tx);
+            // Referral rewards remain phone-proofed. Email-only registration does
+            // not silently introduce a new financial eligibility policy.
         }
         const userWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
         const session = await this.createSession(userWithAdmin, tx);
@@ -1015,11 +1104,13 @@ let AuthService = class AuthService {
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = __decorate([
     (0, common_1.Injectable)(),
+    __param(6, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,
         storage_service_1.StorageService,
         wallet_service_1.WalletService,
         user_blocks_service_1.UserBlocksService,
-        account_deletion_service_1.AccountDeletionService])
+        account_deletion_service_1.AccountDeletionService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], AuthService);
 //# sourceMappingURL=auth.service.js.map

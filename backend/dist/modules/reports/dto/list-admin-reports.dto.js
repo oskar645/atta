@@ -28,4 +28,36 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], ListAdminReportsDto.prototype, "cursor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['open', 'in_progress', 'completed', 'resolved', 'rejected']),
+    __metadata("design:type", String)
+], ListAdminReportsDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], ListAdminReportsDto.prototype, "reason", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(200),
+    __metadata("design:type", String)
+], ListAdminReportsDto.prototype, "search", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['newest', 'oldest']),
+    __metadata("design:type", String)
+], ListAdminReportsDto.prototype, "sort", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], ListAdminReportsDto.prototype, "dateFrom", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsDateString)(),
+    __metadata("design:type", String)
+], ListAdminReportsDto.prototype, "dateTo", void 0);
 //# sourceMappingURL=list-admin-reports.dto.js.map

@@ -8,6 +8,7 @@ const app_module_1 = require("./app.module");
 const trust_proxy_1 = require("./common/trust-proxy");
 const env_1 = require("./config/env");
 const storage_service_1 = require("./modules/storage/storage.service");
+const server_metrics_1 = require("./common/server-metrics");
 const express = require('express');
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, {
@@ -23,6 +24,11 @@ async function bootstrap() {
         forbidNonWhitelisted: true,
     }));
     app.use((req, res, next) => {
+        const startedAt = process.hrtime.bigint();
+        res.once('finish', () => {
+            const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+            (0, server_metrics_1.recordHttpRequest)(res.statusCode, durationMs);
+        });
         res.setHeader('X-Frame-Options', 'DENY');
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Referrer-Policy', 'no-referrer');

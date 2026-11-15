@@ -1,10 +1,43 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
 var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
     var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
     if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
@@ -12,8 +45,11 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AdminService = void 0;
+exports.AdminService = exports.moscowCalendarBounds = void 0;
 const account_deletion_service_1 = require("../auth/account-deletion.service");
+const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const crypto_1 = require("crypto");
 const common_1 = require("@nestjs/common");
 const saved_search_alerts_service_1 = require("../saved-searches/saved-search-alerts.service");
 const common_2 = require("@nestjs/common");
@@ -22,6 +58,7 @@ const phone_1 = require("../../common/phone");
 const referral_code_1 = require("../../common/referral-code");
 const serializers_1 = require("../../common/serializers");
 const listing_publication_1 = require("../../common/listing-publication");
+const listing_contact_rollout_1 = require("../../common/listing-contact-rollout");
 const app_visits_service_1 = require("../app-visits/app-visits.service");
 const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
@@ -31,6 +68,8 @@ const user_blocks_service_1 = require("../user-blocks/user-blocks.service");
 const promotion_plans_constants_1 = require("../promotions/promotion-plans.constants");
 const listings_service_1 = require("../listings/listings.service");
 const raffle_ticket_calculation_1 = require("./raffle-ticket-calculation");
+const server_metrics_1 = require("../../common/server-metrics");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const promotionStatusFromInput = (value) => {
     switch ((value ?? '').trim().toLowerCase()) {
         case 'active':
@@ -44,6 +83,7 @@ const promotionStatusFromInput = (value) => {
     }
 };
 const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const moscowCalendarBounds = (date) => {
     const shifted = new Date(date.getTime() + MOSCOW_OFFSET_MS);
     const year = shifted.getUTCFullYear();
@@ -60,6 +100,15 @@ const moscowCalendarBounds = (date) => {
         dayStart: utcFromMoscow(year, monthIndex, day),
         nextDayStart: utcFromMoscow(year, monthIndex, day + 1),
     };
+};
+exports.moscowCalendarBounds = moscowCalendarBounds;
+const moscowDateKey = (date) => {
+    const shifted = new Date(date.getTime() + MOSCOW_OFFSET_MS);
+    return [
+        shifted.getUTCFullYear(),
+        String(shifted.getUTCMonth() + 1).padStart(2, '0'),
+        String(shifted.getUTCDate()).padStart(2, '0'),
+    ].join('-');
 };
 const promotionTypeFromInput = (value) => {
     switch ((value ?? '').trim().toLowerCase()) {
@@ -109,7 +158,7 @@ const moderationDiffFields = [
     'oem_part_number',
 ];
 let AdminService = class AdminService {
-    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService, savedSearchAlerts, accountDeletion) {
+    constructor(prisma, appVisitsService, notificationsService, reviewsService, storageService, userBlocksService, savedSearchAlerts, accountDeletion, adminDashboardSignal) {
         this.prisma = prisma;
         this.appVisitsService = appVisitsService;
         this.notificationsService = notificationsService;
@@ -118,6 +167,7 @@ let AdminService = class AdminService {
         this.userBlocksService = userBlocksService;
         this.savedSearchAlerts = savedSearchAlerts;
         this.accountDeletion = accountDeletion;
+        this.adminDashboardSignal = adminDashboardSignal;
     }
     pageLimit(value, fallback, max = 100) {
         const parsed = Number(value ?? fallback);
@@ -126,7 +176,7 @@ let AdminService = class AdminService {
         return Math.min(Math.max(Math.trunc(parsed), 1), max);
     }
     analyticsStart(period = 'month', now = new Date()) {
-        const bounds = moscowCalendarBounds(now);
+        const bounds = (0, exports.moscowCalendarBounds)(now);
         if (period === 'today')
             return bounds.dayStart;
         if (period === '7d')
@@ -366,16 +416,16 @@ let AdminService = class AdminService {
             nextCursor: last ? this.encodeAdminCursor(cursorFor(last)) : null,
         };
     }
-    async getDashboardStats() {
-        const now = new Date();
-        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    async getDashboardStats(now = new Date()) {
+        const calendar = (0, exports.moscowCalendarBounds)(now);
+        const monthStart = calendar.monthStart;
         const days30 = new Date(now.getTime() - 30 * 86400000);
         const days14 = new Date(now.getTime() - 14 * 86400000);
         const onlineCutoff = new Date(now.getTime() - 2 * 60000);
         const deletedUsers = await this.prisma.user.count({
             where: { status: client_1.UserStatus.DELETED, deletedAt: { not: null } },
         });
-        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth, zeroResultSearches, allSearches, zeroViewListings] = await Promise.all([
+        const [users, onlineUsers, todayVisits, listings, activeListings, pendingModeration, sold, sales30d, supportOpen, reportsOpen, activeAds, newListings14d, newListingsDaily, spentPoints30d, pointsPurchasesMonth, revenue, promotionsToday, zeroResultSearches, allSearches, zeroViewListings] = await Promise.all([
             this.prisma.user.count({
                 where: {
                     deletedAt: null,
@@ -413,7 +463,7 @@ let AdminService = class AdminService {
                 where: {
                     deletedAt: null,
                     status: client_1.ListingStatus.SOLD,
-                    updatedAt: {
+                    archivedAt: {
                         gte: days30,
                     },
                 },
@@ -462,6 +512,8 @@ let AdminService = class AdminService {
                 from: monthStart.toISOString(),
                 to: now.toISOString(),
             }),
+            this.getDashboardRevenue(now),
+            this.getDashboardPromotions(now),
             this.prisma.zeroResultSearch.count({
                 where: { createdAt: { gte: monthStart } },
             }),
@@ -475,11 +527,11 @@ let AdminService = class AdminService {
         const dailyMap = new Map();
         for (let index = 13; index >= 0; index -= 1) {
             const day = new Date(now.getTime() - index * 86400000);
-            const key = day.toISOString().slice(0, 10);
+            const key = moscowDateKey(day);
             dailyMap.set(key, 0);
         }
         for (const item of newListingsDaily) {
-            const key = item.createdAt.toISOString().slice(0, 10);
+            const key = moscowDateKey(item.createdAt);
             dailyMap.set(key, (dailyMap.get(key) ?? 0) + 1);
         }
         const listingsDaily = Array.from(dailyMap.entries()).map(([day, count]) => ({
@@ -505,6 +557,8 @@ let AdminService = class AdminService {
                 newListings14d,
                 spentPoints30d: spentPoints30d._sum.amount ?? 0,
                 pointsPurchasesMonth,
+                revenue,
+                promotionsToday,
                 zeroResultSearches,
                 allSearches,
                 zeroViewListings,
@@ -512,6 +566,235 @@ let AdminService = class AdminService {
             daily: {
                 listings: listingsDaily,
             },
+        };
+    }
+    async getDashboardMetrics(scopesInput, now = new Date()) {
+        const supported = new Set([
+            'users',
+            'presence',
+            'visits',
+            'listings',
+            'wallet',
+            'payments',
+            'promotions',
+            'support',
+            'reports',
+            'ads',
+            'searches',
+        ]);
+        const scopes = [...new Set((scopesInput ?? '')
+                .split(',')
+                .map((scope) => scope.trim())
+                .filter((scope) => supported.has(scope)))];
+        if (scopes.length === 0) {
+            throw new common_2.BadRequestException('Не указаны поддерживаемые Dashboard scopes');
+        }
+        const calendar = (0, exports.moscowCalendarBounds)(now);
+        const days30 = new Date(now.getTime() - 30 * 86400000);
+        const onlineCutoff = new Date(now.getTime() - 2 * 60000);
+        const parts = await Promise.all(scopes.map(async (scope) => {
+            switch (scope) {
+                case 'users': {
+                    const [users, deletedUsers] = await Promise.all([
+                        this.prisma.user.count({
+                            where: { deletedAt: null, status: { not: client_1.UserStatus.DELETED } },
+                        }),
+                        this.prisma.user.count({
+                            where: { status: client_1.UserStatus.DELETED, deletedAt: { not: null } },
+                        }),
+                    ]);
+                    return { users, deletedUsers };
+                }
+                case 'presence':
+                    return {
+                        onlineUsers: await this.prisma.userPresence.count({
+                            where: { isOnline: true, lastSeen: { gte: onlineCutoff } },
+                        }),
+                    };
+                case 'visits':
+                    return { todayVisits: await this.appVisitsService.countToday(now) };
+                case 'listings': {
+                    const [listings, activeListings, pendingModeration, sold, sales30d, zeroViewListings] = await Promise.all([
+                        this.prisma.listing.count({ where: { deletedAt: null } }),
+                        this.prisma.listing.count({
+                            where: { deletedAt: null, status: client_1.ListingStatus.APPROVED },
+                        }),
+                        this.countModerationReady(),
+                        this.prisma.listing.count({
+                            where: { deletedAt: null, status: client_1.ListingStatus.SOLD },
+                        }),
+                        this.prisma.listing.count({
+                            where: {
+                                deletedAt: null,
+                                status: client_1.ListingStatus.SOLD,
+                                archivedAt: { gte: days30 },
+                            },
+                        }),
+                        this.prisma.listing.count({
+                            where: { deletedAt: null, viewCount: 0 },
+                        }),
+                    ]);
+                    return { listings, activeListings, pendingModeration, sold, sales30d, zeroViewListings };
+                }
+                case 'wallet': {
+                    const aggregate = await this.prisma.walletTransaction.aggregate({
+                        _sum: { amount: true },
+                        where: {
+                            createdAt: { gte: days30, lte: now },
+                            type: client_1.WalletTransactionType.SPEND,
+                        },
+                    });
+                    return { spentPoints30d: aggregate._sum.amount ?? 0 };
+                }
+                case 'payments': {
+                    const [pointsPurchasesMonth, revenue] = await Promise.all([
+                        this.getPointsPurchasesSummary({
+                            from: calendar.monthStart.toISOString(),
+                            to: now.toISOString(),
+                        }),
+                        this.getDashboardRevenue(now),
+                    ]);
+                    return {
+                        pointsPurchasesMonth,
+                        revenue,
+                    };
+                }
+                case 'promotions':
+                    return { promotionsToday: await this.getDashboardPromotions(now) };
+                case 'support':
+                    return { supportTickets: await this.prisma.supportTicket.count() };
+                case 'reports':
+                    return {
+                        reportsOpen: await this.prisma.report.count({ where: { status: 'open' } }),
+                    };
+                case 'ads':
+                    return {
+                        activeAds: await this.prisma.feedAd.count({
+                            where: {
+                                placement: client_1.FeedAdPlacement.HOME,
+                                isActive: true,
+                                OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+                            },
+                        }),
+                    };
+                case 'searches': {
+                    const [zeroResultSearches, allSearches] = await Promise.all([
+                        this.prisma.zeroResultSearch.count({
+                            where: { createdAt: { gte: calendar.monthStart } },
+                        }),
+                        this.prisma.searchAttempt.count({
+                            where: { createdAt: { gte: calendar.monthStart } },
+                        }),
+                    ]);
+                    return { zeroResultSearches, allSearches };
+                }
+                default:
+                    return {};
+            }
+        }));
+        return {
+            source: 'timeweb',
+            scopes,
+            stats: Object.assign({}, ...parts),
+        };
+    }
+    async getDashboardRevenue(now = new Date()) {
+        const { dayStart } = (0, exports.moscowCalendarBounds)(now);
+        const starts = [
+            dayStart,
+            new Date(dayStart.getTime() - 6 * DAY_MS),
+            new Date(dayStart.getTime() - 29 * DAY_MS),
+        ];
+        const totals = await Promise.all(starts.map((from) => this.prisma.payment.aggregate({
+            _sum: { amountRub: true },
+            where: {
+                provider: client_1.PaymentProvider.YOOKASSA,
+                status: client_1.PaymentStatus.SUCCEEDED,
+                currency: 'RUB',
+                creditedAt: { gte: from, lte: now },
+            },
+        })));
+        return {
+            todayRub: this.numberFromDb(totals[0]._sum.amountRub),
+            days7Rub: this.numberFromDb(totals[1]._sum.amountRub),
+            days30Rub: this.numberFromDb(totals[2]._sum.amountRub),
+        };
+    }
+    async getDashboardPromotions(now = new Date()) {
+        const { dayStart } = (0, exports.moscowCalendarBounds)(now);
+        const reasons = [
+            client_1.WalletTransactionReason.PROMOTION_BUMP,
+            client_1.WalletTransactionReason.PROMOTION_VIP,
+            client_1.WalletTransactionReason.PROMOTION_SHOWCASE,
+            client_1.WalletTransactionReason.PROMOTION_TURBO,
+        ];
+        const rows = await this.prisma.walletTransaction.groupBy({
+            by: ['reason'],
+            _count: { _all: true },
+            _sum: { amount: true },
+            where: {
+                type: client_1.WalletTransactionType.SPEND,
+                reason: { in: reasons },
+                createdAt: { gte: dayStart, lte: now },
+            },
+        });
+        const counts = new Map(rows.map((row) => [row.reason, row._count._all]));
+        return {
+            byType: {
+                bump: counts.get(client_1.WalletTransactionReason.PROMOTION_BUMP) ?? 0,
+                vip: counts.get(client_1.WalletTransactionReason.PROMOTION_VIP) ?? 0,
+                showcase: counts.get(client_1.WalletTransactionReason.PROMOTION_SHOWCASE) ?? 0,
+                turbo: counts.get(client_1.WalletTransactionReason.PROMOTION_TURBO) ?? 0,
+            },
+            total: rows.reduce((sum, row) => sum + row._count._all, 0),
+            pointsSpent: rows.reduce((sum, row) => sum + (row._sum.amount ?? 0), 0),
+        };
+    }
+    async getServerStatus() {
+        const startedAt = process.hrtime.bigint();
+        let databaseOk = true;
+        try {
+            await this.prisma.$queryRaw `SELECT 1`;
+        }
+        catch {
+            databaseOk = false;
+        }
+        const databaseResponseMs = Math.round(Number(process.hrtime.bigint() - startedAt) / 1_000_000);
+        const totalMemoryBytes = os.totalmem();
+        const usedMemoryBytes = Math.max(0, totalMemoryBytes - os.freemem());
+        const cores = Math.max(1, os.cpus().length);
+        const cpuPercent = Math.min(100, Math.max(0, (os.loadavg()[0] / cores) * 100));
+        const processMemoryBytes = process.memoryUsage().rss;
+        let diskTotalBytes = null;
+        let diskUsedBytes = null;
+        try {
+            const disk = fs.statfsSync(process.cwd());
+            diskTotalBytes = Number(disk.blocks) * Number(disk.bsize);
+            diskUsedBytes = diskTotalBytes - Number(disk.bavail) * Number(disk.bsize);
+        }
+        catch {
+            // Some containers do not expose filesystem statistics.
+        }
+        return {
+            source: 'server',
+            capturedAt: new Date().toISOString(),
+            cpu: { percent: Number(cpuPercent.toFixed(1)), cores },
+            memory: {
+                usedBytes: usedMemoryBytes,
+                totalBytes: totalMemoryBytes,
+                percent: Number(((usedMemoryBytes / totalMemoryBytes) * 100).toFixed(1)),
+                applicationBytes: processMemoryBytes,
+            },
+            disk: {
+                usedBytes: diskUsedBytes,
+                totalBytes: diskTotalBytes,
+                percent: diskTotalBytes && diskUsedBytes != null
+                    ? Number(((diskUsedBytes / diskTotalBytes) * 100).toFixed(1))
+                    : null,
+            },
+            database: { ok: databaseOk, responseMs: databaseResponseMs },
+            http: (0, server_metrics_1.currentHttpMetrics)(),
+            uptimeSeconds: Math.floor(process.uptime()),
         };
     }
     async listUsers(query = {}) {
@@ -531,6 +814,7 @@ let AdminService = class AdminService {
                         ...(this.isUuid(search) ? [{ id: search }] : []),
                         { displayName: { contains: search, mode: 'insensitive' } },
                         { name: { contains: search, mode: 'insensitive' } },
+                        { email: { contains: search, mode: 'insensitive' } },
                         { phone: { contains: search } },
                         ...(phoneDigits.length >= 4
                             ? [{ phone: { contains: phoneDigits } }]
@@ -613,7 +897,7 @@ let AdminService = class AdminService {
     adminPeriodRange(period, now = new Date()) {
         if (period === 'all')
             return null;
-        const bounds = moscowCalendarBounds(now);
+        const bounds = (0, exports.moscowCalendarBounds)(now);
         if (period === 'today')
             return bounds.dayStart;
         if (period === 'month')
@@ -624,22 +908,54 @@ let AdminService = class AdminService {
     }
     async getUserRegistrationStats(query = {}) {
         const now = new Date();
-        const currentBounds = moscowCalendarBounds(now);
+        const currentBounds = (0, exports.moscowCalendarBounds)(now);
         const currentYear = currentBounds.year;
         const currentMonth = currentBounds.month;
         const requestedYear = Number.isInteger(query.year) ? query.year : currentYear;
-        const year = Math.min(Math.max(requestedYear, 2000), 2100);
-        const yearBounds = moscowCalendarBounds(new Date(Date.UTC(year, 0, 1) - MOSCOW_OFFSET_MS));
+        const maximumSafeYear = currentYear + 100;
+        if (requestedYear < 2000 || requestedYear > maximumSafeYear) {
+            throw new common_2.BadRequestException(`Год должен быть в диапазоне 2000–${maximumSafeYear}`);
+        }
+        const year = requestedYear;
+        const yearBounds = (0, exports.moscowCalendarBounds)(new Date(Date.UTC(year, 0, 1) - MOSCOW_OFFSET_MS));
         const activeUserWhere = {
             deletedAt: null,
             status: {
                 not: client_1.UserStatus.DELETED,
             },
         };
-        const [totalUsers, firstUser, currentMonthCount, todayCount, monthRows] = await Promise.all([
+        const parseMoscowDate = (value) => {
+            if (!value)
+                return null;
+            const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+            if (!match)
+                return null;
+            const yearValue = Number(match[1]);
+            const monthIndex = Number(match[2]) - 1;
+            const dayValue = Number(match[3]);
+            const date = new Date(Date.UTC(yearValue, monthIndex, dayValue) - MOSCOW_OFFSET_MS);
+            const shifted = new Date(date.getTime() + MOSCOW_OFFSET_MS);
+            if (shifted.getUTCFullYear() !== yearValue ||
+                shifted.getUTCMonth() !== monthIndex ||
+                shifted.getUTCDate() !== dayValue) {
+                throw new common_2.BadRequestException('Некорректная дата периода');
+            }
+            return date;
+        };
+        const customFrom = parseMoscowDate(query.from);
+        const customToStart = parseMoscowDate(query.to);
+        if ((customFrom == null) !== (customToStart == null)) {
+            throw new common_2.BadRequestException('Укажите обе даты периода');
+        }
+        const customTo = customToStart == null
+            ? null
+            : new Date(customToStart.getTime() + DAY_MS);
+        if (customFrom && customTo && customFrom >= customTo) {
+            throw new common_2.BadRequestException('Дата начала должна быть раньше даты окончания');
+        }
+        const [totalUsers, firstUser, currentMonthCount, todayCount, yesterdayCount, last7DaysCount, customRangeCount, phoneRegistrationCount, emailRegistrationCount, unknownRegistrationCount, monthRows,] = await Promise.all([
             this.prisma.user.count({ where: activeUserWhere }),
             this.prisma.user.findFirst({
-                where: activeUserWhere,
                 orderBy: { createdAt: 'asc' },
                 select: { createdAt: true },
             }),
@@ -661,6 +977,50 @@ let AdminService = class AdminService {
                     },
                 },
             }),
+            this.prisma.user.count({
+                where: {
+                    ...activeUserWhere,
+                    createdAt: {
+                        gte: new Date(currentBounds.dayStart.getTime() - DAY_MS),
+                        lt: currentBounds.dayStart,
+                    },
+                },
+            }),
+            this.prisma.user.count({
+                where: {
+                    ...activeUserWhere,
+                    createdAt: {
+                        gte: new Date(currentBounds.dayStart.getTime() - 6 * DAY_MS),
+                        lt: currentBounds.nextDayStart,
+                    },
+                },
+            }),
+            customFrom && customTo
+                ? this.prisma.user.count({
+                    where: {
+                        ...activeUserWhere,
+                        createdAt: { gte: customFrom, lt: customTo },
+                    },
+                })
+                : Promise.resolve(null),
+            this.prisma.user.count({
+                where: {
+                    ...activeUserWhere,
+                    registrationMethod: 'PHONE',
+                },
+            }),
+            this.prisma.user.count({
+                where: {
+                    ...activeUserWhere,
+                    registrationMethod: 'EMAIL',
+                },
+            }),
+            this.prisma.user.count({
+                where: {
+                    ...activeUserWhere,
+                    registrationMethod: 'LEGACY_UNKNOWN',
+                },
+            }),
             this.prisma.$queryRaw `
           SELECT
             EXTRACT(MONTH FROM u."created_at" AT TIME ZONE 'Europe/Moscow')::int AS month,
@@ -674,7 +1034,7 @@ let AdminService = class AdminService {
         `,
         ]);
         const firstYear = firstUser
-            ? moscowCalendarBounds(firstUser.createdAt).year
+            ? (0, exports.moscowCalendarBounds)(firstUser.createdAt).year
             : currentYear;
         const availableYears = Array.from({ length: Math.max(currentYear - firstYear + 1, 0) }, (_, index) => firstYear + index);
         const countsByMonth = new Map();
@@ -682,7 +1042,7 @@ let AdminService = class AdminService {
             countsByMonth.set(this.numberFromDb(row.month), this.numberFromDb(row.count));
         }
         const startMonth = year === firstYear && firstUser
-            ? moscowCalendarBounds(firstUser.createdAt).month
+            ? (0, exports.moscowCalendarBounds)(firstUser.createdAt).month
             : 1;
         const endMonth = year === currentYear ? currentMonth : 12;
         const months = !firstUser || year < firstYear || year > currentYear || startMonth > endMonth
@@ -697,7 +1057,19 @@ let AdminService = class AdminService {
             available_years: availableYears,
             total_users: totalUsers,
             todayCount,
+            yesterday_count: yesterdayCount,
+            last_7_days_count: last7DaysCount,
             current_month_count: currentMonthCount,
+            phone_registration_count: phoneRegistrationCount,
+            email_registration_count: emailRegistrationCount,
+            unknown_registration_count: unknownRegistrationCount,
+            custom_range: customFrom && customToStart
+                ? {
+                    from: query.from,
+                    to: query.to,
+                    count: customRangeCount,
+                }
+                : null,
             months,
         };
     }
@@ -953,7 +1325,14 @@ let AdminService = class AdminService {
         const listingId = dto.listing_id?.trim() || undefined;
         const user = await this.prisma.user.findUnique({
             where: { id: userId },
-            select: { id: true, phone: true, deletedAt: true, status: true },
+            select: {
+                id: true,
+                phone: true,
+                email: true,
+                emailVerifiedAt: true,
+                deletedAt: true,
+                status: true,
+            },
         });
         if (!user || user.deletedAt || user.status === client_1.UserStatus.DELETED) {
             throw new common_2.NotFoundException('Пользователь не найден');
@@ -1015,6 +1394,17 @@ let AdminService = class AdminService {
                 await tx.blockedIdentity.create({
                     data: {
                         normalizedPhone: user.phone.trim(),
+                        userBlockId: created.id,
+                        bannedUntil: duration.endsAt,
+                        permanent: duration.type === client_1.UserBlockType.PERMANENT,
+                        reason,
+                    },
+                });
+            }
+            if (user.emailVerifiedAt && user.email?.trim()) {
+                await tx.blockedIdentity.create({
+                    data: {
+                        normalizedEmail: user.email.trim().toLowerCase(),
                         userBlockId: created.id,
                         bannedUntil: duration.endsAt,
                         permanent: duration.type === client_1.UserBlockType.PERMANENT,
@@ -1641,11 +2031,11 @@ let AdminService = class AdminService {
             limit,
         };
     }
-    async getPromotionsSummary() {
+    async getPromotionsSummary(now = new Date()) {
         await this.expirePromotionsByTime();
-        const now = new Date();
-        const startToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-        const startMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        const calendar = (0, exports.moscowCalendarBounds)(now);
+        const startToday = calendar.dayStart;
+        const startMonth = calendar.monthStart;
         const [activeShowcaseCount, activeBumpCount, activeVipCount, activeTurboCount, expiredTodayCount, spentToday, spentThisMonth, showcaseTotals,] = await Promise.all([
             this.prisma.promotion.count({
                 where: { status: client_1.PromotionStatus.ACTIVE, type: client_1.PromotionType.SHOWCASE },
@@ -1909,6 +2299,9 @@ let AdminService = class AdminService {
         };
     }
     raffleRange(query) {
+        if (!query.from || !query.to) {
+            throw new common_2.BadRequestException('Укажите период розыгрыша');
+        }
         const from = new Date(query.from);
         const to = new Date(query.to);
         if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || from > to) {
@@ -1923,6 +2316,94 @@ let AdminService = class AdminService {
         }
         return price;
     }
+    async freezeRaffle(query, authUser) {
+        const { from, to } = this.raffleRange(query);
+        const ticketPrice = this.raffleTicketPrice(query);
+        const fingerprint = (0, crypto_1.createHash)('sha256')
+            .update(`${from.toISOString()}|${to.toISOString()}|${ticketPrice}`)
+            .digest('hex');
+        try {
+            return await this.prisma.$transaction(async (transaction) => {
+                const existing = await transaction.raffleSnapshot.findUnique({ where: { fingerprint } });
+                if (existing)
+                    return this.raffleSnapshotSummary(existing.id, transaction);
+                const snapshot = await transaction.raffleSnapshot.create({
+                    data: {
+                        from,
+                        to,
+                        ticketPriceRub: new client_1.Prisma.Decimal(ticketPrice),
+                        participantsCount: 0,
+                        ticketsCount: 0n,
+                        amountRub: new client_1.Prisma.Decimal(0),
+                        fingerprint,
+                        createdById: authUser.userId,
+                    },
+                });
+                const participants = this.raffleParticipantsSql(from, to, ticketPrice);
+                const price = new client_1.Prisma.Decimal(ticketPrice);
+                await transaction.$executeRaw(client_1.Prisma.sql `
+        INSERT INTO "raffle_snapshot_participants" (
+          "id", "snapshot_id", "user_id", "name", "phone", "total_rub",
+          "tickets", "remainder_rub", "first_at", "last_at", "first_ticket", "last_ticket"
+        )
+        SELECT gen_random_uuid(), ${snapshot.id}::uuid, ranked.user_id,
+          COALESCE(NULLIF(TRIM(u."display_name"), ''), NULLIF(TRIM(u."name"), ''), 'Пользователь'),
+          COALESCE(u."phone", ''), ranked.total_rub, ranked.ticket_count,
+          MOD(ranked.total_rub, ${price}), ranked.first_at, ranked.last_at,
+          ranked.first_ticket, ranked.last_ticket
+        FROM (
+          SELECT eligible.*,
+            COALESCE(SUM(ticket_count) OVER (
+              ORDER BY user_id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ), 0)::bigint + 1 AS first_ticket,
+            SUM(ticket_count) OVER (ORDER BY user_id ROWS UNBOUNDED PRECEDING)::bigint AS last_ticket
+          FROM (
+            SELECT raffle.*, FLOOR(raffle.total_rub / ${price})::bigint AS ticket_count
+            FROM (${participants}) raffle
+          ) eligible
+        ) ranked
+        JOIN "users" u ON u."id" = ranked.user_id
+      `);
+                await transaction.$executeRaw(client_1.Prisma.sql `
+        UPDATE "raffle_snapshots" s SET
+          "participants_count" = totals.participants,
+          "tickets_count" = totals.tickets,
+          "amount_rub" = totals.amount
+        FROM (
+          SELECT COUNT(*)::int AS participants, COALESCE(SUM(tickets), 0)::bigint AS tickets,
+            COALESCE(SUM("total_rub"), 0)::numeric AS amount
+          FROM "raffle_snapshot_participants" WHERE "snapshot_id" = ${snapshot.id}::uuid
+        ) totals WHERE s."id" = ${snapshot.id}::uuid
+      `);
+                return this.raffleSnapshotSummary(snapshot.id, transaction);
+            }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
+        }
+        catch (error) {
+            if (error instanceof client_1.Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+                const existing = await this.prisma.raffleSnapshot.findUnique({ where: { fingerprint } });
+                if (existing)
+                    return this.raffleSnapshotSummary(existing.id);
+            }
+            throw error;
+        }
+    }
+    async raffleSnapshotSummary(snapshotId, client = this.prisma) {
+        const snapshot = await client.raffleSnapshot.findUnique({ where: { id: snapshotId } });
+        if (!snapshot)
+            throw new common_2.NotFoundException('Зафиксированный розыгрыш не найден');
+        return {
+            id: snapshot.id,
+            snapshotId: snapshot.id,
+            fixed: true,
+            from: snapshot.from.toISOString(),
+            to: snapshot.to.toISOString(),
+            ticketPriceRub: snapshot.ticketPriceRub.toString(),
+            participants: snapshot.participantsCount,
+            tickets: snapshot.ticketsCount.toString(),
+            amountRub: Number(snapshot.amountRub.toString()),
+            createdAt: snapshot.createdAt.toISOString(),
+        };
+    }
     raffleParticipantsSql(from, to, ticketPrice, cursor) {
         const filters = this.buildPointsPurchaseFilters({
             fromDate: from, toDate: to, search: '', dateColumn: 'credited_at',
@@ -1930,15 +2411,17 @@ let AdminService = class AdminService {
         if (cursor)
             filters.push(client_1.Prisma.sql `p."user_id" > ${cursor}::uuid`);
         return client_1.Prisma.sql `
-      SELECT p."user_id", SUM(p."amount_rub") AS total_rub,
+      SELECT p."user_id", SUM(p."amount_rub" - p."refunded_amount_rub") AS total_rub,
         MIN(p."credited_at") AS first_at, MAX(p."credited_at") AS last_at
       FROM "payments" p JOIN "users" u ON u."id" = p."user_id"
       WHERE ${client_1.Prisma.join(filters, ' AND ')}
       GROUP BY p."user_id"
-      HAVING SUM(p."amount_rub") >= ${new client_1.Prisma.Decimal(ticketPrice)}
+      HAVING SUM(p."amount_rub" - p."refunded_amount_rub") >= ${new client_1.Prisma.Decimal(ticketPrice)}
     `;
     }
     async getRaffleSummary(query) {
+        if (query.snapshotId)
+            return this.raffleSnapshotSummary(query.snapshotId);
         const { from, to } = this.raffleRange(query);
         const ticketPrice = this.raffleTicketPrice(query);
         const participants = this.raffleParticipantsSql(from, to, ticketPrice);
@@ -1957,6 +2440,28 @@ let AdminService = class AdminService {
         };
     }
     async listRaffleParticipants(query) {
+        if (query.snapshotId) {
+            const limit = Math.min(query.limit ?? 30, 100);
+            if (query.cursor && !/^[0-9a-f-]{36}$/i.test(query.cursor)) {
+                throw new common_2.BadRequestException('Некорректный курсор');
+            }
+            const rows = await this.prisma.raffleSnapshotParticipant.findMany({
+                where: { snapshotId: query.snapshotId },
+                orderBy: { userId: 'asc' },
+                take: limit + 1,
+                ...(query.cursor ? { cursor: { snapshotId_userId: { snapshotId: query.snapshotId, userId: query.cursor } }, skip: 1 } : {}),
+            });
+            const page = rows.slice(0, limit);
+            return {
+                nextCursor: rows.length > limit ? page[page.length - 1]?.userId ?? null : null,
+                items: page.map((row) => ({
+                    userId: row.userId, name: row.name, phone: row.phone,
+                    totalRub: Number(row.totalRub.toString()), tickets: Number(row.tickets),
+                    remainderRub: Number(row.remainderRub.toString()),
+                    firstAt: row.firstAt.toISOString(), lastAt: row.lastAt.toISOString(),
+                })),
+            };
+        }
         const { from, to } = this.raffleRange(query);
         const ticketPrice = this.raffleTicketPrice(query);
         const limit = Math.min(query.limit ?? 30, 100);
@@ -1984,6 +2489,108 @@ let AdminService = class AdminService {
                 ...(0, raffle_ticket_calculation_1.calculateRaffleTickets)(row.total_rub, ticketPrice),
                 firstAt: row.first_at.toISOString(),
                 lastAt: row.last_at.toISOString(),
+            })),
+        };
+    }
+    async listRaffleTickets(query) {
+        if (query.snapshotId)
+            return this.listRaffleSnapshotTickets(query);
+        const { from, to } = this.raffleRange(query);
+        const ticketPrice = this.raffleTicketPrice(query);
+        const limit = Math.min(query.limit ?? 50, 100);
+        const cursorText = query.cursor?.trim() || '0';
+        if (!/^\d+$/.test(cursorText)) {
+            throw new common_2.BadRequestException('Некорректный курсор билета');
+        }
+        const cursor = BigInt(cursorText);
+        const search = query.search?.trim() ?? '';
+        const ticketSearch = /^#?\d{1,30}$/.test(search)
+            ? BigInt(search.replace(/^#/, ''))
+            : null;
+        const participants = this.raffleParticipantsSql(from, to, ticketPrice);
+        const price = new client_1.Prisma.Decimal(ticketPrice);
+        const searchPattern = `%${search}%`;
+        const searchFilter = ticketSearch != null
+            ? client_1.Prisma.sql `ticket_no = ${ticketSearch}`
+            : search
+                ? client_1.Prisma.sql `(
+            COALESCE(NULLIF(TRIM(r.display_name), ''), NULLIF(TRIM(r.name), ''), 'Пользователь')
+              ILIKE ${searchPattern}
+            OR COALESCE(r.phone, '') ILIKE ${searchPattern}
+          )`
+                : client_1.Prisma.sql `TRUE`;
+        const seriesFrom = ticketSearch != null
+            ? client_1.Prisma.sql `GREATEST(r.start_ticket, ${ticketSearch})`
+            : client_1.Prisma.sql `GREATEST(r.start_ticket, ${cursor + 1n})`;
+        const seriesTo = ticketSearch != null
+            ? client_1.Prisma.sql `LEAST(r.end_ticket, ${ticketSearch})`
+            : client_1.Prisma.sql `r.end_ticket`;
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      WITH eligible AS (
+        SELECT raffle.user_id, u."display_name", u."name", u."phone",
+          FLOOR(raffle.total_rub / ${price})::bigint AS ticket_count
+        FROM (${participants}) raffle
+        JOIN "users" u ON u."id" = raffle.user_id
+      ), ranked AS (
+        SELECT eligible.*,
+          COALESCE(SUM(ticket_count) OVER (
+            ORDER BY user_id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ), 0)::bigint + 1 AS start_ticket,
+          SUM(ticket_count) OVER (ORDER BY user_id ROWS UNBOUNDED PRECEDING)::bigint
+            AS end_ticket
+        FROM eligible
+      )
+      SELECT ticket_no, r.user_id::text AS user_id,
+        r.display_name, r.name, r.phone
+      FROM ranked r
+      CROSS JOIN LATERAL generate_series(${seriesFrom}, ${seriesTo}) ticket_no
+      WHERE r.end_ticket > ${cursor} AND ${searchFilter}
+      ORDER BY ticket_no ASC
+      LIMIT ${limit + 1}
+    `);
+        const page = rows.slice(0, limit);
+        return {
+            nextCursor: rows.length > limit
+                ? page[page.length - 1]?.ticket_no.toString() ?? null
+                : null,
+            items: page.map((row) => ({
+                ticketNumber: row.ticket_no.toString(),
+                userId: row.user_id,
+                name: row.display_name?.trim() || row.name?.trim() || 'Пользователь',
+                phone: row.phone?.trim() || '',
+            })),
+        };
+    }
+    async listRaffleSnapshotTickets(query) {
+        const snapshotId = query.snapshotId;
+        await this.raffleSnapshotSummary(snapshotId);
+        const limit = Math.min(query.limit ?? 50, 100);
+        const cursorText = query.cursor?.trim() || '0';
+        if (!/^\d{1,30}$/.test(cursorText))
+            throw new common_2.BadRequestException('Некорректный курсор билета');
+        const cursor = BigInt(cursorText);
+        const search = query.search?.trim() ?? '';
+        const number = /^#?\d{1,30}$/.test(search) ? BigInt(search.replace(/^#/, '')) : null;
+        const like = `%${search}%`;
+        const rows = await this.prisma.$queryRaw(client_1.Prisma.sql `
+      SELECT ticket_no, p."user_id"::text AS user_id, p.name, p.phone
+      FROM "raffle_snapshot_participants" p
+      CROSS JOIN LATERAL generate_series(
+        ${number == null ? client_1.Prisma.sql `GREATEST(p."first_ticket", ${cursor + 1n})` : number},
+        ${number == null ? client_1.Prisma.sql `p."last_ticket"` : number}
+      ) ticket_no
+      WHERE p."snapshot_id" = ${snapshotId}::uuid
+        AND p."last_ticket" > ${cursor}
+        AND ${number == null && search
+            ? client_1.Prisma.sql `(p.name ILIKE ${like} OR p.phone ILIKE ${like})`
+            : number == null ? client_1.Prisma.sql `TRUE` : client_1.Prisma.sql `${number} BETWEEN p."first_ticket" AND p."last_ticket"`}
+      ORDER BY ticket_no ASC LIMIT ${limit + 1}
+    `);
+        const page = rows.slice(0, limit);
+        return {
+            nextCursor: rows.length > limit ? page[page.length - 1]?.ticket_no.toString() ?? null : null,
+            items: page.map((row) => ({
+                ticketNumber: row.ticket_no.toString(), userId: row.user_id, name: row.name, phone: row.phone,
             })),
         };
     }
@@ -2395,7 +3002,10 @@ let AdminService = class AdminService {
         if (listing.photos.length === 0) {
             throw new common_2.BadRequestException(listings_service_1.LISTING_PHOTO_REQUIRED);
         }
-        if (!(0, listing_publication_1.isListingReadyForPublication)(listing)) {
+        if (!(0, listing_publication_1.isListingReadyForPublication)({
+            ...listing,
+            phone: (0, listing_contact_rollout_1.resolveListingContactPhone)(listing.phone, listing.owner?.phone),
+        })) {
             throw new common_2.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
         const now = new Date();
@@ -2437,6 +3047,7 @@ let AdminService = class AdminService {
                 status: 'approved',
             },
         });
+        this.adminDashboardSignal?.changed('listings');
         return {
             source: 'timeweb',
             listing: (0, serializers_1.serializeListing)(updated),
@@ -2481,6 +3092,7 @@ let AdminService = class AdminService {
                 status: 'rejected',
             },
         });
+        this.adminDashboardSignal?.changed('listings');
         return {
             source: 'timeweb',
             listing: (0, serializers_1.serializeListing)(updated),
@@ -2518,6 +3130,7 @@ let AdminService = class AdminService {
                 },
             },
         });
+        this.adminDashboardSignal?.changed('listings');
         return {
             source: 'timeweb',
             listing: (0, serializers_1.serializeListing)(updated),
@@ -2561,9 +3174,54 @@ let AdminService = class AdminService {
             },
         });
         await this.storageService.deleteListingPhotosForListings([id]);
+        this.adminDashboardSignal?.changed('listings');
         return {
             source: 'timeweb',
             listing: (0, serializers_1.serializeListing)(updated),
+        };
+    }
+    async permanentlyDeleteListing(id, authUser) {
+        const listing = await this.prisma.listing.findUnique({
+            where: { id },
+            select: {
+                id: true,
+                ownerId: true,
+                title: true,
+                status: true,
+                deletedAt: true,
+            },
+        });
+        if (!listing) {
+            throw new common_2.NotFoundException('Объявление не найдено');
+        }
+        if (listing.status !== client_1.ListingStatus.DELETED || !listing.deletedAt) {
+            throw new common_2.BadRequestException('Навсегда можно удалить только объявление из раздела «Удалённые»');
+        }
+        const deletedAt = listing.deletedAt.toISOString();
+        await this.storageService.deleteListingPhotosForListings([id]);
+        await this.prisma.$transaction(async (tx) => {
+            await tx.auditLog.create({
+                data: {
+                    actorUserId: authUser.userId,
+                    actorRole: 'admin',
+                    action: 'listing.permanently_delete',
+                    entityType: 'listing',
+                    entityId: id,
+                    oldData: {
+                        ownerId: listing.ownerId,
+                        title: listing.title,
+                        status: listing.status,
+                        deletedAt,
+                    },
+                },
+            });
+            await tx.listing.delete({ where: { id } });
+        });
+        this.adminDashboardSignal?.changed('listings');
+        return {
+            source: 'timeweb',
+            deleted: true,
+            id,
         };
     }
     async deleteReview(id, authUser) {
@@ -2651,7 +3309,7 @@ let AdminService = class AdminService {
             ...(hasTo ? { lte: to } : {}),
         };
     }
-    resolveAnalyticsRange(query) {
+    resolveAnalyticsRange(query, now = new Date()) {
         const explicit = this.resolveRange({
             from: query.from,
             to: query.to,
@@ -2659,11 +3317,11 @@ let AdminService = class AdminService {
         if (explicit?.gte && explicit.lte) {
             return explicit;
         }
-        const now = new Date();
         const period = (query.period ?? 'month').trim().toLowerCase();
-        let start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        const calendar = (0, exports.moscowCalendarBounds)(now);
+        let start = calendar.monthStart;
         if (period === 'day') {
-            start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+            start = calendar.dayStart;
         }
         else if (period === 'week') {
             start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -2673,13 +3331,12 @@ let AdminService = class AdminService {
             lte: explicit?.lte ?? now,
         };
     }
-    resolvePointsPurchasesRange(query) {
+    resolvePointsPurchasesRange(query, now = new Date()) {
         const explicit = this.resolveRange({
             from: query.from,
             to: query.to,
         });
-        const now = new Date();
-        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        const monthStart = (0, exports.moscowCalendarBounds)(now).monthStart;
         return {
             fromDate: explicit?.gte ?? monthStart,
             toDate: explicit?.lte ?? now,
@@ -2690,6 +3347,10 @@ let AdminService = class AdminService {
             client_1.Prisma.sql `p."provider" = ${client_1.PaymentProvider.YOOKASSA}::"PaymentProvider"`,
             client_1.Prisma.sql `p."status" = ${client_1.PaymentStatus.SUCCEEDED}::"PaymentStatus"`,
             client_1.Prisma.sql `p."credited_at" IS NOT NULL`,
+            client_1.Prisma.sql `p."is_test" = false`,
+            client_1.Prisma.sql `LOWER(COALESCE(p."metadata"->>'test', 'false')) <> 'true'`,
+            client_1.Prisma.sql `LOWER(COALESCE(p."metadata"->>'testMode', 'false')) <> 'true'`,
+            client_1.Prisma.sql `LOWER(COALESCE(p."metadata"->>'live', 'true')) <> 'false'`,
             dateColumn === 'credited_at'
                 ? client_1.Prisma.sql `p."credited_at" >= ${fromDate}`
                 : client_1.Prisma.sql `p."created_at" >= ${fromDate}`,
@@ -2848,11 +3509,13 @@ exports.AdminService = AdminService = __decorate([
     (0, common_2.Injectable)(),
     __param(6, (0, common_1.Optional)()),
     __param(6, (0, common_1.Inject)(saved_search_alerts_service_1.SavedSearchAlertsService)),
+    __param(8, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         app_visits_service_1.AppVisitsService,
         notifications_service_1.NotificationsService,
         reviews_service_1.ReviewsService,
         storage_service_1.StorageService,
-        user_blocks_service_1.UserBlocksService, Object, account_deletion_service_1.AccountDeletionService])
+        user_blocks_service_1.UserBlocksService, Object, account_deletion_service_1.AccountDeletionService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], AdminService);
 //# sourceMappingURL=admin.service.js.map

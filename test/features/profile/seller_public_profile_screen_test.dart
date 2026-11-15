@@ -100,6 +100,25 @@ void main() {
     expect(find.text('ID скопирован'), findsOneWidget);
   });
 
+  testWidgets('admin profile shows email and contact verification statuses',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildApp(
+        listings: _FakeSellerListingsService(),
+        showAdminFields: true,
+        initialSellerPhone: '79991112233',
+        initialSellerEmail: 'member@example.com',
+        initialPhoneVerified: true,
+        initialEmailVerified: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+        find.textContaining('+7 999 111 22 33 · Подтверждён'), findsOneWidget);
+    expect(find.text('member@example.com · Не подтверждён'), findsOneWidget);
+  });
+
   testWidgets('regular user does not see seller userId copy button',
       (tester) async {
     await tester.pumpWidget(
@@ -248,7 +267,41 @@ void main() {
     expect(find.text('Дверь Honda'), findsNothing);
   });
 
-  testWidgets('normalized public phone keeps call action available',
+  testWidgets('listing context keeps call action available', (tester) async {
+    final listings = _FakeSellerListingsService();
+    await tester.pumpWidget(
+      _buildApp(
+        listings: listings,
+        profile: _NormalizedPhoneProfileService(),
+        initialListingId: 'listing-1',
+        initialHasCallContact: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Позвонить'), findsOneWidget);
+    expect(find.text('Телефон скрыт'), findsNothing);
+
+    await tester.tap(find.text('Позвонить'));
+    await tester.pumpAndSettle();
+    expect(listings.callContactRequests, <String>['listing-1']);
+  });
+
+  testWidgets('seller without a phone does not show a broken call action',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildApp(
+        listings: _FakeSellerListingsService(),
+        profile: _NoPhoneProfileService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Позвонить'), findsNothing);
+    expect(find.text('Написать'), findsOneWidget);
+  });
+
+  testWidgets('public account phone is not used without listing context',
       (tester) async {
     await tester.pumpWidget(
       _buildApp(
@@ -258,8 +311,40 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.text('Позвонить'), findsNothing);
+  });
+
+  testWidgets('direct profile calls only a unique active listing contact',
+      (tester) async {
+    final listings = _FakeSellerListingsService();
+    await tester.pumpWidget(
+      _buildApp(
+        listings: listings,
+        profile: _UniqueListingPhoneProfileService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
     expect(find.text('Позвонить'), findsOneWidget);
-    expect(find.text('Телефон скрыт'), findsNothing);
+    await tester.tap(find.text('Позвонить'));
+    await tester.pumpAndSettle();
+    expect(listings.ownerCallContactRequests, <String>['seller-1']);
+  });
+
+  testWidgets('chat listing context resolves call availability by listing id',
+      (tester) async {
+    final listings = _FakeSellerListingsService(
+      initialItems: <Listing>[_listing('listing-1', 'Объявление')],
+    );
+    await tester.pumpWidget(
+      _buildApp(
+        listings: listings,
+        initialListingId: 'listing-1',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Позвонить'), findsOneWidget);
   });
 }
 
@@ -276,6 +361,13 @@ Widget _buildApp({
   _FakeAuthService? auth,
   ProfileService? profile,
   String sellerId = 'seller-1',
+  String initialListingId = '',
+  bool? initialHasCallContact,
+  bool showAdminFields = false,
+  String initialSellerPhone = '',
+  String initialSellerEmail = '',
+  bool initialPhoneVerified = false,
+  bool initialEmailVerified = false,
 }) {
   return MultiProvider(
     providers: [
@@ -292,6 +384,13 @@ Widget _buildApp({
       home: SellerPublicProfileScreen(
         sellerId: sellerId,
         initialSellerName: 'Продавец',
+        initialListingId: initialListingId,
+        initialHasCallContact: initialHasCallContact,
+        showAdminFields: showAdminFields,
+        initialSellerPhone: initialSellerPhone,
+        initialSellerEmail: initialSellerEmail,
+        initialPhoneVerified: initialPhoneVerified,
+        initialEmailVerified: initialEmailVerified,
       ),
     ),
   );
@@ -308,6 +407,28 @@ class _FakeSellerListingsService extends ListingsService {
   Completer<List<Listing>>? loadMoreCompleter;
   final List<Map<String, dynamic>> publicOwnerQueries =
       <Map<String, dynamic>>[];
+  final List<String> callContactRequests = <String>[];
+  final List<String> ownerCallContactRequests = <String>[];
+
+  @override
+  Future<String> getCallContact(String listingId) async {
+    callContactRequests.add(listingId);
+    return '79281234567';
+  }
+
+  @override
+  Future<String> getOwnerCallContact(String ownerId) async {
+    ownerCallContactRequests.add(ownerId);
+    return '79281234567';
+  }
+
+  @override
+  Future<Listing?> getListingById(String id) async {
+    for (final item in _items) {
+      if (item.id == id) return item;
+    }
+    return _listing(id, 'Объявление');
+  }
 
   List<Listing> get itemsForTest => List<Listing>.from(_items);
 
@@ -445,6 +566,41 @@ class _NormalizedPhoneProfileService extends _FakeProfileService {
       'created_at': '2026-08-12T10:00:00.000Z',
       'active_listings_count': 2,
       'archived_listings_count': 2,
+    };
+  }
+}
+
+class _NoPhoneProfileService extends _FakeProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{
+      'id': uid,
+      'display_name': 'Продавец без телефона',
+      'avatar_url': '',
+      'created_at': '2026-08-12T10:00:00.000Z',
+      'active_listings_count': 2,
+      'archived_listings_count': 2,
+    };
+  }
+}
+
+class _UniqueListingPhoneProfileService extends _FakeProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{
+      'id': uid,
+      'display_name': 'Продавец',
+      'avatar_url': '',
+      'created_at': '2026-08-12T10:00:00.000Z',
+      'active_listings_count': 2,
+      'archived_listings_count': 0,
+      'has_unique_call_contact': true,
     };
   }
 }

@@ -149,6 +149,39 @@ test('loginPhone works with phone and password without phone verification', asyn
   assert.equal(response.auth.refresh_token, 'refresh-token');
 });
 
+test('legacy email signup treats case and surrounding spaces as one address', async () => {
+  let capturedWhere: unknown;
+  const service = createService({
+    user: {
+      findFirst: async ({ where }: { where: unknown }) => {
+        capturedWhere = where;
+        return baseActiveUser({ email: 'member@example.com' });
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      service.signup({
+        email: ' Member@Example.com ',
+        password: 'password-123',
+        acceptedLegal: true,
+        acceptedPersonalData: true,
+      }),
+    (error) => error instanceof HttpException && error.getStatus() === 409,
+  );
+  assert.deepEqual(capturedWhere, {
+    OR: [
+      {
+        email: {
+          equals: 'member@example.com',
+          mode: 'insensitive',
+        },
+      },
+    ],
+  });
+});
+
 test('loginPhone does not require verificationCheckId for password login', async () => {
   const service = createService({
     user: {
@@ -425,7 +458,10 @@ test('signupPhone allows expired temporary BlockedIdentity and lifts it idempote
         if (where.id === createdUser.id) return createdUser;
         return null;
       },
-      create: async () => createdUser,
+      create: async ({ data }: any) => {
+        assert.equal(data.registrationMethod, 'PHONE');
+        return createdUser;
+      },
     },
     userSession: {
       create: async () => undefined,
@@ -494,6 +530,76 @@ test('getMe does not crash if wallet has issue', async () => {
   });
 
   assert.equal(response.user.id, 'user-1');
+});
+
+test('email passwordless registration uses the common welcome bonus once per User.id', async () => {
+  let storedUser: ReturnType<typeof baseActiveUser> | null = null;
+  const walletCalls: string[] = [];
+  const tx: any = {
+    blockedIdentity: {
+      findFirst: async () => null,
+      updateMany: async () => ({ count: 0 }),
+    },
+    user: {
+      findFirst: async () => storedUser,
+      create: async ({ data }: any) => {
+        assert.equal(data.registrationMethod, 'EMAIL');
+        storedUser = baseActiveUser({
+          ...data,
+          emailVerifiedAt: data.emailVerifiedAt,
+          phone: null,
+          phoneVerified: false,
+          adminProfile: null,
+        });
+        return storedUser;
+      },
+      findUnique: async ({ where }: any) =>
+        storedUser?.id === where.id ? storedUser : null,
+      findUniqueOrThrow: async () => storedUser,
+      update: async ({ data }: any) => {
+        assert.ok(storedUser);
+        storedUser = { ...storedUser, ...data };
+        return storedUser;
+      },
+    },
+    userConsent: {
+      createMany: async () => ({ count: 2 }),
+    },
+    userSession: {
+      create: async () => undefined,
+    },
+    adminUser: {
+      upsert: async () => undefined,
+    },
+    $queryRaw: async () => [],
+  };
+  const service = createService(tx, {
+    walletService: {
+      ensureWalletAndBonuses: async (userId) => {
+        walletCalls.push(userId);
+      },
+    },
+  });
+  const registration = {
+    displayName: 'Email User',
+    acceptedLegal: true,
+    acceptedPersonalData: true,
+  };
+
+  const first = await service.authenticateEmailPasswordless(
+    'member@example.com',
+    tx,
+    registration,
+  ) as any;
+  const second = await service.authenticateEmailPasswordless(
+    'member@example.com',
+    tx,
+  ) as any;
+
+  const createdUserId = first.user.id as string;
+  assert.equal(second.user.id, createdUserId);
+  assert.equal((storedUser as any)?.id, createdUserId);
+  assert.deepEqual(walletCalls, [createdUserId]);
 });
 
 test('revokeOtherSessions revokes only current user sessions except current session', async () => {

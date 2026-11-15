@@ -24,9 +24,12 @@ const moderate_report_dto_1 = require("./dto/moderate-report.dto");
 const list_admin_reports_dto_1 = require("./dto/list-admin-reports.dto");
 const reports_service_1 = require("./reports.service");
 let ReportsController = class ReportsController {
-    constructor(reportsService, chatsGateway, rateLimitService) {
+    constructor(reportsService, 
+    // Kept in the constructor for backward-compatible module wiring. Realtime
+    // delivery is owned by NotificationsService and must not be emitted twice.
+    _chatsGateway, rateLimitService) {
         this.reportsService = reportsService;
-        this.chatsGateway = chatsGateway;
+        this._chatsGateway = _chatsGateway;
         this.rateLimitService = rateLimitService;
     }
     async create(request, authUser, body) {
@@ -34,23 +37,7 @@ let ReportsController = class ReportsController {
             limit: 10,
             windowMs: 60 * 1000,
         });
-        return this.reportsService.create(authUser, body).then((result) => {
-            const notifications = result['admin_notifications'];
-            if (Array.isArray(notifications)) {
-                for (const item of notifications) {
-                    if (!item || typeof item !== 'object') {
-                        continue;
-                    }
-                    const notification = item;
-                    const userId = `${notification['user_id'] ?? ''}`.trim();
-                    if (userId.length === 0) {
-                        continue;
-                    }
-                    this.chatsGateway.emitNotificationNew(notification, userId);
-                }
-            }
-            return result;
-        });
+        return this.reportsService.create(authUser, body);
     }
 };
 exports.ReportsController = ReportsController;
@@ -78,10 +65,13 @@ let AdminReportsController = class AdminReportsController {
         return this.reportsService.listForAdmin(query);
     }
     resolve(reportId, authUser, body) {
-        return this.reportsService.resolve(reportId, authUser, body.comment);
+        return this.reportsService.resolve(reportId, authUser, body.comment, body.decision);
     }
     reject(reportId, authUser, body) {
-        return this.reportsService.reject(reportId, authUser, body.comment);
+        return this.reportsService.reject(reportId, authUser, body.comment, body.decision);
+    }
+    startReview(reportId, authUser) {
+        return this.reportsService.startReview(reportId, authUser);
     }
     reopen(reportId, authUser) {
         return this.reportsService.reopen(reportId, authUser);
@@ -116,6 +106,14 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, moderate_report_dto_1.ModerateReportDto]),
     __metadata("design:returntype", void 0)
 ], AdminReportsController.prototype, "reject", null);
+__decorate([
+    (0, common_1.Patch)(':id/start'),
+    __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], AdminReportsController.prototype, "startReview", null);
 __decorate([
     (0, common_1.Patch)(':id/reopen'),
     __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),

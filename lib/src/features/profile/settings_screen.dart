@@ -299,6 +299,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final recoveryEmail = (user.email ?? '').trim();
     final hasRecoveryEmail = recoveryEmail.isNotEmpty &&
         !recoveryEmail.endsWith('@phone.atta.local');
+    final hasPhone = user.phone?.trim().isNotEmpty == true;
     final securityComplete = user.phoneVerified && user.emailVerified;
     final securityColor =
         securityComplete ? Colors.green.shade700 : Colors.orange.shade700;
@@ -346,11 +347,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: securityColor,
             title: 'Безопасность',
             titleColor: securityColor,
-            subtitle: !hasRecoveryEmail
-                ? 'Добавьте email для восстановления доступа'
-                : user.emailVerified
-                    ? 'Email для восстановления доступа подключён'
-                    : 'Подтвердите email для восстановления доступа',
+            subtitle: !hasPhone
+                ? 'Добавьте номер телефона как способ входа'
+                : !hasRecoveryEmail
+                    ? 'Добавьте email как способ входа'
+                    : user.emailVerified
+                        ? 'Телефон и email подтверждены'
+                        : 'Подтвердите email как способ входа',
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [

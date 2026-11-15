@@ -4,11 +4,41 @@ import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/listing_card.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 
 void main() {
+  testWidgets('media preview decodes network image near its rendered size',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(devicePixelRatio: 3),
+          child: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 200,
+                height: 100,
+                child: MediaPreviewBox(
+                  imageUrl: 'https://example.com/listing.jpg',
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final image = tester.widget<CachedNetworkImage>(
+      find.byType(CachedNetworkImage),
+    );
+    expect(image.memCacheWidth, 600);
+    expect(image.memCacheHeight, 300);
+  });
+
   testWidgets('listing card uses one subtle outer shadow', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -50,7 +80,48 @@ void main() {
         );
 
     expect(shadowDecorations, hasLength(1));
+    final material = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byType(ListingCard),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(material.color, Colors.white);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('listing card keeps dark surface in dark theme', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: SizedBox(
+            width: 220,
+            height: 320,
+            child: ListingCard(
+              listing: _listing(),
+              isFav: false,
+              isSeen: false,
+              reviews: _FakeReviewsService(),
+              onToggleFav: (_) {},
+              onOpen: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final material = tester.widget<Material>(
+      find
+          .descendant(
+            of: find.byType(ListingCard),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(material.color, ThemeData.dark().colorScheme.surface);
   });
 
   testWidgets('viewed badge is visible and readable', (tester) async {

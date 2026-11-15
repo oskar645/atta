@@ -230,7 +230,9 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 attempts: nextAttemptCount,
                 providerStatusCode: this.pickStatusCode(response),
                 providerStatusText: this.pickStatusText(response),
-                metadata: metadata?.passwordless ? { ...metadata, providerResponse: response } : response,
+                metadata: metadata?.passwordless || metadata?.contactLink
+                    ? { ...metadata, providerResponse: response }
+                    : response,
             }, passwordless?.tx);
             return {
                 status: 'confirmed',
@@ -247,7 +249,9 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                     status: nextStatus,
                     providerStatusCode: this.pickStatusCode(response),
                     providerStatusText: this.pickStatusText(response),
-                    metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response),
+                    metadata: (metadata?.passwordless || metadata?.contactLink
+                        ? { ...metadata, providerResponse: response }
+                        : response),
                 },
             });
             return {
@@ -266,7 +270,9 @@ let PhoneVerificationService = PhoneVerificationService_1 = class PhoneVerificat
                 status: nextStatus,
                 providerStatusCode: this.pickStatusCode(response),
                 providerStatusText: this.pickStatusText(response),
-                metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response),
+                metadata: (metadata?.passwordless || metadata?.contactLink
+                    ? { ...metadata, providerResponse: response }
+                    : response),
             },
         });
         return {

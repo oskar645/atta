@@ -16,6 +16,9 @@ const weakSecretValues = new Set([
 const envSchema = zod_1.z.object({
     NODE_ENV: zod_1.z.enum(['development', 'test', 'production']).default('development'),
     APP_ENV: zod_1.z.string().optional().default(''),
+    LISTING_CONTACT_ROLLOUT_STAGE: zod_1.z
+        .enum(['transitional', 'final'])
+        .default('transitional'),
     PORT: zod_1.z.coerce.number().int().positive().default(3000),
     CORS_ORIGIN: zod_1.z.string().default('*'),
     DATABASE_URL: zod_1.z.string().min(1),
@@ -66,6 +69,15 @@ const envSchema = zod_1.z.object({
         .optional()
         .transform((value) => value === 'true'),
     FCM_SERVICE_ACCOUNT_PATH: zod_1.z.string().optional().default(''),
+    APP_DOWNLOAD_SYNC_INTERVAL_MINUTES: zod_1.z.coerce.number().int().positive().default(360),
+    APP_DOWNLOAD_CACHE_TTL_SECONDS: zod_1.z.coerce.number().int().positive().default(43200),
+    APPLE_APP_STORE_CONNECT_ISSUER_ID: zod_1.z.string().optional().default(''),
+    APPLE_APP_STORE_CONNECT_KEY_ID: zod_1.z.string().optional().default(''),
+    APPLE_APP_STORE_CONNECT_PRIVATE_KEY_PATH: zod_1.z.string().optional().default(''),
+    APPLE_APP_STORE_CONNECT_REPORT_REQUEST_ID: zod_1.z.string().optional().default(''),
+    GOOGLE_PLAY_SERVICE_ACCOUNT_PATH: zod_1.z.string().optional().default(''),
+    GOOGLE_PLAY_REPORT_BUCKET: zod_1.z.string().optional().default(''),
+    GOOGLE_PLAY_PACKAGE_NAME: zod_1.z.string().optional().default(''),
     ADMIN_PHONE_NUMBERS: zod_1.z.string().optional().default(''),
     WALLET_TIME_ZONE: zod_1.z.string().min(1).default('Europe/Moscow'),
     YOOKASSA_SHOP_ID: zod_1.z.string().optional().default('1425242'),

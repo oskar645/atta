@@ -198,6 +198,17 @@ class ListingsService {
   Future<List<Listing>>? _myListingsInFlight;
   String? _myListingsCacheUserId;
   String? _myListingsInFlightUserId;
+
+  Future<String> getCallContact(String listingId) async {
+    final response = await _api.getCallContact(listingId);
+    return (response['phone'] ?? '').toString().trim();
+  }
+
+  Future<String> getOwnerCallContact(String ownerId) async {
+    final response = await _api.getOwnerCallContact(ownerId);
+    return (response['phone'] ?? '').toString().trim();
+  }
+
   Object? _lastMyListingsError;
   String? _lastMyListingsErrorUserId;
   final Map<String, List<Listing>> _ownerListingsCache =

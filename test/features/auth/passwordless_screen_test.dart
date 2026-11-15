@@ -1,8 +1,10 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:async';
 
+import 'package:atta/src/features/auth/account_recovery_screen.dart';
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:atta/src/features/auth/passwordless_screen.dart';
+import 'package:atta/src/features/auth/public_support_screen.dart';
 import 'package:atta/src/features/auth/terms_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:flutter/gestures.dart';
@@ -106,6 +108,24 @@ void main() {
     await dispose(tester);
   });
 
+  testWidgets('phone entry keeps recovery and public support actions',
+      (tester) async {
+    await mount(tester, FakePasswordlessAuth(now: DateTime.now));
+
+    expect(find.byKey(const ValueKey('account-recovery-link')), findsOneWidget);
+    expect(find.byKey(const ValueKey('public-support-link')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('account-recovery-link')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AccountRecoveryScreen), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('public-support-link')));
+    await tester.pumpAndSettle();
+    expect(find.byType(PublicSupportScreen), findsOneWidget);
+  });
+
   testWidgets('manual digits and deletion keep immutable country prefix',
       (tester) async {
     final auth = FakePasswordlessAuth(now: DateTime.now);
@@ -135,7 +155,7 @@ void main() {
     for (var attempt = 0; attempt < 2; attempt++) {
       await tester.tap(find.text('Закрытое действие'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Войти'));
+      await tester.tap(find.byKey(const ValueKey('guest-auth-phone')));
       await tester.pumpAndSettle();
       expect(tester.testTextInput.isVisible, isFalse);
       await tester.enterText(find.byType(TextField), '9281234567');
@@ -184,7 +204,7 @@ void main() {
   }
 
   testWidgets(
-      'guest sheet has one entry; successful login resumes original action',
+      'guest sheet phone entry resumes original action after successful login',
       (tester) async {
     final auth = FakePasswordlessAuth(now: DateTime.now)..status = 'confirmed';
     await mount(tester, auth, guest: true);
@@ -192,7 +212,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Создать аккаунт'), findsNothing);
     expect(find.text('Уже есть аккаунт? Войти'), findsNothing);
-    await tester.tap(find.text('Войти'));
+    expect(find.text('Войти по звонку'), findsOneWidget);
+    expect(find.text('Войти по почте'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('guest-auth-phone')));
     await tester.pumpAndSettle();
     expect(find.byType(PasswordlessScreen), findsOneWidget);
     await start(tester);
@@ -279,7 +301,7 @@ void main() {
     await mount(tester, auth, guest: true);
     await tester.tap(find.text('Закрытое действие'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Войти'));
+    await tester.tap(find.byKey(const ValueKey('guest-auth-phone')));
     await tester.pumpAndSettle();
     await start(tester);
     await tester.pump(const Duration(seconds: 5));

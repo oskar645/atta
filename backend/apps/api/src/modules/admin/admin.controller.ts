@@ -451,6 +451,14 @@ export class AdminController {
     });
   }
 
+  @Delete('listings/:id/permanent')
+  permanentlyDeleteListing(
+    @Param('id') id: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.adminService.permanentlyDeleteListing(id, authUser);
+  }
+
   @Delete('reviews/:id')
   deleteReview(
     @Param('id') id: string,

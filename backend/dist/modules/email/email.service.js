@@ -46,6 +46,15 @@ let EmailService = class EmailService {
             html: this.template('Код подтверждения', `<div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:24px 0">${displayCode}</div><p>Код действует 10 минут.</p><p style="color:#667085">Если вы не запрашивали этот код, просто проигнорируйте письмо.<br>Никому не сообщайте код.</p>`),
         });
     }
+    async sendLoginCode(params) {
+        const displayCode = this.formatCode(params.code);
+        return this.send({
+            to: params.to,
+            subject: 'Код для входа в ATTA',
+            text: `ATTA\n\nВаш код для входа в ATTA\n\n${displayCode}\n\nКод действует 10 минут.\n\nЕсли вы не запрашивали этот код, просто проигнорируйте письмо.\nНикому не сообщайте код.`,
+            html: this.template('Ваш код для входа в ATTA', `<div style="font-size:32px;font-weight:700;letter-spacing:8px;margin:24px 0">${displayCode}</div><p>Код действует 10 минут.</p><p style="color:#667085">Если вы не запрашивали этот код, просто проигнорируйте письмо.<br>Никому не сообщайте код.</p>`),
+        });
+    }
     async verify() {
         this.ensureAvailable();
         return this.transporter.verify();

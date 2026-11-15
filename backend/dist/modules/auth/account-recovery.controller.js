@@ -23,10 +23,10 @@ let RecoveryEmailController = class RecoveryEmailController {
         this.recovery = recovery;
     }
     start(user, body, req) {
-        return this.recovery.startRecoveryEmail(user.userId, body.email, this.source(req));
+        return this.recovery.startRecoveryEmail(user.userId, body.email, this.source(req), user.sessionId);
     }
     verify(user, body) {
-        return this.recovery.verifyRecoveryEmail(user.userId, body.challengeId, body.code);
+        return this.recovery.verifyRecoveryEmail(user.userId, body.challengeId, body.code, user.sessionId);
     }
     source(req) {
         return { ip: req?.ip?.toString(), deviceId: req?.headers?.['x-device-id']?.toString() };

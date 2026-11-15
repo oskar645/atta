@@ -18,6 +18,9 @@ const weakSecretValues = new Set([
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   APP_ENV: z.string().optional().default(''),
+  LISTING_CONTACT_ROLLOUT_STAGE: z
+    .enum(['transitional', 'final'])
+    .default('transitional'),
   PORT: z.coerce.number().int().positive().default(3000),
   CORS_ORIGIN: z.string().default('*'),
   DATABASE_URL: z.string().min(1),

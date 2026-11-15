@@ -504,18 +504,17 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
   }
 
   Future<void> _editMessage(Map<String, dynamic> message) async {
-    final controller = TextEditingController(
-      text: (message['text'] ?? '').toString(),
-    );
+    var draft = (message['text'] ?? '').toString();
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Изменить сообщение'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: draft,
           autofocus: true,
           minLines: 2,
           maxLines: 6,
+          onChanged: (value) => draft = value,
         ),
         actions: [
           TextButton(
@@ -523,13 +522,12 @@ class _AdminTicketScreenState extends State<AdminTicketScreen> {
             child: const Text('Отмена'),
           ),
           FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            onPressed: () => Navigator.of(dialogContext).pop(draft),
             child: const Text('Сохранить'),
           ),
         ],
       ),
     );
-    controller.dispose();
     if (!mounted || value == null || value.trim().isEmpty) {
       return;
     }

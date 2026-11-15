@@ -58,8 +58,7 @@ void main() {
 
     final title = tester.widget<Text>(find.text('Безопасность'));
     expect(title.style?.color, Colors.green.shade700);
-    expect(find.text('Email для восстановления доступа подключён'),
-        findsOneWidget);
+    expect(find.text('Телефон и email подтверждены'), findsOneWidget);
   });
 
   testWidgets('settings asks to confirm an unverified recovery email',
@@ -70,8 +69,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('Подтвердите email для восстановления доступа'),
-        findsOneWidget);
+    expect(find.text('Подтвердите email как способ входа'), findsOneWidget);
   });
 
   testWidgets('settings saves name without phone', (tester) async {
@@ -165,25 +163,20 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('start-phone-change')));
     await tester.pumpAndSettle();
 
-    expect(auth.startedPurpose, 'change_phone');
     expect(auth.startedPhone, '79887654321');
     await tester.tap(find.byKey(const ValueKey('check-phone-change')));
     await tester.pumpAndSettle();
 
-    expect(profile.lastUpdate, {
-      'phone': '79887654321',
-      'verificationCheckId': 'change-check-1',
-    });
-    expect(auth.checkedPurpose, 'change_phone');
+    expect(auth.completedPhone, '79887654321');
+    expect(auth.completedVerificationId, 'change-check-1');
     expect(find.byType(SecurityScreen), findsOneWidget);
     expect(find.text('+7 988 765 43 21'), findsOneWidget);
   });
 
   testWidgets('occupied phone has a clear error and keeps old phone',
       (tester) async {
-    final auth = _FakeAuthService();
-    final profile = _FakeProfileService(
-      updateError: const ApiException(
+    final auth = _FakeAuthService(
+      startError: const ApiException(
         'Phone already exists',
         code: 'PHONE_ALREADY_IN_USE',
       ),
@@ -191,7 +184,7 @@ void main() {
     await tester.pumpWidget(MultiProvider(
       providers: [
         Provider<AuthService>.value(value: auth),
-        Provider<ProfileService>.value(value: profile),
+        Provider<ProfileService>.value(value: _FakeProfileService()),
       ],
       child: const MaterialApp(home: ChangePhoneScreen()),
     ));
@@ -200,9 +193,6 @@ void main() {
         find.byKey(const ValueKey('new-phone')), '988 765-43-21');
     await tester.tap(find.byKey(const ValueKey('start-phone-change')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('check-phone-change')));
-    await tester.pumpAndSettle();
-
     expect(find.text('Этот номер уже привязан к другому аккаунту.'),
         findsOneWidget);
     expect(auth.phone, '+79991234567');
@@ -307,8 +297,8 @@ class _FakeAuthService extends AuthService {
   int recoveryStarts = 0;
   String phone = '+79991234567';
   String? startedPhone;
-  String? startedPurpose;
-  String? checkedPurpose;
+  String? completedPhone;
+  String? completedVerificationId;
 
   @override
   Future<Map<String, dynamic>> startRecoveryEmail(String email) async {
@@ -326,13 +316,9 @@ class _FakeAuthService extends AuthService {
       {String? displayName, String? photoUrl}) async {}
 
   @override
-  Future<PhoneVerificationStartResult> startPhoneVerification({
-    required String phone,
-    required String purpose,
-  }) async {
+  Future<PhoneVerificationStartResult> startLinkPhone(String phone) async {
     if (startError != null) throw startError!;
     startedPhone = phone;
-    startedPurpose = purpose;
     return const PhoneVerificationStartResult(
       verificationId: 'change-check-1',
       callToPhone: '78005553535',
@@ -341,17 +327,21 @@ class _FakeAuthService extends AuthService {
   }
 
   @override
-  Future<PhoneVerificationCheckResult> checkPhoneVerification({
-    required String phone,
-    required String verificationId,
-    required String purpose,
-  }) async {
-    checkedPurpose = purpose;
+  Future<PhoneVerificationCheckResult> completeLinkPhone(
+    String phone,
+    String verificationId,
+  ) async {
+    completedPhone = phone;
+    completedVerificationId = verificationId;
+    this.phone = phone;
     return const PhoneVerificationCheckResult(
       status: 'confirmed',
       message: '',
     );
   }
+
+  @override
+  Future<AuthUser?> revalidateCurrentUser() async => currentUser;
 
   @override
   Future<AuthUser?> syncCurrentUserFromProfile(

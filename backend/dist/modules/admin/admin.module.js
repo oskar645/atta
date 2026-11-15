@@ -18,6 +18,10 @@ const user_blocks_module_1 = require("../user-blocks/user-blocks.module");
 const support_module_1 = require("../support/support.module");
 const admin_controller_1 = require("./admin.controller");
 const admin_service_1 = require("./admin.service");
+const admin_app_downloads_controller_1 = require("../app-downloads/admin-app-downloads.controller");
+const admin_app_downloads_service_1 = require("../app-downloads/admin-app-downloads.service");
+const apple_app_downloads_source_1 = require("../app-downloads/apple-app-downloads.source");
+const google_play_downloads_source_1 = require("../app-downloads/google-play-downloads.source");
 let AdminModule = class AdminModule {
 };
 exports.AdminModule = AdminModule;
@@ -32,8 +36,13 @@ exports.AdminModule = AdminModule = __decorate([
             support_module_1.SupportModule,
             user_blocks_module_1.UserBlocksModule,
         ],
-        controllers: [admin_controller_1.AdminController],
-        providers: [admin_service_1.AdminService],
+        controllers: [admin_controller_1.AdminController, admin_app_downloads_controller_1.AdminAppDownloadsController],
+        providers: [
+            admin_service_1.AdminService,
+            admin_app_downloads_service_1.AdminAppDownloadsService,
+            apple_app_downloads_source_1.AppleAppDownloadsSource,
+            google_play_downloads_source_1.GooglePlayDownloadsSource,
+        ],
         exports: [admin_service_1.AdminService],
     })
 ], AdminModule);

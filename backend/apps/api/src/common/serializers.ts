@@ -11,6 +11,10 @@ import {
 } from '@prisma/client';
 import { env } from '../config/env';
 import { normalizeRussianPhone } from './phone';
+import {
+  isFinalListingContactRollout,
+  resolveListingContactPhone,
+} from './listing-contact-rollout';
 import { buildReferralCode } from './referral-code';
 
 type SerializedUser = {
@@ -257,7 +261,7 @@ export const serializeUser = (
   options?: {
     includePrivate?: boolean;
   },
-): SerializedUser | Omit<SerializedUser, 'email' | 'phone' | 'blocked_at' | 'block_reason' | 'deleted_at'> => {
+): SerializedUser | Omit<SerializedUser, 'email' | 'phone' | 'normalized_phone' | 'normalizedPhone' | 'blocked_at' | 'block_reason' | 'deleted_at'> => {
   if (user.deletedAt || user.status === 'DELETED') {
     user = { ...user, displayName: 'Удалённый пользователь', name: 'Удалённый пользователь',
       phone: null, email: null, phoneVerified: false, avatarUrl: null, photoUrl: null,
@@ -289,8 +293,12 @@ export const serializeUser = (
       }),
       user.updatedAt,
     ),
-    normalized_phone: user.phone,
-    normalizedPhone: user.phone,
+    ...(!isFinalListingContactRollout()
+      ? {
+          normalized_phone: user.phone,
+          normalizedPhone: user.phone,
+        }
+      : {}),
     phone_verified: user.phoneVerified,
     phoneVerified: user.phoneVerified,
     isPhoneVerified: user.phoneVerified,
@@ -318,6 +326,8 @@ export const serializeUser = (
     ...base,
     email: user.email,
     phone: user.phone,
+    normalized_phone: user.phone,
+    normalizedPhone: user.phone,
     blocked_at: toIsoString(user.blockedAt),
     block_reason: user.blockReason,
     deleted_at: toIsoString(user.deletedAt),
@@ -385,8 +395,10 @@ export const serializeListing = (
     priceReducedAt != null &&
     Date.now() - priceReducedAt.getTime() < 48 * 60 * 60 * 1000;
 
-  const fallbackPhone = listing.phone?.trim() || listing.owner?.phone?.trim() || '';
-  const normalizedPhone = normalizeRussianPhone(fallbackPhone) || fallbackPhone;
+  const normalizedPhone = resolveListingContactPhone(
+    listing.phone,
+    listing.owner?.phone,
+  );
   const publicPhone = listing.phoneHidden && options?.includePrivateContact !== true
     ? null
     : normalizedPhone;
@@ -401,6 +413,10 @@ export const serializeListing = (
     (owner as Record<string, unknown>).seller_level = ownerSellerLevel;
     (owner as Record<string, unknown>).sellerLevel = ownerSellerLevel;
   }
+  if (owner && options?.includePrivateContact === true) {
+    (owner as Record<string, unknown>).normalized_phone = listing.owner?.phone ?? null;
+    (owner as Record<string, unknown>).normalizedPhone = listing.owner?.phone ?? null;
+  }
   if (
     owner &&
     listing.phoneHidden &&
@@ -412,6 +428,8 @@ export const serializeListing = (
 
   return {
   phone: publicPhone,
+  has_call_contact: normalizedPhone.length > 0,
+  hasCallContact: normalizedPhone.length > 0,
   ...(() => {
     const activePromotions = new Map<PromotionType, Promotion>();
     for (const promotion of listing.promotions ?? []) {

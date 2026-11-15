@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var AccountDeletionService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AccountDeletionService = void 0;
@@ -16,12 +19,14 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
 const redis_service_1 = require("../redis/redis.service");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const DELETED_NAME = 'Удалённый пользователь';
 let AccountDeletionService = AccountDeletionService_1 = class AccountDeletionService {
-    constructor(prisma, storage, redis) {
+    constructor(prisma, storage, redis, adminDashboardSignal) {
         this.prisma = prisma;
         this.storage = storage;
         this.redis = redis;
+        this.adminDashboardSignal = adminDashboardSignal;
         this.logger = new common_1.Logger(AccountDeletionService_1.name);
         this.running = false;
         this.listeners = new Set();
@@ -59,6 +64,7 @@ let AccountDeletionService = AccountDeletionService_1 = class AccountDeletionSer
                             userId,
                             displayName: user.displayName.trim() || user.name.trim() || DELETED_NAME,
                             phone: user.phone?.trim() || null,
+                            email: user.emailVerifiedAt ? user.email?.trim().toLowerCase() || null : null,
                             deletedAt: now,
                         } });
                     // Keep the tombstone: finance, referrals, moderation and the peer's history reference it.
@@ -132,6 +138,7 @@ let AccountDeletionService = AccountDeletionService_1 = class AccountDeletionSer
                 throw error;
             }
         }
+        this.adminDashboardSignal?.changed('users', 'presence', 'visits', 'listings', 'usage');
         // Failures beyond this boundary must never turn committed deletion into an API failure.
         for (const listener of this.listeners) {
             try {
@@ -184,8 +191,10 @@ let AccountDeletionService = AccountDeletionService_1 = class AccountDeletionSer
 exports.AccountDeletionService = AccountDeletionService;
 exports.AccountDeletionService = AccountDeletionService = AccountDeletionService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(3, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         storage_service_1.StorageService,
-        redis_service_1.RedisService])
+        redis_service_1.RedisService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], AccountDeletionService);
 //# sourceMappingURL=account-deletion.service.js.map

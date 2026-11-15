@@ -15,6 +15,7 @@ const client_1 = require("@prisma/client");
 const serializers_1 = require("../../common/serializers");
 const seller_level_1 = require("../../common/seller-level");
 const phone_1 = require("../../common/phone");
+const listing_contact_rollout_1 = require("../../common/listing-contact-rollout");
 const env_1 = require("../../config/env");
 const prisma_service_1 = require("../prisma/prisma.service");
 const storage_service_1 = require("../storage/storage.service");
@@ -125,7 +126,7 @@ let UsersService = class UsersService {
                 if (existingUser) {
                     throw new common_1.BadRequestException('PHONE_ALREADY_REGISTERED');
                 }
-                await this.assertConfirmedPhoneChangeVerification(nextPhone, dto.verificationCheckId ?? dto.verification_check_id);
+                throw new common_1.BadRequestException('PHONE_LINK_ENDPOINT_REQUIRED');
             }
         }
         const user = await this.prisma.user.update({
@@ -233,7 +234,7 @@ let UsersService = class UsersService {
         };
     }
     async getSellerSummary(userId) {
-        const [activeListingsCount, archivedListingsCount, reviews] = await Promise.all([
+        const [activeListingsCount, archivedListingsCount, reviews, activeContacts] = await Promise.all([
             this.prisma.listing.count({
                 where: {
                     ownerId: userId,
@@ -266,11 +267,25 @@ let UsersService = class UsersService {
                     createdAt: true,
                 },
             }),
+            this.prisma.listing.findMany({
+                where: {
+                    ownerId: userId,
+                    status: client_1.ListingStatus.APPROVED,
+                    publishedAt: { not: null },
+                    deletedAt: null,
+                },
+                select: { phone: true },
+                distinct: ['phone'],
+            }),
         ]);
+        const uniqueCallContacts = new Set(activeContacts
+            .map((listing) => (0, listing_contact_rollout_1.normalizeListingContactPhone)(listing.phone))
+            .filter((phone) => phone.length > 0));
         return {
             sellerLevel: (0, seller_level_1.sellerLevelFromMetrics)(activeListingsCount, reviews, userId),
             activeListingsCount,
             archivedListingsCount,
+            hasUniqueCallContact: uniqueCallContacts.size === 1,
         };
     }
     withSellerSummary(user, summary) {
@@ -282,30 +297,9 @@ let UsersService = class UsersService {
             activeListingsCount: summary.activeListingsCount,
             archived_listings_count: summary.archivedListingsCount,
             archivedListingsCount: summary.archivedListingsCount,
+            has_unique_call_contact: summary.hasUniqueCallContact,
+            hasUniqueCallContact: summary.hasUniqueCallContact,
         };
-    }
-    async assertConfirmedPhoneChangeVerification(phone, rawCheckId) {
-        const checkId = rawCheckId?.trim() ?? '';
-        if (!checkId) {
-            throw new common_1.BadRequestException('PHONE_VERIFICATION_REQUIRED');
-        }
-        const verification = await this.prisma.phoneVerification.findFirst({
-            where: {
-                phone,
-                purpose: client_1.PhoneVerificationPurpose.CHANGE_PHONE,
-                checkId,
-                status: client_1.PhoneVerificationStatus.CONFIRMED,
-            },
-            orderBy: {
-                createdAt: 'desc',
-            },
-        });
-        if (!verification) {
-            throw new common_1.BadRequestException('PHONE_VERIFICATION_REQUIRED');
-        }
-        if (verification.expiresAt.getTime() <= Date.now()) {
-            throw new common_1.BadRequestException('PHONE_VERIFICATION_EXPIRED');
-        }
     }
 };
 exports.UsersService = UsersService;

@@ -349,6 +349,16 @@ class AdminApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> permanentlyDeleteListing(
+    String listingId,
+  ) async {
+    final response = await client.delete(
+      '/admin/listings/$listingId/permanent',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> reports({int? limit, String? cursor}) async {
     final response = await client.get(
       '/admin/reports',

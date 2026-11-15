@@ -23,6 +23,7 @@ const CODE_TTL_MS = 10 * 60_000;
 const RESEND_MS = 60_000;
 const GRANT_TTL_MS = 15 * 60_000;
 const NEUTRAL_MESSAGE = 'Если этот email был подтверждён в ATTA, мы отправили код.';
+const RECENT_AUTH_MS = 15 * 60_000;
 let AccountRecoveryService = class AccountRecoveryService {
     constructor(prisma, rateLimit, email, phoneVerification, auth) {
         this.prisma = prisma;
@@ -31,8 +32,9 @@ let AccountRecoveryService = class AccountRecoveryService {
         this.phoneVerification = phoneVerification;
         this.auth = auth;
     }
-    async startRecoveryEmail(userId, rawEmail, source = {}) {
+    async startRecoveryEmail(userId, rawEmail, source = {}, sessionId) {
         this.email.ensureAvailable();
+        await this.assertRecentAuthentication(userId, sessionId);
         const email = this.normalizeEmail(rawEmail);
         await this.limitStart('settings', email, userId, source);
         const duplicate = await this.prisma.user.findFirst({
@@ -41,7 +43,7 @@ let AccountRecoveryService = class AccountRecoveryService {
         });
         if (duplicate)
             throw new common_1.ConflictException('Этот email уже используется');
-        const challenge = await this.createChallenge(userId, client_1.EmailChallengePurpose.RECOVERY_EMAIL, email, source);
+        const challenge = await this.createChallenge(userId, client_1.EmailChallengePurpose.RECOVERY_EMAIL, email, source, (0, crypto_1.randomUUID)(), { recoveryEmail: { sessionId } });
         // A client can lose the HTTP response after SMTP has accepted the email.
         // During the cooldown, acknowledge the already-created challenge instead
         // of creating/sending another one. This also lets older clients recover by
@@ -50,8 +52,14 @@ let AccountRecoveryService = class AccountRecoveryService {
             await this.email.sendVerificationCode({ to: email, code: challenge.code });
         return this.challengeResponse(challenge.id, email, 'Код отправлен', challenge.resendAfter);
     }
-    async verifyRecoveryEmail(userId, challengeId, code) {
+    async verifyRecoveryEmail(userId, challengeId, code, sessionId) {
+        await this.assertRecentAuthentication(userId, sessionId);
         const challenge = await this.consumeCode(challengeId, code, client_1.EmailChallengePurpose.RECOVERY_EMAIL, userId);
+        const recoveryMetadata = challenge.metadata
+            ?.recoveryEmail;
+        if (!sessionId || recoveryMetadata?.sessionId !== sessionId) {
+            throw this.invalidCode();
+        }
         const previous = await this.prisma.$transaction(async (tx) => {
             const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true, emailVerifiedAt: true } });
             const duplicate = await tx.user.findFirst({ where: { email: { equals: challenge.targetEmail, mode: 'insensitive' }, id: { not: userId } }, select: { id: true } });
@@ -124,16 +132,22 @@ let AccountRecoveryService = class AccountRecoveryService {
             this.email.sendRecoveryCompleted({ to: user.email }).catch(() => undefined);
         return response;
     }
-    async createChallenge(userId, purpose, email, source, id = (0, crypto_1.randomUUID)()) {
+    async createChallenge(userId, purpose, email, source, id = (0, crypto_1.randomUUID)(), metadata = {}) {
         const latest = await this.prisma.emailChallenge.findFirst({ where: { userId, purpose, targetEmail: email }, orderBy: { createdAt: 'desc' } });
         if (latest && latest.resendAvailableAt.getTime() > Date.now()) {
             const retryAfter = Math.ceil((latest.resendAvailableAt.getTime() - Date.now()) / 1000);
-            if (purpose === client_1.EmailChallengePurpose.RECOVERY_EMAIL)
+            const latestRecovery = latest.metadata
+                ?.recoveryEmail;
+            const nextRecovery = metadata
+                ?.recoveryEmail;
+            if (purpose === client_1.EmailChallengePurpose.RECOVERY_EMAIL &&
+                latestRecovery?.sessionId === nextRecovery?.sessionId) {
                 return { id: latest.id, resendAfter: retryAfter };
+            }
             throw new common_1.BadRequestException({ code: 'EMAIL_COOLDOWN', retryAfter: Math.ceil((latest.resendAvailableAt.getTime() - Date.now()) / 1000), message: 'Код уже отправлен' });
         }
         const code = (0, crypto_1.randomInt)(0, 1_000_000).toString().padStart(6, '0');
-        await this.prisma.emailChallenge.create({ data: { id, userId, purpose, targetEmail: email, codeHash: this.digest(`${id}:${code}`), expiresAt: new Date(Date.now() + CODE_TTL_MS), resendAvailableAt: new Date(Date.now() + RESEND_MS), requestedByIp: source.ip, requestedByDevice: source.deviceId, metadata: {} } });
+        await this.prisma.emailChallenge.create({ data: { id, userId, purpose, targetEmail: email, codeHash: this.digest(`${id}:${code}`), expiresAt: new Date(Date.now() + CODE_TTL_MS), resendAvailableAt: new Date(Date.now() + RESEND_MS), requestedByIp: source.ip, requestedByDevice: source.deviceId, metadata } });
         return { id, code, resendAfter: RESEND_MS / 1000 };
     }
     async consumeCode(id, code, purpose, userId) {
@@ -166,6 +180,29 @@ let AccountRecoveryService = class AccountRecoveryService {
             this.rateLimit.consumeOrThrow(`email:${scope}:address:${this.digest(email)}`, { limit: 5, windowMs: 60 * 60_000 }),
             ...(userId ? [this.rateLimit.consumeOrThrow(`email:${scope}:user:${userId}`, { limit: 5, windowMs: 60 * 60_000 })] : []),
         ]);
+    }
+    async assertRecentAuthentication(userId, sessionId) {
+        if (!sessionId) {
+            throw new common_1.BadRequestException({
+                code: 'RECENT_AUTH_REQUIRED',
+                message: 'Для изменения способов входа войдите в аккаунт заново.',
+            });
+        }
+        const session = await this.prisma.userSession.findFirst({
+            where: {
+                id: sessionId,
+                userId,
+                revokedAt: null,
+                createdAt: { gte: new Date(Date.now() - RECENT_AUTH_MS) },
+            },
+            select: { id: true },
+        });
+        if (!session) {
+            throw new common_1.BadRequestException({
+                code: 'RECENT_AUTH_REQUIRED',
+                message: 'Для изменения способов входа войдите в аккаунт заново.',
+            });
+        }
     }
     normalizeEmail(value) { return value.trim().toLowerCase(); }
     digest(value) { return (0, crypto_1.createHash)('sha256').update(value).digest('hex'); }

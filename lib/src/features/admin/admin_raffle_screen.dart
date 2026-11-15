@@ -535,74 +535,56 @@ class _AdminRaffleScreenState extends State<AdminRaffleScreen> {
 
   Future<void> _copyTicketRange() async {
     if (summary == null) return;
-    final fromController = TextEditingController(text: '1');
-    final toController = TextEditingController(text: '1');
     final range = await showDialog<(int, int)>(
         context: context,
-        builder: (context) => AlertDialog(
-              title: const Text('Копировать билеты'),
-              content: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text('Для буфера обмена можно выбрать до 500 билетов.'),
-                TextField(
-                    controller: fromController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'С билета')),
-                TextField(
-                    controller: toController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'По билет')),
-              ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Отмена')),
-                FilledButton(
-                    onPressed: () {
-                      final from = int.tryParse(fromController.text.trim());
-                      final to = int.tryParse(toController.text.trim());
-                      if (from == null ||
-                          to == null ||
-                          from < 1 ||
-                          to < from ||
-                          to - from + 1 > 500) {
-                        return;
-                      }
-                      Navigator.pop(context, (from, to));
-                    },
-                    child: const Text('Копировать')),
-              ],
+        builder: (context) => _TicketRangeDialog(
+              maximumTicket: int.tryParse('${summary?['tickets']}') ?? 0,
             ));
-    fromController.dispose();
-    toController.dispose();
     if (range == null || !mounted) return;
-    final period = _period();
-    final admin = context.read<AdminService>();
-    var cursor = '${range.$1 - 1}';
-    final lines = <String>[];
-    while (true) {
-      final page = _snapshotId == null
-          ? await admin.raffleTickets(
-              from: period.from,
-              to: period.to,
-              ticketPrice: _validTicketPrice!,
-              cursor: cursor)
-          : await admin.raffleSnapshotTickets(
-              snapshotId: _snapshotId!, cursor: cursor);
-      final items = (page['items'] as List).cast<Map>();
-      for (final item in items) {
-        final number = int.parse('${item['ticketNumber']}');
-        if (number > range.$2) break;
-        lines.add('Билет №$number — ${item['name']} — ${item['phone']}');
+    setState(() => exporting = true);
+    try {
+      final period = _period();
+      final admin = context.read<AdminService>();
+      var cursor = '${range.$1 - 1}';
+      final seenCursors = <String>{};
+      final lines = <String>[];
+      while (seenCursors.add(cursor)) {
+        final page = _snapshotId == null
+            ? await admin.raffleTickets(
+                from: period.from,
+                to: period.to,
+                ticketPrice: _validTicketPrice!,
+                limit: 100,
+                cursor: cursor)
+            : await admin.raffleSnapshotTickets(
+                snapshotId: _snapshotId!, limit: 100, cursor: cursor);
+        final items = (page['items'] as List).cast<Map>();
+        for (final item in items) {
+          final number = int.parse('${item['ticketNumber']}');
+          if (number > range.$2) break;
+          lines.add('Билет №$number — ${item['name']} — ${item['phone']}');
+        }
+        final next = page['nextCursor'] as String?;
+        if (next == null || int.parse(next) >= range.$2) break;
+        cursor = next;
       }
-      final next = page['nextCursor'] as String?;
-      if (next == null || int.parse(next) >= range.$2) break;
-      cursor = next;
-    }
-    await Clipboard.setData(ClipboardData(text: lines.join('\n')));
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Скопировано билетов: ${lines.length}')),
-      );
+      if (lines.length != range.$2 - range.$1 + 1) {
+        throw StateError('Не удалось получить весь выбранный диапазон');
+      }
+      await Clipboard.setData(ClipboardData(text: lines.join('\n')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Скопировано билетов: ${lines.length}')),
+        );
+      }
+    } catch (exception) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка копирования: $exception')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => exporting = false);
     }
   }
 
@@ -905,6 +887,76 @@ class _AdminRaffleScreenState extends State<AdminRaffleScreen> {
       ),
     );
   }
+}
+
+class _TicketRangeDialog extends StatefulWidget {
+  const _TicketRangeDialog({required this.maximumTicket});
+
+  final int maximumTicket;
+
+  @override
+  State<_TicketRangeDialog> createState() => _TicketRangeDialogState();
+}
+
+class _TicketRangeDialogState extends State<_TicketRangeDialog> {
+  final _fromController = TextEditingController(text: '1');
+  final _toController = TextEditingController(text: '1');
+  String? _error;
+
+  @override
+  void dispose() {
+    _fromController.dispose();
+    _toController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final from = int.tryParse(_fromController.text.trim());
+    final to = int.tryParse(_toController.text.trim());
+    if (from == null ||
+        to == null ||
+        from < 1 ||
+        to < from ||
+        to - from + 1 > 500 ||
+        to > widget.maximumTicket) {
+      setState(() =>
+          _error = 'Укажите до 500 билетов в пределах текущего розыгрыша');
+      return;
+    }
+    Navigator.pop(context, (from, to));
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Копировать билеты'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Text('Для буфера обмена можно выбрать до 500 билетов.'),
+          TextField(
+            controller: _fromController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'С билета'),
+          ),
+          TextField(
+            controller: _toController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'По билет',
+              errorText: _error,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: _submit,
+            child: const Text('Копировать'),
+          ),
+        ],
+      );
 }
 
 class _PanelCard extends StatelessWidget {

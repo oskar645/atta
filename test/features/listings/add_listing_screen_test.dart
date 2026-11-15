@@ -8,12 +8,40 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/image_preparation_service.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 void main() {
+  testWidgets('account phone is prefilled as the listing contact',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ProfileService>.value(value: ProfileService()),
+          Provider<ListingsService>.value(value: ListingsService()),
+        ],
+        child: const MaterialApp(home: AddListingScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _scrollUntilBuilt(
+      tester,
+      _textFieldWithLabel('Телефон (для звонка)'),
+    );
+    final field = tester.widget<TextField>(
+      _textFieldWithLabel('Телефон (для звонка)'),
+    );
+    expect(
+      field.controller?.text,
+      formatRuPhoneForField('79288888645'),
+    );
+  });
+
   testWidgets('create listing screen hides additional section', (tester) async {
     await tester.pumpWidget(
       MultiProvider(

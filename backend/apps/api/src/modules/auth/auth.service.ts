@@ -15,6 +15,7 @@ import {
   PhoneVerificationPurpose,
   PhoneVerificationStatus,
   Prisma,
+  RegistrationMethod,
   ReferralRewardStatus,
   UserStatus,
 } from '@prisma/client';
@@ -83,9 +84,9 @@ export class AuthService {
     const existingUser = await this.prisma.user.findFirst({
       where: {
         OR: [
-          { email },
+          { email: { equals: email, mode: 'insensitive' } },
           payload.phone?.trim() ? { phone: payload.phone.trim() } : undefined,
-        ].filter(Boolean) as Array<{ email?: string; phone?: string }>,
+        ].filter(Boolean) as Prisma.UserWhereInput[],
       },
       include: {
         adminProfile: true,
@@ -104,6 +105,7 @@ export class AuthService {
         data: {
           id: randomUUID(),
           email,
+          registrationMethod: RegistrationMethod.EMAIL,
           phone: payload.phone?.trim() || null,
           displayName,
           name: displayName,
@@ -132,16 +134,21 @@ export class AuthService {
       throw new UnauthorizedException('Email login is required');
     }
 
-    const user = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findFirst({
       where: {
-        email,
+        email: { equals: email, mode: 'insensitive' },
       },
       include: {
         adminProfile: true,
       },
     });
 
-    if (!user || user.deletedAt || user.status === UserStatus.DELETED) {
+    if (
+      !user ||
+      !user.emailVerifiedAt ||
+      user.deletedAt ||
+      user.status === UserStatus.DELETED
+    ) {
       throw new UnauthorizedException('Invalid login credentials');
     }
 
@@ -227,6 +234,7 @@ export class AuthService {
           id: randomUUID(),
           phone: normalizedPhone,
           phoneVerified: true,
+          registrationMethod: RegistrationMethod.PHONE,
           displayName,
           name: displayName,
           passwordHash,
@@ -308,6 +316,7 @@ export class AuthService {
       if (!displayName) throw new BadRequestException('Display name is required');
       user = await tx.user.create({
         data: { id: randomUUID(), phone, phoneVerified: true, displayName, name: displayName,
+          registrationMethod: RegistrationMethod.PHONE,
           passwordHash: await hash(randomBytes(32).toString('base64url'), 10) },
         include: { adminProfile: true },
       });
@@ -319,6 +328,103 @@ export class AuthService {
         verificationId: registration.verificationId, tx,
       });
     }
+    const userWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
+    const session = await this.createSession(userWithAdmin, tx);
+    return this.buildAuthResponse(userWithAdmin, session.auth);
+  }
+
+  // Called only after EmailPasswordlessService has verified ownership of the
+  // normalized email and locked its challenge. It deliberately does not share
+  // the legacy email/password endpoints.
+  async authenticateEmailPasswordless(
+    email: string,
+    tx: Prisma.TransactionClient,
+    registration?: {
+      displayName: string;
+      acceptedLegal: boolean;
+      acceptedPersonalData: boolean;
+      acceptedMarketing?: boolean;
+      platform?: string;
+    },
+  ) {
+    const now = new Date();
+    const identity = await tx.blockedIdentity.findFirst({
+      where: {
+        normalizedEmail: email,
+        liftedAt: null,
+        OR: [{ permanent: true }, { bannedUntil: { gt: now } }],
+      },
+    });
+    if (identity) {
+      throw this.createUnauthorizedError(
+        'EMAIL_BLOCKED',
+        'Этот email заблокирован',
+      );
+    }
+
+    await tx.$queryRaw`
+      SELECT id FROM users
+      WHERE lower(btrim(email)) = ${email}
+      FOR UPDATE
+    `;
+    let user = await tx.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      include: { adminProfile: true },
+    });
+
+    if (user) {
+      if (!user.emailVerifiedAt) {
+        throw new ConflictException({
+          code: 'EMAIL_UNVERIFIED_ACCOUNT_EXISTS',
+          message: 'Этот email уже используется. Обратитесь в поддержку.',
+        });
+      }
+      const block = await this.userBlocksService.getActiveBlock(user.id, tx);
+      user = await tx.user.findUniqueOrThrow({
+        where: { id: user.id },
+        include: { adminProfile: true },
+      });
+      if (user.deletedAt || user.status !== UserStatus.ACTIVE || block) {
+        throw this.createUnauthorizedError(
+          'ACCOUNT_BLOCKED',
+          'Аккаунт недоступен',
+        );
+      }
+      user = await tx.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: now },
+        include: { adminProfile: true },
+      });
+    } else {
+      if (!registration) return null;
+      this.assertRequiredSignupConsents(registration);
+      const displayName = registration.displayName.trim();
+      if (!displayName) {
+        throw new BadRequestException('Display name is required');
+      }
+      user = await tx.user.create({
+        data: {
+          id: randomUUID(),
+          email,
+          emailVerifiedAt: now,
+          phone: null,
+          phoneVerified: false,
+          registrationMethod: RegistrationMethod.EMAIL,
+          displayName,
+          name: displayName,
+          passwordHash: await hash(
+            randomBytes(32).toString('base64url'),
+            10,
+          ),
+        },
+        include: { adminProfile: true },
+      });
+      await this.recordSignupConsents(user.id, registration, tx);
+      await this.walletService.ensureWalletAndBonuses(user.id, tx);
+      // Referral rewards remain phone-proofed. Email-only registration does
+      // not silently introduce a new financial eligibility policy.
+    }
+
     const userWithAdmin = await this.ensureAdminBootstrapForUser(user, tx);
     const session = await this.createSession(userWithAdmin, tx);
     return this.buildAuthResponse(userWithAdmin, session.auth);

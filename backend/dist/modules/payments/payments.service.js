@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var PaymentsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PaymentsService = void 0;
@@ -15,14 +18,16 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const crypto_1 = require("crypto");
 const env_1 = require("../../config/env");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const prisma_service_1 = require("../prisma/prisma.service");
 const wallet_service_1 = require("../wallet/wallet.service");
 const YOOKASSA_API_BASE_URL = 'https://api.yookassa.ru/v3';
 const YOOKASSA_CURRENCY = 'RUB';
 let PaymentsService = PaymentsService_1 = class PaymentsService {
-    constructor(prisma, walletService) {
+    constructor(prisma, walletService, adminDashboardSignal) {
         this.prisma = prisma;
         this.walletService = walletService;
+        this.adminDashboardSignal = adminDashboardSignal;
         this.logger = new common_1.Logger(PaymentsService_1.name);
     }
     async createYookassaPayment(authUser, amountRub) {
@@ -138,15 +143,20 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
     }
     async handleYookassaWebhook(payload) {
         const event = this.getPayloadEvent(payload);
-        if (event !== 'payment.succeeded' && event !== 'payment.canceled') {
+        if (event !== 'payment.succeeded' && event !== 'payment.canceled' && event !== 'refund.succeeded') {
             return { ok: true };
         }
-        const providerPaymentId = this.getPayloadPaymentId(payload);
+        const providerPaymentId = event === 'refund.succeeded'
+            ? this.getPayloadRefundPaymentId(payload)
+            : this.getPayloadPaymentId(payload);
         if (!providerPaymentId) {
             throw new common_1.BadRequestException('Payment id is missing');
         }
         const actualPayment = await this.fetchYooKassaPayment(providerPaymentId);
-        if (event === 'payment.succeeded') {
+        if (event === 'refund.succeeded') {
+            await this.syncYooKassaRefund(providerPaymentId, actualPayment);
+        }
+        else if (event === 'payment.succeeded') {
             await this.processSucceededYookassaPayment(providerPaymentId, actualPayment);
         }
         else {
@@ -189,7 +199,7 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
             throw new common_1.BadRequestException('Payment is not succeeded');
         }
         const verified = await this.verifyActualPayment(providerPaymentId, actualPayment);
-        await this.prisma.$transaction(async (tx) => {
+        const credited = await this.prisma.$transaction(async (tx) => {
             await this.lockPaymentRow(tx, verified.paymentId);
             const payment = await tx.payment.findUnique({
                 where: {
@@ -204,7 +214,14 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
             }
             if (payment.status === client_1.PaymentStatus.SUCCEEDED &&
                 payment.creditedAt != null) {
-                return;
+                await tx.payment.update({
+                    where: { id: payment.id },
+                    data: {
+                        refundedAmountRub: verified.refundedAmountRub,
+                        isTest: verified.test,
+                    },
+                });
+                return false;
             }
             if (!this.localPaymentMatchesVerified(payment, verified)) {
                 throw new common_1.BadRequestException('Payment amount mismatch');
@@ -221,13 +238,34 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
                 data: {
                     status: client_1.PaymentStatus.SUCCEEDED,
                     creditedAt: new Date(),
+                    isTest: verified.test,
+                    refundedAmountRub: verified.refundedAmountRub,
                     metadata: {
                         source: 'wallet_top_up',
                         providerPaymentId,
+                        test: verified.test,
                     },
                 },
             });
+            return true;
         });
+        if (credited)
+            this.adminDashboardSignal?.changed('payments');
+    }
+    async syncYooKassaRefund(providerPaymentId, actualPayment) {
+        const verified = await this.verifyActualPayment(providerPaymentId, actualPayment);
+        const payment = await this.prisma.payment.findUnique({ where: { providerPaymentId } });
+        if (!payment || !this.localPaymentMatchesVerified(payment, verified)) {
+            throw new common_1.BadRequestException('Payment metadata mismatch');
+        }
+        await this.prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+                refundedAmountRub: verified.refundedAmountRub,
+                isTest: verified.test,
+            },
+        });
+        this.adminDashboardSignal?.changed('payments');
     }
     async processCanceledYookassaPayment(providerPaymentId, actualPayment) {
         if (actualPayment.status !== 'canceled') {
@@ -270,11 +308,20 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
         if (!Number.isFinite(amountRub) || amountRub <= 0) {
             throw new common_1.BadRequestException('Payment amount is invalid');
         }
+        const refundedValue = actualPayment.refunded_amount?.value;
+        const refundedCurrency = actualPayment.refunded_amount?.currency;
+        const refundedAmountRub = refundedValue == null ? 0 : Number(refundedValue);
+        if (!Number.isFinite(refundedAmountRub) || refundedAmountRub < 0 || refundedAmountRub > amountRub ||
+            (refundedCurrency != null && refundedCurrency !== YOOKASSA_CURRENCY)) {
+            throw new common_1.BadRequestException('Payment refund amount mismatch');
+        }
         return {
             paymentId,
             userId,
             amountValue: this.formatRubAmount(amountRub),
             pointsAmount: Math.round(amountRub * env_1.env.YOOKASSA_POINTS_PER_RUBLE),
+            test: actualPayment.test === true,
+            refundedAmountRub: new client_1.Prisma.Decimal(this.formatRubAmount(refundedAmountRub)),
         };
     }
     assertLocalPaymentMatchesVerified(payment, verified, message = 'Payment metadata mismatch') {
@@ -366,6 +413,15 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
         const id = object.id;
         return typeof id === 'string' ? id.trim() : '';
     }
+    getPayloadRefundPaymentId(payload) {
+        if (!payload || typeof payload !== 'object')
+            return '';
+        const object = payload.object;
+        if (!object || typeof object !== 'object')
+            return '';
+        const paymentId = object.payment_id;
+        return typeof paymentId === 'string' ? paymentId.trim() : '';
+    }
     getRequiredString(value, message) {
         if (typeof value !== 'string' || !value.trim()) {
             throw new common_1.BadRequestException(message);
@@ -393,7 +449,9 @@ let PaymentsService = PaymentsService_1 = class PaymentsService {
 exports.PaymentsService = PaymentsService;
 exports.PaymentsService = PaymentsService = PaymentsService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(2, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        wallet_service_1.WalletService])
+        wallet_service_1.WalletService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], PaymentsService);
 //# sourceMappingURL=payments.service.js.map

@@ -1,6 +1,7 @@
 import 'package:atta/src/features/admin/admin_raffle_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -82,6 +83,47 @@ class _FakeRaffleAdminService extends AdminService {
               },
             ],
       'nextCursor': paged && cursor == null ? '50' : null,
+    };
+  }
+}
+
+class _LargeRaffleAdminService extends _FakeRaffleAdminService {
+  final List<String?> requestedCursors = <String?>[];
+
+  @override
+  Future<Map<String, dynamic>> raffleSummary(
+      {required String from,
+      required String to,
+      required String ticketPrice}) async {
+    return {
+      'participants': 1,
+      'tickets': 600,
+      'amountRub': 300000,
+      'ticketPriceRub': int.parse(ticketPrice),
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> raffleTickets(
+      {required String from,
+      required String to,
+      required String ticketPrice,
+      int limit = 50,
+      String? cursor,
+      String? search}) async {
+    requestedCursors.add(cursor);
+    final first = int.parse(cursor ?? '0') + 1;
+    final last = (first + limit - 1).clamp(first, 600);
+    return {
+      'items': [
+        for (var number = first; number <= last; number++)
+          {
+            'ticketNumber': '$number',
+            'name': 'Участник',
+            'phone': '+79990000000',
+          },
+      ],
+      'nextCursor': last < 600 ? '$last' : null,
     };
   }
 }
@@ -220,5 +262,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
     expect(admin.requestedTicketSearches.last, '#2');
+  });
+
+  testWidgets(
+      'copy range copies all 500 tickets without dialog lifecycle error',
+      (tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => null,
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+    final admin = _LargeRaffleAdminService();
+    await openScreen(tester, admin);
+    await tester.tap(find.text('Показать участников'));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Копировать диапазон'),
+      300,
+      scrollable: find
+          .descendant(
+              of: find.byType(ListView), matching: find.byType(Scrollable))
+          .first,
+    );
+    await tester.tap(find.text('Копировать диапазон'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'По билет'), '500');
+    await tester.tap(find.widgetWithText(FilledButton, 'Копировать'));
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(admin.requestedCursors, <String?>['0', '100', '200', '300', '400']);
+    expect(find.text('Скопировано билетов: 500'), findsOneWidget);
   });
 }

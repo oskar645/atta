@@ -18,6 +18,7 @@ class ListingCard extends StatelessWidget {
   final VoidCallback onOpen;
   final ValueChanged<bool> onToggleFav;
   final ReviewsService reviews;
+  final bool whiteSurfaceInLightTheme;
 
   const ListingCard({
     super.key,
@@ -27,6 +28,7 @@ class ListingCard extends StatelessWidget {
     required this.onOpen,
     required this.onToggleFav,
     required this.reviews,
+    this.whiteSurfaceInLightTheme = true,
   });
 
   @override
@@ -49,7 +51,10 @@ class ListingCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: Material(
-          color: Theme.of(context).colorScheme.surface,
+          color: whiteSurfaceInLightTheme &&
+                  Theme.of(context).brightness == Brightness.light
+              ? Colors.white
+              : Theme.of(context).colorScheme.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(
@@ -393,6 +398,7 @@ class FavoriteListingCard extends StatelessWidget {
     required this.reviews,
     required this.onOpen,
     this.onError,
+    this.whiteSurfaceInLightTheme = true,
   });
 
   final Listing listing;
@@ -402,6 +408,7 @@ class FavoriteListingCard extends StatelessWidget {
   final ReviewsService reviews;
   final VoidCallback onOpen;
   final ValueChanged<Object>? onError;
+  final bool whiteSurfaceInLightTheme;
 
   @override
   Widget build(BuildContext context) {
@@ -415,6 +422,7 @@ class FavoriteListingCard extends StatelessWidget {
           isFav: isFav,
           isSeen: isSeen,
           reviews: reviews,
+          whiteSurfaceInLightTheme: whiteSurfaceInLightTheme,
           onToggleFav: (makeFav) async {
             if (userId.trim().isEmpty) {
               final authenticated = await promptGuestAuth(context);

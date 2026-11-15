@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.listingModerationReadySql = exports.listingPublicationReadyWhere = exports.requiresPublicationReadiness = exports.isListingReadyForPublication = exports.LISTING_PUBLICATION_NOT_READY = exports.LISTING_DRAFT_TITLE_PLACEHOLDER = void 0;
 const client_1 = require("@prisma/client");
+const listing_contact_rollout_1 = require("./listing-contact-rollout");
 exports.LISTING_DRAFT_TITLE_PLACEHOLDER = 'Черновик объявления';
 exports.LISTING_PUBLICATION_NOT_READY = 'LISTING_PUBLICATION_NOT_READY';
 const categoriesWithKnownSubcategories = new Map([
@@ -191,6 +192,9 @@ const isListingReadyForPublication = (listing) => {
     if (!(listing.city?.trim() ?? '')) {
         return false;
     }
+    if (!/^7\d{10}$/.test((0, listing_contact_rollout_1.normalizeListingContactPhone)(listing.phone))) {
+        return false;
+    }
     if ((listing.photos?.length ?? 0) < 1) {
         return false;
     }
@@ -218,6 +222,9 @@ const listingPublicationReadyWhere = () => ({
     city: {
         not: '',
     },
+    phone: {
+        not: '',
+    },
     photos: {
         some: {},
     },
@@ -234,6 +241,26 @@ const listingModerationReadySql = () => {
         client_1.Prisma.sql `${category} IN (${client_1.Prisma.join([...categoriesWithoutStrictSubcategories])})`,
         ...[...categoriesWithKnownSubcategories].map(([name, children]) => client_1.Prisma.sql `(${category} = ${name} AND ${subcategory} IN (${client_1.Prisma.join([...children])}))`),
     ];
+    const normalizedListingPhone = client_1.Prisma.sql `
+    regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g')
+  `;
+    const validListingPhone = client_1.Prisma.sql `(
+    ${normalizedListingPhone} ~ '^7[0-9]{10}$'
+    OR ${normalizedListingPhone} ~ '^8[0-9]{10}$'
+    OR ${normalizedListingPhone} ~ '^[0-9]{10}$'
+  )`;
+    const validTransitionalContact = (0, listing_contact_rollout_1.isFinalListingContactRollout)()
+        ? validListingPhone
+        : client_1.Prisma.sql `(
+        ${validListingPhone}
+        OR EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.id = l.owner_id
+            AND regexp_replace(COALESCE(u.phone, ''), '[^0-9]', '', 'g')
+              ~ '^(7|8)[0-9]{10}$'
+        )
+      )`;
     return client_1.Prisma.sql `
     l.status = 'PENDING'::"ListingStatus"
     AND l.deleted_at IS NULL AND l.archived_at IS NULL
@@ -242,6 +269,7 @@ const listingModerationReadySql = () => {
     AND (${client_1.Prisma.join(categoryRules, ' OR ')})
     AND l.price > 0
     AND ${trim(client_1.Prisma.sql `l.city`)} <> ''
+    AND ${validTransitionalContact}
     AND EXISTS (SELECT 1 FROM listing_photos p WHERE p.listing_id = l.id)
   `;
 };

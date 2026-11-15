@@ -38,12 +38,14 @@ const saved_searches_module_1 = require("./modules/saved-searches/saved-searches
 const viewed_listings_module_1 = require("./modules/viewed-listings/viewed-listings.module");
 const wallet_module_1 = require("./modules/wallet/wallet.module");
 const top_banners_module_1 = require("./modules/top-banners/top-banners.module");
+const admin_dashboard_realtime_module_1 = require("./common/admin-dashboard-realtime.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
+            admin_dashboard_realtime_module_1.AdminDashboardRealtimeModule,
             prisma_module_1.PrismaModule,
             usage_analytics_module_1.UsageAnalyticsModule,
             rate_limit_module_1.RateLimitModule,

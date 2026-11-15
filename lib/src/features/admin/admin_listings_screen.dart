@@ -147,20 +147,24 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
 
   Future<void> _action(String action, Map<String, dynamic> item) async {
     if (_busy) return;
-    if (action == 'delete') {
+    if (action == 'delete' || action == 'permanent_delete') {
+      final permanent = action == 'permanent_delete';
       final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-                title: const Text('Удалить объявление?'),
-                content: Text(
-                    '«${item['title'] ?? 'Без названия'}» будет скрыто. Действие выполняется по правилам backend.'),
+                title: Text(permanent
+                    ? 'Удалить объявление навсегда?'
+                    : 'Удалить объявление?'),
+                content: Text(permanent
+                    ? '«${item['title'] ?? 'Без названия'}» будет безвозвратно удалено из базы. Отменить это действие будет невозможно.'
+                    : '«${item['title'] ?? 'Без названия'}» будет скрыто. Действие выполняется по правилам backend.'),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
                       child: const Text('Отмена')),
                   FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Удалить'))
+                      child: Text(permanent ? 'Удалить навсегда' : 'Удалить'))
                 ],
               ));
       if (confirmed != true || !mounted) return;
@@ -176,6 +180,9 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
       if (action == 'delete') {
         await service.deleteListing(id, reason: 'Удалено администратором');
       }
+      if (action == 'permanent_delete') {
+        await service.permanentlyDeleteListing(id);
+      }
       if (!mounted) return;
       showAppSnack(
           context,
@@ -183,7 +190,9 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
               ? 'Объявление одобрено'
               : action == 'reject'
                   ? 'Объявление отклонено'
-                  : 'Объявление удалено');
+                  : action == 'permanent_delete'
+                      ? 'Объявление удалено навсегда'
+                      : 'Объявление удалено');
       await _load();
     } catch (e) {
       if (mounted) {
@@ -372,6 +381,15 @@ class _ListingRow extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w800)),
+                      if (_hasModerationChanges(item)) ...[
+                        const SizedBox(height: 3),
+                        const Text('Изменено',
+                            key: ValueKey('admin_listing_changed_label'),
+                            style: TextStyle(
+                                color: Colors.green,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700)),
+                      ],
                       const SizedBox(height: 3),
                       Text('${item['price'] ?? 0} ₽',
                           style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -397,18 +415,30 @@ class _ListingRow extends StatelessWidget {
                     enabled: !busy,
                     tooltip: 'Действия',
                     onSelected: onAction,
-                    itemBuilder: (_) => const [
-                          PopupMenuItem(
+                    itemBuilder: (_) => [
+                          const PopupMenuItem(
                               value: 'approve', child: Text('Одобрить')),
-                          PopupMenuItem(
+                          const PopupMenuItem(
                               value: 'reject', child: Text('Отклонить')),
-                          PopupMenuDivider(),
+                          const PopupMenuDivider(),
                           PopupMenuItem(
-                              value: 'delete', child: Text('Удалить')),
+                              value: status == 'deleted'
+                                  ? 'permanent_delete'
+                                  : 'delete',
+                              child: Text(status == 'deleted'
+                                  ? 'Удалить навсегда'
+                                  : 'Удалить')),
                         ]),
               ])),
         ));
   }
+}
+
+bool _hasModerationChanges(Map<String, dynamic> item) {
+  final diff = item['moderation_diff'];
+  if (diff is! Map) return false;
+  final changed = diff['changed'];
+  return changed is List && changed.isNotEmpty;
 }
 
 class _Badge extends StatelessWidget {

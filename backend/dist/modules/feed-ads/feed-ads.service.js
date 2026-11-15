@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FeedAdsService = void 0;
 const common_1 = require("@nestjs/common");
@@ -16,13 +19,15 @@ const crypto_1 = require("crypto");
 const prisma_service_1 = require("../prisma/prisma.service");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const storage_service_1 = require("../storage/storage.service");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const FEED_AD_IMPRESSION_DEBOUNCE_MS = 30 * 1000;
 const FEED_AD_CLICK_DEBOUNCE_MS = 5 * 1000;
 let FeedAdsService = class FeedAdsService {
-    constructor(prisma, storageService, rateLimitService) {
+    constructor(prisma, storageService, rateLimitService, adminDashboardSignal) {
         this.prisma = prisma;
         this.storageService = storageService;
         this.rateLimitService = rateLimitService;
+        this.adminDashboardSignal = adminDashboardSignal;
     }
     serialize(item) {
         return {
@@ -111,6 +116,7 @@ let FeedAdsService = class FeedAdsService {
                 createdById: authUser.userId,
             },
         });
+        this.adminDashboardSignal?.changed('ads');
         return {
             source: 'timeweb',
             ad: this.serialize(item),
@@ -135,6 +141,7 @@ let FeedAdsService = class FeedAdsService {
                     : Number(body['duration_days'] ?? 0) || 0,
             },
         });
+        this.adminDashboardSignal?.changed('ads');
         return {
             source: 'timeweb',
             ad: this.serialize(item),
@@ -165,6 +172,7 @@ let FeedAdsService = class FeedAdsService {
                 expiresAt,
             },
         });
+        this.adminDashboardSignal?.changed('ads');
         return {
             source: 'timeweb',
             ad: this.serialize(updated),
@@ -178,6 +186,7 @@ let FeedAdsService = class FeedAdsService {
                 isActive: false,
             },
         });
+        this.adminDashboardSignal?.changed('ads');
         return {
             source: 'timeweb',
             ad: this.serialize(updated),
@@ -189,6 +198,7 @@ let FeedAdsService = class FeedAdsService {
         await this.prisma.feedAd.delete({
             where: { id },
         });
+        this.adminDashboardSignal?.changed('ads');
         return {
             deleted: true,
             id,
@@ -299,8 +309,10 @@ let FeedAdsService = class FeedAdsService {
 exports.FeedAdsService = FeedAdsService;
 exports.FeedAdsService = FeedAdsService = __decorate([
     (0, common_1.Injectable)(),
+    __param(3, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         storage_service_1.StorageService,
-        rate_limit_service_1.RateLimitService])
+        rate_limit_service_1.RateLimitService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], FeedAdsService);
 //# sourceMappingURL=feed-ads.service.js.map

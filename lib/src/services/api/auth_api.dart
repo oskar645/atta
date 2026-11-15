@@ -91,6 +91,60 @@ class AuthApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> startEmailPasswordless(String email) async {
+    final response = await _client.post(
+      '/auth/email/start',
+      body: {'email': email.trim()},
+      timeout: const Duration(seconds: 45),
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> checkEmailPasswordless({
+    required String challengeId,
+    required String code,
+  }) async {
+    final response = await _client.post(
+      '/auth/email/check',
+      body: {'challengeId': challengeId, 'code': code.trim()},
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> completeEmailPasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+  }) async {
+    final response = await _client.post('/auth/email/complete', body: {
+      'registrationToken': registrationToken,
+      'displayName': displayName.trim(),
+      'acceptedLegal': acceptedLegal,
+      'acceptedPersonalData': acceptedPersonalData,
+      if (_currentConsentPlatform().isNotEmpty)
+        'platform': _currentConsentPlatform(),
+    });
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> startLinkPhone(String phone) async =>
+      Map<String, dynamic>.from(await _client.post(
+        '/auth/link-phone/start',
+        authorized: true,
+        body: {'phone': phone},
+      ) as Map);
+
+  Future<Map<String, dynamic>> completeLinkPhone(
+    String phone,
+    String verificationId,
+  ) async =>
+      Map<String, dynamic>.from(await _client.post(
+        '/auth/link-phone/complete',
+        authorized: true,
+        body: {'phone': phone, 'verificationId': verificationId},
+      ) as Map);
+
   Future<Map<String, dynamic>> checkPasswordless({
     required String challenge,
   }) async {

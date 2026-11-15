@@ -35,6 +35,7 @@ test('getMe does not crash if wallet has issue', async () => {
       },
       listing: {
         count: async () => 15,
+        findMany: async () => [],
       },
       review: {
         findMany: async () => [],
@@ -59,7 +60,89 @@ test('getMe does not crash if wallet has issue', async () => {
   assert.equal(response.isAdmin, false);
 });
 
-test('updateMe rejects changed phone without confirmed verification', async () => {
+test('public profile reports a safe call action only for one unique listing phone', async () => {
+  const service = new UsersService(
+    {
+      user: {
+        findUnique: async () => ({
+          id: 'seller-1',
+          email: 'seller@example.com',
+          phone: '79990000000',
+          phoneVerified: true,
+          displayName: 'Seller',
+          name: 'Seller',
+          avatarUrl: null,
+          photoUrl: null,
+          status: UserStatus.ACTIVE,
+          blockedAt: null,
+          blockReason: null,
+          lastLoginAt: null,
+          createdAt: new Date('2026-06-18T10:00:00.000Z'),
+          updatedAt: new Date('2026-06-18T10:00:00.000Z'),
+          deletedAt: null,
+        }),
+      },
+      listing: {
+        count: async () => 2,
+        findMany: async () => [
+          { phone: '79281112233' },
+          { phone: '+7 (928) 111-22-33' },
+        ],
+      },
+      review: { findMany: async () => [] },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+
+  const response = await service.getSellerPublicProfile('seller-1');
+
+  assert.equal(response.user.has_unique_call_contact, true);
+  assert.equal('phone' in response.user, false);
+});
+
+test('public profile does not choose between different listing phones', async () => {
+  const service = new UsersService(
+    {
+      user: {
+        findUnique: async () => ({
+          id: 'seller-1',
+          email: 'seller@example.com',
+          phone: '79990000000',
+          phoneVerified: true,
+          displayName: 'Seller',
+          name: 'Seller',
+          avatarUrl: null,
+          photoUrl: null,
+          status: UserStatus.ACTIVE,
+          blockedAt: null,
+          blockReason: null,
+          lastLoginAt: null,
+          createdAt: new Date('2026-06-18T10:00:00.000Z'),
+          updatedAt: new Date('2026-06-18T10:00:00.000Z'),
+          deletedAt: null,
+        }),
+      },
+      listing: {
+        count: async () => 2,
+        findMany: async () => [
+          { phone: '79281112233' },
+          { phone: '79282223344' },
+        ],
+      },
+      review: { findMany: async () => [] },
+    } as never,
+    {} as never,
+    {} as never,
+  );
+
+  const response = await service.getSellerPublicProfile('seller-1');
+
+  assert.equal(response.user.has_unique_call_contact, false);
+  assert.equal('phone' in response.user, false);
+});
+
+test('updateMe routes every phone change through the dedicated link endpoint', async () => {
   let updateCalled = false;
   const service = new UsersService(
     {
@@ -87,12 +170,12 @@ test('updateMe rejects changed phone without confirmed verification', async () =
       ),
     (error) =>
       error instanceof BadRequestException &&
-      error.message === 'PHONE_VERIFICATION_REQUIRED',
+      error.message === 'PHONE_LINK_ENDPOINT_REQUIRED',
   );
   assert.equal(updateCalled, false);
 });
 
-test('updateMe allows changed phone with confirmed verification', async () => {
+test('updateMe rejects even a reusable confirmed verification proof', async () => {
   let updateArgs: Record<string, any> | undefined;
   const service = new UsersService(
     {
@@ -133,6 +216,7 @@ test('updateMe allows changed phone with confirmed verification', async () => {
       },
       listing: {
         count: async () => 30,
+        findMany: async () => [],
       },
       review: {
         findMany: async () => [],
@@ -142,18 +226,20 @@ test('updateMe allows changed phone with confirmed verification', async () => {
     {} as never,
   );
 
-  const response = await service.updateMe(
-    { userId: 'user-1', role: 'user' } as never,
-    {
-      phone: '+7 928 111-22-33',
-      verificationCheckId: 'verification-1',
-    },
+  await assert.rejects(
+    () =>
+      service.updateMe(
+        { userId: 'user-1', role: 'user' } as never,
+        {
+          phone: '+7 928 111-22-33',
+          verificationCheckId: 'verification-1',
+        },
+      ),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'PHONE_LINK_ENDPOINT_REQUIRED',
   );
-
-  assert.equal(updateArgs?.data.phone, '79281112233');
-  assert.equal(updateArgs?.data.phoneVerified, true);
-  assert.ok('phone' in response.user);
-  assert.equal(response.user.phone, '79281112233');
+  assert.equal(updateArgs, undefined);
 });
 
 test('updateMe rejects changed phone owned by another active account', async () => {
@@ -238,6 +324,7 @@ test('avatar upload uses selected storage provider flow', async () => {
       },
       listing: {
         count: async () => 50,
+        findMany: async () => [],
       },
       review: {
         findMany: async () => [],

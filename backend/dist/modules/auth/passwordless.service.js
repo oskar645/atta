@@ -8,12 +8,16 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PasswordlessService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const crypto_1 = require("crypto");
 const phone_1 = require("../../common/phone");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const phone_verification_service_1 = require("../phone-verification/phone-verification.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
@@ -21,11 +25,12 @@ const auth_service_1 = require("./auth.service");
 const legal_document_version_1 = require("./legal-document-version");
 const PROVIDER_POLL_COOLDOWN_MS = 5_000;
 let PasswordlessService = class PasswordlessService {
-    constructor(prisma, phoneVerification, rateLimit, auth) {
+    constructor(prisma, phoneVerification, rateLimit, auth, adminDashboardSignal) {
         this.prisma = prisma;
         this.phoneVerification = phoneVerification;
         this.rateLimit = rateLimit;
         this.auth = auth;
+        this.adminDashboardSignal = adminDashboardSignal;
     }
     async start(phone, source, referral) {
         const normalized = (0, phone_1.normalizeRussianPhone)(phone);
@@ -109,10 +114,10 @@ let PasswordlessService = class PasswordlessService {
     async complete(payload) {
         const id = this.parse(payload.registrationToken);
         await this.rateLimit.consumeOrThrow(`passwordless:complete:${id}`, { limit: 6, windowMs: 60_000 });
-        return this.transaction(async (tx) => {
+        const result = await this.transaction(async (tx) => {
             const { verification, capability } = await this.lockAndValidate(tx, id, payload.registrationToken, 'registration');
             if (capability.state === 'consumed') {
-                return this.replayResponse(capability);
+                return { response: this.replayResponse(capability), created: false };
             }
             if (verification.status !== 'CONFIRMED')
                 throw this.invalid();
@@ -122,6 +127,10 @@ let PasswordlessService = class PasswordlessService {
             // Separate challenges for the same phone serialize too. Legacy signup races are
             // handled by the unique constraint and a fresh transaction below.
             await tx.$queryRaw `SELECT pg_advisory_xact_lock(hashtextextended(${verification.phone}, 0))::text`;
+            const existedBefore = await tx.user.findUnique({
+                where: { phone: verification.phone },
+                select: { id: true },
+            });
             const response = await this.auth.authenticatePasswordless(verification.phone, tx, {
                 ...payload, referralCode: capability.referralCode, referralId: capability.referralId,
                 verificationId: verification.id,
@@ -129,8 +138,11 @@ let PasswordlessService = class PasswordlessService {
             if (!response)
                 throw this.invalid();
             await this.consume(tx, verification, capability, response);
-            return response;
+            return { response, created: existedBefore == null };
         });
+        if (result.created)
+            this.adminDashboardSignal?.changed('users', 'usage');
+        return result.response;
     }
     async transaction(handler) {
         for (let attempt = 0;; attempt++) {
@@ -231,9 +243,11 @@ let PasswordlessService = class PasswordlessService {
 exports.PasswordlessService = PasswordlessService;
 exports.PasswordlessService = PasswordlessService = __decorate([
     (0, common_1.Injectable)(),
+    __param(4, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         phone_verification_service_1.PhoneVerificationService,
         rate_limit_service_1.RateLimitService,
-        auth_service_1.AuthService])
+        auth_service_1.AuthService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], PasswordlessService);
 //# sourceMappingURL=passwordless.service.js.map

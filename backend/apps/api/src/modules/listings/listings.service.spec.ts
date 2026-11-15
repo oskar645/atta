@@ -2029,6 +2029,77 @@ test('create uses owner phone when dto phone is empty', async () => {
   assert.deepEqual(dashboardScopes, [['listings']]);
 });
 
+test('email-only seller can create with a manual listing contact phone', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    findOwnerById: async () => ({
+      id: ownerUser.userId,
+      email: 'owner@example.com',
+      phone: null,
+      displayName: 'Owner',
+      name: 'Owner',
+      status: UserStatus.ACTIVE,
+    }),
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+        phone: createData.phone,
+        status: ListingStatus.PENDING,
+      };
+    },
+  });
+
+  await service.create(ownerUser, {
+    title: 'Listing',
+    description: 'Desc',
+    category: 'Другое',
+    price: 1000,
+    phone: '+7 928 123-45-67',
+    city: 'Grozny',
+  });
+
+  assert.equal(createData?.phone, '79281234567');
+});
+
+test('create rejects a publishable email-only listing without contact phone', async () => {
+  let createData: Record<string, unknown> | undefined;
+  const service = createService({
+    findOwnerById: async () => ({
+      id: ownerUser.userId,
+      email: 'owner@example.com',
+      phone: null,
+      displayName: 'Owner',
+      name: 'Owner',
+      status: UserStatus.ACTIVE,
+    }),
+    create: async (args) => {
+      createData = args.data as Record<string, unknown>;
+      return {
+        ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+        phone: createData.phone,
+        status: ListingStatus.PENDING,
+      };
+    },
+  });
+
+  await assert.rejects(
+    () => service.create(ownerUser, {
+      title: 'Listing',
+      description: 'Desc',
+      category: 'Другое',
+      price: 1000,
+      phone: '',
+      city: 'Grozny',
+    }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'Введите корректный номер телефона',
+  );
+
+  assert.equal(createData, undefined);
+});
+
 test('create stores optional clothes size only for clothes listings', async () => {
   let createData: Record<string, unknown> | undefined;
   const service = createService({
@@ -3922,6 +3993,7 @@ function createPendingPatchService(initial: Record<string, any>) {
   let savedListing: Record<string, any> = {
     ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z', 'Авто'),
     subcategory: 'Легковые автомобили',
+    phone: '79281234567',
     status: ListingStatus.PENDING,
     publishedAt: null,
     photos: [listingPhoto()],
@@ -3980,6 +4052,7 @@ function createResubmitService(initial: Record<string, any>) {
     subcategory: 'Легковые автомобили',
     price: BigInt(1200000),
     city: 'Грозный',
+    phone: '79281234567',
     status: ListingStatus.ARCHIVED,
     publishedAt: new Date('2026-07-01T10:00:00.000Z'),
     archivedAt: new Date('2026-07-02T10:00:00.000Z'),
@@ -4225,6 +4298,258 @@ test('pending PATCH rejects whitespace title direct API bypass', async () => {
   );
 });
 
+test('pending PATCH preserves old-client owner-phone fallback', async () => {
+  const service = createPendingPatchService({ phone: '', city: 'Грозный' });
+
+  const response = await service.update('listing-1', ownerUser, { phone: '' });
+
+  assert.equal(response.listing.phone, '79281234567');
+});
+
+test('pending PATCH rejects an invalid contact phone', async () => {
+  const service = createPendingPatchService({ city: 'Грозный' });
+
+  await assert.rejects(
+    () => service.update('listing-1', ownerUser, { phone: '123' }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'Введите корректный номер телефона',
+  );
+});
+
+test('partial listing edit preserves its own contact instead of account phone', async () => {
+  const service = createPendingPatchService({
+    phone: '79281112233',
+    city: 'Грозный',
+    owner: {
+      ...listingOwner(),
+      phone: '79110000000',
+    },
+  });
+
+  assert.equal(
+    (service as any).pickListingPhone('historical-value', 'historical-value', {
+      legacyOwnerPhone: '79281234567',
+      preserveMatchingLegacyValue: true,
+    }),
+    'historical-value',
+  );
+
+  const response = await service.update('listing-1', ownerUser, {
+    title: 'Обновлённое название',
+  });
+
+  assert.equal(response.listing.phone, '79281112233');
+});
+
+test('listing contact can change without replacing account phone', async () => {
+  const service = createPendingPatchService({
+    phone: '79281112233',
+    city: 'Грозный',
+    owner: {
+      ...listingOwner(),
+      phone: '79110000000',
+    },
+  });
+
+  const response = await service.update('listing-1', ownerUser, {
+    phone: '+7 928 999-88-77',
+  });
+
+  assert.equal(response.listing.phone, '79289998877');
+  assert.equal(
+    (response.listing.owner as any).normalized_phone,
+    '79110000000',
+  );
+});
+
+test('call contact returns exact listing phone even when hidden', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    phone: '79281234567',
+    phoneHidden: true,
+    photos: [listingPhoto()],
+    owner: {
+      ...listingOwner(),
+      phone: '79110000000',
+    },
+  };
+  const service = createService({ findUnique: async () => listing });
+
+  const response = await service.getCallContact('listing-1', strangerUser);
+
+  assert.equal(response.phone, '79281234567');
+});
+
+test('call contact normalizes a legacy ten-digit listing phone', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    phone: '9281234567',
+    phoneHidden: true,
+    photos: [listingPhoto()],
+    owner: {
+      ...listingOwner(),
+      phone: '79110000000',
+    },
+  };
+  const service = createService({ findUnique: async () => listing });
+
+  const response = await service.getCallContact('listing-1', strangerUser);
+
+  assert.equal(response.phone, '79281234567');
+});
+
+test('call contact falls back when the listing phone is non-empty but invalid', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    phone: '123',
+    phoneHidden: true,
+    photos: [listingPhoto()],
+    owner: listingOwner(),
+  };
+  const service = createService({ findUnique: async () => listing });
+
+  const response = await service.getCallContact('listing-1', strangerUser);
+
+  assert.equal(response.phone, '79281234567');
+});
+
+test('call contact returns the listing phone for an email-only seller', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    phone: '79281234567',
+    phoneHidden: true,
+    photos: [listingPhoto()],
+    owner: {
+      ...listingOwner(),
+      phone: null,
+      phoneVerified: false,
+    },
+  };
+  const service = createService({ findUnique: async () => listing });
+
+  const response = await service.getCallContact('listing-1', strangerUser);
+
+  assert.equal(response.phone, '79281234567');
+});
+
+test('call contact uses the transitional owner fallback for a legacy listing', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    phone: '',
+    owner: listingOwner(),
+    photos: [listingPhoto()],
+  };
+  const service = createService({ findUnique: async () => listing });
+
+  const response = await service.getCallContact('listing-1', strangerUser);
+
+  assert.equal(response.phone, '79281234567');
+});
+
+test('call contact stays unavailable when listing and legacy owner have no phone', async () => {
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    phone: '',
+    owner: {
+      ...listingOwner(),
+      phone: null,
+    },
+    photos: [listingPhoto()],
+  };
+  const service = createService({ findUnique: async () => listing });
+
+  await assert.rejects(
+    () => service.getCallContact('listing-1', strangerUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_CONTACT_PHONE_UNAVAILABLE',
+  );
+});
+
+test('owner call contact returns the only active listing phone', async () => {
+  const service = createService({
+    findMany: async () => [
+      { phone: '79281112233' },
+      { phone: '+7 (928) 111-22-33' },
+    ],
+  });
+
+  const response = await service.getOwnerCallContact(
+    ownerUser.userId,
+    strangerUser,
+  );
+
+  assert.equal(response.phone, '79281112233');
+});
+
+test('owner call contact never chooses between different listing phones', async () => {
+  const service = createService({
+    findMany: async () => [
+      { phone: '79281112233' },
+      { phone: '79282223344' },
+    ],
+  });
+
+  await assert.rejects(
+    () => service.getOwnerCallContact(ownerUser.userId, strangerUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_CONTACT_PHONE_AMBIGUOUS',
+  );
+});
+
+test('owner call contact does not fall back to account phone', async () => {
+  const service = createService({ findMany: async () => [{ phone: '' }] });
+
+  await assert.rejects(
+    () => service.getOwnerCallContact(ownerUser.userId, strangerUser),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'LISTING_CONTACT_PHONE_UNAVAILABLE',
+  );
+});
+
+test('transitional resubmit accepts a legacy listing through owner contact fallback', async () => {
+  const context = createResubmitService({ phone: '' });
+
+  const response = await context.service.resubmit('listing-1', ownerUser);
+
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(context.listing.phone, '');
+});
+
+test('transitional edit preserves an invalid historical listing phone when owner fallback is valid', async () => {
+  const service = createPendingPatchService({
+    phone: 'historical-value',
+    city: 'Грозный',
+    owner: listingOwner(),
+  });
+
+  const response = await service.update('listing-1', ownerUser, {
+    phone: 'historical-value',
+    title: 'Обновлённое объявление',
+  });
+
+  assert.equal(response.listing.status, 'pending');
+  assert.equal(response.listing.phone, '79281234567');
+});
+
+test('transitional edit still rejects a newly supplied invalid phone', async () => {
+  const service = createPendingPatchService({
+    phone: 'historical-value',
+    city: 'Грозный',
+    owner: listingOwner(),
+  });
+
+  await assert.rejects(
+    () => service.update('listing-1', ownerUser, { phone: 'new-invalid-value' }),
+    (error) =>
+      error instanceof BadRequestException &&
+      error.message === 'Введите корректный номер телефона',
+  );
+});
+
 test('valid final draft PATCH passes in pending moderation', async () => {
   const service = createPendingPatchService({
     title: 'Черновик объявления',
@@ -4458,6 +4783,105 @@ test('delete last photo is rejected for publishable listing statuses', async () 
       error instanceof BadRequestException &&
       error.message === 'LISTING_PHOTO_REQUIRED',
   );
+});
+
+test('temporary creation draft can delete its last uploaded photo', async () => {
+  const calls: string[] = [];
+  let photos = [
+    {
+      id: 'photo-1',
+      listingId: 'listing-1',
+      storageBucket: 'local',
+      storageKey: 'listings/listing-1/photo.jpg',
+      publicUrl: 'https://cdn.example.com/photo.jpg',
+      sortOrder: 0,
+      sizeBytes: null,
+      mimeType: 'image/jpeg',
+      createdAt: new Date(),
+    },
+  ];
+  const listing = {
+    ...createApprovedListing('listing-1', '2026-07-01T10:00:00.000Z'),
+    title: 'Черновик объявления',
+    status: ListingStatus.PENDING,
+    publishedAt: null,
+    photos,
+  };
+  const prisma = {
+    listing: {
+      findUnique: async () => ({ ...listing, photos }),
+      findUniqueOrThrow: async () => ({ ...listing, photos }),
+      update: async () => ({}),
+    },
+    listingPhoto: {
+      delete: async (args: Record<string, any>) => {
+        calls.push(`delete:${args.where.id}`);
+        photos = photos.filter((photo) => photo.id !== args.where.id);
+      },
+      findMany: async () => photos,
+      update: async () => ({}),
+    },
+    $transaction: async <T>(handler: (tx: unknown) => Promise<T>) =>
+      handler(prisma),
+  };
+  const service = new ListingsService(
+    prisma as never,
+    {
+      deleteStoredFile: async (_category: string, key: string) => {
+        calls.push(`storage:${key}`);
+      },
+    } as never,
+    {} as never,
+  );
+
+  const response = await service.deletePhoto(
+    ownerUser,
+    'listing-1',
+    'photo-1',
+  );
+
+  assert.deepEqual(calls, [
+    'storage:listings/listing-1/photo.jpg',
+    'delete:photo-1',
+  ]);
+  assert.equal(response.deleted, true);
+  assert.deepEqual(response.listing.photo_items, []);
+});
+
+test('user cannot delete another owner listing photo', async () => {
+  let storageCalled = false;
+  const service = new ListingsService(
+    {
+      listing: {
+        findUnique: async () => ({
+          id: 'listing-1',
+          ownerId: ownerUser.userId,
+          status: ListingStatus.PENDING,
+          title: 'Черновик объявления',
+          publishedAt: null,
+          photos: [
+            {
+              id: 'photo-1',
+              storageKey: 'listings/listing-1/photo.jpg',
+              sortOrder: 0,
+            },
+          ],
+        }),
+      },
+    } as never,
+    {
+      deleteStoredFile: async () => {
+        storageCalled = true;
+      },
+    } as never,
+    {} as never,
+  );
+
+  await assert.rejects(
+    () => service.deletePhoto(strangerUser, 'listing-1', 'photo-1'),
+    (error) => error instanceof ForbiddenException,
+  );
+  assert.equal(storageCalled, false);
 });
 
 test('delete one of multiple photos succeeds', async () => {

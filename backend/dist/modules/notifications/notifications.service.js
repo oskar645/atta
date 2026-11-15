@@ -29,6 +29,18 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         this.chatsGateway = chatsGateway;
         this.fcmService = fcmService;
         this.logger = new common_1.Logger(NotificationsService_1.name);
+        this.adminEventNotificationsInFlight = new Map();
+    }
+    onModuleInit() {
+        this.adminPushTimer = setInterval(() => {
+            void this.runAdminPushDrainSafely();
+        }, 30_000);
+        this.adminPushTimer.unref?.();
+        void this.runAdminPushDrainSafely();
+    }
+    onModuleDestroy() {
+        if (this.adminPushTimer)
+            clearInterval(this.adminPushTimer);
     }
     toType(type) {
         switch ((type ?? '').trim().toLowerCase()) {
@@ -265,6 +277,205 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
         await this.publishNotification(item);
         return item;
     }
+    async createAdminEventNotifications(params) {
+        const eventKey = params.eventKey.trim();
+        if (!eventKey)
+            return;
+        const existing = this.adminEventNotificationsInFlight.get(eventKey);
+        if (existing != null)
+            return existing;
+        const future = this.createAdminEventNotificationsInternal({
+            ...params,
+            eventKey,
+        });
+        this.adminEventNotificationsInFlight.set(eventKey, future);
+        try {
+            await future;
+        }
+        finally {
+            if (this.adminEventNotificationsInFlight.get(eventKey) === future) {
+                this.adminEventNotificationsInFlight.delete(eventKey);
+            }
+        }
+    }
+    async createAdminEventNotificationsInternal(params) {
+        const admins = await this.prisma.user.findMany({
+            where: {
+                deletedAt: null,
+                status: client_1.UserStatus.ACTIVE,
+                adminProfile: { is: { isAdmin: true } },
+            },
+            select: { id: true },
+        });
+        await Promise.all(admins.map(async (admin) => {
+            const result = await this.prisma.$transaction(async (tx) => {
+                await tx.$executeRaw `
+            SELECT pg_advisory_xact_lock(
+              hashtext(${`admin_notification:${admin.id}:${params.eventKey}`})
+            )
+          `;
+                let item = await tx.userNotification.findFirst({
+                    where: {
+                        userId: admin.id,
+                        scope: client_1.NotificationScope.PERSONAL,
+                        payload: { path: ['adminEventKey'], equals: params.eventKey },
+                    },
+                });
+                const created = item == null;
+                if (item == null) {
+                    item = await tx.userNotification.create({ data: {
+                            userId: admin.id,
+                            scope: client_1.NotificationScope.PERSONAL,
+                            title: params.title.trim(),
+                            body: params.body.trim(),
+                            type: params.type,
+                            payload: {
+                                ...params.payload,
+                                adminEventKey: params.eventKey,
+                            },
+                        } });
+                }
+                const devices = await tx.userDevice.findMany({
+                    where: {
+                        userId: admin.id,
+                        isActive: true,
+                        platform: { in: [client_1.DevicePlatform.IOS, client_1.DevicePlatform.ANDROID] },
+                        session: { revokedAt: null, expiresAt: { gt: new Date() } },
+                    },
+                    select: { id: true },
+                });
+                if (devices.length > 0) {
+                    await tx.adminPushDelivery.createMany({
+                        data: devices.map((device) => ({
+                            notificationId: item.id,
+                            userId: admin.id,
+                            deviceId: device.id,
+                        })),
+                        skipDuplicates: true,
+                    });
+                }
+                return { item, created };
+            });
+            if (result.created) {
+                this.chatsGateway.emitNotificationNew(this.serialize(result.item), result.item.userId ?? undefined);
+            }
+        }));
+        await this.runAdminPushDrainSafely();
+    }
+    async runAdminPushDrainSafely() {
+        try {
+            await this.drainAdminPushDeliveries();
+        }
+        catch (error) {
+            this.logger.warn(`Admin push delivery pass failed. error=${error instanceof Error ? error.name : 'unknown'}`);
+        }
+    }
+    async drainAdminPushDeliveries() {
+        if (this.adminPushDrainInFlight)
+            return this.adminPushDrainInFlight;
+        const future = this.drainAdminPushDeliveriesInternal();
+        this.adminPushDrainInFlight = future;
+        try {
+            await future;
+        }
+        finally {
+            if (this.adminPushDrainInFlight === future)
+                this.adminPushDrainInFlight = undefined;
+        }
+    }
+    async drainAdminPushDeliveriesInternal() {
+        const claimed = await this.prisma.$transaction(async (tx) => {
+            const rows = await tx.$queryRaw `
+        SELECT "id"
+        FROM "admin_push_deliveries"
+        WHERE "status" = 'pending'
+          AND "attempts" < ${NotificationsService_1.adminPushMaxAttempts}
+          AND "next_attempt_at" <= NOW()
+          AND ("locked_until" IS NULL OR "locked_until" < NOW())
+        ORDER BY "next_attempt_at" ASC, "created_at" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 25
+      `;
+            if (rows.length === 0)
+                return [];
+            const ids = rows.map((row) => row.id);
+            await tx.adminPushDelivery.updateMany({
+                where: { id: { in: ids } },
+                data: {
+                    attempts: { increment: 1 },
+                    lockedUntil: new Date(Date.now() + 60_000),
+                },
+            });
+            return ids;
+        });
+        await Promise.all(claimed.map((id) => this.deliverAdminPush(id)));
+    }
+    async deliverAdminPush(id) {
+        const delivery = await this.prisma.adminPushDelivery.findFirst({
+            where: {
+                id,
+                status: 'pending',
+                user: {
+                    is: {
+                        deletedAt: null,
+                        status: client_1.UserStatus.ACTIVE,
+                        pushNotificationsEnabled: true,
+                        adminProfile: { is: { isAdmin: true } },
+                    },
+                },
+                device: {
+                    is: {
+                        isActive: true,
+                        session: { is: { revokedAt: null, expiresAt: { gt: new Date() } } },
+                    },
+                },
+            },
+            include: { notification: true, device: true },
+        });
+        if (!delivery) {
+            await this.prisma.adminPushDelivery.updateMany({
+                where: { id, status: 'pending' },
+                data: { status: 'cancelled', lockedUntil: null, lastError: 'recipient_ineligible' },
+            });
+            return;
+        }
+        const serialized = this.serialize(delivery.notification);
+        let result;
+        try {
+            const badge = await this.canonicalBadgeCount(delivery.userId);
+            result = await this.sendPushToDevice(delivery.device, serialized, badge);
+        }
+        catch {
+            result = { sent: false, status: 0, reason: 'unexpected_delivery_error' };
+        }
+        if (result.sent) {
+            await this.prisma.adminPushDelivery.update({
+                where: { id },
+                data: { status: 'delivered', deliveredAt: new Date(), lockedUntil: null, lastError: null },
+            });
+            return;
+        }
+        if (this.isPermanentPushFailure(result)) {
+            await this.deactivateDevice(delivery.device);
+            await this.prisma.adminPushDelivery.update({
+                where: { id },
+                data: { status: 'failed', lockedUntil: null, lastError: result.reason ?? `http_${result.status}` },
+            });
+            return;
+        }
+        const attempts = delivery.attempts;
+        const exhausted = attempts >= NotificationsService_1.adminPushMaxAttempts;
+        const delays = [30, 120, 600, 1800, 3600];
+        await this.prisma.adminPushDelivery.update({
+            where: { id },
+            data: {
+                status: exhausted ? 'failed' : 'pending',
+                lockedUntil: null,
+                nextAttemptAt: new Date(Date.now() + delays[Math.min(attempts - 1, delays.length - 1)] * 1000),
+                lastError: result.reason ?? `http_${result.status}`,
+            },
+        });
+    }
     async publishNotification(item) {
         const serialized = this.serialize(item);
         this.chatsGateway.emitNotificationNew(serialized, item.userId ?? undefined);
@@ -339,6 +550,9 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                     appVersion: body.appVersion?.trim() || null,
                     buildNumber: body.buildNumber?.trim() || null,
                     locale: body.locale?.trim() || null,
+                    supportsAndroidDataOnlyPush: this.toPlatform(body.platform) === client_1.DevicePlatform.ANDROID
+                        ? body.supportsAndroidDataOnlyPush === true
+                        : null,
                     isActive: true,
                     lastSeenAt: new Date(),
                 },
@@ -351,6 +565,9 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                     appVersion: body.appVersion?.trim() || null,
                     buildNumber: body.buildNumber?.trim() || null,
                     locale: body.locale?.trim() || null,
+                    supportsAndroidDataOnlyPush: this.toPlatform(body.platform) === client_1.DevicePlatform.ANDROID
+                        ? body.supportsAndroidDataOnlyPush === true
+                        : null,
                 },
             });
         });
@@ -565,9 +782,11 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                 session: { revokedAt: null, expiresAt: { gt: new Date() } },
             },
             select: {
+                id: true,
                 userId: true,
                 deviceToken: true,
                 platform: true,
+                supportsAndroidDataOnlyPush: true,
             },
             take: 5000,
         });
@@ -586,25 +805,19 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                 session: { revokedAt: null, expiresAt: { gt: new Date() } },
             },
             select: {
+                id: true,
                 userId: true,
                 deviceToken: true,
                 platform: true,
+                supportsAndroidDataOnlyPush: true,
             },
         });
         await this.sendPushToDevices(devices, notification);
     }
     async sendPushToDevices(devices, notification) {
-        const title = `${notification['title'] ?? ''}`.trim() || 'ATTA';
-        const body = `${notification['body'] ?? ''}`.trim() || 'Новое уведомление';
-        const payload = {
-            notification,
-            actionType: `${notification['payload']?.['actionType'] ?? ''}`.trim() ||
-                `${notification['type'] ?? ''}`.trim(),
-        };
         const badges = new Map();
         let unexpectedPushFailureLogged = false;
         await Promise.all(devices.map(async (device) => {
-            let result;
             try {
                 let badge = badges.get(device.userId);
                 if (!badge) {
@@ -612,40 +825,50 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
                     badges.set(device.userId, badge);
                 }
                 const absoluteBadge = await badge;
-                result = device.platform === client_1.DevicePlatform.ANDROID
-                    ? await (this.fcmService?.send({
-                        token: device.deviceToken,
-                        title,
-                        body,
-                        notification,
-                        recipientId: device.userId,
-                        actionType: `${payload.actionType ?? ''}`,
-                    }) ?? Promise.resolve({ sent: false, status: 0, skipped: true }))
-                    : await this.apnsService.send({
-                        token: device.deviceToken,
-                        title,
-                        body,
-                        payload: { ...payload, recipientId: device.userId },
-                        badge: absoluteBadge,
-                    });
+                const result = await this.sendPushToDevice(device, notification, absoluteBadge);
+                if (!result.sent && this.isPermanentPushFailure(result)) {
+                    await this.deactivateDevice(device);
+                }
             }
             catch (error) {
                 if (!unexpectedPushFailureLogged) {
                     this.logger.warn(`Push delivery skipped after unexpected send failure. error=${error instanceof Error ? error.name : 'unknown'}`);
                     unexpectedPushFailureLogged = true;
                 }
-                return;
-            }
-            if (!result.sent &&
-                (((result.status === 400 || result.status === 410) &&
-                    (result.reason === 'BadDeviceToken' ||
-                        result.reason === 'Unregistered' ||
-                        result.reason === 'DeviceTokenNotForTopic')) ||
-                    result.reason === 'UNREGISTERED' ||
-                    result.reason === 'INVALID_ARGUMENT')) {
-                await this.deactivateDevice(device);
             }
         }));
+    }
+    async sendPushToDevice(device, notification, badge) {
+        const title = `${notification['title'] ?? ''}`.trim() || 'ATTA';
+        const body = `${notification['body'] ?? ''}`.trim() || 'Новое уведомление';
+        const actionType = `${notification['payload']?.['actionType'] ?? ''}`.trim() ||
+            `${notification['type'] ?? ''}`.trim();
+        if (device.platform === client_1.DevicePlatform.ANDROID) {
+            return this.fcmService?.send({
+                token: device.deviceToken,
+                title,
+                body,
+                notification,
+                recipientId: device.userId,
+                actionType,
+                supportsDataOnly: device.supportsAndroidDataOnlyPush === true,
+            }) ?? { sent: false, status: 0, reason: 'fcm_unavailable', skipped: true };
+        }
+        return this.apnsService.send({
+            token: device.deviceToken,
+            title,
+            body,
+            payload: { notification, actionType, recipientId: device.userId },
+            badge,
+        });
+    }
+    isPermanentPushFailure(result) {
+        return (((result.status === 400 || result.status === 410) &&
+            (result.reason === 'BadDeviceToken' ||
+                result.reason === 'Unregistered' ||
+                result.reason === 'DeviceTokenNotForTopic')) ||
+            result.reason === 'UNREGISTERED' ||
+            result.reason === 'INVALID_ARGUMENT');
     }
     async deactivateDevice(device) {
         await this.prisma.userDevice.updateMany({
@@ -655,6 +878,7 @@ let NotificationsService = NotificationsService_1 = class NotificationsService {
     }
 };
 exports.NotificationsService = NotificationsService;
+NotificationsService.adminPushMaxAttempts = 5;
 exports.NotificationsService = NotificationsService = NotificationsService_1 = __decorate([
     (0, common_1.Injectable)(),
     __param(3, (0, common_1.Optional)()),

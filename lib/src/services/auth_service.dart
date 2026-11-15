@@ -100,6 +100,44 @@ class AuthService {
         isActive: isActive,
       );
 
+  Future<Map<String, dynamic>> startEmailPasswordless(String email) =>
+      _backend.startEmailPasswordless(email);
+
+  Future<Map<String, dynamic>> checkEmailPasswordless({
+    required String challengeId,
+    required String code,
+    required bool Function() isActive,
+  }) =>
+      _backend.checkEmailPasswordless(
+        challengeId: challengeId,
+        code: code,
+        isActive: isActive,
+      );
+
+  Future<void> completeEmailPasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+    required bool Function() isActive,
+  }) =>
+      _backend.completeEmailPasswordless(
+        registrationToken: registrationToken,
+        displayName: displayName,
+        acceptedLegal: acceptedLegal,
+        acceptedPersonalData: acceptedPersonalData,
+        isActive: isActive,
+      );
+
+  Future<PhoneVerificationStartResult> startLinkPhone(String phone) =>
+      _backend.startLinkPhone(phone);
+
+  Future<PhoneVerificationCheckResult> completeLinkPhone(
+    String phone,
+    String verificationId,
+  ) =>
+      _backend.completeLinkPhone(phone, verificationId);
+
   Future<AuthUser> signIn({
     required String email,
     required String password,

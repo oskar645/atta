@@ -2,6 +2,7 @@
 import 'active_promotion.dart';
 import 'car_specs.dart';
 import '../utils/media_url.dart';
+import '../utils/ru_phone.dart';
 
 const _ownerArchiveReasons = {
   'Объявление снято с публикации.',
@@ -181,6 +182,7 @@ class Listing {
 
   final String phone;
   final bool phoneHidden;
+  final bool hasCallContact;
 
   /// Старое поле (оставляем для совместимости).
   /// Обычно сюда кладём полный адрес одной строкой.
@@ -235,6 +237,7 @@ class Listing {
     this.priceReducedAt,
     required this.phone,
     required this.phoneHidden,
+    this.hasCallContact = false,
     required this.city,
     required this.location,
     required this.delivery,
@@ -507,6 +510,9 @@ class Listing {
     final locationRaw = row['location']; // может быть null
     final location = ListingLocation.fromAny(locationRaw, fallbackCity: city);
 
+    final phone = (row['phone'] ?? '').toString();
+    final hasCallContactRaw = row['has_call_contact'] ?? row['hasCallContact'];
+
     return Listing(
       id: row['id'].toString(),
       ownerId: (row['owner_id'] ?? '').toString(),
@@ -522,8 +528,11 @@ class Listing {
           _parseOptionalInt(row['previous_price'] ?? row['previousPrice']),
       priceReducedAt:
           _parseOptionalDt(row['price_reduced_at'] ?? row['priceReducedAt']),
-      phone: (row['phone'] ?? '').toString(),
+      phone: phone,
       phoneHidden: row['phone_hidden'] == true,
+      hasCallContact: hasCallContactRaw is bool
+          ? hasCallContactRaw
+          : normalizeRuPhoneForApi(phone).isNotEmpty,
       city: city,
       location: location,
       delivery: delivery,
@@ -599,6 +608,7 @@ class Listing {
       'price_reduced_at': priceReducedAt?.toIso8601String(),
       'phone': phone,
       'phone_hidden': phoneHidden,
+      'has_call_contact': hasCallContact,
 
 // Старое поле остаётся, туда кладём полную строку.
       'city': city,

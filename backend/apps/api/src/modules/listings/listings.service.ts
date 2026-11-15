@@ -25,6 +25,7 @@ import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   LISTING_PUBLICATION_NOT_READY,
+  LISTING_DRAFT_TITLE_PLACEHOLDER,
   isListingReadyForPublication,
   requiresPublicationReadiness,
 } from '../../common/listing-publication';
@@ -39,6 +40,11 @@ import {
   sellerLevelFromMetrics,
 } from '../../common/seller-level';
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
+import {
+  listingContactRolloutStage,
+  normalizeListingContactPhone,
+  resolveListingContactPhone,
+} from '../../common/listing-contact-rollout';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { PromotionsService } from '../promotions/promotions.service';
@@ -156,11 +162,19 @@ type ListingWithModerationSnapshot = Prisma.ListingGetPayload<{
 
 type ListingPublicationCandidate = Pick<
   ListingWithPublicRelations,
-  'title' | 'description' | 'category' | 'subcategory' | 'price' | 'city' | 'photos'
+  | 'title'
+  | 'description'
+  | 'category'
+  | 'subcategory'
+  | 'price'
+  | 'city'
+  | 'phone'
+  | 'photos'
 >;
 
 type ModerationQueueCandidate = ListingPublicationCandidate & {
   status: ListingStatus;
+  owner?: { phone?: string | null } | null;
 };
 
 const PROTECTED_FEED_HEAD_SIZE = 10;
@@ -514,13 +528,13 @@ export class ListingsService {
   ) {
     if (
       after.status !== ListingStatus.PENDING ||
-      !isListingReadyForPublication(after)
+      !this.isListingReadyForCurrentRollout(after)
     ) {
       return false;
     }
     return before == null ||
       before.status !== ListingStatus.PENDING ||
-      !isListingReadyForPublication(before);
+      !this.isListingReadyForCurrentRollout(before);
   }
 
   private async notifyAdminsOfModeration(listing: {
@@ -590,7 +604,10 @@ export class ListingsService {
       throw new NotFoundException('Listing owner was not found');
     }
 
-    const nextPhone = this.pickListingPhone(dto.phone, owner.phone);
+    const nextPhone = this.pickListingPhone(
+      dto.phone?.trim() ? dto.phone : undefined,
+      owner.phone,
+    );
     const requestedStatus = listingStatusFromInput(dto.status);
     const nextStatus =
       authUser.role === 'admin' ? requestedStatus : ListingStatus.PENDING;
@@ -606,6 +623,7 @@ export class ListingsService {
       nextStatus === ListingStatus.APPROVED &&
       !isListingReadyForPublication({
         ...dto,
+        phone: nextPhone,
         title: dto.title,
         description: dto.description,
         category: dto.category,
@@ -616,6 +634,12 @@ export class ListingsService {
       })
     ) {
       throw new BadRequestException(LISTING_PUBLICATION_NOT_READY);
+    }
+    if (
+      dto.title.trim() !== LISTING_DRAFT_TITLE_PLACEHOLDER &&
+      !normalizeRussianPhone(nextPhone)
+    ) {
+      throw new BadRequestException('Введите корректный номер телефона');
     }
 
     const listing = await this.prisma.listing.create({
@@ -1445,6 +1469,54 @@ export class ListingsService {
     };
   }
 
+  async getCallContact(id: string, authUser: AuthenticatedUser) {
+    await this.userBlocksService.assertNotBlocked(authUser.userId);
+    const listing = await this.prisma.listing.findUnique({
+      where: { id },
+      include: listingInclude,
+    });
+    if (!listing || !canViewListing(listing, authUser)) {
+      throw new NotFoundException('Listing not found');
+    }
+    const phone = resolveListingContactPhone(
+      listing.phone,
+      listing.owner?.phone,
+    );
+    if (!phone) {
+      throw new BadRequestException('LISTING_CONTACT_PHONE_UNAVAILABLE');
+    }
+    return { phone };
+  }
+
+  async getOwnerCallContact(
+    ownerId: string,
+    authUser: AuthenticatedUser,
+  ) {
+    await this.userBlocksService.assertNotBlocked(authUser.userId);
+    const listings = await this.prisma.listing.findMany({
+      where: {
+        ownerId,
+        status: ListingStatus.APPROVED,
+        publishedAt: { not: null },
+        deletedAt: null,
+      },
+      select: { phone: true },
+      distinct: ['phone'],
+    });
+    const phones = new Set(
+      listings
+        .map((listing) => normalizeListingContactPhone(listing.phone))
+        .filter((phone) => phone.length > 0),
+    );
+    if (phones.size === 0) {
+      throw new BadRequestException('LISTING_CONTACT_PHONE_UNAVAILABLE');
+    }
+    if (phones.size > 1) {
+      throw new BadRequestException('LISTING_CONTACT_PHONE_AMBIGUOUS');
+    }
+    return { phone: [...phones][0] };
+  }
+
   private async getSellerLevel(ownerId: string) {
     const [activeListingsCount, reviews] = await Promise.all([
       this.prisma.listing.count({
@@ -1510,7 +1582,13 @@ export class ListingsService {
         ? requestedStatus
         : this.statusAfterOwnerEdit(listing, authUser);
 
-    const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
+    const hasPhoneInput = Object.prototype.hasOwnProperty.call(dto, 'phone');
+    const nextPhone = hasPhoneInput
+      ? this.pickListingPhone(dto.phone, listing.phone, {
+          legacyOwnerPhone: listing.owner?.phone,
+          preserveMatchingLegacyValue: true,
+        })
+      : listing.phone;
     const nextCategory = dto.category?.trim() ?? listing.category;
     const shouldUpdateOem = Object.prototype.hasOwnProperty.call(
       dto,
@@ -2078,7 +2156,15 @@ export class ListingsService {
     if (!photo) {
       throw new NotFoundException('Listing photo not found');
     }
-    if (listing.photos.length <= 1 && this.requiresPhotoBeforePublication(listing.status)) {
+    const isTemporaryUploadDraft =
+      listing.status === ListingStatus.PENDING &&
+      (listing.title?.trim() ?? '') === LISTING_DRAFT_TITLE_PLACEHOLDER &&
+      listing.publishedAt == null;
+    if (
+      listing.photos.length <= 1 &&
+      this.requiresPhotoBeforePublication(listing.status) &&
+      !isTemporaryUploadDraft
+    ) {
       throw new BadRequestException(LISTING_PHOTO_REQUIRED);
     }
 
@@ -2132,15 +2218,38 @@ export class ListingsService {
   private pickListingPhone(
     rawPhone: string | undefined,
     fallbackPhone: string | null | undefined,
+    options?: {
+      legacyOwnerPhone?: string | null;
+      preserveMatchingLegacyValue?: boolean;
+    },
   ) {
-    const candidate = rawPhone?.trim() || fallbackPhone?.trim() || '';
+    const raw = rawPhone?.trim() ?? '';
+    const fallback = fallbackPhone?.trim() ?? '';
+    const candidate = raw || fallback;
     if (!candidate) {
-      return '';
+      return resolveListingContactPhone(
+        null,
+        options?.legacyOwnerPhone,
+        listingContactRolloutStage,
+      );
     }
 
-    const normalized = normalizeRussianPhone(candidate);
+    const normalized = normalizeListingContactPhone(candidate);
     if (!normalized) {
-      return candidate;
+      const canPreserveHistoricalValue =
+        listingContactRolloutStage === 'transitional' &&
+        options?.preserveMatchingLegacyValue === true &&
+        raw.length > 0 &&
+        raw === fallback &&
+        resolveListingContactPhone(
+          fallback,
+          options.legacyOwnerPhone,
+          'transitional',
+        ).length > 0;
+      if (canPreserveHistoricalValue) {
+        return fallback;
+      }
+      throw new BadRequestException('Введите корректный номер телефона');
     }
     validateRussianPhoneOrThrow(normalized);
     return normalized;
@@ -2225,9 +2334,24 @@ export class ListingsService {
       return;
     }
 
-    if (!isListingReadyForPublication(listing)) {
+    if (!this.isListingReadyForCurrentRollout(listing)) {
       throw new BadRequestException(LISTING_PUBLICATION_NOT_READY);
     }
+  }
+
+  private isListingReadyForCurrentRollout(
+    listing: ListingPublicationCandidate & {
+      owner?: { phone?: string | null } | null;
+    },
+  ) {
+    return isListingReadyForPublication({
+      ...listing,
+      phone: resolveListingContactPhone(
+        listing.phone,
+        listing.owner?.phone,
+        listingContactRolloutStage,
+      ),
+    });
   }
 
   private async resubmitPublishedListingAfterOwnerEdit(

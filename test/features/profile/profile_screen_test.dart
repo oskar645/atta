@@ -90,10 +90,54 @@ void main() {
         profileService: _FakeProfileService(),
       ),
     );
-    await _pumpUntilFound(tester, find.text('Подтвердите почту'));
+    await _pumpUntilFound(
+      tester,
+      find.text('Подтвердите электронную почту'),
+    );
 
     expect(find.textContaining('Номер подтверж'), findsNothing);
     expect(find.text('На ATTA с августа 2026 года'), findsOneWidget);
+    expect(find.byKey(const Key('profile-member-since')), findsOneWidget);
+  });
+
+  testWidgets('email-only profile asks for phone in the existing status slot',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _EmailOnlyProfileService(),
+        authService: _DateAuthService(const AuthUser(
+          uid: 'email-only',
+          email: 'member@example.com',
+          emailVerified: true,
+          displayName: 'Email User',
+        )),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Подтвердите номер телефона'));
+
+    expect(find.text('Подтвердите номер телефона'), findsOneWidget);
+  });
+
+  testWidgets('fully linked profile hides only verification prompt',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _FakeProfileService(),
+        authService: _DateAuthService(const AuthUser(
+          uid: 'linked',
+          email: 'member@example.com',
+          emailVerified: true,
+          phone: '79990000000',
+          phoneVerified: true,
+          displayName: 'Linked User',
+        )),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Linked User'));
+
+    expect(find.textContaining('Подтвердите'), findsNothing);
     expect(find.byKey(const Key('profile-member-since')), findsOneWidget);
   });
 
@@ -782,6 +826,24 @@ class _FakeProfileService extends ProfileService {
 
   @override
   Stream<int> streamMyListingsCount(String uid) => Stream<int>.value(5);
+}
+
+class _EmailOnlyProfileService extends _FakeProfileService {
+  @override
+  Stream<Map<String, dynamic>> streamProfile(
+    String uid, {
+    Map<String, dynamic>? seed,
+  }) async* {
+    yield <String, dynamic>{
+      ...?seed,
+      'display_name': 'Email User',
+      'phone': null,
+      'phoneVerified': false,
+      'email': 'member@example.com',
+      'email_verified': true,
+      'created_at': '2026-08-12T10:00:00.000Z',
+    };
+  }
 }
 
 class _EditableProfileService extends _FakeProfileService {

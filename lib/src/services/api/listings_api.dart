@@ -76,6 +76,22 @@ class ListingsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> getCallContact(String id) async {
+    final response = await client.post(
+      '/listings/$id/call-contact',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
+  Future<Map<String, dynamic>> getOwnerCallContact(String ownerId) async {
+    final response = await client.post(
+      '/listings/owner/$ownerId/call-contact',
+      authorized: true,
+    );
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> create(Map<String, dynamic> body) async {
     final response = await client.post(
       '/listings',

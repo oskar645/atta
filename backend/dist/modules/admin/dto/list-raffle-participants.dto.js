@@ -16,18 +16,43 @@ class ListRaffleParticipantsDto {
 }
 exports.ListRaffleParticipantsDto = ListRaffleParticipantsDto;
 __decorate([
+    (0, class_validator_1.ValidateIf)((value) => !value.snapshotId),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsDateString)({ strict: true }),
+    (0, class_validator_1.MaxLength)(40),
     __metadata("design:type", String)
 ], ListRaffleParticipantsDto.prototype, "from", void 0);
 __decorate([
+    (0, class_validator_1.ValidateIf)((value) => !value.snapshotId),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsDateString)({ strict: true }),
+    (0, class_validator_1.MaxLength)(40),
     __metadata("design:type", String)
 ], ListRaffleParticipantsDto.prototype, "to", void 0);
 __decorate([
+    (0, class_validator_1.ValidateIf)((value) => !value.snapshotId),
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.Matches)(/^[1-9][0-9]*$/),
+    (0, class_validator_1.MaxLength)(12),
     __metadata("design:type", String)
 ], ListRaffleParticipantsDto.prototype, "ticketPrice", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsUUID)(),
+    __metadata("design:type", String)
+], ListRaffleParticipantsDto.prototype, "snapshotId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Matches)(/^\d{1,30}$/),
+    __metadata("design:type", String)
+], ListRaffleParticipantsDto.prototype, "fromTicket", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.Matches)(/^\d{1,30}$/),
+    __metadata("design:type", String)
+], ListRaffleParticipantsDto.prototype, "toTicket", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsInt)(),
@@ -39,6 +64,18 @@ __decorate([
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(128),
     __metadata("design:type", String)
 ], ListRaffleParticipantsDto.prototype, "cursor", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MaxLength)(120),
+    __metadata("design:type", String)
+], ListRaffleParticipantsDto.prototype, "search", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['participants', 'tickets']),
+    __metadata("design:type", String)
+], ListRaffleParticipantsDto.prototype, "format", void 0);
 //# sourceMappingURL=list-raffle-participants.dto.js.map

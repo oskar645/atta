@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var PromotionsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PromotionsService = void 0;
@@ -15,6 +18,7 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const crypto_1 = require("crypto");
 const listing_search_1 = require("../../common/listing-search");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const serializers_1 = require("../../common/serializers");
 const prisma_service_1 = require("../prisma/prisma.service");
 const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
@@ -79,10 +83,11 @@ const parseShowcaseCursor = (rawCursor) => {
     }
 };
 let PromotionsService = PromotionsService_1 = class PromotionsService {
-    constructor(prisma, walletService, rateLimitService) {
+    constructor(prisma, walletService, rateLimitService, adminDashboardSignal) {
         this.prisma = prisma;
         this.walletService = walletService;
         this.rateLimitService = rateLimitService;
+        this.adminDashboardSignal = adminDashboardSignal;
         this.logger = new common_1.Logger(PromotionsService_1.name);
         this.workerTimer = null;
         this.workerRunning = false;
@@ -277,6 +282,8 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                 alreadyActive: false,
             };
         });
+        if (!alreadyActive)
+            this.adminDashboardSignal?.changed('wallet', 'promotions');
         const freshListing = await this.prisma.listing.findUniqueOrThrow({
             where: {
                 id: listingId,
@@ -548,7 +555,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             });
         }
         const walletReason = await this.walletService.resolveSpendReason(plan.walletReason);
-        const { promotion, updatedWallet } = await this.prisma.$transaction(async (tx) => {
+        const { promotion, updatedWallet, createdSpend } = await this.prisma.$transaction(async (tx) => {
             await tx.$executeRaw `
           SELECT pg_advisory_xact_lock(
             hashtext(${`raise:${authUser.userId}:${listingId}:${idempotencyKey}`})
@@ -577,6 +584,7 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
                             userId: authUser.userId,
                         },
                     }),
+                    createdSpend: false,
                 };
             }
             const lockedListing = await tx.listing.findUnique({
@@ -629,8 +637,11 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
             return {
                 promotion,
                 updatedWallet,
+                createdSpend: true,
             };
         });
+        if (createdSpend)
+            this.adminDashboardSignal?.changed('wallet', 'promotions');
         const freshListing = await this.prisma.listing.findUniqueOrThrow({
             where: {
                 id: listingId,
@@ -928,8 +939,10 @@ let PromotionsService = PromotionsService_1 = class PromotionsService {
 exports.PromotionsService = PromotionsService;
 exports.PromotionsService = PromotionsService = PromotionsService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(3, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         wallet_service_1.WalletService,
-        rate_limit_service_1.RateLimitService])
+        rate_limit_service_1.RateLimitService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], PromotionsService);
 //# sourceMappingURL=promotions.service.js.map

@@ -48,6 +48,14 @@ export class FavoritesController {
     return this.favoritesService.add(authUser, listingId);
   }
 
+  @Delete('bulk/:scope')
+  removeMany(
+    @CurrentUser() authUser: AuthenticatedUser,
+    @Param('scope') scope?: string,
+  ) {
+    return this.favoritesService.removeMany(authUser, scope);
+  }
+
   @Delete(':listingId')
   remove(
     @CurrentUser() authUser: AuthenticatedUser,

@@ -13,6 +13,7 @@ const CODE_TTL_MS = 10 * 60_000;
 const RESEND_MS = 60_000;
 const GRANT_TTL_MS = 15 * 60_000;
 const NEUTRAL_MESSAGE = 'Если этот email был подтверждён в ATTA, мы отправили код.';
+const RECENT_AUTH_MS = 15 * 60_000;
 type Source = { ip?: string; deviceId?: string; userAgent?: string };
 
 @Injectable()
@@ -25,8 +26,14 @@ export class AccountRecoveryService {
     private readonly auth: AuthService,
   ) {}
 
-  async startRecoveryEmail(userId: string, rawEmail: string, source: Source = {}) {
+  async startRecoveryEmail(
+    userId: string,
+    rawEmail: string,
+    source: Source = {},
+    sessionId?: string,
+  ) {
     this.email.ensureAvailable();
+    await this.assertRecentAuthentication(userId, sessionId);
     const email = this.normalizeEmail(rawEmail);
     await this.limitStart('settings', email, userId, source);
     const duplicate = await this.prisma.user.findFirst({
@@ -34,7 +41,14 @@ export class AccountRecoveryService {
       select: { id: true },
     });
     if (duplicate) throw new ConflictException('Этот email уже используется');
-    const challenge = await this.createChallenge(userId, EmailChallengePurpose.RECOVERY_EMAIL, email, source);
+    const challenge = await this.createChallenge(
+      userId,
+      EmailChallengePurpose.RECOVERY_EMAIL,
+      email,
+      source,
+      randomUUID(),
+      { recoveryEmail: { sessionId } },
+    );
     // A client can lose the HTTP response after SMTP has accepted the email.
     // During the cooldown, acknowledge the already-created challenge instead
     // of creating/sending another one. This also lets older clients recover by
@@ -43,8 +57,19 @@ export class AccountRecoveryService {
     return this.challengeResponse(challenge.id, email, 'Код отправлен', challenge.resendAfter);
   }
 
-  async verifyRecoveryEmail(userId: string, challengeId: string, code: string) {
+  async verifyRecoveryEmail(
+    userId: string,
+    challengeId: string,
+    code: string,
+    sessionId?: string,
+  ) {
+    await this.assertRecentAuthentication(userId, sessionId);
     const challenge = await this.consumeCode(challengeId, code, EmailChallengePurpose.RECOVERY_EMAIL, userId);
+    const recoveryMetadata = (challenge.metadata as Prisma.JsonObject)
+      ?.recoveryEmail as Prisma.JsonObject | undefined;
+    if (!sessionId || recoveryMetadata?.sessionId !== sessionId) {
+      throw this.invalidCode();
+    }
     const previous = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { email: true, emailVerifiedAt: true } });
       const duplicate = await tx.user.findFirst({ where: { email: { equals: challenge.targetEmail, mode: 'insensitive' }, id: { not: userId } }, select: { id: true } });
@@ -115,15 +140,31 @@ export class AccountRecoveryService {
     return response;
   }
 
-  private async createChallenge(userId: string, purpose: EmailChallengePurpose, email: string, source: Source, id = randomUUID()) {
+  private async createChallenge(
+    userId: string,
+    purpose: EmailChallengePurpose,
+    email: string,
+    source: Source,
+    id = randomUUID(),
+    metadata: Prisma.InputJsonValue = {},
+  ) {
     const latest = await this.prisma.emailChallenge.findFirst({ where: { userId, purpose, targetEmail: email }, orderBy: { createdAt: 'desc' } });
     if (latest && latest.resendAvailableAt.getTime() > Date.now()) {
       const retryAfter = Math.ceil((latest.resendAvailableAt.getTime() - Date.now()) / 1000);
-      if (purpose === EmailChallengePurpose.RECOVERY_EMAIL) return { id: latest.id, resendAfter: retryAfter };
+      const latestRecovery = (latest.metadata as Prisma.JsonObject)
+        ?.recoveryEmail as Prisma.JsonObject | undefined;
+      const nextRecovery = (metadata as Prisma.JsonObject)
+        ?.recoveryEmail as Prisma.JsonObject | undefined;
+      if (
+        purpose === EmailChallengePurpose.RECOVERY_EMAIL &&
+        latestRecovery?.sessionId === nextRecovery?.sessionId
+      ) {
+        return { id: latest.id, resendAfter: retryAfter };
+      }
       throw new BadRequestException({ code: 'EMAIL_COOLDOWN', retryAfter: Math.ceil((latest.resendAvailableAt.getTime() - Date.now()) / 1000), message: 'Код уже отправлен' });
     }
     const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
-    await this.prisma.emailChallenge.create({ data: { id, userId, purpose, targetEmail: email, codeHash: this.digest(`${id}:${code}`), expiresAt: new Date(Date.now() + CODE_TTL_MS), resendAvailableAt: new Date(Date.now() + RESEND_MS), requestedByIp: source.ip, requestedByDevice: source.deviceId, metadata: {} } });
+    await this.prisma.emailChallenge.create({ data: { id, userId, purpose, targetEmail: email, codeHash: this.digest(`${id}:${code}`), expiresAt: new Date(Date.now() + CODE_TTL_MS), resendAvailableAt: new Date(Date.now() + RESEND_MS), requestedByIp: source.ip, requestedByDevice: source.deviceId, metadata } });
     return { id, code, resendAfter: RESEND_MS / 1000 };
   }
 
@@ -157,6 +198,30 @@ export class AccountRecoveryService {
       this.rateLimit.consumeOrThrow(`email:${scope}:address:${this.digest(email)}`, { limit: 5, windowMs: 60 * 60_000 }),
       ...(userId ? [this.rateLimit.consumeOrThrow(`email:${scope}:user:${userId}`, { limit: 5, windowMs: 60 * 60_000 })] : []),
     ]);
+  }
+
+  private async assertRecentAuthentication(userId: string, sessionId?: string) {
+    if (!sessionId) {
+      throw new BadRequestException({
+        code: 'RECENT_AUTH_REQUIRED',
+        message: 'Для изменения способов входа войдите в аккаунт заново.',
+      });
+    }
+    const session = await this.prisma.userSession.findFirst({
+      where: {
+        id: sessionId,
+        userId,
+        revokedAt: null,
+        createdAt: { gte: new Date(Date.now() - RECENT_AUTH_MS) },
+      },
+      select: { id: true },
+    });
+    if (!session) {
+      throw new BadRequestException({
+        code: 'RECENT_AUTH_REQUIRED',
+        message: 'Для изменения способов входа войдите в аккаунт заново.',
+      });
+    }
   }
 
   private normalizeEmail(value: string) { return value.trim().toLowerCase(); }

@@ -197,6 +197,47 @@ test('favorites list pagination cursor contract is unchanged', async () => {
   assert.equal(typeof response.nextCursor, 'string');
 });
 
+test('bulk remove all deletes only current user favorites in one query', async () => {
+  let capturedWhere: unknown;
+  const service = new FavoritesService({
+    favorite: {
+      deleteMany: async (args: Record<string, unknown>) => {
+        capturedWhere = args['where'];
+        return { count: 1200 };
+      },
+    },
+  } as any);
+
+  const result = await service.removeMany({ userId: 'user-1' } as any, 'all');
+
+  assert.deepEqual(capturedWhere, { userId: 'user-1' });
+  assert.equal(result.removed_count, 1200);
+});
+
+test('bulk remove inactive preserves approved non-deleted listings', async () => {
+  let capturedWhere: unknown;
+  const service = new FavoritesService({
+    favorite: {
+      deleteMany: async (args: Record<string, unknown>) => {
+        capturedWhere = args['where'];
+        return { count: 3 };
+      },
+    },
+  } as any);
+
+  await service.removeMany({ userId: 'user-1' } as any, 'inactive');
+
+  assert.deepEqual(capturedWhere, {
+    userId: 'user-1',
+    listing: {
+      OR: [
+        { status: { not: ListingStatus.APPROVED } },
+        { deletedAt: { not: null } },
+      ],
+    },
+  });
+});
+
 const favoriteFixture = (id: string, listingId: string, createdAt: Date) => ({
   id,
   userId: 'user-1',

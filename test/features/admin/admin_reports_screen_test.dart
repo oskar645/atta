@@ -23,6 +23,8 @@ void main() {
     );
 
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Спам'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Написать автору жалобы'));
     await tester.pumpAndSettle();
 
@@ -49,6 +51,8 @@ void main() {
     );
 
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Спам'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Нарушений нет'));
     await tester.pumpAndSettle();
 
@@ -73,6 +77,8 @@ void main() {
       ),
     );
 
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Спам'));
     await tester.pumpAndSettle();
 
     expect(find.text('Жалоба на объявление'), findsOneWidget);
@@ -99,6 +105,8 @@ void main() {
     );
 
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Спам'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Отправить предупреждение'));
     await tester.pumpAndSettle();
 
@@ -118,6 +126,34 @@ void main() {
 
     expect(reports.contactCalls, 1);
     expect(reports.lastMessage, contains('P.S.'));
+  });
+
+  testWidgets('shows three status tabs and starts review from details',
+      (tester) async {
+    final reports = _FakeReportsService();
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ReportsService>.value(value: reports),
+        ],
+        child: const MaterialApp(home: AdminReportsScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('Новые 1'), findsOneWidget);
+    expect(find.text('На проверке 0'), findsOneWidget);
+    expect(find.text('Завершённые 0'), findsOneWidget);
+
+    await tester.tap(find.text('Спам'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Начать проверку'));
+    await tester.pumpAndSettle();
+
+    expect(reports.startReviewCalls, 1);
+    expect(find.text('Жалобы'), findsOneWidget);
   });
 }
 
@@ -139,7 +175,38 @@ class _FakeReportsService extends ReportsService {
     },
   ];
   int contactCalls = 0;
+  int startReviewCalls = 0;
   String lastMessage = '';
+
+  @override
+  Future<AdminReportsPage> queryAdminReports({
+    required String status,
+    int limit = 40,
+    String? cursor,
+    String? reason,
+    String? search,
+    String sort = 'newest',
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) async {
+    return AdminReportsPage(
+      items: status == 'open'
+          ? List<Map<String, dynamic>>.from(_items)
+          : const <Map<String, dynamic>>[],
+      nextCursor: null,
+      hasMore: false,
+      counts: const <String, int>{
+        'open': 1,
+        'in_progress': 0,
+        'completed': 0,
+      },
+    );
+  }
+
+  @override
+  Future<void> startReview(String reportId) async {
+    startReviewCalls += 1;
+  }
 
   @override
   List<Map<String, dynamic>> peekAllReports() =>

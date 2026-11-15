@@ -32,3 +32,30 @@ test('verification email uses the ATTA sender and formats a six-digit code', asy
     delete process.env.SMTP_PASS;
   }
 });
+
+test('passwordless login email reuses the ATTA template and sender', async () => {
+  const originalCreateTransport = nodemailer.createTransport;
+  let message: Record<string, unknown> | undefined;
+  nodemailer.createTransport = (() => ({
+    verify: async () => true,
+    sendMail: async (value: Record<string, unknown>) => {
+      message = value;
+      return { messageId: 'test-message', accepted: [value.to] };
+    },
+  })) as typeof nodemailer.createTransport;
+
+  try {
+    process.env.SMTP_PASS = 'test-only-password';
+    const { EmailService } = await import('./email.service');
+    const email = new EmailService();
+    await email.sendLoginCode({ to: 'recipient@example.com', code: '654321' });
+
+    assert.equal(message?.from, 'ATTA <atta@attamarket.online>');
+    assert.equal(message?.subject, 'Код для входа в ATTA');
+    assert.match(String(message?.text), /654 321/);
+    assert.match(String(message?.html), /654 321/);
+  } finally {
+    nodemailer.createTransport = originalCreateTransport;
+    delete process.env.SMTP_PASS;
+  }
+});

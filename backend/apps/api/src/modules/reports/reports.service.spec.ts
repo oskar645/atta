@@ -15,6 +15,7 @@ test('admin list excludes hidden reports', async () => {
           capturedWhere = args['where'] as Record<string, unknown> | undefined;
           return [];
         },
+        count: async () => 0,
       },
     } as any,
     {} as any,
@@ -23,10 +24,154 @@ test('admin list excludes hidden reports', async () => {
   await service.listForAdmin();
 
   assert.deepEqual(capturedWhere, {
-    status: {
-      notIn: ['hidden', 'deleted'],
-    },
+    AND: [
+      {
+        AND: [
+          {},
+          {
+            status: {
+              notIn: ['hidden', 'deleted'],
+            },
+          },
+        ],
+      },
+      {},
+    ],
   });
+});
+
+test('start review persists in-progress state and administrator', async () => {
+  let updateArgs: Record<string, any> | undefined;
+  const service = new ReportsService(
+    {
+      report: {
+        findUnique: async () => ({ id: 'report-1', status: 'open' }),
+        update: async (args: Record<string, any>) => {
+          updateArgs = args;
+          return {
+            id: 'report-1',
+            listingId: null,
+            listingOwnerId: 'user-2',
+            reporterId: 'user-1',
+            reason: 'Спам',
+            comment: '',
+            status: 'in_progress',
+            decision: null,
+            adminUid: 'admin-1',
+            adminComment: null,
+            handledBy: 'admin-1',
+            createdAt: new Date('2026-01-01T00:00:00.000Z'),
+            handledAt: new Date('2026-01-01T00:00:00.000Z'),
+            closedAt: null,
+          };
+        },
+      },
+    } as any,
+    {} as any,
+  );
+
+  const result = await service.startReview('report-1', {
+    userId: 'admin-1',
+  } as any);
+
+  assert.equal(updateArgs?.data?.status, 'in_progress');
+  assert.equal(updateArgs?.data?.handledBy, 'admin-1');
+  assert.equal(result.item.status, 'in_progress');
+});
+
+test('resolve keeps exact decision and notifies reporter once', async () => {
+  const notifications: Array<Record<string, any>> = [];
+  let updateArgs: Record<string, any> | undefined;
+  const service = new ReportsService(
+    {
+      report: {
+        findUnique: async () => ({ id: 'report-1' }),
+        update: async (args: Record<string, any>) => {
+          updateArgs = args;
+          return {
+            id: 'report-1',
+            listingId: null,
+            listingOwnerId: 'user-2',
+            reporterId: 'user-1',
+            reason: 'Спам',
+            comment: '',
+            status: 'resolved',
+            decision: args.data.decision,
+            adminUid: 'admin-1',
+            adminComment: null,
+            handledBy: 'admin-1',
+            createdAt: new Date('2026-01-01T00:00:00.000Z'),
+            handledAt: new Date('2026-01-01T00:00:00.000Z'),
+            closedAt: new Date('2026-01-01T00:00:00.000Z'),
+          };
+        },
+      },
+    } as any,
+    {
+      createSystemNotification: async (args: Record<string, any>) => {
+        notifications.push(args);
+      },
+    } as any,
+  );
+
+  await service.resolve(
+    'report-1',
+    { userId: 'admin-1' } as any,
+    undefined,
+    'warned',
+  );
+
+  assert.equal(updateArgs?.data?.decision, 'warned');
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.userId, 'user-1');
+});
+
+test('repeated final decision is idempotent and does not notify twice', async () => {
+  let updateCalls = 0;
+  let notificationCalls = 0;
+  const existing = {
+    id: 'report-1',
+    listingId: null,
+    listingOwnerId: 'user-2',
+    reporterId: 'user-1',
+    reason: 'Спам',
+    comment: '',
+    status: 'resolved',
+    decision: 'warned',
+    adminUid: 'admin-1',
+    adminComment: null,
+    handledBy: 'admin-1',
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    handledAt: new Date('2026-01-01T00:00:00.000Z'),
+    closedAt: new Date('2026-01-01T00:00:00.000Z'),
+  };
+  const service = new ReportsService(
+    {
+      report: {
+        findUnique: async () => existing,
+        update: async () => {
+          updateCalls += 1;
+          return existing;
+        },
+      },
+    } as any,
+    {
+      createSystemNotification: async () => {
+        notificationCalls += 1;
+      },
+    } as any,
+  );
+
+  const result = await service.resolve(
+    'report-1',
+    { userId: 'admin-1' } as any,
+    undefined,
+    'warned',
+  );
+
+  assert.equal(result.item.decision, 'warned');
+  assert.equal(updateCalls, 0);
+  assert.equal(notificationCalls, 0);
 });
 
 test('hide marks report hidden without deleting it', async () => {

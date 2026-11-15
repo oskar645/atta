@@ -18,11 +18,14 @@ const saved_search_alerts_service_1 = require("../saved-searches/saved-search-al
 const common_2 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const listing_search_1 = require("../../common/listing-search");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
+const notifications_service_1 = require("../notifications/notifications.service");
 const listing_publication_1 = require("../../common/listing-publication");
 Object.defineProperty(exports, "LISTING_PUBLICATION_NOT_READY", { enumerable: true, get: function () { return listing_publication_1.LISTING_PUBLICATION_NOT_READY; } });
 const serializers_1 = require("../../common/serializers");
 const seller_level_1 = require("../../common/seller-level");
 const phone_1 = require("../../common/phone");
+const listing_contact_rollout_1 = require("../../common/listing-contact-rollout");
 const prisma_service_1 = require("../prisma/prisma.service");
 const promotions_service_1 = require("../promotions/promotions.service");
 const storage_service_1 = require("../storage/storage.service");
@@ -333,12 +336,40 @@ const parseRankRowDate = (value) => value == null ? null : value instanceof Date
 let ListingsService = class ListingsService {
     constructor(prisma, storageService, promotionsService, userBlocksService = {
         assertNotBlocked: async () => undefined,
-    }, savedSearchAlerts) {
+    }, savedSearchAlerts, adminDashboardSignal, notificationsService) {
         this.prisma = prisma;
         this.storageService = storageService;
         this.promotionsService = promotionsService;
         this.userBlocksService = userBlocksService;
         this.savedSearchAlerts = savedSearchAlerts;
+        this.adminDashboardSignal = adminDashboardSignal;
+        this.notificationsService = notificationsService;
+    }
+    entersModerationQueue(before, after) {
+        if (after.status !== client_1.ListingStatus.PENDING ||
+            !this.isListingReadyForCurrentRollout(after)) {
+            return false;
+        }
+        return before == null ||
+            before.status !== client_1.ListingStatus.PENDING ||
+            !this.isListingReadyForCurrentRollout(before);
+    }
+    async notifyAdminsOfModeration(listing) {
+        try {
+            await this.notificationsService?.createAdminEventNotifications({
+                eventKey: `admin_moderation:${listing.id}:${listing.updatedAt.toISOString()}`,
+                title: 'ATTA — Модерация',
+                body: 'Новое объявление ожидает проверки.',
+                type: client_1.NotificationType.MODERATION,
+                payload: {
+                    actionType: 'admin_moderation_new',
+                    listingId: listing.id,
+                },
+            });
+        }
+        catch {
+            // Administrative delivery must not roll back a completed listing write.
+        }
     }
     async recordSearchAttempt(dto) {
         const query = dto.query.normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 240);
@@ -362,6 +393,7 @@ let ListingsService = class ListingsService {
             await this.prisma.zeroResultSearch.deleteMany({
                 where: { attemptId: dto.attemptId },
             });
+            this.adminDashboardSignal?.changed('searches');
             return { recorded: true };
         }
         await this.prisma.zeroResultSearch.upsert({
@@ -369,6 +401,7 @@ let ListingsService = class ListingsService {
             create: { attemptId: dto.attemptId, query, normalizedQuery },
             update: { query, normalizedQuery, createdAt: new Date() },
         });
+        this.adminDashboardSignal?.changed('searches');
         return { recorded: true };
     }
     async create(authUser, dto) {
@@ -381,7 +414,7 @@ let ListingsService = class ListingsService {
         if (!owner || owner.status === client_1.UserStatus.DELETED) {
             throw new common_2.NotFoundException('Listing owner was not found');
         }
-        const nextPhone = this.pickListingPhone(dto.phone, owner.phone);
+        const nextPhone = this.pickListingPhone(dto.phone?.trim() ? dto.phone : undefined, owner.phone);
         const requestedStatus = (0, serializers_1.listingStatusFromInput)(dto.status);
         const nextStatus = authUser.role === 'admin' ? requestedStatus : client_1.ListingStatus.PENDING;
         const category = dto.category.trim();
@@ -394,6 +427,7 @@ let ListingsService = class ListingsService {
         if (nextStatus === client_1.ListingStatus.APPROVED &&
             !(0, listing_publication_1.isListingReadyForPublication)({
                 ...dto,
+                phone: nextPhone,
                 title: dto.title,
                 description: dto.description,
                 category: dto.category,
@@ -403,6 +437,10 @@ let ListingsService = class ListingsService {
                 photos: dto.photo_urls ?? [],
             })) {
             throw new common_2.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
+        }
+        if (dto.title.trim() !== listing_publication_1.LISTING_DRAFT_TITLE_PLACEHOLDER &&
+            !(0, phone_1.normalizeRussianPhone)(nextPhone)) {
+            throw new common_2.BadRequestException('Введите корректный номер телефона');
         }
         const listing = await this.prisma.listing.create({
             data: {
@@ -456,6 +494,10 @@ let ListingsService = class ListingsService {
         });
         if (listing.status === client_1.ListingStatus.APPROVED) {
             await this.savedSearchAlerts?.notifyApprovedListing(listing.id);
+        }
+        this.adminDashboardSignal?.changed('listings');
+        if (this.entersModerationQueue(null, listing)) {
+            await this.notifyAdminsOfModeration(listing);
         }
         return {
             listing: (0, serializers_1.serializeListing)(listing, { includePrivateContact: true }),
@@ -1119,6 +1161,44 @@ let ListingsService = class ListingsService {
             ...this.promotionsService.enrichListing(listing, authUser),
         };
     }
+    async getCallContact(id, authUser) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
+        const listing = await this.prisma.listing.findUnique({
+            where: { id },
+            include: exports.listingInclude,
+        });
+        if (!listing || !(0, exports.canViewListing)(listing, authUser)) {
+            throw new common_2.NotFoundException('Listing not found');
+        }
+        const phone = (0, listing_contact_rollout_1.resolveListingContactPhone)(listing.phone, listing.owner?.phone);
+        if (!phone) {
+            throw new common_2.BadRequestException('LISTING_CONTACT_PHONE_UNAVAILABLE');
+        }
+        return { phone };
+    }
+    async getOwnerCallContact(ownerId, authUser) {
+        await this.userBlocksService.assertNotBlocked(authUser.userId);
+        const listings = await this.prisma.listing.findMany({
+            where: {
+                ownerId,
+                status: client_1.ListingStatus.APPROVED,
+                publishedAt: { not: null },
+                deletedAt: null,
+            },
+            select: { phone: true },
+            distinct: ['phone'],
+        });
+        const phones = new Set(listings
+            .map((listing) => (0, listing_contact_rollout_1.normalizeListingContactPhone)(listing.phone))
+            .filter((phone) => phone.length > 0));
+        if (phones.size === 0) {
+            throw new common_2.BadRequestException('LISTING_CONTACT_PHONE_UNAVAILABLE');
+        }
+        if (phones.size > 1) {
+            throw new common_2.BadRequestException('LISTING_CONTACT_PHONE_AMBIGUOUS');
+        }
+        return { phone: [...phones][0] };
+    }
     async getSellerLevel(ownerId) {
         const [activeListingsCount, reviews] = await Promise.all([
             this.prisma.listing.count({
@@ -1172,7 +1252,13 @@ let ListingsService = class ListingsService {
         const nextStatus = requestedStatus != null && requestedStatus !== client_1.ListingStatus.APPROVED
             ? requestedStatus
             : this.statusAfterOwnerEdit(listing, authUser);
-        const nextPhone = this.pickListingPhone(dto.phone, listing.owner?.phone ?? listing.phone);
+        const hasPhoneInput = Object.prototype.hasOwnProperty.call(dto, 'phone');
+        const nextPhone = hasPhoneInput
+            ? this.pickListingPhone(dto.phone, listing.phone, {
+                legacyOwnerPhone: listing.owner?.phone,
+                preserveMatchingLegacyValue: true,
+            })
+            : listing.phone;
         const nextCategory = dto.category?.trim() ?? listing.category;
         const shouldUpdateOem = Object.prototype.hasOwnProperty.call(dto, 'oem_part_number');
         const nextOemPartNumber = isAutoPartsCategory(nextCategory)
@@ -1264,6 +1350,10 @@ let ListingsService = class ListingsService {
         if (updated.status === client_1.ListingStatus.APPROVED && listing.status !== client_1.ListingStatus.APPROVED) {
             await this.savedSearchAlerts?.notifyApprovedListing(updated.id);
         }
+        this.adminDashboardSignal?.changed('listings');
+        if (this.entersModerationQueue(listing, updated)) {
+            await this.notifyAdminsOfModeration(updated);
+        }
         return {
             listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
         };
@@ -1295,6 +1385,7 @@ let ListingsService = class ListingsService {
             include: exports.listingInclude,
         });
         await this.storageService.deleteListingPhotosForListings([id]);
+        this.adminDashboardSignal?.changed('listings');
         return {
             listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
             status_after_delete: (0, serializers_1.listingStatusToResponse)(client_1.ListingStatus.DELETED),
@@ -1347,6 +1438,7 @@ let ListingsService = class ListingsService {
             },
             include: exports.listingInclude,
         });
+        this.adminDashboardSignal?.changed('listings');
         return {
             listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
             status_after_archive: (0, serializers_1.listingStatusToResponse)(nextStatus),
@@ -1385,6 +1477,10 @@ let ListingsService = class ListingsService {
                 include: exports.listingInclude,
             });
         });
+        this.adminDashboardSignal?.changed('listings');
+        if (this.entersModerationQueue(listing, updated)) {
+            await this.notifyAdminsOfModeration(updated);
+        }
         return {
             listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
             status_after_resubmit: (0, serializers_1.listingStatusToResponse)(client_1.ListingStatus.PENDING),
@@ -1472,6 +1568,9 @@ let ListingsService = class ListingsService {
                 },
             });
         });
+        if (listing.viewCount === 0 && updated.viewCount > 0) {
+            this.adminDashboardSignal?.changed('listings');
+        }
         return {
             listing_id: listingId,
             view_count: updated.viewCount,
@@ -1583,6 +1682,10 @@ let ListingsService = class ListingsService {
             where: { id: listingId },
             include: exports.listingInclude,
         });
+        if (this.entersModerationQueue(listing, updated)) {
+            this.adminDashboardSignal?.changed('listings');
+            await this.notifyAdminsOfModeration(updated);
+        }
         return {
             source: 'timeweb',
             photo: {
@@ -1616,7 +1719,12 @@ let ListingsService = class ListingsService {
         if (!photo) {
             throw new common_2.NotFoundException('Listing photo not found');
         }
-        if (listing.photos.length <= 1 && this.requiresPhotoBeforePublication(listing.status)) {
+        const isTemporaryUploadDraft = listing.status === client_1.ListingStatus.PENDING &&
+            (listing.title?.trim() ?? '') === listing_publication_1.LISTING_DRAFT_TITLE_PLACEHOLDER &&
+            listing.publishedAt == null;
+        if (listing.photos.length <= 1 &&
+            this.requiresPhotoBeforePublication(listing.status) &&
+            !isTemporaryUploadDraft) {
             throw new common_2.BadRequestException(exports.LISTING_PHOTO_REQUIRED);
         }
         await this.storageService.deleteStoredFile('listings', photo.storageKey);
@@ -1645,6 +1753,10 @@ let ListingsService = class ListingsService {
             where: { id: listingId },
             include: exports.listingInclude,
         });
+        if (this.entersModerationQueue(listing, updated)) {
+            this.adminDashboardSignal?.changed('listings');
+            await this.notifyAdminsOfModeration(updated);
+        }
         return {
             source: 'timeweb',
             deleted: true,
@@ -1652,14 +1764,24 @@ let ListingsService = class ListingsService {
             listing: (0, serializers_1.serializeListing)(updated, { includePrivateContact: true }),
         };
     }
-    pickListingPhone(rawPhone, fallbackPhone) {
-        const candidate = rawPhone?.trim() || fallbackPhone?.trim() || '';
+    pickListingPhone(rawPhone, fallbackPhone, options) {
+        const raw = rawPhone?.trim() ?? '';
+        const fallback = fallbackPhone?.trim() ?? '';
+        const candidate = raw || fallback;
         if (!candidate) {
-            return '';
+            return (0, listing_contact_rollout_1.resolveListingContactPhone)(null, options?.legacyOwnerPhone, listing_contact_rollout_1.listingContactRolloutStage);
         }
-        const normalized = (0, phone_1.normalizeRussianPhone)(candidate);
+        const normalized = (0, listing_contact_rollout_1.normalizeListingContactPhone)(candidate);
         if (!normalized) {
-            return candidate;
+            const canPreserveHistoricalValue = listing_contact_rollout_1.listingContactRolloutStage === 'transitional' &&
+                options?.preserveMatchingLegacyValue === true &&
+                raw.length > 0 &&
+                raw === fallback &&
+                (0, listing_contact_rollout_1.resolveListingContactPhone)(fallback, options.legacyOwnerPhone, 'transitional').length > 0;
+            if (canPreserveHistoricalValue) {
+                return fallback;
+            }
+            throw new common_2.BadRequestException('Введите корректный номер телефона');
         }
         (0, phone_1.validateRussianPhoneOrThrow)(normalized);
         return normalized;
@@ -1712,9 +1834,15 @@ let ListingsService = class ListingsService {
         if (!(0, listing_publication_1.requiresPublicationReadiness)(status)) {
             return;
         }
-        if (!(0, listing_publication_1.isListingReadyForPublication)(listing)) {
+        if (!this.isListingReadyForCurrentRollout(listing)) {
             throw new common_2.BadRequestException(listing_publication_1.LISTING_PUBLICATION_NOT_READY);
         }
+    }
+    isListingReadyForCurrentRollout(listing) {
+        return (0, listing_publication_1.isListingReadyForPublication)({
+            ...listing,
+            phone: (0, listing_contact_rollout_1.resolveListingContactPhone)(listing.phone, listing.owner?.phone, listing_contact_rollout_1.listingContactRolloutStage),
+        });
     }
     async resubmitPublishedListingAfterOwnerEdit(listing, authUser, tx = this.prisma) {
         if (this.statusAfterOwnerEdit(listing, authUser) !== client_1.ListingStatus.PENDING) {
@@ -1808,10 +1936,14 @@ exports.ListingsService = ListingsService;
 exports.ListingsService = ListingsService = __decorate([
     (0, common_2.Injectable)(),
     __param(4, (0, common_1.Optional)()),
+    __param(5, (0, common_1.Optional)()),
+    __param(6, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         storage_service_1.StorageService,
         promotions_service_1.PromotionsService,
         user_blocks_service_1.UserBlocksService,
-        saved_search_alerts_service_1.SavedSearchAlertsService])
+        saved_search_alerts_service_1.SavedSearchAlertsService,
+        admin_dashboard_signal_1.AdminDashboardSignal,
+        notifications_service_1.NotificationsService])
 ], ListingsService);
 //# sourceMappingURL=listings.service.js.map

@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.WalletService = void 0;
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const prisma_service_1 = require("../prisma/prisma.service");
 const wallet_constants_1 = require("./wallet.constants");
 const DAILY_LOGIN_BONUS_REASON = client_1.WalletTransactionReason.DAILY_LOGIN_BONUS;
@@ -23,9 +24,10 @@ const REFERRAL_INVITER_BONUS_REASON = client_1.WalletTransactionReason.REFERRAL_
 const reasonToResponse = (reason) => reason.toLowerCase();
 const typeToResponse = (type) => type.toLowerCase();
 let WalletService = class WalletService {
-    constructor(prisma, nowProvider = () => new Date()) {
+    constructor(prisma, nowProvider = () => new Date(), adminDashboardSignal) {
         this.prisma = prisma;
         this.nowProvider = nowProvider;
+        this.adminDashboardSignal = adminDashboardSignal;
         this.walletReasonSupportCache = new Map();
     }
     async getWallet(authUser) {
@@ -269,7 +271,8 @@ let WalletService = class WalletService {
         if (amount <= 0) {
             throw new common_1.BadRequestException('Bonus amount must be positive');
         }
-        return this.runInTransaction(async (transaction) => {
+        let createdSpend = false;
+        const result = await this.runInTransaction(async (transaction) => {
             const wallet = await this.ensureWalletForUser(userId, transaction);
             await this.lockWalletRow(transaction, userId);
             if (idempotencyKey) {
@@ -318,8 +321,12 @@ let WalletService = class WalletService {
                     metadata: this.buildTransactionMetadata(metadata),
                 },
             });
+            createdSpend = true;
             return updatedWallet;
         }, tx);
+        if (createdSpend && tx == null)
+            this.adminDashboardSignal?.changed('wallet');
+        return result;
     }
     async resolveSpendReason(preferred, tx) {
         if (preferred === client_1.WalletTransactionReason.RECURRING_BONUS) {
@@ -831,6 +838,7 @@ exports.WalletService = WalletService;
 exports.WalletService = WalletService = __decorate([
     (0, common_1.Injectable)(),
     __param(1, (0, common_1.Inject)(wallet_constants_1.WALLET_NOW_PROVIDER)),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Function])
+    __param(2, (0, common_1.Optional)()),
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Function, admin_dashboard_signal_1.AdminDashboardSignal])
 ], WalletService);
 //# sourceMappingURL=wallet.service.js.map

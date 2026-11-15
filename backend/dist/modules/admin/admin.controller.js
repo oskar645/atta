@@ -11,10 +11,14 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AdminController = void 0;
 const common_1 = require("@nestjs/common");
 const events_1 = require("events");
+const pdfkit_1 = __importDefault(require("pdfkit"));
 const admin_guard_1 = require("../auth/admin.guard");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const jwt_auth_guard_1 = require("../auth/jwt-auth.guard");
@@ -42,6 +46,12 @@ let AdminController = class AdminController {
     }
     getDashboardStats() {
         return this.adminService.getDashboardStats();
+    }
+    getDashboardMetrics(scopes) {
+        return this.adminService.getDashboardMetrics(scopes);
+    }
+    getServerStatus() {
+        return this.adminService.getServerStatus();
     }
     getZeroResultSearches(query) {
         return this.adminService.getZeroResultSearches(query);
@@ -132,7 +142,14 @@ let AdminController = class AdminController {
     listRaffleParticipants(query) {
         return this.adminService.listRaffleParticipants(query);
     }
-    async exportRaffle(query, format, response) {
+    listRaffleTickets(query) {
+        return this.adminService.listRaffleTickets(query);
+    }
+    freezeRaffle(query, authUser) {
+        return this.adminService.freezeRaffle(query, authUser);
+    }
+    async exportRaffle(query, response) {
+        const format = query.format;
         if (format !== 'participants' && format !== 'tickets') {
             response.status(400).json({ message: 'Некорректный формат выгрузки' });
             return;
@@ -142,7 +159,7 @@ let AdminController = class AdminController {
         response.setHeader('Content-Disposition', `attachment; filename="raffle-${format}.csv"`);
         const csv = (value) => {
             const raw = String(value ?? '');
-            const safe = /^[=+@\-\t\r]/.test(raw) ? `'${raw}` : raw;
+            const safe = /^[\u0000-\u0020]*[=+@-]/.test(raw) ? `'${raw}` : raw;
             return `"${safe.replace(/"/g, '""')}"`;
         };
         const write = async (fields) => {
@@ -162,14 +179,13 @@ let AdminController = class AdminController {
         let cursor;
         let number = 0;
         do {
-            const page = await this.adminService.listRaffleParticipants({
-                from: query.from, to: query.to,
-                ticketPrice: query.ticketPrice, limit: 100, cursor,
-            });
-            for (const item of page.items) {
+            const page = format === 'tickets'
+                ? await this.adminService.listRaffleTickets({ ...query, limit: 100, cursor })
+                : await this.adminService.listRaffleParticipants({ ...query, limit: 100, cursor });
+            for (const itemValue of page.items) {
+                const item = itemValue;
                 if (format === 'tickets') {
-                    for (let i = 0; i < item.tickets; i++)
-                        await write([++number, item.name, item.phone]);
+                    await write([item.ticketNumber, item.name, item.phone]);
                 }
                 else {
                     await write([++number, item.name, item.phone, item.totalRub, item.tickets,
@@ -179,6 +195,93 @@ let AdminController = class AdminController {
             cursor = page.nextCursor ?? undefined;
         } while (cursor);
         response.end();
+    }
+    async printRaffleTickets(query, response) {
+        // Validate the range and return the same summary printed in CSV exports.
+        const summary = await this.adminService.getRaffleSummary(query);
+        const totalTickets = BigInt(summary.tickets);
+        const fromTicket = BigInt(query.fromTicket ?? '1');
+        const toTicket = BigInt(query.toTicket ?? totalTickets.toString());
+        if (fromTicket < 1n || toTicket < fromTicket || toTicket > totalTickets) {
+            throw new common_1.BadRequestException('Некорректный диапазон билетов');
+        }
+        if (toTicket - fromTicket + 1n > 10000n) {
+            throw new common_1.BadRequestException('Один PDF может содержать не более 10000 билетов');
+        }
+        response.setHeader('Content-Type', 'application/pdf');
+        response.setHeader('Content-Disposition', 'attachment; filename="raffle-tickets.pdf"');
+        const document = new pdfkit_1.default({
+            size: 'A4',
+            margin: 18,
+            autoFirstPage: true,
+            bufferPages: false,
+        });
+        document.registerFont('RobotoCyrillic', require.resolve('@fontsource/roboto/files/roboto-cyrillic-400-normal.woff'));
+        document.registerFont('RobotoLatin', require.resolve('@fontsource/roboto/files/roboto-latin-400-normal.woff'));
+        document.on('error', (error) => response.destroy(error));
+        document.pipe(response);
+        const pageWidth = 595.28;
+        const pageHeight = 841.89;
+        const margin = 18;
+        const gap = 8;
+        const columns = 2;
+        const rows = 4;
+        const ticketWidth = (pageWidth - margin * 2 - gap) / columns;
+        const ticketHeight = (pageHeight - margin * 2 - gap * (rows - 1)) / rows;
+        const fontFor = (value) => /[А-Яа-яЁё]/.test(value)
+            ? 'RobotoCyrillic'
+            : 'RobotoLatin';
+        let onPage = 0;
+        const drawTicket = (number, name, phone) => {
+            if (onPage >= columns * rows) {
+                document.addPage();
+                onPage = 0;
+            }
+            const column = onPage % columns;
+            const row = Math.floor(onPage / columns);
+            const x = margin + column * (ticketWidth + gap);
+            const y = margin + row * (ticketHeight + gap);
+            document.save()
+                .dash(4, { space: 3 })
+                .lineWidth(0.6)
+                .strokeColor('#8B95A5')
+                .rect(x, y, ticketWidth, ticketHeight)
+                .stroke()
+                .restore();
+            document.font('Helvetica-Bold').fontSize(13).fillColor('#0F5FFF')
+                .text('ATTA', x + 12, y + 12, { width: ticketWidth - 24 });
+            document.font('RobotoCyrillic').fontSize(8).fillColor('#5C667A')
+                .text('РОЗЫГРЫШ', x + 12, y + 29);
+            document.font('RobotoCyrillic').fontSize(10).fillColor('#111827')
+                .text('БИЛЕТ', x + 12, y + 51);
+            document.font('Helvetica-Bold').fontSize(22).fillColor('#111827')
+                .text(`#${number.toString().padStart(6, '0')}`, x + 12, y + 68);
+            document.font('RobotoCyrillic').fontSize(8).fillColor('#6B7280')
+                .text('Участник', x + 12, y + 105);
+            document.font(fontFor(name)).fontSize(10).fillColor('#111827')
+                .text(name, x + 12, y + 118, { width: ticketWidth - 24, ellipsis: true });
+            document.font('RobotoCyrillic').fontSize(8).fillColor('#6B7280')
+                .text('Телефон', x + 12, y + 143);
+            document.font('Helvetica').fontSize(10).fillColor('#111827')
+                .text(phone || '—', x + 12, y + 156);
+            document.font('RobotoCyrillic').fontSize(7).fillColor('#6B7280')
+                .text(`${new Date(summary.from).toLocaleDateString('ru-RU')} — ${new Date(summary.to).toLocaleDateString('ru-RU')}`, x + 12, y + ticketHeight - 18, { width: ticketWidth - 24, align: 'right' });
+            onPage += 1;
+        };
+        let cursor = (fromTicket - 1n).toString();
+        let finished = false;
+        do {
+            const page = await this.adminService.listRaffleTickets({ ...query, limit: 100, cursor });
+            for (const item of page.items) {
+                if (BigInt(item.ticketNumber) > toTicket) {
+                    finished = true;
+                    break;
+                }
+                drawTicket(Number(item.ticketNumber), item.name, item.phone);
+            }
+            cursor = page.nextCursor ?? undefined;
+        } while (cursor && !finished);
+        document.end();
     }
     getPointsPurchasesSummary(query) {
         return this.adminService.getPointsPurchasesSummary(query);
@@ -213,6 +316,9 @@ let AdminController = class AdminController {
             moderationNote: dto.moderation_note,
         });
     }
+    permanentlyDeleteListing(id, authUser) {
+        return this.adminService.permanentlyDeleteListing(id, authUser);
+    }
     deleteReview(id, authUser) {
         return this.adminService.deleteReview(id, authUser);
     }
@@ -233,6 +339,19 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "getDashboardStats", null);
+__decorate([
+    (0, common_1.Get)('dashboard/metrics'),
+    __param(0, (0, common_1.Query)('scopes')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getDashboardMetrics", null);
+__decorate([
+    (0, common_1.Get)('server-status'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "getServerStatus", null);
 __decorate([
     (0, common_1.Get)('analytics/zero-result-searches'),
     __param(0, (0, common_1.Query)()),
@@ -436,14 +555,36 @@ __decorate([
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "listRaffleParticipants", null);
 __decorate([
+    (0, common_1.Get)('raffle/tickets'),
+    __param(0, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "listRaffleTickets", null);
+__decorate([
+    (0, common_1.Post)('raffle/freeze'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto, Object]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "freezeRaffle", null);
+__decorate([
     (0, common_1.Get)('raffle/export'),
     __param(0, (0, common_1.Query)()),
-    __param(1, (0, common_1.Query)('format')),
-    __param(2, (0, common_1.Res)()),
+    __param(1, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto, String, Object]),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto, Object]),
     __metadata("design:returntype", Promise)
 ], AdminController.prototype, "exportRaffle", null);
+__decorate([
+    (0, common_1.Get)('raffle/print.pdf'),
+    __param(0, (0, common_1.Query)()),
+    __param(1, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [list_raffle_participants_dto_1.ListRaffleParticipantsDto, Object]),
+    __metadata("design:returntype", Promise)
+], AdminController.prototype, "printRaffleTickets", null);
 __decorate([
     (0, common_1.Get)('payments/points-purchases/summary'),
     __param(0, (0, common_1.Query)()),
@@ -514,6 +655,14 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, moderate_listing_dto_1.ModerateListingDto]),
     __metadata("design:returntype", void 0)
 ], AdminController.prototype, "deleteListing", null);
+__decorate([
+    (0, common_1.Delete)('listings/:id/permanent'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", void 0)
+], AdminController.prototype, "permanentlyDeleteListing", null);
 __decorate([
     (0, common_1.Delete)('reviews/:id'),
     __param(0, (0, common_1.Param)('id')),

@@ -20,6 +20,8 @@ const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
 const socket_io_1 = require("socket.io");
 const analytics_signal_1 = require("../usage-analytics/analytics-signal");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
+const support_realtime_signal_1 = require("../../common/support-realtime-signal");
 const phone_1 = require("../../common/phone");
 const env_1 = require("../../config/env");
 const env_2 = require("../../config/env");
@@ -28,13 +30,15 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const send_chat_message_dto_1 = require("./dto/send-chat-message.dto");
 const chats_service_1 = require("./chats.service");
 let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
-    constructor(presenceService, chatsService, jwtService, prisma, accountDeletion, analyticsSignal) {
+    constructor(presenceService, chatsService, jwtService, prisma, accountDeletion, analyticsSignal, adminDashboardSignal, supportRealtimeSignal) {
         this.presenceService = presenceService;
         this.chatsService = chatsService;
         this.jwtService = jwtService;
         this.prisma = prisma;
         this.accountDeletion = accountDeletion;
         this.analyticsSignal = analyticsSignal;
+        this.adminDashboardSignal = adminDashboardSignal;
+        this.supportRealtimeSignal = supportRealtimeSignal;
         this.logger = new common_1.Logger(ChatsGateway_1.name);
     }
     async isAnalyticsAdmin(client) {
@@ -68,7 +72,50 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
             }
         }
     }
+    async notifyAdminDashboard(scopes) {
+        for (const client of this.server?.sockets?.sockets?.values() ?? []) {
+            if (!client.rooms.has('admin:analytics'))
+                continue;
+            try {
+                if (await this.isAnalyticsAdmin(client)) {
+                    client.emit('admin.dashboard.changed', { scopes });
+                }
+                else {
+                    await client.leave('admin:analytics');
+                }
+            }
+            catch {
+                await client.leave('admin:analytics');
+            }
+        }
+    }
+    async notifySupportAdmins(event) {
+        for (const client of this.server?.sockets?.sockets?.values() ?? []) {
+            if (!client.rooms.has('admin:analytics'))
+                continue;
+            try {
+                if (await this.isAnalyticsAdmin(client)) {
+                    client.emit('support.changed', event);
+                }
+                else {
+                    await client.leave('admin:analytics');
+                }
+            }
+            catch {
+                await client.leave('admin:analytics');
+            }
+        }
+    }
     onModuleInit() {
+        this.unsubscribeSupportRealtime = this.supportRealtimeSignal?.subscribe((event) => {
+            if (event.userId) {
+                this.server?.to(`user:${event.userId}`).emit('support.changed', event);
+            }
+            void this.notifySupportAdmins(event).catch(() => undefined);
+        });
+        this.unsubscribeAdminDashboard = this.adminDashboardSignal?.subscribe((scopes) => {
+            void this.notifyAdminDashboard(scopes).catch(() => undefined);
+        });
         this.unsubscribeAnalytics = this.analyticsSignal?.subscribe(() => {
             if (this.analyticsTimer)
                 return;
@@ -85,6 +132,8 @@ let ChatsGateway = ChatsGateway_1 = class ChatsGateway {
     onModuleDestroy() {
         this.unsubscribeDeletion?.();
         this.unsubscribeAnalytics?.();
+        this.unsubscribeAdminDashboard?.();
+        this.unsubscribeSupportRealtime?.();
         if (this.analyticsTimer)
             clearTimeout(this.analyticsTimer);
     }
@@ -505,11 +554,15 @@ exports.ChatsGateway = ChatsGateway = ChatsGateway_1 = __decorate([
         },
     }),
     __param(5, (0, common_1.Optional)()),
+    __param(6, (0, common_1.Optional)()),
+    __param(7, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [presence_service_1.PresenceService,
         chats_service_1.ChatsService,
         jwt_1.JwtService,
         prisma_service_1.PrismaService,
         account_deletion_service_1.AccountDeletionService,
-        analytics_signal_1.AnalyticsSignal])
+        analytics_signal_1.AnalyticsSignal,
+        admin_dashboard_signal_1.AdminDashboardSignal,
+        support_realtime_signal_1.SupportRealtimeSignal])
 ], ChatsGateway);
 //# sourceMappingURL=chats.gateway.js.map

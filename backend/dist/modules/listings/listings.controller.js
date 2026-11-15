@@ -78,6 +78,14 @@ let ListingsController = class ListingsController {
     findOne(id, authUser) {
         return this.listingsService.findOne(id, authUser);
     }
+    async getCallContact(request, id, authUser) {
+        await this.rateLimitService.consumeOrThrow(`listing:call-contact:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`, { limit: 60, windowMs: 60 * 60 * 1000 });
+        return this.listingsService.getCallContact(id, authUser);
+    }
+    async getOwnerCallContact(request, ownerId, authUser) {
+        await this.rateLimitService.consumeOrThrow(`listing:owner-call-contact:${authUser.userId}:${request?.ip?.toString() ?? 'unknown'}`, { limit: 60, windowMs: 60 * 60 * 1000 });
+        return this.listingsService.getOwnerCallContact(ownerId, authUser);
+    }
     update(id, authUser, dto) {
         return this.listingsService.update(id, authUser, dto);
     }
@@ -172,6 +180,26 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "findOne", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)(':id/call-contact'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], ListingsController.prototype, "getCallContact", null);
+__decorate([
+    (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
+    (0, common_1.Post)('owner/:ownerId/call-contact'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('ownerId')),
+    __param(2, (0, current_user_decorator_1.CurrentUser)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], ListingsController.prototype, "getOwnerCallContact", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Patch)(':id'),

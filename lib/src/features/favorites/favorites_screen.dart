@@ -41,6 +41,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
     with SingleTickerProviderStateMixin {
   final Set<String> _pendingDeletedSearchKeys = <String>{};
   late final TabController _tabController;
+  bool _bulkRemoving = false;
 
   @override
   void initState() {
@@ -57,6 +58,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
   }
 
   void _handleTabChanged() {
+    if (mounted) setState(() {});
     if (_tabController.indexIsChanging || _tabController.index != 1) return;
     final userId = context.read<AuthService>().currentUser?.uid;
     if (userId == null || userId.isEmpty) return;
@@ -66,6 +68,81 @@ class _FavoritesScreenState extends State<FavoritesScreen>
           .markSavedSearchNotificationsRead(userId),
     );
   }
+
+  Future<void> _showFavoriteActions(String userId) async {
+    if (_bulkRemoving || _tabController.index != 0) return;
+    final inactiveOnly = await showModalBottomSheet<bool>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.delete_sweep_outlined),
+              title: const Text('Удалить всё'),
+              onTap: () => Navigator.pop(sheetContext, false),
+            ),
+            ListTile(
+              leading: const Icon(Icons.hide_source_outlined),
+              title: const Text('Удалить неактивные'),
+              onTap: () => Navigator.pop(sheetContext, true),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (inactiveOnly == null || !mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(inactiveOnly
+            ? 'Удалить неактивные?'
+            : 'Удалить всё из избранного?'),
+        content: Text(inactiveOnly
+            ? 'Активные объявления останутся.'
+            : 'Все объявления будут убраны из избранного.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Нет'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Да'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _bulkRemoving = true);
+    try {
+      final removed = await context.read<FavoritesService>().removeMany(
+            uid: userId,
+            inactiveOnly: inactiveOnly,
+          );
+      if (!mounted) return;
+      showAppSnack(context, 'Удалено из избранного: $removed');
+    } catch (error) {
+      if (!mounted) return;
+      showAppSnack(context, 'Не удалось обновить избранное: $error',
+          isError: true);
+    } finally {
+      if (mounted) setState(() => _bulkRemoving = false);
+    }
+  }
+
+  List<Widget>? _favoriteAppBarActions(String userId) =>
+      _tabController.index == 0
+          ? <Widget>[
+              IconButton(
+                key: const ValueKey('favorites_bulk_menu'),
+                tooltip: 'Действия',
+                onPressed:
+                    _bulkRemoving ? null : () => _showFavoriteActions(userId),
+                icon: const Icon(Icons.more_vert),
+              ),
+            ]
+          : null;
 
   @override
   void dispose() {
@@ -103,6 +180,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         history: history,
         reviews: reviews,
         pendingDeletedSearchKeys: _pendingDeletedSearchKeys,
+        appBarActions: _favoriteAppBarActions(user.uid),
       );
     }
 
@@ -114,6 +192,7 @@ class _FavoritesScreenState extends State<FavoritesScreen>
         return Scaffold(
           appBar: AppBar(
             title: const Text('Избранное'),
+            actions: _favoriteAppBarActions(user.uid),
             bottom: TabBar(
               controller: _tabController,
               isScrollable: true,
@@ -616,6 +695,7 @@ class _TimewebFavoritesScreen extends StatelessWidget {
     required this.history,
     required this.reviews,
     required this.pendingDeletedSearchKeys,
+    required this.appBarActions,
   });
 
   final TabController tabController;
@@ -628,6 +708,7 @@ class _TimewebFavoritesScreen extends StatelessWidget {
   final ListingHistoryService history;
   final ReviewsService reviews;
   final Set<String> pendingDeletedSearchKeys;
+  final List<Widget>? appBarActions;
 
   @override
   Widget build(BuildContext context) {
@@ -639,6 +720,7 @@ class _TimewebFavoritesScreen extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             title: const Text('Избранное'),
+            actions: appBarActions,
             bottom: TabBar(
               controller: tabController,
               isScrollable: false,

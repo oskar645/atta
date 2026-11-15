@@ -1,4 +1,8 @@
 import { ListingStatus, Prisma } from '@prisma/client';
+import {
+  isFinalListingContactRollout,
+  normalizeListingContactPhone,
+} from './listing-contact-rollout';
 
 export const LISTING_DRAFT_TITLE_PLACEHOLDER = 'Черновик объявления';
 export const LISTING_PUBLICATION_NOT_READY = 'LISTING_PUBLICATION_NOT_READY';
@@ -172,6 +176,7 @@ export type PublicationReadyListing = {
   subcategory?: string | null;
   price: number | bigint | null;
   city?: string | null;
+  phone?: string | null;
   photos?: unknown[] | null;
 };
 
@@ -210,6 +215,10 @@ export const isListingReadyForPublication = (
     return false;
   }
 
+  if (!/^7\d{10}$/.test(normalizeListingContactPhone(listing.phone))) {
+    return false;
+  }
+
   if ((listing.photos?.length ?? 0) < 1) {
     return false;
   }
@@ -239,6 +248,9 @@ export const listingPublicationReadyWhere = (): Prisma.ListingWhereInput => ({
   city: {
     not: '',
   },
+  phone: {
+    not: '',
+  },
   photos: {
     some: {},
   },
@@ -257,6 +269,26 @@ export const listingModerationReadySql = (): Prisma.Sql => {
       Prisma.sql`(${category} = ${name} AND ${subcategory} IN (${Prisma.join([...children])}))`,
     ),
   ];
+  const normalizedListingPhone = Prisma.sql`
+    regexp_replace(COALESCE(l.phone, ''), '[^0-9]', '', 'g')
+  `;
+  const validListingPhone = Prisma.sql`(
+    ${normalizedListingPhone} ~ '^7[0-9]{10}$'
+    OR ${normalizedListingPhone} ~ '^8[0-9]{10}$'
+    OR ${normalizedListingPhone} ~ '^[0-9]{10}$'
+  )`;
+  const validTransitionalContact = isFinalListingContactRollout()
+    ? validListingPhone
+    : Prisma.sql`(
+        ${validListingPhone}
+        OR EXISTS (
+          SELECT 1
+          FROM users u
+          WHERE u.id = l.owner_id
+            AND regexp_replace(COALESCE(u.phone, ''), '[^0-9]', '', 'g')
+              ~ '^(7|8)[0-9]{10}$'
+        )
+      )`;
   return Prisma.sql`
     l.status = 'PENDING'::"ListingStatus"
     AND l.deleted_at IS NULL AND l.archived_at IS NULL
@@ -265,6 +297,7 @@ export const listingModerationReadySql = (): Prisma.Sql => {
     AND (${Prisma.join(categoryRules, ' OR ')})
     AND l.price > 0
     AND ${trim(Prisma.sql`l.city`)} <> ''
+    AND ${validTransitionalContact}
     AND EXISTS (SELECT 1 FROM listing_photos p WHERE p.listing_id = l.id)
   `;
 };

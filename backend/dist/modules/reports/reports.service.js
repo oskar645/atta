@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 var ReportsService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReportsService = void 0;
@@ -15,10 +18,12 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const notifications_service_1 = require("../notifications/notifications.service");
 const prisma_service_1 = require("../prisma/prisma.service");
+const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 let ReportsService = ReportsService_1 = class ReportsService {
-    constructor(prisma, notificationsService) {
+    constructor(prisma, notificationsService, adminDashboardSignal) {
         this.prisma = prisma;
         this.notificationsService = notificationsService;
+        this.adminDashboardSignal = adminDashboardSignal;
     }
     pageLimit(value, fallback = 50) {
         const parsed = Number(value ?? fallback);
@@ -65,6 +70,11 @@ let ReportsService = ReportsService_1 = class ReportsService {
             decision: report.decision,
             admin_uid: report.adminUid,
             admin_comment: report.adminComment,
+            admin_note: report.adminNote ?? null,
+            handled_by: report.handledBy ?? null,
+            handled_by_name: report.handledByUser?.displayName?.trim() ||
+                report.handledByUser?.name?.trim() ||
+                null,
             created_at: report.createdAt.toISOString(),
             handled_at: report.handledAt?.toISOString() ?? null,
             closed_at: report.closedAt?.toISOString() ?? null,
@@ -98,38 +108,111 @@ let ReportsService = ReportsService_1 = class ReportsService {
         const rawCreatedAt = decoded?.createdAt;
         const cursorDate = rawCreatedAt ? new Date(rawCreatedAt) : null;
         const cursorId = decoded?.id;
-        const items = await this.prisma.report.findMany({
-            where: {
-                status: {
-                    notIn: [...ReportsService_1.hiddenStatuses],
+        const oldestFirst = query.sort === 'oldest';
+        const search = query.search?.trim() ?? '';
+        const reason = query.reason?.trim() ?? '';
+        const statusFilter = (() => {
+            switch (query.status) {
+                case 'open':
+                    return ['open'];
+                case 'in_progress':
+                    return ['in_progress'];
+                case 'completed':
+                    return ['resolved', 'rejected'];
+                case 'resolved':
+                    return ['resolved'];
+                case 'rejected':
+                    return ['rejected'];
+                default:
+                    return null;
+            }
+        })();
+        const commonWhere = {
+            ...(reason
+                ? { reason: { equals: reason, mode: client_1.Prisma.QueryMode.insensitive } }
+                : {}),
+            ...(query.dateFrom || query.dateTo
+                ? {
+                    createdAt: {
+                        ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+                        ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+                    },
+                }
+                : {}),
+            ...(search
+                ? {
+                    OR: [
+                        { reason: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } },
+                        { comment: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } },
+                        { listing: { is: { title: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } } } },
+                        { reporter: { is: { displayName: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } } } },
+                        { reporter: { is: { name: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } } } },
+                        { listingOwner: { is: { displayName: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } } } },
+                        { listingOwner: { is: { name: { contains: search, mode: client_1.Prisma.QueryMode.insensitive } } } },
+                    ],
+                }
+                : {}),
+        };
+        const baseWhere = {
+            AND: [
+                commonWhere,
+                {
+                    status: statusFilter
+                        ? { in: statusFilter }
+                        : { notIn: [...ReportsService_1.hiddenStatuses] },
                 },
-                ...(cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
-                    ? {
-                        OR: [
-                            { createdAt: { lt: cursorDate } },
-                            { createdAt: cursorDate, id: { lt: cursorId } },
-                        ],
-                    }
-                    : {}),
-            },
-            include: {
-                listing: {
-                    include: {
-                        owner: true,
-                        photos: {
-                            orderBy: {
-                                sortOrder: 'asc',
+            ],
+        };
+        const cursorWhere = cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
+            ? {
+                OR: oldestFirst
+                    ? [
+                        { createdAt: { gt: cursorDate } },
+                        { createdAt: cursorDate, id: { gt: cursorId } },
+                    ]
+                    : [
+                        { createdAt: { lt: cursorDate } },
+                        { createdAt: cursorDate, id: { lt: cursorId } },
+                    ],
+            }
+            : {};
+        const [items, newCount, reviewCount, completedCount] = await Promise.all([
+            this.prisma.report.findMany({
+                where: {
+                    AND: [baseWhere, cursorWhere],
+                },
+                include: {
+                    listing: {
+                        include: {
+                            owner: true,
+                            photos: {
+                                orderBy: {
+                                    sortOrder: 'asc',
+                                },
+                                take: 1,
                             },
-                            take: 1,
                         },
                     },
+                    listingOwner: true,
+                    reporter: true,
+                    handledByUser: true,
                 },
-                listingOwner: true,
-                reporter: true,
-            },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            take: limit + 1,
-        });
+                orderBy: [
+                    { createdAt: oldestFirst ? 'asc' : 'desc' },
+                    { id: oldestFirst ? 'asc' : 'desc' },
+                ],
+                take: limit + 1,
+            }),
+            this.prisma.report.count({
+                where: { AND: [commonWhere, { status: 'open' }] },
+            }),
+            this.prisma.report.count({
+                where: { AND: [commonWhere, { status: 'in_progress' }] },
+            }),
+            this.prisma.report.count({
+                where: { AND: [commonWhere, { status: { in: ['resolved', 'rejected'] } }] },
+            }),
+        ]);
         const pageItems = items.slice(0, limit);
         const last = items.length > limit ? pageItems[pageItems.length - 1] : null;
         return {
@@ -143,6 +226,11 @@ let ReportsService = ReportsService_1 = class ReportsService {
                 : null,
             hasMore: items.length > limit,
             limit,
+            counts: {
+                open: newCount,
+                in_progress: reviewCount,
+                completed: completedCount,
+            },
         };
     }
     async create(authUser, body) {
@@ -207,13 +295,65 @@ let ReportsService = ReportsService_1 = class ReportsService {
                 reportId: report.id,
             },
         })));
+        this.adminDashboardSignal?.changed('reports');
         return {
             source: 'timeweb',
             item: this.serialize(report),
             admin_notifications: adminNotifications.map((item) => this.notificationsService.serializeNotification(item)),
         };
     }
-    async resolve(reportId, authUser, comment) {
+    async startReview(reportId, authUser) {
+        const exists = await this.prisma.report.findUnique({
+            where: { id: reportId },
+        });
+        if (!exists)
+            throw new common_1.NotFoundException('Report not found');
+        if (ReportsService_1.hiddenStatuses.includes(exists.status)) {
+            throw new common_1.BadRequestException('Скрытую жалобу нельзя взять на проверку');
+        }
+        if (exists.status === 'in_progress') {
+            return { source: 'timeweb', item: this.serialize(exists) };
+        }
+        if (exists.status !== 'open') {
+            throw new common_1.BadRequestException('Завершённую жалобу нужно сначала открыть повторно');
+        }
+        const report = await this.prisma.report.update({
+            where: { id: reportId },
+            data: {
+                status: 'in_progress',
+                decision: null,
+                adminUid: authUser.userId,
+                handledBy: authUser.userId,
+                handledAt: new Date(),
+                closedAt: null,
+            },
+        });
+        this.adminDashboardSignal?.changed('reports');
+        return { source: 'timeweb', item: this.serialize(report) };
+    }
+    async notifyReporterOfDecision(report) {
+        const noViolation = report.decision === 'no_violation';
+        try {
+            await this.notificationsService.createSystemNotification({
+                userId: report.reporterId,
+                title: 'Ваша жалоба рассмотрена',
+                body: noViolation
+                    ? 'Мы проверили информацию. Нарушений правил не обнаружено.'
+                    : 'Мы проверили информацию и приняли необходимые меры.',
+                type: client_1.NotificationType.GENERIC,
+                payload: {
+                    actionType: 'report_update',
+                    reportId: report.id,
+                    status: 'completed',
+                },
+            });
+        }
+        catch {
+            // Решение уже сохранено; временная ошибка уведомления не должна
+            // возвращать жалобу в работу или провоцировать повторное решение.
+        }
+    }
+    async resolve(reportId, authUser, comment, decision = 'resolved') {
         const exists = await this.prisma.report.findUnique({
             where: {
                 id: reportId,
@@ -221,6 +361,12 @@ let ReportsService = ReportsService_1 = class ReportsService {
         });
         if (!exists) {
             throw new common_1.NotFoundException('Report not found');
+        }
+        if (exists.status === 'resolved' && exists.decision === decision) {
+            return { source: 'timeweb', item: this.serialize(exists) };
+        }
+        if (exists.status === 'resolved' || exists.status === 'rejected') {
+            throw new common_1.BadRequestException('Для изменения решения сначала откройте жалобу повторно');
         }
         const report = await this.prisma.report.update({
             where: {
@@ -228,7 +374,7 @@ let ReportsService = ReportsService_1 = class ReportsService {
             },
             data: {
                 status: 'resolved',
-                decision: 'resolved',
+                decision,
                 adminUid: authUser.userId,
                 adminComment: comment?.trim() || null,
                 handledBy: authUser.userId,
@@ -236,12 +382,14 @@ let ReportsService = ReportsService_1 = class ReportsService {
                 closedAt: new Date(),
             },
         });
+        this.adminDashboardSignal?.changed('reports');
+        await this.notifyReporterOfDecision(report);
         return {
             source: 'timeweb',
             item: this.serialize(report),
         };
     }
-    async reject(reportId, authUser, comment) {
+    async reject(reportId, authUser, comment, decision = 'no_violation') {
         const exists = await this.prisma.report.findUnique({
             where: {
                 id: reportId,
@@ -250,13 +398,19 @@ let ReportsService = ReportsService_1 = class ReportsService {
         if (!exists) {
             throw new common_1.NotFoundException('Report not found');
         }
+        if (exists.status === 'rejected' && exists.decision === decision) {
+            return { source: 'timeweb', item: this.serialize(exists) };
+        }
+        if (exists.status === 'resolved' || exists.status === 'rejected') {
+            throw new common_1.BadRequestException('Для изменения решения сначала откройте жалобу повторно');
+        }
         const report = await this.prisma.report.update({
             where: {
                 id: reportId,
             },
             data: {
                 status: 'rejected',
-                decision: 'rejected',
+                decision,
                 adminUid: authUser.userId,
                 adminComment: comment?.trim() || null,
                 handledBy: authUser.userId,
@@ -264,6 +418,8 @@ let ReportsService = ReportsService_1 = class ReportsService {
                 closedAt: new Date(),
             },
         });
+        this.adminDashboardSignal?.changed('reports');
+        await this.notifyReporterOfDecision(report);
         return {
             source: 'timeweb',
             item: this.serialize(report),
@@ -322,6 +478,7 @@ let ReportsService = ReportsService_1 = class ReportsService {
                 reporter: true,
             },
         });
+        this.adminDashboardSignal?.changed('reports');
         return {
             source: 'timeweb',
             item: this.serialize(report),
@@ -349,6 +506,7 @@ let ReportsService = ReportsService_1 = class ReportsService {
                 closedAt: exists.closedAt ?? new Date(),
             },
         });
+        this.adminDashboardSignal?.changed('reports');
         return {
             source: 'timeweb',
             hidden: true,
@@ -360,7 +518,9 @@ exports.ReportsService = ReportsService;
 ReportsService.hiddenStatuses = ['hidden', 'deleted'];
 exports.ReportsService = ReportsService = ReportsService_1 = __decorate([
     (0, common_1.Injectable)(),
+    __param(2, (0, common_1.Optional)()),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        notifications_service_1.NotificationsService])
+        notifications_service_1.NotificationsService,
+        admin_dashboard_signal_1.AdminDashboardSignal])
 ], ReportsService);
 //# sourceMappingURL=reports.service.js.map

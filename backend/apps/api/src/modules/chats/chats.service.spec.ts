@@ -398,6 +398,29 @@ test('listChats sorts by lastMessageAt desc and keeps empty chats below', async 
   assert.equal(result.unreadTotal, 0);
 });
 
+test('seller chat list excludes chats until their first message', async () => {
+  let capturedWhere: Record<string, unknown> | undefined;
+  const service = new ChatsService(
+    {
+      chat: {
+        findMany: async (args: { where: Record<string, unknown> }) => {
+          capturedWhere = args.where;
+          return [];
+        },
+        aggregate: chatAggregate({ unreadForBuyer: 0, unreadForSeller: 0 }),
+      },
+    } as never,
+    { getPresenceMap: async () => new Map() } as never,
+    {} as never,
+  );
+
+  await service.listChats({ userId: 'seller-1', role: 'user' } as never);
+
+  const whereText = JSON.stringify(capturedWhere);
+  assert.match(whereText, /"sellerId":"seller-1"/);
+  assert.match(whereText, /"lastMessageAt":\{"not":null\}/);
+});
+
 test('markChatRead resets only current participant unread and marks incoming messages read', async () => {
   const incomingMessage = createMessage();
   const chatUpdateCalls: Array<Record<string, unknown>> = [];

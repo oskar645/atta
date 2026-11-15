@@ -197,12 +197,63 @@ class ReportsService {
   }) async {
     _debugSource('Reports source: Timeweb');
     if (decision == 'rejected' || decision == 'no_violation') {
-      final response = await _api.reject(reportId, comment: adminComment);
+      final response = await _api.reject(
+        reportId,
+        comment: adminComment,
+        decision: decision,
+      );
       _upsertReportFromResponse(response);
     } else {
-      final response = await _api.resolve(reportId, comment: adminComment);
+      final response = await _api.resolve(
+        reportId,
+        comment: adminComment,
+        decision: decision,
+      );
       _upsertReportFromResponse(response);
     }
+  }
+
+  Future<void> startReview(String reportId) async {
+    final response = await _api.startReview(reportId);
+    _upsertReportFromResponse(response);
+  }
+
+  Future<AdminReportsPage> queryAdminReports({
+    required String status,
+    int limit = 40,
+    String? cursor,
+    String? reason,
+    String? search,
+    String sort = 'newest',
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) async {
+    final response = await _api.listAdmin(
+      limit: limit,
+      cursor: cursor,
+      status: status,
+      reason: reason,
+      search: search,
+      sort: sort,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+    );
+    final rawCounts = response['counts'];
+    final counts = rawCounts is Map
+        ? rawCounts.map(
+            (key, value) => MapEntry(
+              key.toString(),
+              value is num ? value.toInt() : int.tryParse('$value') ?? 0,
+            ),
+          )
+        : const <String, int>{};
+    final nextCursor = (response['nextCursor'] ?? '').toString().trim();
+    return AdminReportsPage(
+      items: _extractItems(response),
+      nextCursor: nextCursor.isEmpty ? null : nextCursor,
+      hasMore: response['hasMore'] == true && nextCursor.isNotEmpty,
+      counts: counts,
+    );
   }
 
   Future<void> reopenReport(String reportId) async {
@@ -346,4 +397,18 @@ class ReportsService {
     if (lastFetchAt == null) return true;
     return DateTime.now().difference(lastFetchAt) >= _reportsTtl;
   }
+}
+
+class AdminReportsPage {
+  const AdminReportsPage({
+    required this.items,
+    required this.nextCursor,
+    required this.hasMore,
+    required this.counts,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final String? nextCursor;
+  final bool hasMore;
+  final Map<String, int> counts;
 }

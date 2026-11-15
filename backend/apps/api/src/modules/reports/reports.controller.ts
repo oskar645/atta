@@ -16,7 +16,9 @@ import { ReportsService } from './reports.service';
 export class ReportsController {
   constructor(
     private readonly reportsService: ReportsService,
-    private readonly chatsGateway: ChatsGateway,
+    // Kept in the constructor for backward-compatible module wiring. Realtime
+    // delivery is owned by NotificationsService and must not be emitted twice.
+    private readonly _chatsGateway: ChatsGateway,
     private readonly rateLimitService: RateLimitService,
   ) {}
 
@@ -33,23 +35,7 @@ export class ReportsController {
         windowMs: 60 * 1000,
       },
     );
-    return this.reportsService.create(authUser, body).then((result) => {
-      const notifications = result['admin_notifications'];
-      if (Array.isArray(notifications)) {
-        for (const item of notifications) {
-          if (!item || typeof item !== 'object') {
-            continue;
-          }
-          const notification = item as Record<string, unknown>;
-          const userId = `${notification['user_id'] ?? ''}`.trim();
-          if (userId.length === 0) {
-            continue;
-          }
-          this.chatsGateway.emitNotificationNew(notification, userId);
-        }
-      }
-      return result;
-    });
+    return this.reportsService.create(authUser, body);
   }
 }
 
@@ -69,7 +55,12 @@ export class AdminReportsController {
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() body: ModerateReportDto,
   ) {
-    return this.reportsService.resolve(reportId, authUser, body.comment);
+    return this.reportsService.resolve(
+      reportId,
+      authUser,
+      body.comment,
+      body.decision,
+    );
   }
 
   @Patch(':id/reject')
@@ -78,7 +69,20 @@ export class AdminReportsController {
     @CurrentUser() authUser: AuthenticatedUser,
     @Body() body: ModerateReportDto,
   ) {
-    return this.reportsService.reject(reportId, authUser, body.comment);
+    return this.reportsService.reject(
+      reportId,
+      authUser,
+      body.comment,
+      body.decision,
+    );
+  }
+
+  @Patch(':id/start')
+  startReview(
+    @Param('id', new ParseUUIDPipe()) reportId: string,
+    @CurrentUser() authUser: AuthenticatedUser,
+  ) {
+    return this.reportsService.startReview(reportId, authUser);
   }
 
   @Patch(':id/reopen')

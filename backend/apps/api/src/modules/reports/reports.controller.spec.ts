@@ -50,3 +50,16 @@ test('AdminReportsController forwards pagination query to service', () => {
     hasMore: false,
   });
 });
+
+test('AdminReportsController exposes start-review without changing old routes', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    AdminReportsController.prototype,
+    'startReview',
+  );
+  assert.ok(descriptor?.value);
+  assert.equal(Reflect.getMetadata(PATH_METADATA, descriptor.value), ':id/start');
+  assert.equal(
+    Reflect.getMetadata(METHOD_METADATA, descriptor.value),
+    RequestMethod.PATCH,
+  );
+});

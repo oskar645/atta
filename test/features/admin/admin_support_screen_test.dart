@@ -307,11 +307,61 @@ void main() {
         field.controller?.text, contains('объявление находится на модерации'));
     expect(support.adminReplyCalls, 0);
   });
+
+  testWidgets('admin edits own support message without disposed controller',
+      (tester) async {
+    final support = _FakeSupportService(
+      messages: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'message-1',
+          'sender': 'admin',
+          'sender_user_id': 'admin-1',
+          'text': 'Старый текст',
+          'created_at': '2026-11-09T10:00:00.000Z',
+        },
+      ],
+    );
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<SupportService>.value(value: support),
+          Provider<ProfileService>.value(value: _FakeProfileService()),
+          Provider<AuthService>.value(value: _FakeAuthService()),
+        ],
+        child: const MaterialApp(
+          home: AdminTicketScreen(
+            ticketId: 'ticket-1',
+            titleName: 'Пользователь',
+            userUid: 'user-1',
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(find.text('Старый текст'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Изменить'));
+    await tester.pumpAndSettle();
+    expect(find.text('Изменить сообщение'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField), 'Исправленный текст');
+    await tester.tap(find.widgetWithText(FilledButton, 'Сохранить'));
+    await tester.pumpAndSettle();
+
+    expect(support.editedMessages, <String, String>{
+      'message-1': 'Исправленный текст',
+    });
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeSupportService extends SupportService {
-  _FakeSupportService({List<Map<String, dynamic>>? tickets})
-      : _tickets = tickets ??
+  _FakeSupportService({
+    List<Map<String, dynamic>>? tickets,
+    List<Map<String, dynamic>>? messages,
+  })  : _messages = messages,
+        _tickets = tickets ??
             <Map<String, dynamic>>[
               <String, dynamic>{
                 'id': 'ticket-1',
@@ -324,7 +374,9 @@ class _FakeSupportService extends SupportService {
             ];
 
   final List<Map<String, dynamic>> _tickets;
+  final List<Map<String, dynamic>>? _messages;
   final List<String> hiddenTicketIds = <String>[];
+  final Map<String, String> editedMessages = <String, String>{};
   int adminReplyCalls = 0;
   final StreamController<List<Map<String, dynamic>>> _controller =
       StreamController<List<Map<String, dynamic>>>.broadcast();
@@ -338,13 +390,23 @@ class _FakeSupportService extends SupportService {
   @override
   Stream<List<Map<String, dynamic>>> streamAdminMessages(
       String ticketId) async* {
-    yield <Map<String, dynamic>>[
-      <String, dynamic>{
-        'sender': 'user',
-        'text': 'Здравствуйте',
-        'created_at': '2026-07-02T10:00:00.000Z',
-      },
-    ];
+    yield _messages ??
+        <Map<String, dynamic>>[
+          <String, dynamic>{
+            'sender': 'user',
+            'text': 'Здравствуйте',
+            'created_at': '2026-07-02T10:00:00.000Z',
+          },
+        ];
+  }
+
+  @override
+  Future<void> editAdminMessage({
+    required String ticketId,
+    required String messageId,
+    required String text,
+  }) async {
+    editedMessages[messageId] = text;
   }
 
   @override

@@ -20,6 +20,10 @@ import { PasswordlessService } from './passwordless.service';
 import { EmailModule } from '../email/email.module';
 import { AccountRecoveryController, RecoveryEmailController } from './account-recovery.controller';
 import { AccountRecoveryService } from './account-recovery.service';
+import { EmailPasswordlessController } from './email-passwordless.controller';
+import { EmailPasswordlessService } from './email-passwordless.service';
+import { ContactLinkController } from './contact-link.controller';
+import { ContactLinkService } from './contact-link.service';
 
 @Module({
   imports: [
@@ -34,10 +38,19 @@ import { AccountRecoveryService } from './account-recovery.service';
       secret: env.JWT_ACCESS_SECRET,
     }),
   ],
-  controllers: [AuthController, PasswordlessController, RecoveryEmailController, AccountRecoveryController],
+  controllers: [
+    AuthController,
+    PasswordlessController,
+    EmailPasswordlessController,
+    ContactLinkController,
+    RecoveryEmailController,
+    AccountRecoveryController,
+  ],
   providers: [
     AuthService,
     PasswordlessService,
+    EmailPasswordlessService,
+    ContactLinkService,
     AccountRecoveryService,
     AccountDeletionService,
     RestoreCredentialsService,

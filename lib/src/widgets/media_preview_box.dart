@@ -91,62 +91,87 @@ class MediaPreviewBox extends StatelessWidget {
     String? token,
   }) {
     final authToken = token?.trim() ?? '';
-    return SizedBox.expand(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        ),
-        child: debugImageProvider != null
-            ? _coverImage(debugImageProvider!)
-            : kIsWeb && authToken.isEmpty
-                ? Image.network(
-                    resolvedUrl,
-                    fit: BoxFit.cover,
-                    alignment: alignment,
-                    webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return _fallback(
-                        context,
-                        placeholderLabel ?? 'Загрузка фото...',
-                        icon,
-                      );
-                    },
-                    errorBuilder: (_, __, ___) {
-                      if (kDebugMode) {
-                        debugPrint(
-                          'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
-                        );
-                      }
-                      return _fallback(context, errorLabel, errorIcon);
-                    },
-                  )
-                : CachedNetworkImage(
-                    imageUrl: resolvedUrl,
-                    httpHeaders: authToken.isEmpty
-                        ? null
-                        : <String, String>{
-                            'Authorization': 'Bearer $authToken',
-                          },
-                    imageBuilder: (_, imageProvider) =>
-                        _coverImage(imageProvider),
-                    fit: BoxFit.cover,
-                    alignment: alignment,
-                    placeholder: (_, __) => _fallback(
-                      context,
-                      placeholderLabel ?? 'Загрузка фото...',
-                      icon,
-                    ),
-                    errorWidget: (_, __, ___) {
-                      if (kDebugMode) {
-                        debugPrint(
-                          'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
-                        );
-                      }
-                      return _fallback(context, errorLabel, errorIcon);
-                    },
-                  ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cacheSize = _cacheSizeFor(context, constraints);
+        return SizedBox.expand(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            ),
+            child: debugImageProvider != null
+                ? _coverImage(debugImageProvider!)
+                : kIsWeb && authToken.isEmpty
+                    ? Image.network(
+                        resolvedUrl,
+                        fit: BoxFit.cover,
+                        alignment: alignment,
+                        webHtmlElementStrategy: WebHtmlElementStrategy.prefer,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return _fallback(
+                            context,
+                            placeholderLabel ?? 'Загрузка фото...',
+                            icon,
+                          );
+                        },
+                        errorBuilder: (_, __, ___) {
+                          if (kDebugMode) {
+                            debugPrint(
+                              'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
+                            );
+                          }
+                          return _fallback(context, errorLabel, errorIcon);
+                        },
+                      )
+                    : CachedNetworkImage(
+                        imageUrl: resolvedUrl,
+                        httpHeaders: authToken.isEmpty
+                            ? null
+                            : <String, String>{
+                                'Authorization': 'Bearer $authToken',
+                              },
+                        memCacheWidth: cacheSize.$1,
+                        memCacheHeight: cacheSize.$2,
+                        imageBuilder: (_, imageProvider) =>
+                            _coverImage(imageProvider),
+                        fit: BoxFit.cover,
+                        alignment: alignment,
+                        placeholder: (_, __) => _fallback(
+                          context,
+                          placeholderLabel ?? 'Загрузка фото...',
+                          icon,
+                        ),
+                        errorWidget: (_, __, ___) {
+                          if (kDebugMode) {
+                            debugPrint(
+                              'Media render failed category=${resolution.category} provider=${resolution.provider} original=${resolution.originalUrl} resolved=${resolution.resolvedUrl}',
+                            );
+                          }
+                          return _fallback(context, errorLabel, errorIcon);
+                        },
+                      ),
+          ),
+        );
+      },
+    );
+  }
+
+  (int?, int?) _cacheSizeFor(
+    BuildContext context,
+    BoxConstraints constraints,
+  ) {
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
+    int? pixels(double value) {
+      if (!value.isFinite || value <= 0) return null;
+      final pixelCount = (value * pixelRatio).ceil();
+      if (pixelCount > 4096) return 4096;
+      return pixelCount < 1 ? 1 : pixelCount;
+    }
+
+    return (
+      pixels(constraints.maxWidth),
+      pixels(constraints.maxHeight),
     );
   }
 

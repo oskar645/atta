@@ -5,12 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import {
-  PhoneVerificationPurpose,
-  PhoneVerificationStatus,
-  ListingStatus,
-  UserStatus,
-} from '@prisma/client';
+import { ListingStatus, UserStatus } from '@prisma/client';
 
 import {
   serializeAdminProfile,
@@ -18,6 +13,7 @@ import {
 } from '../../common/serializers';
 import { sellerLevelFromMetrics, SellerLevel } from '../../common/seller-level';
 import { normalizeRussianPhone, validateRussianPhoneOrThrow } from '../../common/phone';
+import { normalizeListingContactPhone } from '../../common/listing-contact-rollout';
 import { parseAdminPhoneNumbers } from '../../config/env';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -141,11 +137,7 @@ export class UsersService {
         if (existingUser) {
           throw new BadRequestException('PHONE_ALREADY_REGISTERED');
         }
-
-        await this.assertConfirmedPhoneChangeVerification(
-          nextPhone,
-          dto.verificationCheckId ?? dto.verification_check_id,
-        );
+        throw new BadRequestException('PHONE_LINK_ENDPOINT_REQUIRED');
       }
     }
 
@@ -274,7 +266,7 @@ export class UsersService {
   }
 
   private async getSellerSummary(userId: string) {
-    const [activeListingsCount, archivedListingsCount, reviews] = await Promise.all([
+    const [activeListingsCount, archivedListingsCount, reviews, activeContacts] = await Promise.all([
       this.prisma.listing.count({
         where: {
           ownerId: userId,
@@ -307,11 +299,27 @@ export class UsersService {
           createdAt: true,
         },
       }),
+      this.prisma.listing.findMany({
+        where: {
+          ownerId: userId,
+          status: ListingStatus.APPROVED,
+          publishedAt: { not: null },
+          deletedAt: null,
+        },
+        select: { phone: true },
+        distinct: ['phone'],
+      }),
     ]);
+    const uniqueCallContacts = new Set(
+      activeContacts
+        .map((listing) => normalizeListingContactPhone(listing.phone))
+        .filter((phone) => phone.length > 0),
+    );
     return {
       sellerLevel: sellerLevelFromMetrics(activeListingsCount, reviews, userId),
       activeListingsCount,
       archivedListingsCount,
+      hasUniqueCallContact: uniqueCallContacts.size === 1,
     };
   }
 
@@ -321,6 +329,7 @@ export class UsersService {
       sellerLevel: SellerLevel | null;
       activeListingsCount: number;
       archivedListingsCount: number;
+      hasUniqueCallContact: boolean;
     },
   ) {
     return {
@@ -331,36 +340,9 @@ export class UsersService {
       activeListingsCount: summary.activeListingsCount,
       archived_listings_count: summary.archivedListingsCount,
       archivedListingsCount: summary.archivedListingsCount,
+      has_unique_call_contact: summary.hasUniqueCallContact,
+      hasUniqueCallContact: summary.hasUniqueCallContact,
     };
   }
 
-  private async assertConfirmedPhoneChangeVerification(
-    phone: string,
-    rawCheckId?: string,
-  ) {
-    const checkId = rawCheckId?.trim() ?? '';
-    if (!checkId) {
-      throw new BadRequestException('PHONE_VERIFICATION_REQUIRED');
-    }
-
-    const verification = await this.prisma.phoneVerification.findFirst({
-      where: {
-        phone,
-        purpose: PhoneVerificationPurpose.CHANGE_PHONE,
-        checkId,
-        status: PhoneVerificationStatus.CONFIRMED,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    if (!verification) {
-      throw new BadRequestException('PHONE_VERIFICATION_REQUIRED');
-    }
-
-    if (verification.expiresAt.getTime() <= Date.now()) {
-      throw new BadRequestException('PHONE_VERIFICATION_EXPIRED');
-    }
-  }
 }

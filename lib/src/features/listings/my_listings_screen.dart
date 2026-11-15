@@ -1125,6 +1125,9 @@ class _MyListingTile extends StatelessWidget {
         child: Ink(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.light
+                ? Colors.white
+                : Theme.of(context).colorScheme.surface,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: listing.hasVipPromotion
@@ -1184,25 +1187,39 @@ class _MyListingTile extends StatelessWidget {
                         const SizedBox(height: 6),
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: Container(
-                            key: ValueKey('my_listing_status:${listing.id}'),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: statusPresentation.background,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              statusPresentation.label,
-                              style: TextStyle(
-                                color: statusPresentation.foreground,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
+                          child: normalizedStatus == 'approved'
+                              ? Text(
+                                  key: ValueKey(
+                                    'my_listing_status:${listing.id}',
+                                  ),
+                                  statusPresentation.label,
+                                  style: TextStyle(
+                                    color: statusPresentation.foreground,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                )
+                              : Container(
+                                  key: ValueKey(
+                                    'my_listing_status:${listing.id}',
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: statusPresentation.background,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    statusPresentation.label,
+                                    style: TextStyle(
+                                      color: statusPresentation.foreground,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
                         ),
                         const SizedBox(height: 6),
                         Text(

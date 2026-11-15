@@ -606,6 +606,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
     String userId, {
     String initialName = '',
     String initialAvatar = '',
+    String initialListingId = '',
   }) {
     final id = userId.trim();
     if (id.isEmpty) return;
@@ -615,6 +616,7 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
           sellerId: id,
           initialSellerName: initialName,
           initialSellerAvatar: initialAvatar,
+          initialListingId: initialListingId,
         ),
       ),
     );
@@ -869,6 +871,9 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                               otherId,
                               initialName: otherName,
                               initialAvatar: otherAvatar,
+                              initialListingId: otherId == chatRow.sellerId
+                                  ? chatRow.listingId
+                                  : '',
                             ),
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
@@ -943,6 +948,9 @@ class _ChatScreenState extends State<ChatScreen> with RouteAware {
                       otherId,
                       initialName: otherName,
                       initialAvatar: otherAvatar,
+                      initialListingId: otherId == chatRow.sellerId
+                          ? chatRow.listingId
+                          : '',
                     ),
                   ),
                   Expanded(

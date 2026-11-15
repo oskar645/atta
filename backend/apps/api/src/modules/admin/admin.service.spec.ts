@@ -27,6 +27,99 @@ const adminUser = {
 
 const moscowNow = () => new Date(Date.now() + 3 * 60 * 60 * 1000);
 
+test('permanent listing deletion is restricted to already deleted listings', async () => {
+  let storageCleanupCalled = false;
+  const service = new AdminService(
+    {
+      listing: {
+        findUnique: async () => ({
+          id: 'listing-active',
+          ownerId: 'owner-1',
+          title: 'Активное объявление',
+          status: ListingStatus.APPROVED,
+          deletedAt: null,
+        }),
+      },
+    } as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {
+      deleteListingPhotosForListings: async () => {
+        storageCleanupCalled = true;
+      },
+    } as any,
+    {} as any,
+    undefined,
+    {} as any,
+  );
+
+  await assert.rejects(
+    () => service.permanentlyDeleteListing('listing-active', adminUser),
+    BadRequestException,
+  );
+  assert.equal(storageCleanupCalled, false);
+});
+
+test('permanent listing deletion removes deleted record and keeps audit log', async () => {
+  const deletedAt = new Date('2026-11-01T10:00:00.000Z');
+  const cleanedIds: string[][] = [];
+  const audited: Record<string, any>[] = [];
+  const deletedIds: string[] = [];
+  const prisma = {
+    listing: {
+      findUnique: async () => ({
+        id: 'listing-deleted',
+        ownerId: 'owner-1',
+        title: 'Удалённое объявление',
+        status: ListingStatus.DELETED,
+        deletedAt,
+      }),
+    },
+    $transaction: async (action: (tx: any) => Promise<void>) => action({
+      auditLog: {
+        create: async ({ data }: { data: Record<string, any> }) => {
+          audited.push(data);
+        },
+      },
+      listing: {
+        delete: async ({ where }: { where: { id: string } }) => {
+          deletedIds.push(where.id);
+        },
+      },
+    }),
+  };
+  const service = new AdminService(
+    prisma as any,
+    {} as any,
+    {} as any,
+    {} as any,
+    {
+      deleteListingPhotosForListings: async (ids: string[]) => {
+        cleanedIds.push(ids);
+      },
+    } as any,
+    {} as any,
+    undefined,
+    {} as any,
+  );
+
+  const result = await service.permanentlyDeleteListing(
+    'listing-deleted',
+    adminUser,
+  );
+
+  assert.deepEqual(cleanedIds, [['listing-deleted']]);
+  assert.deepEqual(deletedIds, ['listing-deleted']);
+  assert.equal(audited[0]?.['action'], 'listing.permanently_delete');
+  assert.equal(audited[0]?.['entityId'], 'listing-deleted');
+  assert.deepEqual(result, {
+    source: 'timeweb',
+    deleted: true,
+    id: 'listing-deleted',
+  });
+});
+
 test('moderation list hydrates only the database-selected eligible page', async () => {
   let capturedWhere: Record<string, unknown> | undefined;
 
@@ -78,7 +171,7 @@ test('moderation list preserves eligible database page and total', async () => {
     category: 'Запчасти',
     subcategory: 'Оптика',
     price: BigInt(1000),
-    phone: '',
+    phone: '79281234567',
     phoneHidden: false,
     city: 'Грозный',
     address: '',
@@ -204,6 +297,19 @@ test('users list excludes soft-deleted users', async () => {
       not: UserStatus.DELETED,
     },
   });
+
+  await service.listUsers({ search: 'member@example.com' });
+  const searchConditions = (capturedWhere?.['OR'] ?? []) as Array<
+    Record<string, unknown>
+  >;
+  assert.ok(
+    searchConditions.some(
+      (condition) =>
+        (condition['email'] as Record<string, unknown> | undefined)?.[
+          'contains'
+        ] === 'member@example.com',
+    ),
+  );
 });
 
 test('dashboard stats count spent wallet points for last 30 days', async () => {
@@ -522,6 +628,10 @@ test('admin registration stats aggregate users by selected year without personal
     {
       user: {
         count: async (args?: any) => {
+          const registrationMethod = args?.where?.registrationMethod;
+          if (registrationMethod === 'PHONE') return 4;
+          if (registrationMethod === 'EMAIL') return 3;
+          if (registrationMethod === 'LEGACY_UNKNOWN') return 2;
           const createdAt = args?.where?.createdAt;
           if (createdAt?.gte && createdAt?.lt) {
             countRanges.push({ gte: createdAt.gte, lt: createdAt.lt });
@@ -612,6 +722,15 @@ test('admin registration stats aggregate users by selected year without personal
   assert.equal(currentStats.yesterday_count, 1);
   assert.equal(currentStats.last_7_days_count, 2);
   assert.equal(currentStats.current_month_count, 2);
+  assert.equal(currentStats.phone_registration_count, 4);
+  assert.equal(currentStats.email_registration_count, 3);
+  assert.equal(currentStats.unknown_registration_count, 2);
+  assert.equal(
+    currentStats.phone_registration_count +
+      currentStats.email_registration_count +
+      currentStats.unknown_registration_count,
+    currentStats.total_users,
+  );
   assert.deepEqual(currentStats.available_years, [previousYear, currentYear]);
   assert.equal(currentStats.months[0].month, currentMonth);
   assert.equal(currentStats.months[0].count, 2);
@@ -631,8 +750,8 @@ test('admin registration stats aggregate users by selected year without personal
     BadRequestException,
   );
   const serialized = JSON.stringify(currentStats);
-  assert.equal(serialized.includes('phone'), false);
-  assert.equal(serialized.includes('email'), false);
+  assert.equal(serialized.includes('"phone":'), false);
+  assert.equal(serialized.includes('"email":'), false);
   assert.equal(serialized.includes('display_name'), false);
 });
 
@@ -665,6 +784,9 @@ test('admin registration stats returns empty months without users', async () => 
   assert.equal(stats.yesterday_count, 0);
   assert.equal(stats.last_7_days_count, 0);
   assert.equal(stats.current_month_count, 0);
+  assert.equal(stats.phone_registration_count, 0);
+  assert.equal(stats.email_registration_count, 0);
+  assert.equal(stats.unknown_registration_count, 0);
   assert.deepEqual(stats.months, []);
 });
 
@@ -1303,7 +1425,7 @@ function listingForModeration(
     price: options?.price ?? BigInt(100),
     previousPrice: options?.previousPrice ?? null,
     priceReducedAt: options?.priceReducedAt ?? null,
-    phone: '',
+    phone: '79281234567',
     phoneHidden: false,
     city: 'Грозный',
     address: '',

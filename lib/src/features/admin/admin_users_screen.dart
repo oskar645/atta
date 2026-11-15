@@ -305,6 +305,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     );
   }
 
+  bool _phoneVerified(Map<String, dynamic> item) =>
+      item['phone_verified'] == true ||
+      item['phoneVerified'] == true ||
+      item['isPhoneVerified'] == true;
+
+  bool _emailVerified(Map<String, dynamic> item) =>
+      item['email_verified'] == true ||
+      item['emailVerified'] == true ||
+      _value(item, const ['email_verified_at', 'emailVerifiedAt']).isNotEmpty;
+
   bool _isProtectedAdmin(Map<String, dynamic> item) {
     return _protectedAdminPhones.contains(_value(item, const ['phone']));
   }
@@ -385,6 +395,12 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             initialSellerAvatar: _avatarUrl(details.isEmpty ? item : details),
             initialSellerPhone:
                 _value(details.isEmpty ? item : details, const ['phone']),
+            initialSellerEmail:
+                _value(details.isEmpty ? item : details, const ['email']),
+            initialPhoneVerified:
+                _phoneVerified(details.isEmpty ? item : details),
+            initialEmailVerified:
+                _emailVerified(details.isEmpty ? item : details),
             initialStatusLabel: _statusLabel(details.isEmpty ? item : details),
             initialIsAdmin:
                 (details['is_admin'] == true || details['isAdmin'] == true) ||
@@ -451,7 +467,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 textInputAction: TextInputAction.search,
                 onSubmitted: (_) => _runSearch(),
                 decoration: InputDecoration(
-                  labelText: 'Поиск по имени, телефону, userId',
+                  labelText: 'Поиск по имени, телефону, Email, userId',
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.search),
                     tooltip: 'Найти',
@@ -648,11 +664,15 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                                       Row(
                                         children: [
                                           Expanded(
-                                            child: _UserCompactInfo(
-                                              icon: Icons.phone_outlined,
-                                              text: formatRussianPhone(
-                                                _value(item, const ['phone']),
-                                              ),
+                                            child: _UserContactsInfo(
+                                              phone:
+                                                  _value(item, const ['phone']),
+                                              email:
+                                                  _value(item, const ['email']),
+                                              phoneVerified:
+                                                  _phoneVerified(item),
+                                              emailVerified:
+                                                  _emailVerified(item),
                                             ),
                                           ),
                                           const SizedBox(width: 8),
@@ -743,6 +763,103 @@ class _UserCompactInfo extends StatelessWidget {
   }
 }
 
+class _UserContactsInfo extends StatelessWidget {
+  const _UserContactsInfo({
+    required this.phone,
+    required this.email,
+    required this.phoneVerified,
+    required this.emailVerified,
+  });
+
+  final String phone;
+  final String email;
+  final bool phoneVerified;
+  final bool emailVerified;
+
+  @override
+  Widget build(BuildContext context) {
+    final contacts = <Widget>[
+      if (phone.trim().isNotEmpty)
+        _UserContactLine(
+          icon: Icons.phone_outlined,
+          text: formatRussianPhone(phone),
+          verified: phoneVerified,
+        ),
+      if (email.trim().isNotEmpty)
+        _UserContactLine(
+          icon: Icons.email_outlined,
+          text: email.trim(),
+          verified: emailVerified,
+        ),
+    ];
+    if (contacts.isEmpty) {
+      return const _UserContactLine(
+        icon: Icons.contact_phone_outlined,
+        text: 'Не указано',
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < contacts.length; index++) ...[
+          if (index > 0) const SizedBox(height: 3),
+          contacts[index],
+        ],
+      ],
+    );
+  }
+}
+
+class _UserContactLine extends StatelessWidget {
+  const _UserContactLine({
+    required this.icon,
+    required this.text,
+    this.verified,
+  });
+
+  final IconData icon;
+  final String text;
+  final bool? verified;
+
+  @override
+  Widget build(BuildContext context) {
+    final isVerified = verified == true;
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: const Color(0xFF667085)),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF475467),
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ),
+        if (verified != null) ...[
+          const SizedBox(width: 4),
+          Tooltip(
+            message: isVerified ? 'Подтверждён' : 'Не подтверждён',
+            child: Icon(
+              isVerified ? Icons.verified_rounded : Icons.error_outline_rounded,
+              key: ValueKey(
+                '${isVerified ? 'verified' : 'unverified'}-${icon.codePoint}-$text',
+              ),
+              size: 14,
+              color: isVerified
+                  ? const Color(0xFF12B76A)
+                  : Theme.of(context).colorScheme.outline,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _UserAdminBadge extends StatelessWidget {
   const _UserAdminBadge();
 
@@ -820,6 +937,12 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
         final yesterdayCount = _intValue(data['yesterday_count']) ?? 0;
         final last7DaysCount = _intValue(data['last_7_days_count']) ?? 0;
         final currentMonthCount = _intValue(data['current_month_count']) ?? 0;
+        final phoneRegistrationCount =
+            _intValue(data['phone_registration_count']) ?? 0;
+        final emailRegistrationCount =
+            _intValue(data['email_registration_count']) ?? 0;
+        final unknownRegistrationCount =
+            _intValue(data['unknown_registration_count']) ?? 0;
         final selectedYearCount = months.fold<int>(
           0,
           (total, row) => total + row.count,
@@ -896,6 +1019,9 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
                 currentMonthCount: currentMonthCount,
                 selectedYear: year,
                 selectedYearCount: selectedYearCount,
+                phoneRegistrationCount: phoneRegistrationCount,
+                emailRegistrationCount: emailRegistrationCount,
+                unknownRegistrationCount: unknownRegistrationCount,
               ),
               const SizedBox(height: 12),
               _RegistrationRangeSelector(
@@ -1071,6 +1197,9 @@ class _RegistrationSummaryCards extends StatelessWidget {
     required this.currentMonthCount,
     required this.selectedYear,
     required this.selectedYearCount,
+    required this.phoneRegistrationCount,
+    required this.emailRegistrationCount,
+    required this.unknownRegistrationCount,
   });
 
   final int totalUsers;
@@ -1080,6 +1209,9 @@ class _RegistrationSummaryCards extends StatelessWidget {
   final int currentMonthCount;
   final int selectedYear;
   final int selectedYearCount;
+  final int phoneRegistrationCount;
+  final int emailRegistrationCount;
+  final int unknownRegistrationCount;
 
   @override
   Widget build(BuildContext context) {
@@ -1100,6 +1232,25 @@ class _RegistrationSummaryCards extends StatelessWidget {
               label: 'Всего',
               value: '$totalUsers',
             ),
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-phone-card'),
+              width: cardWidth,
+              label: 'По телефону',
+              value: '$phoneRegistrationCount',
+            ),
+            _RegistrationSummaryCard(
+              key: const ValueKey('registration-email-card'),
+              width: cardWidth,
+              label: 'По Email',
+              value: '$emailRegistrationCount',
+            ),
+            if (unknownRegistrationCount > 0)
+              _RegistrationSummaryCard(
+                key: const ValueKey('registration-unknown-card'),
+                width: cardWidth,
+                label: 'Не определено',
+                value: '$unknownRegistrationCount',
+              ),
             _RegistrationSummaryCard(
               key: const ValueKey('registration-today-card'),
               width: cardWidth,

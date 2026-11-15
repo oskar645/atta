@@ -116,6 +116,49 @@ void main() {
     expect(authApi.logoutCalled, isTrue);
   });
 
+  test('email code login stores the standard backend session', () async {
+    final api = _FakeAuthApi();
+    final service = BackendAuthService(
+      authApi: api,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    final result = await service.checkEmailPasswordless(
+      challengeId: 'challenge-1',
+      code: '123456',
+      isActive: () => true,
+    );
+
+    expect(result['auth'], isA<Map>());
+    expect(api.lastEmailChallengeId, 'challenge-1');
+    expect(api.lastEmailCode, '123456');
+    expect(service.currentUser?.uid, 'email-user');
+    expect(service.currentUser?.emailVerified, isTrue);
+  });
+
+  test('email registration completion stores the standard backend session',
+      () async {
+    final api = _FakeAuthApi();
+    final service = BackendAuthService(
+      authApi: api,
+      usersApi: _FakeUsersApi(),
+      tokenStorage: TokenStorage(),
+    );
+
+    await service.completeEmailPasswordless(
+      registrationToken: 'registration-token',
+      displayName: 'Email User',
+      acceptedLegal: true,
+      acceptedPersonalData: true,
+      isActive: () => true,
+    );
+
+    expect(api.lastEmailRegistrationToken, 'registration-token');
+    expect(api.lastEmailDisplayName, 'Email User');
+    expect(service.currentUser?.uid, 'email-user');
+  });
+
   for (final nativeFails in [false, true]) {
     test(
         'delete clears current device tokens/user/restore and enters guest (native failure=$nativeFails)',
@@ -1153,6 +1196,10 @@ class _FakeAuthApi extends AuthApi {
   bool logoutCalled = false;
   String? lastLoginPhoneVerificationCheckId;
   String? lastSignupPhoneReferralCode;
+  String? lastEmailChallengeId;
+  String? lastEmailCode;
+  String? lastEmailRegistrationToken;
+  String? lastEmailDisplayName;
   Object? refreshError;
   Object? meError;
   Map<String, dynamic>? meResponse;
@@ -1272,6 +1319,41 @@ class _FakeAuthApi extends AuthApi {
       'call_phone_pretty': '+7 (800) 500-82-75',
       'message': 'Позвоните на указанный номер для подтверждения',
     };
+  }
+
+  Map<String, dynamic> get _emailAuthResponse => <String, dynamic>{
+        'auth': <String, dynamic>{
+          'access_token': 'email-access-token',
+          'refresh_token': 'email-refresh-token',
+        },
+        'user': <String, dynamic>{
+          'id': 'email-user',
+          'email': 'member@example.com',
+          'email_verified': true,
+          'display_name': 'Email User',
+        },
+      };
+
+  @override
+  Future<Map<String, dynamic>> checkEmailPasswordless({
+    required String challengeId,
+    required String code,
+  }) async {
+    lastEmailChallengeId = challengeId;
+    lastEmailCode = code;
+    return _emailAuthResponse;
+  }
+
+  @override
+  Future<Map<String, dynamic>> completeEmailPasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+  }) async {
+    lastEmailRegistrationToken = registrationToken;
+    lastEmailDisplayName = displayName;
+    return _emailAuthResponse;
   }
 
   @override

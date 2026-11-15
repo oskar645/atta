@@ -15,6 +15,7 @@ const serializers_1 = require("../../common/serializers");
 const seller_level_1 = require("../../common/seller-level");
 const listings_service_1 = require("../listings/listings.service");
 const prisma_service_1 = require("../prisma/prisma.service");
+const client_1 = require("@prisma/client");
 const pageLimit = (value) => Math.max(1, Math.min(Number.isFinite(value ?? NaN) ? value : 50, 100));
 const encodeCursor = (payload) => Buffer.from(JSON.stringify(payload)).toString('base64url');
 const decodeCursor = (cursor) => {
@@ -139,6 +140,31 @@ let FavoritesService = class FavoritesService {
         return {
             deleted: true,
             listing_id: listingId,
+        };
+    }
+    async removeMany(authUser, scope) {
+        if (scope !== 'all' && scope !== 'inactive') {
+            throw new common_1.BadRequestException('Некорректный режим очистки избранного');
+        }
+        const result = await this.prisma.favorite.deleteMany({
+            where: {
+                userId: authUser.userId,
+                ...(scope === 'inactive'
+                    ? {
+                        listing: {
+                            OR: [
+                                { status: { not: client_1.ListingStatus.APPROVED } },
+                                { deletedAt: { not: null } },
+                            ],
+                        },
+                    }
+                    : {}),
+            },
+        });
+        return {
+            deleted: true,
+            scope,
+            removed_count: result.count,
         };
     }
 };

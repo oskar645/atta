@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -23,6 +24,8 @@ import 'package:atta/src/features/admin/admin_marketplace_analytics_screens.dart
 import 'package:atta/src/features/admin/admin_repeated_messages_screen.dart';
 import 'package:atta/src/features/admin/admin_advertising_tab.dart';
 import 'package:atta/src/features/admin/admin_blocks_screen.dart';
+import 'package:atta/src/features/listings/photo_viewer_screen.dart';
+import 'package:atta/src/models/listing.dart';
 import 'admin_support_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
@@ -31,10 +34,12 @@ import 'package:atta/src/services/chat_socket_service.dart';
 import 'package:atta/src/services/usage_analytics_service.dart';
 import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/media_url.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({
@@ -664,6 +669,11 @@ class _TimewebAdminListingsModerationTabState
                                           style: const TextStyle(
                                               fontWeight: FontWeight.w800),
                                         ),
+                                        if (_hasRealModerationChanges(
+                                            item)) ...[
+                                          const SizedBox(height: 4),
+                                          const _ModerationChangedLabel(),
+                                        ],
                                         const SizedBox(height: 6),
                                         Text(
                                           '${(item['price'] ?? 0).toString()} ₽ • ${(item['city'] ?? '').toString()}',
@@ -754,6 +764,28 @@ class _TimewebAdminListingsModerationTabState
       },
     );
   }
+}
+
+bool _hasRealModerationChanges(Map<String, dynamic> item) {
+  final diff = item['moderation_diff'];
+  if (diff is! Map) return false;
+  final changed = diff['changed'];
+  return changed is List && changed.isNotEmpty;
+}
+
+class _ModerationChangedLabel extends StatelessWidget {
+  const _ModerationChangedLabel();
+
+  @override
+  Widget build(BuildContext context) => const Text(
+        'Изменено',
+        key: ValueKey('admin_moderation_changed_label'),
+        style: TextStyle(
+          color: Colors.green,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      );
 }
 
 class _ModerationLoadingView extends StatelessWidget {
@@ -1689,6 +1721,24 @@ class AdminListingReviewScreen extends StatefulWidget {
 class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
   bool _busy = false;
   int _photoIndex = 0;
+
+  Future<void> _openVideo(ListingVideo video) async {
+    final uri = Uri.tryParse(video.playbackUrl);
+    if (uri == null) {
+      if (mounted) {
+        showAppSnack(context, 'Не удалось открыть видео', isError: true);
+      }
+      return;
+    }
+    var opened = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
+    if (!opened) {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+    if (!opened && mounted) {
+      showAppSnack(context, 'Не удалось открыть видео', isError: true);
+    }
+  }
+
   static const List<_ModerationRejectReason> _rejectReasons = [
     _ModerationRejectReason(
       label: 'Мат / оскорбления',
@@ -2182,12 +2232,29 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     final ownerName = (d['owner_name'] ?? d['ownerName'] ?? '').toString();
     final status = (d['status'] ?? '').toString();
     final createdAt = (d['created_at'] ?? '').toString();
+    final address = (d['address'] ?? '').toString();
+    final phoneHidden = d['phone_hidden'] == true;
     final moderationChanges = _moderationChangesByField(d);
     final moderationChangesByLabel = _moderationChangesByDisplayLabel(d);
 
     final raw = d['photo_urls'] ?? [];
     final images =
         (raw is List) ? raw.map((e) => e.toString()).toList() : <String>[];
+    final fullScreenImages = images
+        .map(
+          (url) => resolvePublicMediaUrl(
+            url,
+            categoryHint: 'listings',
+          ),
+        )
+        .toList(growable: false);
+    final video = ListingVideo.fromAny(d['video']);
+    final media = <_AdminModerationMediaItem>[
+      if (images.isNotEmpty) _AdminModerationMediaItem.photo(images.first, 0),
+      if (video != null) _AdminModerationMediaItem.video(video),
+      for (var i = 1; i < images.length; i++)
+        _AdminModerationMediaItem.photo(images[i], i),
+    ];
     final extraFields = _moderationExtraFields(d);
 
     return Scaffold(
@@ -2195,27 +2262,68 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          if (images.isNotEmpty)
+          if (media.isNotEmpty)
             Column(
               children: [
                 SizedBox(
                   height: 240,
                   child: PageView.builder(
-                    itemCount: images.length,
+                    itemCount: media.length,
                     onPageChanged: (value) {
                       if (!mounted) return;
                       setState(() => _photoIndex = value);
                     },
-                    itemBuilder: (_, i) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: MediaPreviewBox(
-                        imageUrl: images[i],
-                        categoryHint: 'listings',
-                        width: double.infinity,
-                        height: 240,
-                        borderRadius: 16,
-                      ),
-                    ),
+                    itemBuilder: (_, i) {
+                      final item = media[i];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2),
+                        child: GestureDetector(
+                          key: ValueKey(
+                            item.video == null
+                                ? 'admin_moderation_photo_${item.photoIndex}'
+                                : 'admin_moderation_video',
+                          ),
+                          onTap: () {
+                            if (item.video != null) {
+                              _openVideo(item.video!);
+                              return;
+                            }
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => PhotoViewerScreen(
+                                  photoUrls: fullScreenImages,
+                                  initialIndex: item.photoIndex!,
+                                ),
+                              ),
+                            );
+                          },
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              MediaPreviewBox(
+                                imageUrl: item.previewUrl,
+                                categoryHint: 'listings',
+                                width: double.infinity,
+                                height: 240,
+                                borderRadius: 16,
+                              ),
+                              if (item.video != null)
+                                const Center(
+                                  child: CircleAvatar(
+                                    radius: 30,
+                                    backgroundColor: Colors.black54,
+                                    child: Icon(
+                                      Icons.play_arrow_rounded,
+                                      color: Colors.white,
+                                      size: 42,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
                 if (moderationChanges.containsKey('photos')) ...[
@@ -2229,7 +2337,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                 Row(
                   children: [
                     Text(
-                      'Фото ${_photoIndex + 1} из ${images.length}',
+                      'Медиа ${_photoIndex + 1} из ${media.length}',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.outline,
                         fontSize: 12,
@@ -2237,7 +2345,7 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                     ),
                     const Spacer(),
                     ...List<Widget>.generate(
-                      images.length,
+                      media.length,
                       (index) => Container(
                         width: 8,
                         height: 8,
@@ -2346,6 +2454,29 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
             ),
           ),
           const SizedBox(height: 10),
+          if (address.trim().isNotEmpty || d['delivery'] is Map) ...[
+            _AdminInfoSection(
+              title: 'Местоположение и доставка',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (address.trim().isNotEmpty)
+                    _AdminInfoRow(
+                      label: 'Адрес',
+                      value: address,
+                      change: moderationChanges['address'],
+                    ),
+                  if (d['delivery'] is Map && (d['delivery'] as Map).isNotEmpty)
+                    _AdminInfoRow(
+                      label: 'Доставка',
+                      value: _formatModerationValue(d['delivery']),
+                      change: moderationChanges['delivery'],
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           _AdminInfoSection(
             title: 'Продавец',
             child: Column(
@@ -2367,6 +2498,11 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                   ),
                 if (phone.trim().isNotEmpty)
                   _AdminInfoRow(label: 'Телефон', value: phoneDisplay),
+                _AdminInfoRow(
+                  label: 'Телефон скрыт',
+                  value: phoneHidden ? 'Да' : 'Нет',
+                  change: moderationChanges['phone_hidden'],
+                ),
                 if (createdAt.trim().isNotEmpty)
                   _AdminInfoRow(
                       label: 'Создано',
@@ -2391,6 +2527,33 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
                       ),
                     )
                     .toList(growable: false),
+              ),
+            ),
+          ],
+          if ((d['id'] ?? '').toString().trim().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Card(
+              child: ExpansionTile(
+                key: const ValueKey('admin_moderation_technical_data'),
+                title: const Text(
+                  'Технические данные',
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: const Text('ID и служебная информация'),
+                childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                children: [
+                  _AdminCopyableValue(
+                    label: 'ID объявления',
+                    value: d['id'].toString(),
+                    copyKey: 'listing_id',
+                  ),
+                  if ((d['moderated_by'] ?? '').toString().trim().isNotEmpty)
+                    _AdminCopyableValue(
+                      label: 'ID модератора',
+                      value: d['moderated_by'].toString(),
+                      copyKey: 'moderator_id',
+                    ),
+                ],
               ),
             ),
           ],
@@ -2508,6 +2671,59 @@ class _AdminInfoRow extends StatelessWidget {
   }
 }
 
+class _AdminCopyableValue extends StatelessWidget {
+  const _AdminCopyableValue({
+    required this.label,
+    required this.value,
+    required this.copyKey,
+  });
+
+  final String label;
+  final String value;
+  final String copyKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      key: ValueKey('admin_moderation_copy:$copyKey'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () async {
+        await Clipboard.setData(ClipboardData(text: value));
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ID скопирован')),
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 110,
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.outline,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.copy_outlined, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _AdminInfoChip extends StatelessWidget {
   const _AdminInfoChip({
     required this.label,
@@ -2572,41 +2788,65 @@ class _ModerationChangedLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final details = photos
-        ? _formatPhotoChange(change)
-        : 'Было: ${(formatBefore ?? _formatModerationValue)(change.before)}';
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 6,
-      runSpacing: 4,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          decoration: BoxDecoration(
-            color: scheme.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: scheme.primary.withValues(alpha: 0.28)),
-          ),
-          child: Text(
-            'Изменено',
+    final accent = scheme.brightness == Brightness.dark
+        ? const Color(0xFF69DB8A)
+        : const Color(0xFF16803A);
+    final formatter = formatBefore ?? _formatModerationValue;
+    return Container(
+      key: ValueKey('admin_moderation_change:${change.field}'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: accent.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            change.label,
             style: TextStyle(
-              color: scheme.primary,
-              fontSize: 12,
+              color: accent,
+              fontSize: 13,
               fontWeight: FontWeight.w800,
             ),
           ),
-        ),
-        Text(
-          details,
-          style: TextStyle(
-            color: scheme.onSurfaceVariant,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+          const SizedBox(height: 4),
+          if (photos)
+            Text(
+              _formatPhotoChange(change),
+              style: TextStyle(color: accent, fontWeight: FontWeight.w700),
+            )
+          else ...[
+            Text('Было: ${formatter(change.before)}'),
+            const SizedBox(height: 2),
+            Text(
+              'Стало: ${formatter(change.after)}',
+              style: TextStyle(
+                color: accent,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
+}
+
+class _AdminModerationMediaItem {
+  const _AdminModerationMediaItem.photo(this.previewUrl, this.photoIndex)
+      : video = null;
+
+  _AdminModerationMediaItem.video(ListingVideo value)
+      : previewUrl = value.thumbnailUrl,
+        photoIndex = null,
+        video = value;
+
+  final String previewUrl;
+  final int? photoIndex;
+  final ListingVideo? video;
 }
 
 class _ModerationChange {
@@ -2648,7 +2888,33 @@ Map<String, String> _moderationExtraFields(Map<String, dynamic> data) {
     'photoUrls',
     'photo_items',
     'photoItems',
+    'video',
+    'address',
+    'delivery',
     'moderation_diff',
+    'owner_email',
+    'previous_price',
+    'price_reduced_at',
+    'latitude',
+    'longitude',
+    'location',
+    'view_count',
+    'favorites_count',
+    'rejection_reason',
+    'moderation_note',
+    'moderated_by',
+    'moderated_at',
+    'published_at',
+    'archived_at',
+    'deleted_at',
+    'owner',
+    'seller_level',
+    'sellerLevel',
+    'promotions',
+    'canPromote',
+    'can_promote',
+    'cannotPromoteReason',
+    'cannot_promote_reason',
   };
 
   final fields = <String, String>{};
@@ -2695,7 +2961,10 @@ Map<String, _ModerationChange> _moderationChangesByDisplayLabel(
 ) {
   final byField = _moderationChangesByField(data);
   return {
-    for (final change in byField.values) change.label: change,
+    for (final change in byField.values) ...{
+      change.label: change,
+      _moderationFieldLabel(change.field): change,
+    },
   };
 }
 
@@ -2706,6 +2975,8 @@ String _moderationFieldLabel(String key) {
     'condition': 'Состояние',
     'delivery': 'Доставка',
     'address': 'Адрес',
+    'phone_hidden': 'Телефон скрыт',
+    'car': 'Характеристики',
     'deal_type': 'Тип сделки',
     'real_estate_type': 'Вид товара',
     'clothes_type': 'Тип одежды',

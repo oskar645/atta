@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:atta/src/services/api/api_exception.dart';
@@ -173,7 +174,38 @@ class ImagePreparationService {
     required bool squareCrop,
     required String tooLargeMessage,
     required String debugLabel,
-  }) async {
+  }) {
+    PreparedImage prepare() => _prepareImageBytesSync(
+          originalBytes,
+          fileName: fileName,
+          targetBytes: targetBytes,
+          maxBytes: maxBytes,
+          maxDimension: maxDimension,
+          minQuality: minQuality,
+          maxQuality: maxQuality,
+          squareCrop: squareCrop,
+          tooLargeMessage: tooLargeMessage,
+          debugLabel: debugLabel,
+        );
+
+    if (kIsWeb) {
+      return Future<PreparedImage>.value(prepare());
+    }
+    return Isolate.run(prepare);
+  }
+
+  PreparedImage _prepareImageBytesSync(
+    Uint8List originalBytes, {
+    required String fileName,
+    required int targetBytes,
+    required int maxBytes,
+    required int maxDimension,
+    required int minQuality,
+    required int maxQuality,
+    required bool squareCrop,
+    required String tooLargeMessage,
+    required String debugLabel,
+  }) {
     final extension = _detectExtension(fileName, originalBytes);
     final mimeType = lookupMimeType(
           fileName,

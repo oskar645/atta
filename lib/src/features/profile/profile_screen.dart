@@ -520,6 +520,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               profile.pickNameFromRow(data, fallback: authFallbackName);
           final phone = (data['phone'] ?? '').toString().trim();
           final phoneDisplay = phone.isEmpty ? '' : formatRussianPhone(phone);
+          final phoneVerified = data['phoneVerified'] == true ||
+              data['phone_verified'] == true ||
+              user.phoneVerified;
           final email = (data['email'] ?? user.email ?? '').toString().trim();
           final hasVisibleEmail = email.isNotEmpty &&
               !email.toLowerCase().endsWith('@phone.atta.local');
@@ -539,7 +542,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               Container(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  color: Theme.of(context).brightness == Brightness.light
+                      ? Colors.white
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
                   boxShadow: attaSoftShadows(context),
                 ),
                 child: Row(
@@ -620,22 +625,25 @@ class _ProfileScreenState extends State<ProfileScreen>
                             ),
                           ),
                           const SizedBox(height: 5),
-                          _ProfileVerificationStatus(
-                            verified: hasVisibleEmail && emailVerified,
-                            label: hasVisibleEmail && emailVerified
-                                ? 'Почта подтверждена'
-                                : 'Подтвердите почту',
-                            onTap: () async {
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => const SecurityScreen(),
-                                ),
-                              );
-                              if (mounted) {
-                                await _refreshProfileOnResume();
-                              }
-                            },
-                          ),
+                          if (!(phoneVerified &&
+                              hasVisibleEmail &&
+                              emailVerified))
+                            _ProfileVerificationStatus(
+                              verified: false,
+                              label: hasVisibleEmail && emailVerified
+                                  ? 'Подтвердите номер телефона'
+                                  : 'Подтвердите электронную почту',
+                              onTap: () async {
+                                await Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const SecurityScreen(),
+                                  ),
+                                );
+                                if (mounted) {
+                                  await _refreshProfileOnResume();
+                                }
+                              },
+                            ),
                           if (memberSince.isNotEmpty) ...[
                             const SizedBox(height: 5),
                             Text(

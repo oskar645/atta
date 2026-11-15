@@ -978,6 +978,15 @@ class _EditListingScreenState extends State<EditListingScreen> {
       return;
     }
 
+    if (normalizeRuPhoneForApi(phone).isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Укажите номер телефона для связи с покупателями'),
+        ),
+      );
+      return;
+    }
+
     if (_totalPhotoCount == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Добавьте минимум 1 фото')),

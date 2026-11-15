@@ -305,6 +305,25 @@ test('signup welcome bonus 200 is granted once on first wallet bootstrap', async
   );
 });
 
+test('concurrent welcome bootstrap grants one transaction for the User.id', async () => {
+  const { service, state } = createService();
+
+  const [first, second] = await Promise.all([
+    service.ensureWalletAndBonuses('user-1'),
+    service.ensureWalletAndBonuses('user-1'),
+  ]);
+
+  assert.equal(first.bonusBalance, WALLET_WELCOME_BONUS);
+  assert.equal(second.bonusBalance, WALLET_WELCOME_BONUS);
+  assert.equal(state.wallet.bonusBalance, WALLET_WELCOME_BONUS);
+  assert.equal(
+    state.transactions.filter(
+      (item) => item.reason === WalletTransactionReason.SIGNUP_BONUS,
+    ).length,
+    1,
+  );
+});
+
 test('daily bonus is granted only once per day', async () => {
   const { service, state } = createService();
 

@@ -74,7 +74,13 @@ class AttaApp extends StatelessWidget {
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2B2D33)),
+      scaffoldBackgroundColor: Colors.white,
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
       cardTheme: const CardThemeData(
+        color: Colors.white,
         elevation: 0.75,
         shadowColor: Color(0x12000000),
       ),

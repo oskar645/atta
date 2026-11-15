@@ -17,12 +17,37 @@ void main() {
 
     expect(find.text('Пользователь ATTA'), findsOneWidget);
     expect(find.text('+7 999 111 22 33'), findsOneWidget);
+    expect(find.text('member@example.com'), findsOneWidget);
+    expect(find.byTooltip('Подтверждён'), findsNWidgets(2));
     expect(find.text('user-1'), findsNothing);
     expect(find.text('ID'), findsOneWidget);
     expect(find.textContaining('Last seen'), findsNothing);
     expect(find.textContaining('Admin:'), findsNothing);
     expect(adminService.usersCalls, 1);
     expect(adminService.registrationStatsCalls, 0);
+  });
+
+  testWidgets('email-only user shows email instead of missing contact',
+      (tester) async {
+    final adminService = _FakeAdminService(
+      userItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'email-user',
+          'display_name': 'Email User',
+          'email': 'only@example.com',
+          'email_verified': true,
+          'created_at': '2026-11-15T10:00:00.000Z',
+          'status': 'active',
+        },
+      ],
+    );
+
+    await tester.pumpWidget(_wrap(adminService));
+    await tester.pumpAndSettle();
+
+    expect(find.text('only@example.com'), findsOneWidget);
+    expect(find.text('Не указано'), findsNothing);
+    expect(find.byTooltip('Подтверждён'), findsOneWidget);
   });
 
   testWidgets('registration stats tab shows months and changes year',
@@ -36,6 +61,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Всего'), findsOneWidget);
+    expect(find.text('По телефону'), findsOneWidget);
+    expect(find.text('По Email'), findsOneWidget);
+    expect(find.text('Не определено'), findsOneWidget);
     expect(find.text('Сегодня'), findsOneWidget);
     expect(find.text('Вчера'), findsOneWidget);
     expect(find.text('За 7 дней'), findsOneWidget);
@@ -44,6 +72,12 @@ void main() {
     expect(find.text('Выбрать период'), findsOneWidget);
     expect(find.text('Динамика за год'), findsOneWidget);
     expect(find.byKey(const ValueKey('registration-total-users-card')),
+        findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('registration-phone-card')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('registration-email-card')), findsOneWidget);
+    expect(find.byKey(const ValueKey('registration-unknown-card')),
         findsOneWidget);
     expect(
         find.byKey(const ValueKey('registration-today-card')), findsOneWidget);
@@ -154,6 +188,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('registration stats hides unknown card when there are none',
+      (tester) async {
+    final adminService = _FakeAdminService(unknownCount: 0);
+
+    await tester.pumpWidget(_wrap(adminService));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Регистрации'));
+    await tester.pumpAndSettle();
+
+    expect(
+        find.byKey(const ValueKey('registration-phone-card')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('registration-email-card')), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('registration-unknown-card')), findsNothing);
+  });
+
   testWidgets('registration stats handles loading and error states',
       (tester) async {
     final completer = Completer<Map<String, dynamic>>();
@@ -193,9 +244,15 @@ Widget _wrap(AdminService adminService) {
 }
 
 class _FakeAdminService extends AdminService {
-  _FakeAdminService({this.statsCompleter});
+  _FakeAdminService({
+    this.statsCompleter,
+    this.unknownCount = 27,
+    this.userItems,
+  });
 
   final Completer<Map<String, dynamic>>? statsCompleter;
+  final int unknownCount;
+  final List<Map<String, dynamic>>? userItems;
   int usersCalls = 0;
   int registrationStatsCalls = 0;
   final List<int?> requestedYears = <int?>[];
@@ -209,15 +266,19 @@ class _FakeAdminService extends AdminService {
   }) async {
     usersCalls += 1;
     return <String, dynamic>{
-      'items': <Map<String, dynamic>>[
-        <String, dynamic>{
-          'id': 'user-1',
-          'display_name': 'Пользователь ATTA',
-          'phone': '79991112233',
-          'created_at': '2026-08-01T10:00:00.000Z',
-          'status': 'active',
-        },
-      ],
+      'items': userItems ??
+          <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'user-1',
+              'display_name': 'Пользователь ATTA',
+              'phone': '79991112233',
+              'phone_verified': true,
+              'email': 'member@example.com',
+              'email_verified': true,
+              'created_at': '2026-08-01T10:00:00.000Z',
+              'status': 'active',
+            },
+          ],
       'hasMore': false,
       'nextCursor': null,
     };
@@ -251,7 +312,10 @@ class _FakeAdminService extends AdminService {
       return <String, dynamic>{
         'year': currentYear - 1,
         'available_years': <int>[currentYear - 1, currentYear],
-        'total_users': 327,
+        'total_users': 300 + unknownCount,
+        'phone_registration_count': 200,
+        'email_registration_count': 100,
+        'unknown_registration_count': unknownCount,
         'todayCount': 7,
         'yesterday_count': 5,
         'last_7_days_count': 31,
@@ -264,7 +328,10 @@ class _FakeAdminService extends AdminService {
     return <String, dynamic>{
       'year': currentYear,
       'available_years': <int>[currentYear - 1, currentYear],
-      'total_users': 327,
+      'total_users': 300 + unknownCount,
+      'phone_registration_count': 200,
+      'email_registration_count': 100,
+      'unknown_registration_count': unknownCount,
       'todayCount': 7,
       'yesterday_count': 5,
       'last_7_days_count': 31,

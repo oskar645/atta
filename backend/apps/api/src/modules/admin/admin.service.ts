@@ -38,6 +38,7 @@ import {
   isListingReadyForPublication,
   listingModerationReadySql,
 } from '../../common/listing-publication';
+import { resolveListingContactPhone } from '../../common/listing-contact-rollout';
 import { AuthenticatedUser } from '../auth/auth.types';
 import { AppVisitsService } from '../app-visits/app-visits.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -859,6 +860,7 @@ export class AdminService {
               ...(this.isUuid(search) ? [{ id: search }] : []),
               { displayName: { contains: search, mode: 'insensitive' } },
               { name: { contains: search, mode: 'insensitive' } },
+              { email: { contains: search, mode: 'insensitive' } },
               { phone: { contains: search } },
               ...(phoneDigits.length >= 4
                 ? [{ phone: { contains: phoneDigits } }]
@@ -1013,6 +1015,9 @@ export class AdminService {
       yesterdayCount,
       last7DaysCount,
       customRangeCount,
+      phoneRegistrationCount,
+      emailRegistrationCount,
+      unknownRegistrationCount,
       monthRows,
     ] =
       await Promise.all([
@@ -1065,6 +1070,24 @@ export class AdminService {
               },
             })
           : Promise.resolve(null),
+        this.prisma.user.count({
+          where: {
+            ...activeUserWhere,
+            registrationMethod: 'PHONE',
+          },
+        }),
+        this.prisma.user.count({
+          where: {
+            ...activeUserWhere,
+            registrationMethod: 'EMAIL',
+          },
+        }),
+        this.prisma.user.count({
+          where: {
+            ...activeUserWhere,
+            registrationMethod: 'LEGACY_UNKNOWN',
+          },
+        }),
         this.prisma.$queryRaw<
           Array<{ month: number | bigint; count: number | bigint }>
         >`
@@ -1117,6 +1140,9 @@ export class AdminService {
       yesterday_count: yesterdayCount,
       last_7_days_count: last7DaysCount,
       current_month_count: currentMonthCount,
+      phone_registration_count: phoneRegistrationCount,
+      email_registration_count: emailRegistrationCount,
+      unknown_registration_count: unknownRegistrationCount,
       custom_range: customFrom && customToStart
         ? {
             from: query.from,
@@ -1402,7 +1428,14 @@ export class AdminService {
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, phone: true, deletedAt: true, status: true },
+      select: {
+        id: true,
+        phone: true,
+        email: true,
+        emailVerifiedAt: true,
+        deletedAt: true,
+        status: true,
+      },
     });
     if (!user || user.deletedAt || user.status === UserStatus.DELETED) {
       throw new NotFoundException('Пользователь не найден');
@@ -1470,6 +1503,18 @@ export class AdminService {
         await tx.blockedIdentity.create({
           data: {
             normalizedPhone: user.phone.trim(),
+            userBlockId: created.id,
+            bannedUntil: duration.endsAt,
+            permanent: duration.type === UserBlockType.PERMANENT,
+            reason,
+          },
+        });
+      }
+
+      if (user.emailVerifiedAt && user.email?.trim()) {
+        await tx.blockedIdentity.create({
+          data: {
+            normalizedEmail: user.email.trim().toLowerCase(),
             userBlockId: created.id,
             bannedUntil: duration.endsAt,
             permanent: duration.type === UserBlockType.PERMANENT,
@@ -3251,7 +3296,12 @@ export class AdminService {
     if (listing.photos.length === 0) {
       throw new BadRequestException(LISTING_PHOTO_REQUIRED);
     }
-    if (!isListingReadyForPublication(listing)) {
+    if (
+      !isListingReadyForPublication({
+        ...listing,
+        phone: resolveListingContactPhone(listing.phone, listing.owner?.phone),
+      })
+    ) {
       throw new BadRequestException(LISTING_PUBLICATION_NOT_READY);
     }
 
@@ -3460,6 +3510,58 @@ export class AdminService {
     return {
       source: 'timeweb',
       listing: serializeListing(updated),
+    };
+  }
+
+  async permanentlyDeleteListing(
+    id: string,
+    authUser: AuthenticatedUser,
+  ) {
+    const listing = await this.prisma.listing.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        ownerId: true,
+        title: true,
+        status: true,
+        deletedAt: true,
+      },
+    });
+    if (!listing) {
+      throw new NotFoundException('Объявление не найдено');
+    }
+    if (listing.status !== ListingStatus.DELETED || !listing.deletedAt) {
+      throw new BadRequestException(
+        'Навсегда можно удалить только объявление из раздела «Удалённые»',
+      );
+    }
+    const deletedAt = listing.deletedAt.toISOString();
+
+    await this.storageService.deleteListingPhotosForListings([id]);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.auditLog.create({
+        data: {
+          actorUserId: authUser.userId,
+          actorRole: 'admin',
+          action: 'listing.permanently_delete',
+          entityType: 'listing',
+          entityId: id,
+          oldData: {
+            ownerId: listing.ownerId,
+            title: listing.title,
+            status: listing.status,
+            deletedAt,
+          },
+        },
+      });
+      await tx.listing.delete({ where: { id } });
+    });
+    this.adminDashboardSignal?.changed('listings');
+
+    return {
+      source: 'timeweb',
+      deleted: true,
+      id,
     };
   }
 

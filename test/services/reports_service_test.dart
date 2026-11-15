@@ -118,7 +118,16 @@ class _FakeReportsApi extends ReportsApi {
   }
 
   @override
-  Future<Map<String, dynamic>> listAdmin({int? limit, String? cursor}) async {
+  Future<Map<String, dynamic>> listAdmin({
+    int? limit,
+    String? cursor,
+    String? status,
+    String? reason,
+    String? search,
+    String? sort,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) async {
     return <String, dynamic>{
       'items': _items,
     };
@@ -128,6 +137,7 @@ class _FakeReportsApi extends ReportsApi {
   Future<Map<String, dynamic>> resolve(
     String reportId, {
     String? comment,
+    String? decision,
   }) async {
     resolvedReportId = reportId;
     return <String, dynamic>{
@@ -139,6 +149,7 @@ class _FakeReportsApi extends ReportsApi {
   Future<Map<String, dynamic>> reject(
     String reportId, {
     String? comment,
+    String? decision,
   }) async {
     rejectedReportId = reportId;
     return <String, dynamic>{

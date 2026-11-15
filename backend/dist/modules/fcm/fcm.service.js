@@ -41,10 +41,40 @@ var __importStar = (this && this.__importStar) || (function () {
 var FcmService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FcmService = void 0;
+exports.buildAndroidFcmMessage = buildAndroidFcmMessage;
 const common_1 = require("@nestjs/common");
 const crypto = __importStar(require("crypto"));
 const fs = __importStar(require("fs"));
 const env_1 = require("../../config/env");
+function buildAndroidFcmMessage(push) {
+    const legacyNotification = push.supportsDataOnly === true
+        ? {}
+        : {
+            notification: { title: push.title, body: push.body },
+        };
+    return {
+        message: {
+            token: push.token.trim(),
+            // Only clients which explicitly advertise the native data-only handler
+            // receive data-only messages. Unknown/old clients keep the system
+            // notification payload so background delivery remains visible.
+            ...legacyNotification,
+            data: {
+                notification: JSON.stringify(push.notification),
+                recipientId: push.recipientId,
+                actionType: push.actionType,
+                title: push.title,
+                body: push.body,
+            },
+            android: {
+                priority: 'HIGH',
+                ...(push.supportsDataOnly === true
+                    ? {}
+                    : { notification: { channel_id: 'atta_messages', sound: 'default' } }),
+            },
+        },
+    };
+}
 let FcmService = FcmService_1 = class FcmService {
     constructor() {
         this.logger = new common_1.Logger(FcmService_1.name);
@@ -65,26 +95,7 @@ let FcmService = FcmService_1 = class FcmService {
                     authorization: `Bearer ${accessToken}`,
                     'content-type': 'application/json',
                 },
-                body: JSON.stringify({
-                    message: {
-                        token,
-                        notification: { title: push.title, body: push.body },
-                        data: {
-                            notification: JSON.stringify(push.notification),
-                            recipientId: push.recipientId,
-                            actionType: push.actionType,
-                            title: push.title,
-                            body: push.body,
-                        },
-                        android: {
-                            priority: 'HIGH',
-                            notification: {
-                                channel_id: 'atta_messages',
-                                sound: 'default',
-                            },
-                        },
-                    },
-                }),
+                body: JSON.stringify(buildAndroidFcmMessage({ ...push, token })),
             });
             if (response.ok)
                 return { sent: true, status: response.status };

@@ -40,6 +40,7 @@ let NotificationsController = class NotificationsController {
             appVersion: body.app_version ?? body.appVersion,
             buildNumber: body.build_number ?? body.buildNumber,
             locale: body.locale,
+            supportsAndroidDataOnlyPush: body.supports_android_data_only_push ?? body.supportsAndroidDataOnlyPush,
         });
     }
     unregisterDevice(authUser, body) {

@@ -154,6 +154,25 @@ class FavoritesService {
     }
   }
 
+  Future<int> removeMany({
+    required String uid,
+    required bool inactiveOnly,
+  }) async {
+    final normalizedUid = uid.trim();
+    if (normalizedUid.isEmpty) return 0;
+    final response = await _api.removeMany(inactiveOnly: inactiveOnly);
+    final removed = int.tryParse('${response['removed_count']}') ?? 0;
+    if (inactiveOnly) {
+      await refreshFavoriteIds(
+        normalizedUid,
+        reason: 'bulk_remove_inactive',
+      );
+    } else {
+      _publish(normalizedUid, const <String>{});
+    }
+    return removed;
+  }
+
   Future<Set<String>> refreshFavoriteIds(
     String uid, {
     String reason = 'manual',

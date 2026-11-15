@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atta/src/features/admin/admin_screen.dart';
+import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/chat_socket_service.dart';
@@ -9,6 +10,7 @@ import 'package:atta/src/services/saved_search_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 void main() {
   test('dashboard scheduler refreshes at Moscow midnight before interval', () {
@@ -563,7 +565,7 @@ void main() {
   testWidgets(
     'moderation loads listings on open and does not auto-refresh in background',
     (tester) async {
-      final adminService = _FakeAdminService();
+      final adminService = _FakeAdminService(includeModerationDiff: true);
 
       await tester.pumpWidget(
         MultiProvider(
@@ -586,6 +588,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Модерация'));
       await tester.pumpAndSettle();
+      expect(find.text('Изменено'), findsOneWidget);
 
       final callsAfterOpen = adminService.listingsCalls;
       await tester.pump(const Duration(seconds: 7));
@@ -686,7 +689,7 @@ void main() {
       expect(find.text('Продавец'), findsOneWidget);
       expect(
           find.textContaining('Подробное описание объявления'), findsOneWidget);
-      expect(find.textContaining('Телефон'), findsOneWidget);
+      expect(find.text('Телефон'), findsOneWidget);
       expect(find.textContaining('+7 999 000 00 00'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Дополнительные поля'), 300);
       await tester.pumpAndSettle();
@@ -697,6 +700,178 @@ void main() {
       expect(find.text('Отклонить ❌'), findsOneWidget);
     },
   );
+
+  testWidgets('moderation photo opens existing full screen viewer',
+      (tester) async {
+    await tester.pumpWidget(_buildModerationReviewApp(<String, dynamic>{
+      ..._moderationListingFixture(),
+      'photo_urls': <String>[
+        '/media/object?category=listings&key=listings%2Fphoto-1.jpg',
+        '/media/object?category=listings&key=listings%2Fphoto-2.jpg',
+      ],
+    }));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('admin_moderation_photo_0')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byType(PhotoViewerScreen), findsOneWidget);
+    final viewer = tester.widget<PhotoViewerScreen>(
+      find.byType(PhotoViewerScreen),
+    );
+    expect(viewer.photoUrls, hasLength(2));
+    expect(viewer.photoUrls.first, startsWith('http'));
+    expect(viewer.photoUrls.first, contains('category=listings'));
+    expect(viewer.initialIndex, 0);
+  });
+
+  testWidgets('moderation keeps technical ids compact and copyable',
+      (tester) async {
+    await tester.pumpWidget(_buildModerationReviewApp(<String, dynamic>{
+      ..._moderationListingFixture(),
+      'id': 'ca5a2cbf-dfe7-41a7-8101-123456789abc',
+      'moderated_by': 'a1b2c3d4-e5f6-47a8-9012-abcdef123456',
+      'owner': <String, dynamic>{
+        'id': 'seller-1',
+        'large_internal_value': List<String>.filled(20, 'internal').join('-'),
+      },
+    }));
+    await tester.pump();
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('admin_moderation_technical_data')),
+      300,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('admin_moderation_technical_data')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('ID объявления'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('admin_moderation_copy:listing_id')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('large_internal_value'), findsNothing);
+  });
+
+  testWidgets('moderation video is visible and opens playback url',
+      (tester) async {
+    final previousLauncher = UrlLauncherPlatform.instance;
+    final launcher = _FakeUrlLauncher();
+    UrlLauncherPlatform.instance = launcher;
+    addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+
+    await tester.pumpWidget(_buildModerationReviewApp(<String, dynamic>{
+      ..._moderationListingFixture(),
+      'video': <String, dynamic>{
+        'provider': 'rutube',
+        'originalUrl': 'https://rutube.example/original',
+        'videoId': 'video-1',
+        'playbackUrl': 'https://rutube.example/watch/video-1',
+        'thumbnailUrl': 'https://example.com/video-thumb.jpg',
+      },
+    }));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('admin_moderation_video')),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('admin_moderation_video')),
+    );
+    await tester.pump();
+
+    expect(
+      launcher.launchedUrls,
+      contains('https://rutube.example/watch/video-1'),
+    );
+  });
+
+  testWidgets('moderation changes show real before and after values in green',
+      (tester) async {
+    await tester.pumpWidget(_buildModerationReviewApp(<String, dynamic>{
+      ..._moderationListingFixture(),
+      'price': 450000,
+      'phone_hidden': true,
+      'car': <String, dynamic>{'brand': 'BMW', 'model': 'X5'},
+      'moderation_diff': <String, dynamic>{
+        'changed': <Map<String, dynamic>>[
+          <String, dynamic>{
+            'field': 'price',
+            'label': 'Цена',
+            'before': 500000,
+            'after': 450000,
+          },
+          <String, dynamic>{
+            'field': 'phone_hidden',
+            'label': 'Телефон скрыт',
+            'before': false,
+            'after': true,
+          },
+          <String, dynamic>{
+            'field': 'car',
+            'label': 'Характеристики',
+            'before': <String, dynamic>{'brand': 'BMW', 'model': 'X3'},
+            'after': <String, dynamic>{'brand': 'BMW', 'model': 'X5'},
+          },
+        ],
+      },
+    }));
+    await tester.pumpAndSettle();
+
+    final priceChange = find.byKey(
+      const ValueKey('admin_moderation_change:price'),
+    );
+    expect(priceChange, findsOneWidget);
+    expect(
+      find.descendant(of: priceChange, matching: find.text('Было: 500000 ₽')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: priceChange, matching: find.text('Стало: 450000 ₽')),
+      findsOneWidget,
+    );
+    final priceContainer = tester.widget<Container>(priceChange);
+    final decoration = priceContainer.decoration! as BoxDecoration;
+    expect(decoration.border, isNotNull);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('admin_moderation_change:phone_hidden')),
+      300,
+    );
+    expect(
+      find.byKey(const ValueKey('admin_moderation_change:phone_hidden')),
+      findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('admin_moderation_change:car')),
+      300,
+    );
+    expect(
+      find.byKey(const ValueKey('admin_moderation_change:car')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('moderation detail keeps all existing administrative actions',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildModerationReviewApp(_moderationListingFixture()),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(find.text('Одобрить ✅'), 500);
+    expect(find.text('Одобрить ✅'), findsOneWidget);
+    expect(find.text('Отклонить ❌'), findsOneWidget);
+    expect(find.text('Удалить полностью'), findsOneWidget);
+    expect(find.text('Заблокировать пользователя'), findsOneWidget);
+  });
 
   testWidgets('moderation approve removes item immediately', (tester) async {
     final adminService = _FakeAdminService();
@@ -866,6 +1041,13 @@ class _FakeAuthService extends AuthService {
 }
 
 class _FakeAdminService extends AdminService {
+  _FakeAdminService({this.includeModerationDiff = false}) {
+    _moderationBadges.add(2);
+    _supportBadges.add(0);
+    _reportsBadges.add(1);
+  }
+
+  final bool includeModerationDiff;
   final List<String> approvedIds = <String>[];
   final List<String> rejectedIds = <String>[];
   final List<String> markedSections = <String>[];
@@ -891,12 +1073,6 @@ class _FakeAdminService extends AdminService {
       StreamController<int>.broadcast();
   final StreamController<int> _reportsBadges =
       StreamController<int>.broadcast();
-
-  _FakeAdminService() {
-    _moderationBadges.add(2);
-    _supportBadges.add(0);
-    _reportsBadges.add(1);
-  }
 
   @override
   void bindAdminUser(String uid) {}
@@ -1126,7 +1302,22 @@ class _FakeAdminService extends AdminService {
     return <String, dynamic>{
       'items': _showPending
           ? <Map<String, dynamic>>[
-              _listingMap(id: 'listing-pending', title: 'Pending listing'),
+              if (includeModerationDiff)
+                <String, dynamic>{
+                  ..._listingMap(
+                      id: 'listing-pending', title: 'Pending listing'),
+                  'moderation_diff': <String, dynamic>{
+                    'changed': <Map<String, dynamic>>[
+                      <String, dynamic>{
+                        'field': 'price',
+                        'before': 500000,
+                        'after': 450000,
+                      },
+                    ],
+                  },
+                }
+              else
+                _listingMap(id: 'listing-pending', title: 'Pending listing'),
             ]
           : const <Map<String, dynamic>>[],
     };
@@ -1179,6 +1370,59 @@ class _FakeAdminService extends AdminService {
 class _FakeNotificationsService extends NotificationsService {}
 
 class _FakeSavedSearchService extends SavedSearchService {}
+
+Widget _buildModerationReviewApp(Map<String, dynamic> listing) {
+  return MultiProvider(
+    providers: [
+      Provider<AuthService>.value(value: _FakeAuthService()),
+      Provider<AdminService>.value(value: _FakeAdminService()),
+      Provider<NotificationsService>.value(
+        value: _FakeNotificationsService(),
+      ),
+    ],
+    child: MaterialApp(
+      home: AdminListingReviewScreen(
+        listingId: (listing['id'] ?? '').toString(),
+        listingData: listing,
+      ),
+    ),
+  );
+}
+
+Map<String, dynamic> _moderationListingFixture() => <String, dynamic>{
+      'id': 'listing-review',
+      'title': 'BMW X5',
+      'price': 500000,
+      'city': 'Москва',
+      'address': 'ул. Тестовая, 1',
+      'category': 'Авто',
+      'subcategory': 'Легковые',
+      'description': 'Описание объявления для проверки.',
+      'phone': '+79990000000',
+      'phone_hidden': false,
+      'owner_id': 'seller-1',
+      'owner_name': 'Seller',
+      'status': 'pending',
+      'created_at': '2026-07-01T10:00:00.000Z',
+      'delivery': <String, dynamic>{'pickup': true},
+      'photo_urls': const <String>[],
+    };
+
+class _FakeUrlLauncher extends UrlLauncherPlatform {
+  final List<String> launchedUrls = <String>[];
+
+  @override
+  Future<bool> canLaunch(String url) async => true;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    launchedUrls.add(url);
+    return true;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 class _FakeDashboardSocketService extends ChatSocketService {
   final StreamController<ChatSocketEvent> _eventController =

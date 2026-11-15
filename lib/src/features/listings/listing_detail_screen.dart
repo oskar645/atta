@@ -23,6 +23,7 @@ import 'package:atta/src/services/favorites_service.dart';
 import 'package:atta/src/services/listing_history_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
+import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reports_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
@@ -353,35 +354,22 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
       final authenticated = await promptGuestAuth(context);
       if (!authenticated || !mounted) return;
     }
-    var phone = listing.phone.trim();
-    if (phone.isEmpty) {
-      try {
-        final profile =
-            await context.read<ProfileService>().getProfile(listing.ownerId);
-        for (final candidate in <dynamic>[
-          profile['phone'],
-          profile['normalized_phone'],
-          profile['normalizedPhone'],
-        ]) {
-          final value = candidate?.toString().trim() ?? '';
-          if (normalizeRuPhoneForApi(value).isNotEmpty) {
-            phone = value;
-            break;
-          }
-        }
-      } catch (_) {}
+    try {
+      final result = await const PhoneCallService().callListing(
+        listings: context.read<ListingsService>(),
+        listingId: listing.id,
+      );
+      if (!mounted || result.opened) return;
+      showAppSnack(
+        context,
+        result.failure == PhoneCallFailure.network
+            ? 'Не удалось получить номер. Проверьте интернет и попробуйте снова'
+            : 'Номер телефона для этого объявления недоступен',
+      );
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnack(context, 'Номер телефона для этого объявления недоступен');
     }
-    if (!mounted) return;
-    final normalizedPhone = normalizeRuPhoneForApi(phone);
-    if (normalizedPhone.isEmpty) {
-      showAppSnack(context, 'Продавец не указал номер телефона');
-      return;
-    }
-    final uri = Uri(
-      scheme: 'tel',
-      path: '+$normalizedPhone',
-    );
-    await launchUrl(uri);
   }
 
   Future<void> _messageSellerAfterAuthIfAllowed({
@@ -791,14 +779,21 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
         child: Row(
           children: [
             Expanded(
-              child: FilledButton.icon(
-                onPressed: (!canContact || listing.ownerId == myUid)
-                    ? isGuest
-                        ? () => _openLoginScreen()
-                        : null
-                    : () => _callSellerAfterAuthIfAllowed(listing),
-                icon: const Icon(Icons.call),
-                label: Text(status == 'approved' ? 'Позвонить' : 'Недоступно'),
+              child: Visibility(
+                visible: listing.hasCallContact,
+                maintainSize: true,
+                maintainAnimation: true,
+                maintainState: true,
+                child: FilledButton.icon(
+                  onPressed: (!canContact || listing.ownerId == myUid)
+                      ? isGuest
+                          ? () => _openLoginScreen()
+                          : null
+                      : () => _callSellerAfterAuthIfAllowed(listing),
+                  icon: const Icon(Icons.call),
+                  label:
+                      Text(status == 'approved' ? 'Позвонить' : 'Недоступно'),
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -1491,7 +1486,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                 const SizedBox(height: 6),
                                 Align(
                                   alignment: Alignment.centerLeft,
-                                  child: TextButton(
+                                  child: FilledButton(
                                     onPressed: () {
                                       Navigator.of(context).push(
                                         MaterialPageRoute(
@@ -1499,6 +1494,27 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                                         ),
                                       );
                                     },
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor:
+                                          Theme.of(context).colorScheme.primary,
+                                      foregroundColor: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
+                                      minimumSize: const Size(0, 34),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 8,
+                                      ),
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
                                     child: const Text('Получить бонусы'),
                                   ),
                                 ),
@@ -1626,6 +1642,8 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                   _buildDescriptionSection(context, listing.description),
                   const SizedBox(height: 12),
                   _SellerInfoSection(
+                    listingId: listing.id,
+                    hasCallContact: listing.hasCallContact,
                     sellerId: listing.ownerId,
                     initialSellerName: sellerName,
                     initialSellerAvatar: sellerAvatar,
@@ -1889,6 +1907,8 @@ class _SellerReviewsOverviewSectionState
 
 class _SellerInfoSection extends StatefulWidget {
   const _SellerInfoSection({
+    required this.listingId,
+    required this.hasCallContact,
     required this.sellerId,
     required this.initialSellerName,
     required this.initialSellerAvatar,
@@ -1900,6 +1920,8 @@ class _SellerInfoSection extends StatefulWidget {
     required this.sellerInitialBuilder,
   });
 
+  final String listingId;
+  final bool hasCallContact;
   final String sellerId;
   final String initialSellerName;
   final String initialSellerAvatar;
@@ -1987,6 +2009,8 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
               initialSellerName: _sellerName,
               initialSellerAvatar: _sellerAvatar,
               initialSellerPhone: widget.phone,
+              initialListingId: widget.listingId,
+              initialHasCallContact: widget.hasCallContact,
             ),
           ),
         );
@@ -2081,7 +2105,9 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
                       Text(
                         widget.phoneHidden
                             ? 'Телефон: скрыт'
-                            : 'Телефон: ${formatRussianPhone(widget.phone)}',
+                            : widget.phone.trim().isEmpty
+                                ? 'Телефон: не указан'
+                                : 'Телефон: ${formatRussianPhone(widget.phone)}',
                         style: TextStyle(
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),

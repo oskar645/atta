@@ -3,12 +3,12 @@ import 'dart:async';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
+import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 
 import 'registration_consents.dart';
@@ -1144,37 +1144,14 @@ class _PhoneRegistrationConfirmScreenState
   Future<bool> _launchCall() async {
     final number = _normalizeDialablePhone((_callToPhone ?? '').trim());
     if (number.isEmpty) return false;
-
-    final candidates = <Uri>[
-      Uri.parse('tel://$number'),
-      Uri.parse('tel:$number'),
-    ];
-    try {
-      for (final uri in candidates) {
-        final canOpen = await canLaunchUrl(uri);
-        debugPrint('Dial canLaunchUrl($uri) => $canOpen');
-        if (!canOpen) continue;
-        final openedDefault = await launchUrl(uri);
-        if (openedDefault) return true;
-        final openedExternal = await launchUrl(
-          uri,
-          mode: LaunchMode.externalApplication,
-        );
-        if (openedExternal) return true;
-      }
-
+    final result = await const PhoneCallService().openNumber(number);
+    if (!result.opened) {
       final hint = defaultTargetPlatform == TargetPlatform.iOS
           ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
           : '';
       _snack('Не удалось открыть звонилку. Номер: $number.$hint');
-      return false;
-    } catch (_) {
-      final hint = defaultTargetPlatform == TargetPlatform.iOS
-          ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'
-          : '';
-      _snack('Не удалось открыть звонилку. Номер: $number.$hint');
-      return false;
     }
+    return result.opened;
   }
 
   Future<void> _startAutoPolling({required bool showTimeoutSnack}) async {
@@ -1571,24 +1548,9 @@ class _PhoneVerificationScreenState extends State<_PhoneVerificationScreen>
       _statusHint = 'Проверяем звонок...';
     });
 
-    final candidates = <Uri>[
-      Uri.parse('tel://$number'),
-      Uri.parse('tel:$number'),
-    ];
     try {
-      var opened = false;
-      for (final uri in candidates) {
-        final canOpen = await canLaunchUrl(uri);
-        debugPrint('Dial canLaunchUrl($uri) => $canOpen');
-        if (!canOpen) continue;
-        opened = await launchUrl(uri);
-        if (!opened) {
-          opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
-        if (opened) break;
-      }
-
-      if (!opened) {
+      final result = await const PhoneCallService().openNumber(number);
+      if (!result.opened) {
         if (!mounted) return;
         final hint = defaultTargetPlatform == TargetPlatform.iOS
             ? ' Не работает в iOS Simulator: проверьте на реальном iPhone.'

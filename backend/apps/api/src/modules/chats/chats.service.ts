@@ -431,6 +431,7 @@ export class ChatsService {
               {
                 sellerId: authUser.userId,
                 deletedBySellerAt: null,
+                lastMessageAt: { not: null },
               },
             ],
           },

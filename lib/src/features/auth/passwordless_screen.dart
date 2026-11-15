@@ -1,14 +1,28 @@
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'passwordless_controller.dart';
 import 'registration_consents.dart';
 import 'account_recovery_screen.dart';
 import 'public_support_screen.dart';
+
+Future<void> openAccountRecoveryScreen(BuildContext context) =>
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const AccountRecoveryScreen(),
+      ),
+    );
+
+Future<void> openPublicSupportScreen(BuildContext context) =>
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const PublicSupportScreen(),
+      ),
+    );
 
 class PasswordlessScreen extends StatefulWidget {
   const PasswordlessScreen({super.key, this.returnToPreviousAfterAuth = false});
@@ -65,13 +79,8 @@ class _PasswordlessScreenState extends State<PasswordlessScreen> {
   Future<void> _call() async {
     if (_openingDialer) return;
     setState(() => _openingDialer = true);
-    final digits = _flow.callToPhone.replaceAll(RegExp(r'\D'), '');
     try {
-      if (digits.isNotEmpty) {
-        final uri = Uri(scheme: 'tel', path: '+$digits');
-        final opened = await launchUrl(uri);
-        if (!opened) await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
+      await const PhoneCallService().openNumber(_flow.callToPhone);
     } catch (_) {
       // Desktop browsers may not have a tel: handler. The displayed number
       // and independent polling still allow a call from another device.
@@ -158,18 +167,13 @@ class _PasswordlessScreenState extends State<PasswordlessScreen> {
                       children: [
                         TextButton(
                           key: const ValueKey('account-recovery-link'),
-                          onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                  builder: (_) =>
-                                      const AccountRecoveryScreen())),
+                          onPressed: () => openAccountRecoveryScreen(context),
                           child: const Text('Нет доступа к номеру?',
                               style: TextStyle(fontSize: 13)),
                         ),
                         TextButton(
                           key: const ValueKey('public-support-link'),
-                          onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute<void>(
-                                  builder: (_) => const PublicSupportScreen())),
+                          onPressed: () => openPublicSupportScreen(context),
                           child: const Text('Нужна помощь?',
                               style: TextStyle(fontSize: 13)),
                         ),

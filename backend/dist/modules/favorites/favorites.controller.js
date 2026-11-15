@@ -34,6 +34,9 @@ let FavoritesController = class FavoritesController {
     addByPath(authUser, listingId) {
         return this.favoritesService.add(authUser, listingId);
     }
+    removeMany(authUser, scope) {
+        return this.favoritesService.removeMany(authUser, scope);
+    }
     remove(authUser, listingId) {
         return this.favoritesService.remove(authUser, listingId);
     }
@@ -64,6 +67,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", void 0)
 ], FavoritesController.prototype, "addByPath", null);
+__decorate([
+    (0, common_1.Delete)('bulk/:scope'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('scope')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", void 0)
+], FavoritesController.prototype, "removeMany", null);
 __decorate([
     (0, common_1.Delete)(':listingId'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),

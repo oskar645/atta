@@ -25,6 +25,42 @@ class PhoneVerificationStartResult {
     this.expiresAt = '',
   });
 
+  factory PhoneVerificationStartResult.fromJson(Map<String, dynamic> response) {
+    String pick(List<String> keys) {
+      for (final key in keys) {
+        final value = response[key]?.toString() ?? '';
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    final callToPhone = pick(const [
+      'callToPhone',
+      'callPhone',
+      'phoneToCall',
+      'call_phone',
+      'call_to_phone',
+    ]);
+    final callToPhonePretty = pick(const [
+      'callToPhonePretty',
+      'callPhonePretty',
+      'call_phone_pretty',
+      'call_to_phone_pretty',
+    ]);
+    return PhoneVerificationStartResult(
+      verificationId: pick(const [
+        'verificationId',
+        'verificationCheckId',
+        'checkId',
+        'check_id',
+      ]),
+      callToPhone: callToPhone,
+      callToPhonePretty:
+          callToPhonePretty.isNotEmpty ? callToPhonePretty : callToPhone,
+      expiresAt: pick(const ['expiresAt']),
+    );
+  }
+
   bool get hasCallToPhone => callToPhone.trim().isNotEmpty;
 }
 
@@ -36,6 +72,14 @@ class PhoneVerificationCheckResult {
     required this.status,
     required this.message,
   });
+
+  factory PhoneVerificationCheckResult.fromJson(
+    Map<String, dynamic> response,
+  ) =>
+      PhoneVerificationCheckResult(
+        status: (response['status'] ?? '').toString(),
+        message: (response['message'] ?? '').toString(),
+      );
 
   bool get isConfirmed => status == 'confirmed';
   bool get isPending => status == 'pending';
@@ -220,6 +264,67 @@ class BackendAuthService {
     }
   }
 
+  Future<Map<String, dynamic>> startEmailPasswordless(String email) =>
+      _authApi.startEmailPasswordless(email);
+
+  Future<Map<String, dynamic>> checkEmailPasswordless({
+    required String challengeId,
+    required String code,
+    required bool Function() isActive,
+  }) async {
+    final generation = _authGeneration;
+    final response = await _authApi.checkEmailPasswordless(
+      challengeId: challengeId,
+      code: code,
+    );
+    if (response['auth'] is Map &&
+        isActive() &&
+        _isCurrentAuthGeneration(generation)) {
+      _validatePasswordlessAuthPayload(response);
+      await _consumeAuthPayload(
+        response,
+        generation: _beginAuthSessionChange(),
+      );
+    }
+    return response;
+  }
+
+  Future<void> completeEmailPasswordless({
+    required String registrationToken,
+    required String displayName,
+    required bool acceptedLegal,
+    required bool acceptedPersonalData,
+    required bool Function() isActive,
+  }) async {
+    final generation = _authGeneration;
+    final response = await _authApi.completeEmailPasswordless(
+      registrationToken: registrationToken,
+      displayName: displayName,
+      acceptedLegal: acceptedLegal,
+      acceptedPersonalData: acceptedPersonalData,
+    );
+    if (isActive() && _isCurrentAuthGeneration(generation)) {
+      _validatePasswordlessAuthPayload(response);
+      await _consumeAuthPayload(
+        response,
+        generation: _beginAuthSessionChange(),
+      );
+    }
+  }
+
+  Future<PhoneVerificationStartResult> startLinkPhone(String phone) async {
+    final response = await _authApi.startLinkPhone(phone);
+    return PhoneVerificationStartResult.fromJson(response);
+  }
+
+  Future<PhoneVerificationCheckResult> completeLinkPhone(
+    String phone,
+    String verificationId,
+  ) async {
+    final response = await _authApi.completeLinkPhone(phone, verificationId);
+    return PhoneVerificationCheckResult.fromJson(response);
+  }
+
   void _validatePasswordlessAuthPayload(Map<String, dynamic> response) {
     final auth = response['auth'];
     final user = response['user'];
@@ -373,33 +478,7 @@ class BackendAuthService {
       purpose: purpose,
     );
 
-    return PhoneVerificationStartResult(
-      verificationId: (response['verificationId'] ??
-              response['verificationCheckId'] ??
-              response['checkId'] ??
-              response['check_id'] ??
-              '')
-          .toString(),
-      callToPhone: (response['callToPhone'] ??
-              response['callPhone'] ??
-              response['phoneToCall'] ??
-              response['call_phone'] ??
-              response['call_to_phone'] ??
-              '')
-          .toString(),
-      callToPhonePretty: (response['callToPhonePretty'] ??
-              response['callPhonePretty'] ??
-              response['call_phone_pretty'] ??
-              response['call_to_phone_pretty'] ??
-              response['callToPhone'] ??
-              response['callPhone'] ??
-              response['phoneToCall'] ??
-              response['call_phone'] ??
-              response['call_to_phone'] ??
-              '')
-          .toString(),
-      expiresAt: (response['expiresAt'] ?? '').toString(),
-    );
+    return PhoneVerificationStartResult.fromJson(response);
   }
 
   Future<PhoneVerificationCheckResult> checkPhoneVerification({
@@ -413,10 +492,7 @@ class BackendAuthService {
       purpose: purpose,
     );
 
-    return PhoneVerificationCheckResult(
-      status: (response['status'] ?? '').toString(),
-      message: (response['message'] ?? '').toString(),
-    );
+    return PhoneVerificationCheckResult.fromJson(response);
   }
 
   Future<bool> isPhoneRegistered({

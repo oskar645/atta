@@ -5,6 +5,25 @@ import { ListingStatus, UserStatus } from '@prisma/client';
 
 import { normalizeStoredMediaUrl, serializeListing, serializeUser } from './serializers';
 
+// Mirrors the call-contact lookup used by the published Flutter clients
+// 1.0.24+28 and 1.0.26+30: prefer listing.phone, then fall back to the
+// separately loaded public seller profile aliases.
+function resolvePublishedClientPhone(
+  listing: Record<string, any>,
+  publicSeller: Record<string, any>,
+) {
+  for (const candidate of [
+    listing.phone,
+    publicSeller.phone,
+    publicSeller.normalized_phone,
+    publicSeller.normalizedPhone,
+  ]) {
+    const value = candidate?.toString().trim() ?? '';
+    if (value) return value;
+  }
+  return '';
+}
+
 test('private user response exposes recovery-email verification status', () => {
   const verifiedAt = new Date('2026-09-24T10:00:00.000Z');
   const serialized = serializeUser({
@@ -98,9 +117,74 @@ test('public listing serialization hides owner normalized phone when phone is hi
   const owner = serialized.owner as any;
   assert.equal('normalized_phone' in owner, false);
   assert.equal('normalizedPhone' in owner, false);
+  assert.equal(serialized.has_call_contact, true);
+  assert.equal(serialized.hasCallContact, true);
 });
 
-test('public listing serialization keeps owner normalized phone when phone is visible', () => {
+test('public listing exposes contact availability without exposing hidden phone', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '79281234567',
+      phoneHidden: true,
+    }) as any,
+  ) as any;
+
+  assert.equal(serialized.phone, null);
+  assert.equal(serialized.has_call_contact, true);
+  assert.equal(serialized.hasCallContact, true);
+});
+
+test('transitional legacy listing reports owner contact as callable', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '',
+      phoneHidden: false,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79281234567',
+      },
+    }) as any,
+  ) as any;
+
+  assert.equal(serialized.has_call_contact, true);
+  assert.equal(serialized.hasCallContact, true);
+});
+
+test('legacy ten-digit listing contact is callable and normalized publicly', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '9281234567',
+      phoneHidden: false,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79110000000',
+      },
+    }) as any,
+  ) as any;
+
+  assert.equal(serialized.phone, '79281234567');
+  assert.equal(serialized.has_call_contact, true);
+  assert.equal(serialized.hasCallContact, true);
+});
+
+test('invalid listing contact falls back to owner without exposing a hidden phone', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '123',
+      phoneHidden: true,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79281234567',
+      },
+    }) as any,
+  ) as any;
+
+  assert.equal(serialized.phone, null);
+  assert.equal(serialized.has_call_contact, true);
+  assert.equal(serialized.hasCallContact, true);
+});
+
+test('transitional public listing serialization preserves published-client phone aliases', () => {
   const serialized = serializeListing(
     listingFixture({
       phone: '79281234567',
@@ -116,6 +200,139 @@ test('public listing serialization keeps owner normalized phone when phone is vi
   const owner = serialized.owner as any;
   assert.equal(owner.normalized_phone, '79281234567');
   assert.equal(owner.normalizedPhone, '79281234567');
+});
+
+test('transitional public user serialization preserves published-client phone aliases', () => {
+  const serialized = serializeUser({
+    ...listingFixture({}).owner,
+    phone: '79281234567',
+  } as any) as any;
+
+  assert.equal('phone' in serialized, false);
+  assert.equal(serialized.normalized_phone, '79281234567');
+  assert.equal(serialized.normalizedPhone, '79281234567');
+});
+
+test('transitional listing serialization preserves owner-phone fallback for old clients', () => {
+  const serialized = serializeListing(
+    listingFixture({
+      phone: '',
+      phoneHidden: false,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79281234567',
+      },
+    }) as any,
+  );
+
+  assert.equal(serialized.phone, '79281234567');
+  assert.equal(serialized.has_call_contact, true);
+  assert.equal(serialized.hasCallContact, true);
+});
+
+test('published clients resolve an open listing contact from the listing itself', () => {
+  const listing = serializeListing(
+    listingFixture({
+      phone: '79281112233',
+      phoneHidden: false,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79110000000',
+      },
+    }) as any,
+  ) as any;
+  const publicSeller = serializeUser({
+    ...listingFixture({}).owner,
+    phone: '79110000000',
+  } as any) as any;
+
+  assert.equal(
+    resolvePublishedClientPhone(listing, publicSeller),
+    '79281112233',
+  );
+});
+
+test('published clients keep their legacy account-phone fallback for a hidden listing', () => {
+  const listing = serializeListing(
+    listingFixture({
+      phone: '79281112233',
+      phoneHidden: true,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: '79110000000',
+      },
+    }) as any,
+  ) as any;
+  const publicSeller = serializeUser({
+    ...listingFixture({}).owner,
+    phone: '79110000000',
+  } as any) as any;
+
+  assert.equal(listing.phone, null);
+  assert.equal(
+    resolvePublishedClientPhone(listing, publicSeller),
+    '79110000000',
+  );
+  assert.notEqual(
+    resolvePublishedClientPhone(listing, publicSeller),
+    '79281112233',
+  );
+});
+
+test('published clients cannot resolve a hidden listing contact for an email-only seller', () => {
+  const listing = serializeListing(
+    listingFixture({
+      phone: '79281112233',
+      phoneHidden: true,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: null,
+        phoneVerified: false,
+      },
+    }) as any,
+  ) as any;
+  const publicSeller = serializeUser({
+    ...listingFixture({}).owner,
+    phone: null,
+    phoneVerified: false,
+  } as any) as any;
+
+  assert.equal(listing.phone, null);
+  assert.equal(resolvePublishedClientPhone(listing, publicSeller), '');
+  assert.equal(listing.has_call_contact, true);
+});
+
+test('published public seller profile preserves transitional phone aliases', () => {
+  const publicSeller = serializeUser({
+    ...listingFixture({}).owner,
+    phone: '79110000000',
+  } as any) as any;
+
+  assert.equal('phone' in publicSeller, false);
+  assert.equal(publicSeller.normalized_phone, '79110000000');
+  assert.equal(publicSeller.normalizedPhone, '79110000000');
+});
+
+test('published clients resolve no contact when listing and account phones are absent', () => {
+  const listing = serializeListing(
+    listingFixture({
+      phone: '',
+      phoneHidden: false,
+      owner: {
+        ...listingFixture({}).owner,
+        phone: null,
+        phoneVerified: false,
+      },
+    }) as any,
+  ) as any;
+  const publicSeller = serializeUser({
+    ...listingFixture({}).owner,
+    phone: null,
+    phoneVerified: false,
+  } as any) as any;
+
+  assert.equal(resolvePublishedClientPhone(listing, publicSeller), '');
+  assert.equal(listing.has_call_contact, false);
 });
 
 test('private listing serialization keeps owner normalized phone when phone is hidden', () => {

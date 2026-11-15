@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, Prisma } from '@prisma/client';
 
 import { AuthenticatedUser } from '../auth/auth.types';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -52,6 +52,8 @@ export class ReportsService {
     decision: string | null;
     adminUid: string | null;
     adminComment: string | null;
+    adminNote?: string | null;
+    handledBy?: string | null;
     createdAt: Date;
     handledAt?: Date | null;
     closedAt?: Date | null;
@@ -86,6 +88,10 @@ export class ReportsService {
       avatarUrl?: string | null;
       photoUrl?: string | null;
     } | null;
+    handledByUser?: {
+      displayName: string;
+      name: string;
+    } | null;
   }) {
     const listingPhotos =
       report.listing?.photos?.map((photo) => ({
@@ -109,6 +115,12 @@ export class ReportsService {
       decision: report.decision,
       admin_uid: report.adminUid,
       admin_comment: report.adminComment,
+      admin_note: report.adminNote ?? null,
+      handled_by: report.handledBy ?? null,
+      handled_by_name:
+        report.handledByUser?.displayName?.trim() ||
+        report.handledByUser?.name?.trim() ||
+        null,
       created_at: report.createdAt.toISOString(),
       handled_at: report.handledAt?.toISOString() ?? null,
       closed_at: report.closedAt?.toISOString() ?? null,
@@ -148,19 +160,79 @@ export class ReportsService {
     const rawCreatedAt = decoded?.createdAt;
     const cursorDate = rawCreatedAt ? new Date(rawCreatedAt) : null;
     const cursorId = decoded?.id;
-    const items = await this.prisma.report.findMany({
-      where: {
-        status: {
-          notIn: [...ReportsService.hiddenStatuses],
+    const oldestFirst = query.sort === 'oldest';
+    const search = query.search?.trim() ?? '';
+    const reason = query.reason?.trim() ?? '';
+    const statusFilter = (() => {
+      switch (query.status) {
+        case 'open':
+          return ['open'];
+        case 'in_progress':
+          return ['in_progress'];
+        case 'completed':
+          return ['resolved', 'rejected'];
+        case 'resolved':
+          return ['resolved'];
+        case 'rejected':
+          return ['rejected'];
+        default:
+          return null;
+      }
+    })();
+    const commonWhere: Prisma.ReportWhereInput = {
+      ...(reason
+        ? { reason: { equals: reason, mode: Prisma.QueryMode.insensitive } }
+        : {}),
+      ...(query.dateFrom || query.dateTo
+        ? {
+            createdAt: {
+              ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+              ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+            },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              { reason: { contains: search, mode: Prisma.QueryMode.insensitive } },
+              { comment: { contains: search, mode: Prisma.QueryMode.insensitive } },
+              { listing: { is: { title: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+              { reporter: { is: { displayName: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+              { reporter: { is: { name: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+              { listingOwner: { is: { displayName: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+              { listingOwner: { is: { name: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+            ],
+          }
+        : {}),
+    };
+    const baseWhere: Prisma.ReportWhereInput = {
+      AND: [
+        commonWhere,
+        {
+          status: statusFilter
+            ? { in: statusFilter }
+            : { notIn: [...ReportsService.hiddenStatuses] },
         },
-        ...(cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
-          ? {
-              OR: [
-                { createdAt: { lt: cursorDate } },
-                { createdAt: cursorDate, id: { lt: cursorId } },
-              ],
-            }
-          : {}),
+      ],
+    };
+    const cursorWhere: Prisma.ReportWhereInput =
+      cursorDate && !Number.isNaN(cursorDate.getTime()) && cursorId
+        ? {
+            OR: oldestFirst
+              ? [
+                  { createdAt: { gt: cursorDate } },
+                  { createdAt: cursorDate, id: { gt: cursorId } },
+                ]
+              : [
+                  { createdAt: { lt: cursorDate } },
+                  { createdAt: cursorDate, id: { lt: cursorId } },
+                ],
+          }
+        : {};
+    const [items, newCount, reviewCount, completedCount] = await Promise.all([
+      this.prisma.report.findMany({
+      where: {
+        AND: [baseWhere, cursorWhere],
       },
       include: {
         listing: {
@@ -176,10 +248,24 @@ export class ReportsService {
         },
         listingOwner: true,
         reporter: true,
+        handledByUser: true,
       },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      orderBy: [
+        { createdAt: oldestFirst ? 'asc' : 'desc' },
+        { id: oldestFirst ? 'asc' : 'desc' },
+      ],
       take: limit + 1,
-    });
+      }),
+      this.prisma.report.count({
+        where: { AND: [commonWhere, { status: 'open' }] },
+      }),
+      this.prisma.report.count({
+        where: { AND: [commonWhere, { status: 'in_progress' }] },
+      }),
+      this.prisma.report.count({
+        where: { AND: [commonWhere, { status: { in: ['resolved', 'rejected'] } }] },
+      }),
+    ]);
     const pageItems = items.slice(0, limit);
     const last = items.length > limit ? pageItems[pageItems.length - 1] : null;
 
@@ -194,6 +280,11 @@ export class ReportsService {
         : null,
       hasMore: items.length > limit,
       limit,
+      counts: {
+        open: newCount,
+        in_progress: reviewCount,
+        completed: completedCount,
+      },
     };
   }
 
@@ -286,7 +377,73 @@ export class ReportsService {
     };
   }
 
-  async resolve(reportId: string, authUser: AuthenticatedUser, comment?: string) {
+  async startReview(reportId: string, authUser: AuthenticatedUser) {
+    const exists = await this.prisma.report.findUnique({
+      where: { id: reportId },
+    });
+    if (!exists) throw new NotFoundException('Report not found');
+    if (
+      ReportsService.hiddenStatuses.includes(
+        exists.status as 'hidden' | 'deleted',
+      )
+    ) {
+      throw new BadRequestException('Скрытую жалобу нельзя взять на проверку');
+    }
+    if (exists.status === 'in_progress') {
+      return { source: 'timeweb', item: this.serialize(exists) };
+    }
+    if (exists.status !== 'open') {
+      throw new BadRequestException(
+        'Завершённую жалобу нужно сначала открыть повторно',
+      );
+    }
+    const report = await this.prisma.report.update({
+      where: { id: reportId },
+      data: {
+        status: 'in_progress',
+        decision: null,
+        adminUid: authUser.userId,
+        handledBy: authUser.userId,
+        handledAt: new Date(),
+        closedAt: null,
+      },
+    });
+    this.adminDashboardSignal?.changed('reports');
+    return { source: 'timeweb', item: this.serialize(report) };
+  }
+
+  private async notifyReporterOfDecision(report: {
+    id: string;
+    reporterId: string;
+    decision: string | null;
+  }) {
+    const noViolation = report.decision === 'no_violation';
+    try {
+      await this.notificationsService.createSystemNotification({
+        userId: report.reporterId,
+        title: 'Ваша жалоба рассмотрена',
+        body: noViolation
+          ? 'Мы проверили информацию. Нарушений правил не обнаружено.'
+          : 'Мы проверили информацию и приняли необходимые меры.',
+        type: NotificationType.GENERIC,
+        payload: {
+          actionType: 'report_update',
+          reportId: report.id,
+          status: 'completed',
+        },
+      });
+    } catch {
+      // Решение уже сохранено; временная ошибка уведомления не должна
+      // возвращать жалобу в работу или провоцировать повторное решение.
+    }
+  }
+
+  async resolve(
+    reportId: string,
+    authUser: AuthenticatedUser,
+    comment?: string,
+    decision = 'resolved',
+  ) {
     const exists = await this.prisma.report.findUnique({
       where: {
         id: reportId,
@@ -295,6 +452,14 @@ export class ReportsService {
 
     if (!exists) {
       throw new NotFoundException('Report not found');
+    }
+    if (exists.status === 'resolved' && exists.decision === decision) {
+      return { source: 'timeweb', item: this.serialize(exists) };
+    }
+    if (exists.status === 'resolved' || exists.status === 'rejected') {
+      throw new BadRequestException(
+        'Для изменения решения сначала откройте жалобу повторно',
+      );
     }
 
     const report = await this.prisma.report.update({
@@ -303,7 +468,7 @@ export class ReportsService {
       },
       data: {
         status: 'resolved',
-        decision: 'resolved',
+        decision,
         adminUid: authUser.userId,
         adminComment: comment?.trim() || null,
         handledBy: authUser.userId,
@@ -312,6 +477,7 @@ export class ReportsService {
       },
     });
     this.adminDashboardSignal?.changed('reports');
+    await this.notifyReporterOfDecision(report);
 
     return {
       source: 'timeweb',
@@ -319,7 +485,12 @@ export class ReportsService {
     };
   }
 
-  async reject(reportId: string, authUser: AuthenticatedUser, comment?: string) {
+  async reject(
+    reportId: string,
+    authUser: AuthenticatedUser,
+    comment?: string,
+    decision = 'no_violation',
+  ) {
     const exists = await this.prisma.report.findUnique({
       where: {
         id: reportId,
@@ -329,6 +500,14 @@ export class ReportsService {
     if (!exists) {
       throw new NotFoundException('Report not found');
     }
+    if (exists.status === 'rejected' && exists.decision === decision) {
+      return { source: 'timeweb', item: this.serialize(exists) };
+    }
+    if (exists.status === 'resolved' || exists.status === 'rejected') {
+      throw new BadRequestException(
+        'Для изменения решения сначала откройте жалобу повторно',
+      );
+    }
 
     const report = await this.prisma.report.update({
       where: {
@@ -336,7 +515,7 @@ export class ReportsService {
       },
       data: {
         status: 'rejected',
-        decision: 'rejected',
+        decision,
         adminUid: authUser.userId,
         adminComment: comment?.trim() || null,
         handledBy: authUser.userId,
@@ -345,6 +524,7 @@ export class ReportsService {
       },
     });
     this.adminDashboardSignal?.changed('reports');
+    await this.notifyReporterOfDecision(report);
 
     return {
       source: 'timeweb',

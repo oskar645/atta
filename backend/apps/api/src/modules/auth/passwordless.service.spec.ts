@@ -61,7 +61,7 @@ test('check and complete rate limits bound repeated valid-shaped but invalid cre
 test('complete DTO rejects another phone, missing consents, blank name, stale legal version and bad platform', async () => {
   const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
   const valid = { registrationToken: `${randomUUID()}.${'a'.repeat(43)}`, displayName: 'Name',
-    acceptedLegal: true, acceptedPersonalData: true, platform: 'IOS', legalDocumentVersion: '2026-09-12' };
+    acceptedLegal: true, acceptedPersonalData: true, platform: 'IOS', legalDocumentVersion: '2026-11-09' };
   for (const patch of [{ phone: '79990000000' }, { referralCode: 'changed' }, { referralId: 'changed' }, { acceptedLegal: false }, { acceptedPersonalData: undefined },
     { displayName: '' }, { legalDocumentVersion: 'old' }, { platform: 'unknown' }]) {
     await assert.rejects(pipe.transform({ ...valid, ...patch }, { type: 'body', metatype: PasswordlessCompleteDto }));

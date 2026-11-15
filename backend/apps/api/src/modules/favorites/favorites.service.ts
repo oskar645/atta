@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -12,6 +13,7 @@ import {
   listingInclude,
 } from '../listings/listings.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ListingStatus } from '@prisma/client';
 
 type CursorPayload = {
   createdAt: string;
@@ -165,6 +167,32 @@ export class FavoritesService {
     return {
       deleted: true,
       listing_id: listingId,
+    };
+  }
+
+  async removeMany(authUser: AuthenticatedUser, scope?: string) {
+    if (scope !== 'all' && scope !== 'inactive') {
+      throw new BadRequestException('Некорректный режим очистки избранного');
+    }
+    const result = await this.prisma.favorite.deleteMany({
+      where: {
+        userId: authUser.userId,
+        ...(scope === 'inactive'
+          ? {
+              listing: {
+                OR: [
+                  { status: { not: ListingStatus.APPROVED } },
+                  { deletedAt: { not: null } },
+                ],
+              },
+            }
+          : {}),
+      },
+    });
+    return {
+      deleted: true,
+      scope,
+      removed_count: result.count,
     };
   }
 }

@@ -353,6 +353,7 @@ let ChatsService = class ChatsService {
                             {
                                 sellerId: authUser.userId,
                                 deletedBySellerAt: null,
+                                lastMessageAt: { not: null },
                             },
                         ],
                     },

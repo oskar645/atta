@@ -308,7 +308,9 @@ export class PhoneVerificationService {
         attempts: nextAttemptCount,
         providerStatusCode: this.pickStatusCode(response),
         providerStatusText: this.pickStatusText(response),
-        metadata: metadata?.passwordless ? { ...metadata, providerResponse: response } : response,
+        metadata: metadata?.passwordless || metadata?.contactLink
+          ? { ...metadata, providerResponse: response }
+          : response,
       }, passwordless?.tx);
 
       return {
@@ -327,7 +329,9 @@ export class PhoneVerificationService {
           status: nextStatus,
           providerStatusCode: this.pickStatusCode(response),
           providerStatusText: this.pickStatusText(response),
-          metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response) as Prisma.InputJsonValue,
+          metadata: (metadata?.passwordless || metadata?.contactLink
+            ? { ...metadata, providerResponse: response }
+            : response) as Prisma.InputJsonValue,
         },
       });
 
@@ -349,7 +353,9 @@ export class PhoneVerificationService {
         status: nextStatus,
         providerStatusCode: this.pickStatusCode(response),
         providerStatusText: this.pickStatusText(response),
-        metadata: (metadata?.passwordless ? { ...metadata, providerResponse: response } : response) as Prisma.InputJsonValue,
+        metadata: (metadata?.passwordless || metadata?.contactLink
+          ? { ...metadata, providerResponse: response }
+          : response) as Prisma.InputJsonValue,
       },
     });
 

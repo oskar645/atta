@@ -51,7 +51,11 @@ export class ChatsController {
     @Body() dto: CreateChatDto,
   ) {
     const result = await this.chatsService.createOrGetChat(authUser, dto);
-    this.chatsGateway.emitChatUpdated(result.chat);
+    if (result.chat.lastMessageAt == null) {
+      this.chatsGateway.emitChatUpdatedToUser(authUser.userId, result.chat);
+    } else {
+      this.chatsGateway.emitChatUpdated(result.chat);
+    }
     return result;
   }
 

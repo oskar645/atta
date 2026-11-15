@@ -3,12 +3,11 @@ import 'dart:async';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/backend_auth_service.dart';
-import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class SecurityScreen extends StatefulWidget {
   const SecurityScreen({super.key});
@@ -33,18 +32,22 @@ class _SecurityScreenState extends State<SecurityScreen> {
   Widget build(BuildContext context) {
     final user = context.watch<AuthService>().currentUser!;
     final email = _visibleEmail(user.email);
+    final phone = (user.phone ?? '').trim();
     return Scaffold(
       appBar: AppBar(title: const Text('Безопасность')),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         const Text('Телефон',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
-        Text(
-          formatRussianPhone(user.phone ?? ''),
-          style: const TextStyle(fontSize: 18),
-        ),
+        Text(phone.isEmpty ? 'Не добавлен' : formatRussianPhone(phone),
+            style: const TextStyle(fontSize: 18)),
         const SizedBox(height: 4),
-        Text(user.phoneVerified ? 'Подтверждён ✓' : 'Не подтверждён',
+        Text(
+            phone.isEmpty
+                ? 'Добавьте номер для входа и звонков'
+                : user.phoneVerified
+                    ? 'Подтверждён ✓'
+                    : 'Не подтверждён',
             style: TextStyle(
                 color: user.phoneVerified
                     ? Colors.green.shade700
@@ -62,11 +65,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
               );
               if (mounted) setState(() {});
             },
-            child: const Text('Изменить'),
+            child: Text(phone.isEmpty ? 'Добавить' : 'Изменить'),
           ),
         ),
         const SizedBox(height: 28),
-        const Text('Резервный email',
+        const Text('Электронная почта',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
         const SizedBox(height: 8),
         if (email.isNotEmpty) ...[
@@ -93,7 +96,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
                       builder: (_) => const RecoveryEmailScreen()));
                   if (mounted) setState(() {});
                 },
-                child: Text(email.isEmpty ? 'Добавить' : 'Изменить'))),
+                child: Text(email.isEmpty
+                    ? 'Добавить'
+                    : user.emailVerified
+                        ? 'Изменить'
+                        : 'Подтвердить'))),
       ]),
     );
   }
@@ -149,10 +156,7 @@ class _ChangePhoneScreenState extends State<ChangePhoneScreen> {
       _status = null;
     });
     try {
-      final result = await context.read<AuthService>().startPhoneVerification(
-            phone: phone,
-            purpose: 'change_phone',
-          );
+      final result = await context.read<AuthService>().startLinkPhone(phone);
       if (!mounted) return;
       if (result.verificationId.isEmpty || !result.hasCallToPhone) {
         throw const ApiException(
@@ -173,11 +177,8 @@ class _ChangePhoneScreenState extends State<ChangePhoneScreen> {
       '',
     );
     if (number.isEmpty) return;
-    final opened = await launchUrl(
-      Uri.parse('tel:$number'),
-      mode: LaunchMode.externalApplication,
-    );
-    if (!opened && mounted) {
+    final result = await const PhoneCallService().openNumber(number);
+    if (!result.opened && mounted) {
       setState(() =>
           _error = 'Не удалось открыть звонилку. Наберите номер вручную.');
     }
@@ -193,11 +194,9 @@ class _ChangePhoneScreenState extends State<ChangePhoneScreen> {
       _status = 'Проверяем звонок...';
     });
     try {
-      final check = await context.read<AuthService>().checkPhoneVerification(
-            phone: phone,
-            verificationId: verification.verificationId,
-            purpose: 'change_phone',
-          );
+      final check = await context
+          .read<AuthService>()
+          .completeLinkPhone(phone, verification.verificationId);
       if (!mounted) return;
       if (check.isPending) {
         setState(
@@ -215,14 +214,7 @@ class _ChangePhoneScreenState extends State<ChangePhoneScreen> {
         return;
       }
 
-      final auth = context.read<AuthService>();
-      final profile = context.read<ProfileService>();
-      final user = auth.currentUser!;
-      final updated = await profile.updateProfile(user.uid, {
-        'phone': phone,
-        'verificationCheckId': verification.verificationId,
-      });
-      await auth.syncCurrentUserFromProfile(user.uid, updated);
+      await context.read<AuthService>().revalidateCurrentUser();
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (error) {
@@ -240,8 +232,12 @@ class _ChangePhoneScreenState extends State<ChangePhoneScreen> {
   @override
   Widget build(BuildContext context) {
     final verification = _verification;
+    final hasPhone =
+        context.read<AuthService>().currentUser?.phone?.trim().isNotEmpty ==
+            true;
     return Scaffold(
-      appBar: AppBar(title: const Text('Изменить телефон')),
+      appBar: AppBar(
+          title: Text(hasPhone ? 'Изменить телефон' : 'Добавить телефон')),
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [

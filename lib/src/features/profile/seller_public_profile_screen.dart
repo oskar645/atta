@@ -11,6 +11,7 @@ import 'package:atta/src/services/chat_service.dart';
 import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/presence_service.dart';
+import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
@@ -23,13 +24,17 @@ import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 class SellerPublicProfileScreen extends StatefulWidget {
   final String sellerId;
   final String initialSellerName;
   final String initialSellerAvatar;
   final String initialSellerPhone;
+  final String initialSellerEmail;
+  final bool initialPhoneVerified;
+  final bool initialEmailVerified;
+  final String initialListingId;
+  final bool? initialHasCallContact;
   final String initialStatusLabel;
   final bool showAdminFields;
   final bool initialIsAdmin;
@@ -41,6 +46,11 @@ class SellerPublicProfileScreen extends StatefulWidget {
     this.initialSellerName = '',
     this.initialSellerAvatar = '',
     this.initialSellerPhone = '',
+    this.initialSellerEmail = '',
+    this.initialPhoneVerified = false,
+    this.initialEmailVerified = false,
+    this.initialListingId = '',
+    this.initialHasCallContact,
     this.initialStatusLabel = '',
     this.showAdminFields = false,
     this.initialIsAdmin = false,
@@ -64,17 +74,45 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
   Timer? _searchDebounce;
   String _sellerSearch = '';
   bool _followBusy = false;
+  bool? _hasCallContact;
+  bool _contactAvailabilityRequested = false;
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
+    _hasCallContact = widget.initialHasCallContact;
     _scrollController.addListener(_handleScroll);
     _tab.addListener(() {
       if (!_tab.indexIsChanging && mounted) {
         setState(() {});
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_hasCallContact != null ||
+        _contactAvailabilityRequested ||
+        widget.initialListingId.trim().isEmpty) {
+      return;
+    }
+    _contactAvailabilityRequested = true;
+    unawaited(_resolveCallAvailability());
+  }
+
+  Future<void> _resolveCallAvailability() async {
+    try {
+      final listing = await context
+          .read<ListingsService>()
+          .getListingById(widget.initialListingId);
+      if (!mounted) return;
+      setState(() => _hasCallContact = listing?.hasCallContact == true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _hasCallContact = false);
+    }
   }
 
   Future<void> _handleRefresh({
@@ -197,9 +235,6 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
 
   String _profilePhone(Map<String, dynamic> userRow) {
     for (final candidate in <dynamic>[
-      userRow['phone'],
-      userRow['normalized_phone'],
-      userRow['normalizedPhone'],
       widget.initialSellerPhone,
     ]) {
       final value = candidate?.toString().trim() ?? '';
@@ -304,6 +339,10 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
         'avatar_url': widget.initialSellerAvatar.trim(),
       if (widget.initialSellerPhone.trim().isNotEmpty)
         'phone': widget.initialSellerPhone.trim(),
+      if (widget.initialSellerEmail.trim().isNotEmpty)
+        'email': widget.initialSellerEmail.trim(),
+      'phone_verified': widget.initialPhoneVerified,
+      'email_verified': widget.initialEmailVerified,
     };
 
     return Scaffold(
@@ -329,6 +368,17 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
           final phone = _profilePhone(userRow);
           final phoneDisplay =
               phone.isEmpty ? 'Телефон не указан' : formatRussianPhone(phone);
+          final email = widget.initialSellerEmail.trim();
+          final phoneVerified = widget.initialPhoneVerified ||
+              userRow['phone_verified'] == true ||
+              userRow['phoneVerified'] == true;
+          final emailVerified = widget.initialEmailVerified ||
+              userRow['email_verified'] == true ||
+              userRow['emailVerified'] == true ||
+              (userRow['email_verified_at'] ?? userRow['emailVerifiedAt'] ?? '')
+                  .toString()
+                  .trim()
+                  .isNotEmpty;
           final statusText = widget.initialStatusLabel.trim().isNotEmpty
               ? widget.initialStatusLabel.trim()
               : (userRow['status'] ?? '').toString().trim();
@@ -348,7 +398,13 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
             'archivedListingsCount',
           );
 
-          final canCall = phone.isNotEmpty && !isMe;
+          final hasUniqueProfileContact =
+              userRow['has_unique_call_contact'] == true ||
+                  userRow['hasUniqueCallContact'] == true;
+          final canCall = (_hasCallContact == true ||
+                  (widget.initialListingId.trim().isEmpty &&
+                      hasUniqueProfileContact)) &&
+              !isMe;
           final canWrite = !isMe;
 
           return RefreshIndicator(
@@ -476,8 +532,16 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     ),
                                   _AdminInfoChip(
                                     icon: Icons.phone_outlined,
-                                    label: phoneDisplay,
+                                    label: phone.isEmpty
+                                        ? phoneDisplay
+                                        : '$phoneDisplay · ${phoneVerified ? 'Подтверждён' : 'Не подтверждён'}',
                                   ),
+                                  if (email.isNotEmpty)
+                                    _AdminInfoChip(
+                                      icon: Icons.email_outlined,
+                                      label:
+                                          '$email · ${emailVerified ? 'Подтверждён' : 'Не подтверждён'}',
+                                    ),
                                   _AdminInfoChip(
                                     icon: isAdminUser
                                         ? Icons.admin_panel_settings_outlined
@@ -572,24 +636,46 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                                     },
                             ),
                           ),
-                          Expanded(
-                            child: _SellerActionButton(
-                              icon: Icons.call_outlined,
-                              label: 'Позвонить',
-                              onTap: canCall
-                                  ? () async {
-                                      final normalizedPhone =
-                                          normalizeRuPhoneForApi(phone);
-                                      await launchUrl(
-                                        Uri(
-                                          scheme: 'tel',
-                                          path: '+$normalizedPhone',
-                                        ),
-                                      );
+                          if (canCall)
+                            Expanded(
+                              child: _SellerActionButton(
+                                icon: Icons.call_outlined,
+                                label: 'Позвонить',
+                                onTap: () async {
+                                  if (myUid.isEmpty) {
+                                    final authenticated =
+                                        await promptGuestAuth(context);
+                                    if (!authenticated || !context.mounted) {
+                                      return;
                                     }
-                                  : null,
+                                  }
+                                  final listingId =
+                                      widget.initialListingId.trim();
+                                  final result = listingId.isNotEmpty
+                                      ? await const PhoneCallService()
+                                          .callListing(
+                                          listings: listingsSvc,
+                                          listingId: listingId,
+                                        )
+                                      : await const PhoneCallService()
+                                          .callSeller(
+                                          listings: listingsSvc,
+                                          sellerId: widget.sellerId,
+                                        );
+                                  if (!context.mounted || result.opened) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        result.failure ==
+                                                PhoneCallFailure.network
+                                            ? 'Не удалось получить номер. Проверьте интернет и попробуйте снова'
+                                            : 'Номер телефона для этого объявления недоступен',
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
-                          ),
                           Expanded(
                             child: _SellerActionButton(
                               icon: Icons.chat_bubble_outline,

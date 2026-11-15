@@ -8,6 +8,7 @@ test('recovery-email start reuses the cooldown challenge and sends only once', a
   const challenges: any[] = [];
   const prisma = {
     user: { findFirst: async () => null },
+    userSession: { findFirst: async () => ({ id: 'session-1' }) },
     emailChallenge: {
       findFirst: async () => challenges.at(-1) ?? null,
       create: async ({ data }: any) => {
@@ -32,12 +33,22 @@ test('recovery-email start reuses the cooldown challenge and sends only once', a
     {} as never,
   );
 
-  const first = service.startRecoveryEmail('user-1', 'Member@Example.com');
+  const first = service.startRecoveryEmail(
+    'user-1',
+    'Member@Example.com',
+    {},
+    'session-1',
+  );
   while (sends === 0) await new Promise((resolve) => setImmediate(resolve));
 
   // Models a retry after the client lost/timed out waiting for the first HTTP
   // response while the original SMTP operation is still completing.
-  const recovered = await service.startRecoveryEmail('user-1', 'member@example.com');
+  const recovered = await service.startRecoveryEmail(
+    'user-1',
+    'member@example.com',
+    {},
+    'session-1',
+  );
   assert.equal(recovered.challengeId, challenges[0].id);
   assert.equal(recovered.resendAfter, 60);
   assert.equal(challenges.length, 1);
@@ -54,9 +65,11 @@ test('recovery-email verify stores email and emailVerifiedAt on the authenticate
     id: 'challenge-1', userId: 'user-1', purpose: 'RECOVERY_EMAIL',
     targetEmail: 'member@example.com', codeHash: '', expiresAt,
     consumedAt: null, attempts: 0, maxAttempts: 5,
+    metadata: { recoveryEmail: { sessionId: 'session-1' } },
   };
   const updates: any[] = [];
   const prisma = {
+    userSession: { findFirst: async () => ({ id: 'session-1' }) },
     emailChallenge: { findFirst: async () => challenge },
     $transaction: async (callback: (tx: any) => unknown) => callback({
       user: {
@@ -74,7 +87,12 @@ test('recovery-email verify stores email and emailVerifiedAt on the authenticate
   );
   (service as any).digest = () => '';
 
-  await service.verifyRecoveryEmail('user-1', challenge.id, '123456');
+  await service.verifyRecoveryEmail(
+    'user-1',
+    challenge.id,
+    '123456',
+    'session-1',
+  );
 
   assert.equal(updates.length, 1);
   assert.equal(updates[0].where.id, 'user-1');

@@ -28,6 +28,10 @@ const passwordless_service_1 = require("./passwordless.service");
 const email_module_1 = require("../email/email.module");
 const account_recovery_controller_1 = require("./account-recovery.controller");
 const account_recovery_service_1 = require("./account-recovery.service");
+const email_passwordless_controller_1 = require("./email-passwordless.controller");
+const email_passwordless_service_1 = require("./email-passwordless.service");
+const contact_link_controller_1 = require("./contact-link.controller");
+const contact_link_service_1 = require("./contact-link.service");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
@@ -45,10 +49,19 @@ exports.AuthModule = AuthModule = __decorate([
                 secret: env_1.env.JWT_ACCESS_SECRET,
             }),
         ],
-        controllers: [auth_controller_1.AuthController, passwordless_controller_1.PasswordlessController, account_recovery_controller_1.RecoveryEmailController, account_recovery_controller_1.AccountRecoveryController],
+        controllers: [
+            auth_controller_1.AuthController,
+            passwordless_controller_1.PasswordlessController,
+            email_passwordless_controller_1.EmailPasswordlessController,
+            contact_link_controller_1.ContactLinkController,
+            account_recovery_controller_1.RecoveryEmailController,
+            account_recovery_controller_1.AccountRecoveryController,
+        ],
         providers: [
             auth_service_1.AuthService,
             passwordless_service_1.PasswordlessService,
+            email_passwordless_service_1.EmailPasswordlessService,
+            contact_link_service_1.ContactLinkService,
             account_recovery_service_1.AccountRecoveryService,
             account_deletion_service_1.AccountDeletionService,
             restore_credentials_service_1.RestoreCredentialsService,

@@ -1552,6 +1552,15 @@ class _AddListingScreenState extends State<AddListingScreen> {
       return;
     }
 
+    if (normalizeRuPhoneForApi(phone).isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Укажите номер телефона для связи с покупателями'),
+        ),
+      );
+      return;
+    }
+
     if (_photoItems.isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -2111,7 +2120,7 @@ class _AddListingScreenState extends State<AddListingScreen> {
             decoration: InputDecoration(
               labelText: 'Телефон (для звонка)',
               helperText: _phone.text.trim().isEmpty
-                  ? 'Номер из профиля подставляется автоматически, его можно изменить для этого объявления'
+                  ? 'Укажите номер телефона для связи с покупателями'
                   : 'Будет показано как: ${formatRussianPhone(_phone.text)}',
             ),
           ),
@@ -2125,7 +2134,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ),
             subtitle: Text(
               _phoneHidden
-                  ? 'Покупатель не увидит номер в карточке, но сможет нажать “Позвонить”'
+                  ? _phone.text.trim().isEmpty
+                      ? 'Кнопка звонка не показывается без номера телефона'
+                      : 'Покупатель не увидит номер в карточке, но сможет нажать “Позвонить”'
                   : 'Покупатель увидит ваш номер прямо в объявлении',
             ),
             value: _phoneHidden,

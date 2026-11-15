@@ -469,6 +469,35 @@ void main() {
     );
   });
 
+  testWidgets('active listing uses plain green status and white card surface',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<FollowService>.value(value: _FakeFollowService()),
+          Provider<ListingsService>.value(value: _ListingsWithItemService()),
+        ],
+        child: const MaterialApp(home: MyListingsScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final statusFinder =
+        find.byKey(const ValueKey('my_listing_status:listing-1'));
+    expect(statusFinder, findsOneWidget);
+    expect(tester.widget(statusFinder), isA<Text>());
+    expect(tester.widget<Text>(statusFinder).style?.color,
+        const Color(0xFF16713A));
+
+    final cardInk = find.ancestor(
+      of: statusFinder,
+      matching: find.byType(Ink),
+    );
+    final ink = tester.widget<Ink>(cardInk);
+    expect((ink.decoration as BoxDecoration).color, Colors.white);
+  });
+
   testWidgets('bottom actions keep full text at compact and wide widths',
       (tester) async {
     addTearDown(() => tester.binding.setSurfaceSize(null));

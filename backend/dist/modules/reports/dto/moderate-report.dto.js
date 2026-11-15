@@ -20,4 +20,9 @@ __decorate([
     (0, class_validator_1.MaxLength)(1000),
     __metadata("design:type", String)
 ], ModerateReportDto.prototype, "comment", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsIn)(['resolved', 'no_violation', 'warned', 'removed', 'action_taken']),
+    __metadata("design:type", String)
+], ModerateReportDto.prototype, "decision", void 0);
 //# sourceMappingURL=moderate-report.dto.js.map

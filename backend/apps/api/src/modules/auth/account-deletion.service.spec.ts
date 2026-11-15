@@ -238,8 +238,9 @@ test('seller public API returns anonymized tombstone without private identity', 
   const f = fixture(); await f.deletion.deleteUser(A);
   const users = new UsersService(f.prisma, {} as never, {} as never);
   const result = await users.getSellerPublicProfile(A);
-  assert.equal(result.user.display_name, 'Удалённый пользователь');
-  assert.equal(result.user.avatar_url, null); assert.equal(result.user.normalizedPhone, null);
+  const publicUser = result.user as any;
+  assert.equal(publicUser.display_name, 'Удалённый пользователь');
+  assert.equal(publicUser.avatar_url, null); assert.equal(publicUser.normalizedPhone, null);
 });
 
 test('admin optional saved-search alerts injection retains its concrete DI token', async () => {

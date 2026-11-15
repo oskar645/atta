@@ -54,6 +54,7 @@ export class AccountDeletionService implements OnModuleInit, OnModuleDestroy {
             userId,
             displayName: user.displayName.trim() || user.name.trim() || DELETED_NAME,
             phone: user.phone?.trim() || null,
+            email: user.emailVerifiedAt ? user.email?.trim().toLowerCase() || null : null,
             deletedAt: now,
           } });
           // Keep the tombstone: finance, referrals, moderation and the peer's history reference it.

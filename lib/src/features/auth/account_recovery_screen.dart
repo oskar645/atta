@@ -1,10 +1,10 @@
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 enum _RecoveryStep { email, code, phone, call, done }
 
@@ -161,8 +161,8 @@ class _AccountRecoveryScreenState extends State<AccountRecoveryScreen> {
                             style: Theme.of(context).textTheme.headlineSmall),
                         const SizedBox(height: 16),
                         FilledButton(
-                            onPressed: () => launchUrl(
-                                Uri(scheme: 'tel', path: callToPhone)),
+                            onPressed: () => const PhoneCallService()
+                                .openNumber(callToPhone),
                             child: const Text('Позвонить')),
                         TextButton(
                             onPressed: busy ? null : checkPhone,

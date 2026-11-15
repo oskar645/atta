@@ -49,23 +49,63 @@ class AdminReportsScreen extends StatefulWidget {
 class _AdminReportsScreenState extends State<AdminReportsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  late final ReportsService _reports;
-  late final Stream<List<Map<String, dynamic>>> _openReportsStream;
-  late final Stream<List<Map<String, dynamic>>> _processedReportsStream;
+  final TextEditingController _search = TextEditingController();
+  Timer? _searchDebounce;
+  String _reason = '';
+  String _sort = 'newest';
+  DateTimeRange? _dateRange;
+  Map<String, int> _counts = const <String, int>{};
+
+  static const _reasons = <String>[
+    'Запрещённый товар',
+    'Мошенничество',
+    'Спам / реклама',
+    'Оскорбления',
+    'Фейк / обман',
+    'Другое',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _reports = context.read<ReportsService>();
-    _openReportsStream = _reports.streamOpenReports();
-    _processedReportsStream = _reports.streamProcessedReports();
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _searchDebounce?.cancel();
+    _search.dispose();
     super.dispose();
+  }
+
+  void _scheduleSearch(String _) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _updateCounts(Map<String, int> counts) {
+    if (!mounted || counts.isEmpty) return;
+    if (_counts.toString() == counts.toString()) return;
+    setState(() => _counts = counts);
+  }
+
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5),
+      lastDate: now.add(const Duration(days: 1)),
+      initialDateRange: _dateRange,
+    );
+    if (picked != null && mounted) setState(() => _dateRange = picked);
+  }
+
+  String _tabLabel(String label, String key) {
+    final count = _counts[key];
+    return count == null ? label : '$label $count';
   }
 
   @override
@@ -77,26 +117,122 @@ class _AdminReportsScreenState extends State<AdminReportsScreen>
         title: const Text('Жалобы'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'Новые'),
-            Tab(text: 'Обработанные'),
+          isScrollable: true,
+          tabs: [
+            Tab(text: _tabLabel('Новые', 'open')),
+            Tab(text: _tabLabel('На проверке', 'in_progress')),
+            Tab(text: _tabLabel('Завершённые', 'completed')),
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
         children: [
-          _ReportsTab(
-            stream: _openReportsStream,
-            emptyText: 'Новых жалоб пока нет',
-            initialReportId: widget.initialReportId,
-            isProcessedTab: false,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+            child: TextField(
+              controller: _search,
+              onChanged: _scheduleSearch,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Поиск по жалобам',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Очистить поиск',
+                        onPressed: () {
+                          _search.clear();
+                          setState(() {});
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+                isDense: true,
+              ),
+            ),
           ),
-          _ReportsTab(
-            stream: _processedReportsStream,
-            emptyText: 'Обработанных жалоб пока нет',
-            initialReportId: widget.initialReportId,
-            isProcessedTab: true,
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Row(
+              children: [
+                DropdownButton<String>(
+                  value: _reason,
+                  underline: const SizedBox.shrink(),
+                  items: <DropdownMenuItem<String>>[
+                    const DropdownMenuItem(
+                        value: '', child: Text('Все причины')),
+                    ..._reasons.map(
+                      (value) =>
+                          DropdownMenuItem(value: value, child: Text(value)),
+                    ),
+                  ],
+                  onChanged: (value) => setState(() => _reason = value ?? ''),
+                ),
+                const SizedBox(width: 12),
+                TextButton.icon(
+                  onPressed: _pickDateRange,
+                  icon: const Icon(Icons.date_range_outlined, size: 18),
+                  label:
+                      Text(_dateRange == null ? 'Любая дата' : 'Период выбран'),
+                ),
+                if (_dateRange != null)
+                  IconButton(
+                    tooltip: 'Сбросить дату',
+                    onPressed: () => setState(() => _dateRange = null),
+                    icon: const Icon(Icons.close, size: 18),
+                  ),
+                const SizedBox(width: 4),
+                DropdownButton<String>(
+                  value: _sort,
+                  underline: const SizedBox.shrink(),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'newest', child: Text('Сначала новые')),
+                    DropdownMenuItem(
+                        value: 'oldest', child: Text('Сначала старые')),
+                  ],
+                  onChanged: (value) =>
+                      setState(() => _sort = value ?? 'newest'),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _ReportsTab(
+                  status: 'open',
+                  emptyText: 'Новых жалоб пока нет',
+                  initialReportId: widget.initialReportId,
+                  search: _search.text.trim(),
+                  reason: _reason,
+                  sort: _sort,
+                  dateRange: _dateRange,
+                  onCounts: _updateCounts,
+                ),
+                _ReportsTab(
+                  status: 'in_progress',
+                  emptyText: 'Жалоб на проверке пока нет',
+                  initialReportId: widget.initialReportId,
+                  search: _search.text.trim(),
+                  reason: _reason,
+                  sort: _sort,
+                  dateRange: _dateRange,
+                  onCounts: _updateCounts,
+                ),
+                _ReportsTab(
+                  status: 'completed',
+                  emptyText: 'Завершённых жалоб пока нет',
+                  initialReportId: widget.initialReportId,
+                  search: _search.text.trim(),
+                  reason: _reason,
+                  sort: _sort,
+                  dateRange: _dateRange,
+                  onCounts: _updateCounts,
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -106,30 +242,59 @@ class _AdminReportsScreenState extends State<AdminReportsScreen>
 
 class _ReportsTab extends StatefulWidget {
   const _ReportsTab({
-    required this.stream,
+    required this.status,
     required this.emptyText,
     required this.initialReportId,
-    required this.isProcessedTab,
+    required this.search,
+    required this.reason,
+    required this.sort,
+    required this.dateRange,
+    required this.onCounts,
   });
 
-  final Stream<List<Map<String, dynamic>>> stream;
+  final String status;
   final String emptyText;
   final String initialReportId;
-  final bool isProcessedTab;
+  final String search;
+  final String reason;
+  final String sort;
+  final DateTimeRange? dateRange;
+  final ValueChanged<Map<String, int>> onCounts;
 
   @override
   State<_ReportsTab> createState() => _ReportsTabState();
 }
 
-class _ReportsTabState extends State<_ReportsTab> {
+class _ReportsTabState extends State<_ReportsTab>
+    with AutomaticKeepAliveClientMixin {
   final ScrollController _scrollController = ScrollController();
+  List<Map<String, dynamic>> _items = const [];
+  String? _nextCursor;
+  bool _hasMore = true;
+  bool _loading = true;
   bool _loadingMore = false;
-  Object? _loadMoreError;
+  Object? _error;
+  int _generation = 0;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_maybeLoadMore);
+    unawaited(_load(reset: true));
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReportsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.search != widget.search ||
+        oldWidget.reason != widget.reason ||
+        oldWidget.sort != widget.sort ||
+        oldWidget.dateRange != widget.dateRange) {
+      unawaited(_load(reset: true));
+    }
   }
 
   @override
@@ -143,97 +308,207 @@ class _ReportsTabState extends State<_ReportsTab> {
   void _maybeLoadMore() {
     if (!_scrollController.hasClients || _loadingMore) return;
     if (_scrollController.position.extentAfter > 700) return;
-    final reports = context.read<ReportsService>();
-    if (!reports.canLoadMoreReports) return;
-    _loadMore();
+    if (!_hasMore) return;
+    unawaited(_load(reset: false));
   }
 
-  Future<void> _loadMore() async {
+  Future<void> _load({required bool reset}) async {
+    if (!reset && (_loadingMore || !_hasMore)) return;
+    final generation = reset ? ++_generation : _generation;
     setState(() {
-      _loadingMore = true;
-      _loadMoreError = null;
+      if (reset) _loading = true;
+      _loadingMore = !reset;
+      _error = null;
     });
     try {
-      await context.read<ReportsService>().loadMoreReports();
+      final page = await context.read<ReportsService>().queryAdminReports(
+            status: widget.status,
+            cursor: reset ? null : _nextCursor,
+            search: widget.search,
+            reason: widget.reason,
+            sort: widget.sort,
+            dateFrom: widget.dateRange?.start,
+            dateTo: widget.dateRange == null
+                ? null
+                : DateTime(
+                    widget.dateRange!.end.year,
+                    widget.dateRange!.end.month,
+                    widget.dateRange!.end.day,
+                    23,
+                    59,
+                    59,
+                    999,
+                  ),
+          );
+      if (!mounted || generation != _generation) return;
+      final seen = <String>{};
+      final merged =
+          reset ? page.items : <Map<String, dynamic>>[..._items, ...page.items];
+      setState(() {
+        _items = merged
+            .where((item) => seen.add((item['id'] ?? '').toString()))
+            .toList(growable: false);
+        _nextCursor = page.nextCursor;
+        _hasMore = page.hasMore;
+        _loading = false;
+      });
+      widget.onCounts(page.counts);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _loadMoreError = error);
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
     } finally {
       if (mounted) setState(() => _loadingMore = false);
     }
   }
 
+  Future<void> _open(Map<String, dynamic> report) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('Жалоба')),
+          body: ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              _ReportCard(report: report, highlight: false),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mounted) await _load(reset: true);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: widget.stream,
-      initialData: context.read<ReportsService>().peekAllReports(),
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting &&
-            (snap.data == null || snap.data!.isEmpty)) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snap.hasError) {
-          return Center(child: Text('Ошибка: ${snap.error}'));
-        }
-
-        final items =
-            (snap.data ?? const <Map<String, dynamic>>[]).where((item) {
-          final isOpen = ReportsService.isOpenStatusValue(
-            (item['status'] ?? '').toString(),
-          );
-          return widget.isProcessedTab ? !isOpen : isOpen;
-        }).toList(growable: false);
-        if (items.isEmpty) {
-          return Center(child: Text(widget.emptyText));
-        }
-
-        return RefreshIndicator(
-          onRefresh: () async {
-            await context.read<ReportsService>().refreshReports(force: true);
-          },
-          child: ListView.separated(
-            controller: _scrollController,
-            padding: const EdgeInsets.all(12),
-            itemCount: items.length + 1,
-            separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (_, index) {
-              if (index == items.length) {
-                if (_loadingMore) {
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                  );
-                }
-                if (_loadMoreError != null) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Center(
-                      child: Text(
-                        'Не удалось догрузить: $_loadMoreError',
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  );
-                }
-                return const SizedBox(height: 12);
-              }
-              return _ReportCard(
-                report: items[index],
-                highlight: widget.initialReportId.trim().isNotEmpty &&
-                    (items[index]['id'] ?? '').toString().trim() ==
-                        widget.initialReportId.trim(),
+    super.build(context);
+    if (_loading && _items.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _items.isEmpty) {
+      return _ReportsError(error: _error!, onRetry: () => _load(reset: true));
+    }
+    if (_items.isEmpty) return Center(child: Text(widget.emptyText));
+    return RefreshIndicator(
+      onRefresh: () => _load(reset: true),
+      child: ListView.separated(
+        key: PageStorageKey('admin-reports-${widget.status}'),
+        controller: _scrollController,
+        padding: const EdgeInsets.all(12),
+        itemCount: _items.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (_, index) {
+          if (index == _items.length) {
+            if (_loadingMore) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
               );
-            },
-          ),
-        );
-      },
+            }
+            if (_error != null) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Center(
+                  child: TextButton(
+                    onPressed: () => _load(reset: false),
+                    child: const Text(
+                      'Не удалось догрузить. Нажмите, чтобы повторить.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              );
+            }
+            return const SizedBox(height: 12);
+          }
+          return _CompactReportCard(
+            report: _items[index],
+            highlight: widget.initialReportId.trim().isNotEmpty &&
+                (_items[index]['id'] ?? '').toString().trim() ==
+                    widget.initialReportId.trim(),
+            onTap: () => _open(_items[index]),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ReportsError extends StatelessWidget {
+  const _ReportsError({required this.error, required this.onRetry});
+  final Object error;
+  final VoidCallback onRetry;
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('Не удалось загрузить жалобы.'),
+            const SizedBox(height: 8),
+            OutlinedButton(onPressed: onRetry, child: const Text('Повторить')),
+          ]),
+        ),
+      );
+}
+
+class _CompactReportCard extends StatelessWidget {
+  const _CompactReportCard({
+    required this.report,
+    required this.highlight,
+    required this.onTap,
+  });
+  final Map<String, dynamic> report;
+  final bool highlight;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = (report['reason'] ?? 'Причина не указана').toString();
+    final title = (report['listing_title'] ?? '').toString().trim();
+    final target = title.isEmpty
+        ? (report['reported_user_name'] ?? 'Профиль пользователя').toString()
+        : title;
+    final status = (report['status'] ?? 'open').toString();
+    final createdAt =
+        DateTime.tryParse((report['created_at'] ?? '').toString());
+    final statusLabel = switch (status) {
+      'in_progress' => 'На проверке',
+      'resolved' || 'rejected' => 'Завершена',
+      _ => 'Новая',
+    };
+    return Card(
+      elevation: 0,
+      color: highlight ? Theme.of(context).colorScheme.primaryContainer : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        title: Text(reason, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          '$target${createdAt == null ? '' : ' · ${timeago.format(createdAt, locale: 'ru')}'}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(statusLabel, style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 4),
+            const Icon(Icons.chevron_right, size: 20),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -383,6 +658,21 @@ class _ReportCard extends StatelessWidget {
     }
   }
 
+  Future<void> _startReview(BuildContext context) async {
+    final reportId = (report['id'] ?? '').toString().trim();
+    if (reportId.isEmpty) return;
+    try {
+      await context.read<ReportsService>().startReview(reportId);
+      if (!context.mounted) return;
+      showAppSnack(context, 'Жалоба взята на проверку');
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!context.mounted) return;
+      showAppSnack(context, 'Не удалось начать проверку: $error',
+          isError: true);
+    }
+  }
+
   Future<void> _contactUserViaSupport(
     BuildContext context, {
     required String userId,
@@ -478,6 +768,7 @@ class _ReportCard extends StatelessWidget {
 
       if (!context.mounted) return;
       showAppSnack(context, 'Жалоба обработана');
+      Navigator.of(context).pop();
     } catch (error) {
       if (!context.mounted) return;
       showAppSnack(context, 'Ошибка: $error', isError: true);
@@ -505,6 +796,12 @@ class _ReportCard extends StatelessWidget {
     final listingSellerName =
         (report['listing_seller_name'] ?? '').toString().trim();
     final statusText = _formatStatus((report['status'] ?? '').toString());
+    final rawStatus = (report['status'] ?? '').toString().trim().toLowerCase();
+    final decision = (report['decision'] ?? '').toString().trim();
+    final adminComment = (report['admin_comment'] ?? '').toString().trim();
+    final handledByName = (report['handled_by_name'] ?? '').toString().trim();
+    final handledAt =
+        DateTime.tryParse((report['handled_at'] ?? '').toString());
     final createdAt =
         DateTime.tryParse((report['created_at'] ?? '').toString());
     final isOpen =
@@ -566,11 +863,17 @@ class _ReportCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 4),
-              IconButton(
-                tooltip: 'Убрать из списка',
-                onPressed: () => _confirmHideReport(context),
-                icon: const Icon(Icons.delete_outline, size: 20),
-                visualDensity: VisualDensity.compact,
+              PopupMenuButton<String>(
+                tooltip: 'Дополнительные действия',
+                onSelected: (value) {
+                  if (value == 'hide') unawaited(_confirmHideReport(context));
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'hide',
+                    child: Text('Убрать жалобу из списка'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -658,6 +961,41 @@ class _ReportCard extends StatelessWidget {
             const SizedBox(height: 8),
             Text('Комментарий: $comment'),
           ],
+          if (decision.isNotEmpty ||
+              adminComment.isNotEmpty ||
+              handledByName.isNotEmpty ||
+              handledAt != null) ...[
+            const SizedBox(height: 12),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 8),
+              title: const Text('Обработка жалобы'),
+              children: [
+                if (decision.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Решение: ${_decisionLabel(decision)}'),
+                  ),
+                if (adminComment.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Комментарий администратора: $adminComment'),
+                  ),
+                if (handledByName.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Администратор: $handledByName'),
+                  ),
+                if (handledAt != null)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Обработано: ${timeago.format(handledAt, locale: 'ru')}',
+                    ),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
@@ -719,6 +1057,12 @@ class _ReportCard extends StatelessWidget {
                         ),
                 child: const Text('Отправить предупреждение'),
               ),
+              if (rawStatus == 'open')
+                FilledButton.tonalIcon(
+                  onPressed: () => _startReview(context),
+                  icon: const Icon(Icons.play_arrow_rounded),
+                  label: const Text('Начать проверку'),
+                ),
               if (isOpen) ...[
                 FilledButton.tonal(
                   onPressed: () => _applyDecision(
@@ -736,18 +1080,34 @@ class _ReportCard extends StatelessWidget {
                     deleteListing: false,
                     templates: AdminReportsScreen._warnTemplates,
                   ),
-                  child: const Text('Пометить обработанной'),
+                  child: const Text('Принять меры'),
                 ),
-                FilledButton(
-                  onPressed: listingId.isEmpty
-                      ? null
-                      : () => _applyDecision(
-                            context,
-                            decision: 'removed',
-                            deleteListing: true,
-                            templates: AdminReportsScreen._removeTemplates,
-                          ),
-                  child: const Text('Удалить объявление'),
+                PopupMenuButton<String>(
+                  enabled: listingId.isNotEmpty,
+                  tooltip: 'Опасные действия',
+                  onSelected: (value) {
+                    if (value == 'delete_listing') {
+                      unawaited(
+                        _applyDecision(
+                          context,
+                          decision: 'removed',
+                          deleteListing: true,
+                          templates: AdminReportsScreen._removeTemplates,
+                        ),
+                      );
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'delete_listing',
+                      child: Text('Удалить объявление'),
+                    ),
+                  ],
+                  child: OutlinedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.more_horiz),
+                    label: const Text('Опасные действия'),
+                  ),
                 ),
               ] else
                 OutlinedButton(
@@ -758,6 +1118,7 @@ class _ReportCard extends StatelessWidget {
                           .reopenReport(reportId);
                       if (!context.mounted) return;
                       showAppSnack(context, 'Жалоба возвращена в новые');
+                      Navigator.of(context).pop();
                     } catch (error) {
                       if (!context.mounted) return;
                       showAppSnack(context, 'Ошибка: $error', isError: true);
@@ -770,6 +1131,23 @@ class _ReportCard extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _decisionLabel(String value) {
+    switch (value.trim().toLowerCase()) {
+      case 'no_violation':
+      case 'rejected':
+        return 'Нарушений не обнаружено';
+      case 'warned':
+        return 'Приняты меры: предупреждение';
+      case 'removed':
+        return 'Приняты меры: объявление удалено';
+      case 'action_taken':
+      case 'resolved':
+        return 'Приняты меры';
+      default:
+        return value;
+    }
   }
 
   Future<_DecisionOptions?> _askDecisionOptions(
