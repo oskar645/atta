@@ -102,31 +102,19 @@ const categoriesWithKnownSubcategories = new Map<string, Set<string>>([
   ])],
   ['Недвижимость', new Set([
     'Квартиры',
-    'Квартира',
     'Комнаты',
-    'Комната',
     'Дома',
-    'Дом',
     'Части дома',
     'Таунхаусы',
-    'Таунхаус',
     'Дачи',
-    'Дача',
     'Коттеджи',
-    'Коттедж',
     'Земельные участки',
-    'Земельный участок',
-    'Гаражи и машиноместа',
-    'Гараж',
-    'Машино-место',
+    'Гаражи',
+    'Машино-места',
     'Коммерческие помещения',
-    'Коммерческая недвижимость',
     'Офисы',
-    'Офис',
     'Склады',
-    'Склад',
     'Производственные помещения',
-    'Производственное помещение',
     'Торговое помещение',
     'Готовый бизнес',
     'Недостроенный объект',
@@ -139,6 +127,28 @@ const categoriesWithKnownSubcategories = new Map<string, Set<string>>([
     'Земля коммерческого назначения',
   ])],
 ]);
+
+const publicationSubcategoryAliases = new Map<string, Map<string, string>>([
+  ['Недвижимость', new Map([
+    ['Квартира', 'Квартиры'],
+    ['Комната', 'Комнаты'],
+    ['Дом', 'Дома'],
+    ['Таунхаус', 'Таунхаусы'],
+    ['Дача', 'Дачи'],
+    ['Коттедж', 'Коттеджи'],
+    ['Земельный участок', 'Земельные участки'],
+    ['Гараж', 'Гаражи'],
+    ['Машино-место', 'Машино-места'],
+    ['Коммерческая недвижимость', 'Коммерческие помещения'],
+    ['Офис', 'Офисы'],
+    ['Склад', 'Склады'],
+    ['Производственное помещение', 'Производственные помещения'],
+  ])],
+  ['Услуги', new Map([['Сварка и аргон', 'Сварочные работы']])],
+]);
+
+const canonicalPublicationSubcategory = (category: string, value: string) =>
+  publicationSubcategoryAliases.get(category)?.get(value) ?? value;
 
 const categoriesWithoutStrictSubcategories = new Set([
   'Продукты питания',
@@ -199,7 +209,10 @@ export const isListingReadyForPublication = (
 
   const knownSubcategories = categoriesWithKnownSubcategories.get(category);
   if (knownSubcategories) {
-    const subcategory = listing.subcategory?.trim() ?? '';
+    const subcategory = canonicalPublicationSubcategory(
+      category,
+      listing.subcategory?.trim() ?? '',
+    );
     if (!knownSubcategories.has(subcategory)) {
       return false;
     }

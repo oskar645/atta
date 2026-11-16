@@ -7,13 +7,30 @@ const number = (value: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+const savedSearchSubcategoryAliases = new Map<string, Map<string, string>>([
+  ['Недвижимость', new Map([
+    ['Квартира', 'Квартиры'], ['Комната', 'Комнаты'], ['Дом', 'Дома'],
+    ['Таунхаус', 'Таунхаусы'], ['Дача', 'Дачи'], ['Коттедж', 'Коттеджи'],
+    ['Земельный участок', 'Земельные участки'], ['Гараж', 'Гаражи'],
+    ['Машино-место', 'Машино-места'],
+    ['Коммерческая недвижимость', 'Коммерческие помещения'],
+    ['Офис', 'Офисы'], ['Склад', 'Склады'],
+    ['Производственное помещение', 'Производственные помещения'],
+  ])],
+]);
+
+const canonicalSubcategory = (category: string, subcategory: string) =>
+  savedSearchSubcategoryAliases.get(category)?.get(subcategory) ?? subcategory;
+
 // Text search is applied using the existing buildListingSearchWhere in the DB.
 // These are the persisted feed filters, including the existing 26-part queryKey.
 export function matchesSavedSearchFilters(listing: Listing, search: SavedSearch): boolean {
-  for (const key of ['category', 'subcategory'] as const) {
-    const q = norm(search[key]);
-    if (q && q !== 'все' && norm(listing[key]) !== q) return false;
-  }
+  const categoryQuery = norm(search.category);
+  if (categoryQuery && categoryQuery !== 'все' && norm(listing.category) !== categoryQuery) return false;
+  const subcategoryQuery = norm(search.subcategory);
+  if (subcategoryQuery && subcategoryQuery !== 'все' &&
+      norm(canonicalSubcategory(search.category, listing.subcategory)) !==
+      norm(canonicalSubcategory(search.category, search.subcategory))) return false;
   // The current feed treats location without radius as ranking only. There are
   // no saved center coordinates: radius currently enables textual locality.
   if (search.radiusKm != null && norm(search.location)) {

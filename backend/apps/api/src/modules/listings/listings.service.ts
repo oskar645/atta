@@ -522,6 +522,25 @@ export class ListingsService {
     @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
+  private validateLocation(location?: Record<string, unknown>) {
+    if (location == null) return;
+    const latitude = location['latitude'];
+    const longitude = location['longitude'];
+    if (latitude == null && longitude == null) return;
+    if (
+      typeof latitude !== 'number' ||
+      typeof longitude !== 'number' ||
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new BadRequestException('Некорректные координаты объявления');
+    }
+  }
+
   private entersModerationQueue(
     before: ModerationQueueCandidate | null,
     after: ModerationQueueCandidate,
@@ -593,6 +612,7 @@ export class ListingsService {
 
   async create(authUser: AuthenticatedUser, dto: CreateListingDto) {
     await this.userBlocksService.assertNotBlocked(authUser.userId);
+    this.validateLocation(dto.location);
 
     const owner = await this.prisma.user.findUnique({
       where: {
@@ -1041,6 +1061,174 @@ export class ListingsService {
       items: enrichedItems.map((listing) => serializeListing(listing)),
       nextCursor,
       hasMore,
+    };
+  }
+
+  async findRealEstateMap(params: {
+    north: number;
+    south: number;
+    east: number;
+    west: number;
+    subcategory?: string;
+    city?: string;
+    search?: string;
+    dealType?: string;
+    minPrice?: number;
+    maxPrice?: number;
+    limit?: number;
+  }) {
+    const { north, south, east, west } = params;
+    if (
+      ![north, south, east, west].every(Number.isFinite) ||
+      north <= south || north > 90 || south < -90 ||
+      east > 180 || east < -180 || west > 180 || west < -180
+    ) {
+      throw new BadRequestException('Некорректная видимая область карты');
+    }
+
+    const and: Prisma.ListingWhereInput[] = [];
+    const subcategory = params.subcategory?.trim();
+    if (subcategory && subcategory.toLocaleLowerCase('ru-RU') !== 'все') {
+      const legacySubcategoryAliases: Record<string, string[]> = {
+        'Квартиры': ['Квартира'],
+        'Комнаты': ['Комната'],
+        'Дома': ['Дом'],
+        'Таунхаусы': ['Таунхаус'],
+        'Дачи': ['Дача'],
+        'Коттеджи': ['Коттедж'],
+        'Земельные участки': ['Земельный участок'],
+        'Гаражи': ['Гараж'],
+        'Машино-места': ['Машино-место'],
+        'Коммерческие помещения': ['Коммерческая недвижимость'],
+        'Офисы': ['Офис'],
+        'Склады': ['Склад'],
+        'Производственные помещения': ['Производственное помещение'],
+      };
+      and.push({ subcategory: { in: [subcategory, ...(legacySubcategoryAliases[subcategory] ?? [])] } });
+    }
+    const city = params.city?.trim();
+    if (city) {
+      and.push({ OR: [
+        { city: { contains: city, mode: 'insensitive' } },
+        { address: { contains: city, mode: 'insensitive' } },
+      ] });
+    }
+    const dealType = params.dealType?.trim();
+    if (dealType) and.push({ dealType });
+    const searchWhere = buildListingSearchWhere(params.search?.trim());
+    if (searchWhere) and.push(searchWhere);
+
+    const longitudeBounds: Prisma.ListingWhereInput = east >= west
+      ? { longitude: { gte: west, lte: east } }
+      : { OR: [{ longitude: { gte: west } }, { longitude: { lte: east } }] };
+    and.push(longitudeBounds);
+
+    // Older listings may have their coordinates only in location_json. Select
+    // those IDs with a read-only, type-checked SQL predicate so malformed JSON
+    // (including numeric-looking strings) can never be cast or treated as a
+    // point. The normal scalar-coordinate query remains the primary path.
+    const jsonCoordinateRows = typeof this.prisma.$queryRaw === 'function'
+      ? await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT id
+      FROM listings
+      WHERE (latitude IS NULL OR longitude IS NULL)
+        AND jsonb_typeof(location_json->'latitude') = 'number'
+        AND jsonb_typeof(location_json->'longitude') = 'number'
+        AND CASE WHEN jsonb_typeof(location_json->'latitude') = 'number'
+          THEN (location_json->>'latitude')::numeric BETWEEN ${south} AND ${north}
+          ELSE FALSE END
+        AND CASE WHEN jsonb_typeof(location_json->'longitude') = 'number'
+          THEN (
+            ${east} >= ${west}
+            AND (location_json->>'longitude')::numeric BETWEEN ${west} AND ${east}
+          ) OR (
+            ${east} < ${west}
+            AND ((location_json->>'longitude')::numeric >= ${west}
+              OR (location_json->>'longitude')::numeric <= ${east})
+          )
+          ELSE FALSE END
+      `)
+      : [];
+    const jsonCoordinateIds = jsonCoordinateRows.map(({ id }) => id);
+
+    const limit = Math.max(1, Math.min(params.limit ?? 500, 500));
+    const listings = await this.prisma.listing.findMany({
+      where: {
+        category: 'Недвижимость',
+        status: ListingStatus.APPROVED,
+        deletedAt: null,
+        photos: { some: {} },
+        owner: { deletedAt: null, status: UserStatus.ACTIVE },
+        ...(typeof params.minPrice === 'number' || typeof params.maxPrice === 'number'
+          ? { price: {
+              ...(typeof params.minPrice === 'number' ? { gte: BigInt(params.minPrice) } : {}),
+              ...(typeof params.maxPrice === 'number' ? { lte: BigInt(params.maxPrice) } : {}),
+            } }
+          : {}),
+        AND: [{
+          OR: [
+            {
+              latitude: { not: null, gte: south, lte: north },
+              ...longitudeBounds,
+            },
+            ...(jsonCoordinateIds.length > 0 ? [{ id: { in: jsonCoordinateIds } }] : []),
+          ],
+        }, ...and.filter((condition) => condition !== longitudeBounds)],
+      },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+        city: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+        locationJson: true,
+        subcategory: true,
+        dealType: true,
+        photos: { orderBy: { sortOrder: 'asc' }, take: 1, select: { publicUrl: true } },
+      },
+      orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+
+    const items = listings.flatMap((listing) => {
+      const columnLatitude = listing.latitude == null ? null : Number(listing.latitude);
+      const columnLongitude = listing.longitude == null ? null : Number(listing.longitude);
+      const columnsValid = columnLatitude != null && columnLongitude != null &&
+        Number.isFinite(columnLatitude) && Number.isFinite(columnLongitude) &&
+        columnLatitude >= -90 && columnLatitude <= 90 &&
+        columnLongitude >= -180 && columnLongitude <= 180;
+      const location = listing.locationJson;
+      const jsonLatitude = typeof location === 'object' && location !== null && !Array.isArray(location)
+        ? (location as Record<string, unknown>)['latitude'] : undefined;
+      const jsonLongitude = typeof location === 'object' && location !== null && !Array.isArray(location)
+        ? (location as Record<string, unknown>)['longitude'] : undefined;
+      const latitude = columnsValid ? columnLatitude : jsonLatitude;
+      const longitude = columnsValid ? columnLongitude : jsonLongitude;
+      if (typeof latitude !== 'number' || typeof longitude !== 'number' ||
+          !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+          latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        return [];
+      }
+      return [{
+        id: listing.id,
+        title: listing.title,
+        price: Number(listing.price),
+        city: listing.city,
+        address: listing.address,
+        latitude,
+        longitude,
+        subcategory: listing.subcategory,
+        deal_type: listing.dealType,
+        photo_url: listing.photos[0]?.publicUrl ?? null,
+      }];
+    });
+
+    return {
+      items,
+      truncated: listings.length === limit,
+      limit,
     };
   }
 
@@ -1548,6 +1736,7 @@ export class ListingsService {
 
   async update(id: string, authUser: AuthenticatedUser, dto: UpdateListingDto) {
     await this.userBlocksService.assertNotBlocked(authUser.userId);
+    this.validateLocation(dto.location);
 
     const listing = await this.prisma.listing.findUnique({
       where: {
@@ -1618,13 +1807,17 @@ export class ListingsService {
           city: dto.city?.trim(),
           address: dto.address?.trim(),
           latitude:
-            dto.location && typeof dto.location['latitude'] === 'number'
-              ? dto.location['latitude']
-              : undefined,
+            dto.location == null
+              ? undefined
+              : typeof dto.location['latitude'] === 'number'
+                ? dto.location['latitude']
+                : null,
           longitude:
-            dto.location && typeof dto.location['longitude'] === 'number'
-              ? dto.location['longitude']
-              : undefined,
+            dto.location == null
+              ? undefined
+              : typeof dto.location['longitude'] === 'number'
+                ? dto.location['longitude']
+                : null,
           phone: nextPhone,
           phoneHidden: dto.phone_hidden,
           delivery: dto.delivery ? toInputJson(dto.delivery) : undefined,

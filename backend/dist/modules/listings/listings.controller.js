@@ -68,6 +68,21 @@ let ListingsController = class ListingsController {
             search,
         });
     }
+    findRealEstateMap(north, south, east, west, subcategory, city, search, dealType, minPrice, maxPrice, limit) {
+        return this.listingsService.findRealEstateMap({
+            north: Number(north),
+            south: Number(south),
+            east: Number(east),
+            west: Number(west),
+            subcategory,
+            city,
+            search,
+            dealType,
+            minPrice: minPrice == null ? undefined : Number(minPrice),
+            maxPrice: maxPrice == null ? undefined : Number(maxPrice),
+            limit: limit == null ? undefined : Number(limit),
+        });
+    }
     findMy(authUser, status, limit, cursor) {
         return this.listingsService.findMy(authUser, {
             status,
@@ -160,6 +175,23 @@ __decorate([
     __metadata("design:paramtypes", [String, String, String, String]),
     __metadata("design:returntype", void 0)
 ], ListingsController.prototype, "findVip", null);
+__decorate([
+    (0, common_1.Get)('map'),
+    __param(0, (0, common_1.Query)('north')),
+    __param(1, (0, common_1.Query)('south')),
+    __param(2, (0, common_1.Query)('east')),
+    __param(3, (0, common_1.Query)('west')),
+    __param(4, (0, common_1.Query)('subcategory')),
+    __param(5, (0, common_1.Query)('city')),
+    __param(6, (0, common_1.Query)('search')),
+    __param(7, (0, common_1.Query)('dealType')),
+    __param(8, (0, common_1.Query)('minPrice')),
+    __param(9, (0, common_1.Query)('maxPrice')),
+    __param(10, (0, common_1.Query)('limit')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String, String, String, String, String, String, String, String, String, String]),
+    __metadata("design:returntype", void 0)
+], ListingsController.prototype, "findRealEstateMap", null);
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Get)('my'),

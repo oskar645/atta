@@ -82,6 +82,20 @@ test('stored category, subcategory, location and vehicle limits are respected', 
   }
   assert.equal(matchesSavedSearchFilters(listing(), { ...saved(), location: 'Казань', radiusKm: null }), true);
 });
+
+test('legacy property subcategory still matches a saved search using its canonical label', () => {
+  const oldListing = {
+    ...listing(),
+    category: 'Недвижимость',
+    subcategory: 'Квартира',
+  } as unknown as Listing;
+  const propertySearch = {
+    ...saved(),
+    category: 'Недвижимость',
+    subcategory: 'Квартиры',
+  };
+  assert.equal(matchesSavedSearchFilters(oldListing, propertySearch), true);
+});
 test('extended persisted queryKey price and year are honored', () => {
   const parts = Array(26).fill(''); parts[4] = '900000';
   assert.equal(matchesSavedSearchFilters(listing(), { ...saved(), queryKey: parts.join('|') }), false);

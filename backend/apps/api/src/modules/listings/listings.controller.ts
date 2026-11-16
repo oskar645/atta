@@ -107,6 +107,35 @@ export class ListingsController {
     });
   }
 
+  @Get('map')
+  findRealEstateMap(
+    @Query('north') north?: string,
+    @Query('south') south?: string,
+    @Query('east') east?: string,
+    @Query('west') west?: string,
+    @Query('subcategory') subcategory?: string,
+    @Query('city') city?: string,
+    @Query('search') search?: string,
+    @Query('dealType') dealType?: string,
+    @Query('minPrice') minPrice?: string,
+    @Query('maxPrice') maxPrice?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.listingsService.findRealEstateMap({
+      north: Number(north),
+      south: Number(south),
+      east: Number(east),
+      west: Number(west),
+      subcategory,
+      city,
+      search,
+      dealType,
+      minPrice: minPrice == null ? undefined : Number(minPrice),
+      maxPrice: maxPrice == null ? undefined : Number(maxPrice),
+      limit: limit == null ? undefined : Number(limit),
+    });
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('my')
   findMy(

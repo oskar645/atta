@@ -359,6 +359,97 @@ function createService(overrides?: {
   );
 }
 
+test('real-estate map query keeps public visibility and viewport filters server-side', async () => {
+  let captured: Record<string, any> | undefined;
+  const service = createService({
+    findMany: async (args) => {
+      captured = args as Record<string, any>;
+      return [{
+        id: 'home-1', title: 'Дом', price: BigInt(2500000), city: 'Грозный',
+        address: 'ул. Мира, 1', latitude: 43.31, longitude: 45.69,
+        subcategory: 'Дома', dealType: 'Продажа',
+        photos: [{ publicUrl: 'https://example.com/home.jpg' }],
+      }];
+    },
+  });
+
+  const result = await service.findRealEstateMap({
+    north: 44, south: 42, east: 47, west: 44,
+    subcategory: 'Дома', city: 'Грозный', dealType: 'Продажа',
+    minPrice: 1000000, maxPrice: 3000000,
+  });
+
+  assert.equal(captured?.where.category, 'Недвижимость');
+  assert.equal(captured?.where.status, ListingStatus.APPROVED);
+  assert.deepEqual(captured?.where.photos, { some: {} });
+  assert.equal(captured?.take, 500);
+  assert.equal(result.items[0]?.latitude, 43.31);
+  assert.equal(result.items[0]?.photo_url, 'https://example.com/home.jpg');
+});
+
+test('real-estate map falls back to valid numeric coordinates in location_json', async () => {
+  let captured: Record<string, any> | undefined;
+  let rawQueryCalled = false;
+  const service = createService({
+    queryRaw: async () => {
+      rawQueryCalled = true;
+      return [{ id: 'home-json' }];
+    },
+    findMany: async (args) => {
+      captured = args as Record<string, any>;
+      return [{
+        id: 'home-json', title: 'Старый дом', price: BigInt(1500000),
+        city: 'Грозный', address: 'ул. Мира', latitude: null, longitude: null,
+        locationJson: { latitude: 43.31, longitude: 45.69 },
+        subcategory: 'Дом', dealType: 'Продажа', photos: [],
+      }];
+    },
+  });
+
+  const result = await service.findRealEstateMap({
+    north: 44, south: 42, east: 47, west: 44,
+  });
+
+  assert.equal(rawQueryCalled, true);
+  assert.deepEqual(captured?.where.AND[0].OR[1], { id: { in: ['home-json'] } });
+  assert.deepEqual(result.items.map(({ id, latitude, longitude }) => ({
+    id, latitude, longitude,
+  })), [{ id: 'home-json', latitude: 43.31, longitude: 45.69 }]);
+});
+
+test('real-estate map prefers valid column coordinates and rejects string JSON coordinates', async () => {
+  const service = createService({
+    queryRaw: async () => [{ id: 'home-invalid' }],
+    findMany: async () => [{
+      id: 'home-invalid', title: 'Дом', price: BigInt(1000), city: '', address: '',
+      latitude: 43.3, longitude: 45.6,
+      locationJson: { latitude: '1', longitude: '2' },
+      subcategory: 'Дом', dealType: null, photos: [],
+    }, {
+      id: 'home-fallback-invalid', title: 'Дом', price: BigInt(1000), city: '', address: '',
+      latitude: null, longitude: null,
+      locationJson: { latitude: '43.3', longitude: '45.6' },
+      subcategory: 'Дом', dealType: null, photos: [],
+    }],
+  });
+
+  const result = await service.findRealEstateMap({
+    north: 44, south: 42, east: 47, west: 44,
+  });
+
+  assert.deepEqual(result.items.map(({ id, latitude, longitude }) => ({
+    id, latitude, longitude,
+  })), [{ id: 'home-invalid', latitude: 43.3, longitude: 45.6 }]);
+});
+
+test('real-estate map query rejects invalid viewport', async () => {
+  const service = createService();
+  await assert.rejects(
+    service.findRealEstateMap({ north: 42, south: 44, east: 47, west: 44 }),
+    BadRequestException,
+  );
+});
+
 function createListingViewCounterService(options?: {
   existingViews?: Array<{
     listingId: string;

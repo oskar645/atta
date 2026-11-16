@@ -37,7 +37,10 @@
     "docker:prod:logs": "docker compose -f docker-compose.prod.yml --env-file .env.production logs -f api",
     "docker:prod:build": "docker compose -f docker-compose.prod.yml --env-file .env.production build api",
     "deploy:timeweb": "bash scripts/deploy-timeweb.sh",
-    "data:audit:test-user": "ts-node apps/api/src/scripts/audit-test-data.ts"
+    "data:audit:test-user": "ts-node apps/api/src/scripts/audit-test-data.ts",
+    "listings:coordinates:audit": "ts-node scripts/backfill-listing-coordinates.ts --audit",
+    "listings:coordinates:dry-run": "ts-node scripts/backfill-listing-coordinates.ts",
+    "listings:coordinates:apply": "ts-node scripts/backfill-listing-coordinates.ts --apply"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",
