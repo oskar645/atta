@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -85,7 +87,7 @@ abstract class _State<T extends StatefulWidget> extends State<T> {
     if (items.isEmpty) {
       return const Center(child: Text('За выбранный период данных нет.'));
     }
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
         onRefresh: load,
         child: ListView.separated(
             padding: const EdgeInsets.all(12),
@@ -211,17 +213,21 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
         _Header(period, change),
         Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: TextField(
-                controller: search,
-                decoration: const InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.search),
-                    hintText: 'Поиск по запросам'),
-                onChanged: (_) {
-                  timer?.cancel();
-                  timer = Timer(const Duration(milliseconds: 300), load);
-                })),
+            child: StandardSearchSurface(
+              child: TextField(
+                  controller: search,
+                  decoration: const InputDecoration(
+                      isDense: true,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Поиск по запросам'),
+                  onChanged: (_) {
+                    timer?.cancel();
+                    timer = Timer(const Duration(milliseconds: 300), load);
+                  }),
+            )),
         Expanded(
             child: loading
                 ? const Center(child: CircularProgressIndicator())
@@ -232,7 +238,7 @@ class _SearchState extends _State<AdminZeroResultSearchesScreen> {
                     : items.isEmpty
                         ? const Center(
                             child: Text('За выбранный период данных нет.'))
-                        : RefreshIndicator(
+                        : AttaRefreshIndicator(
                             onRefresh: load,
                             child: ListView.separated(
                               controller: scroll,

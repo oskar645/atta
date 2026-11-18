@@ -76,6 +76,34 @@ class ListingsApi {
     return Map<String, dynamic>.from(response as Map);
   }
 
+  Future<Map<String, dynamic>> realEstateMap({
+    required double north,
+    required double south,
+    required double east,
+    required double west,
+    String? subcategory,
+    String? city,
+    String? search,
+    String? dealType,
+    int? minPrice,
+    int? maxPrice,
+  }) async {
+    final response = await client.get('/listings/map', queryParameters: {
+      'north': north,
+      'south': south,
+      'east': east,
+      'west': west,
+      if ((subcategory ?? '').trim().isNotEmpty) 'subcategory': subcategory,
+      if ((city ?? '').trim().isNotEmpty) 'city': city,
+      if ((search ?? '').trim().isNotEmpty) 'search': search,
+      if ((dealType ?? '').trim().isNotEmpty) 'dealType': dealType,
+      if (minPrice != null) 'minPrice': minPrice,
+      if (maxPrice != null) 'maxPrice': maxPrice,
+      'limit': 500,
+    });
+    return Map<String, dynamic>.from(response as Map);
+  }
+
   Future<Map<String, dynamic>> getCallContact(String id) async {
     final response = await client.post(
       '/listings/$id/call-contact',

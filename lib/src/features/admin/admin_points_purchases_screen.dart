@@ -1,7 +1,9 @@
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:atta/src/utils/moscow_calendar.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -272,7 +274,7 @@ class _AdminPointsPurchasesScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Покупки баллов')),
-      body: RefreshIndicator(
+      body: AttaRefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
           controller: _scrollController,
@@ -300,16 +302,22 @@ class _AdminPointsPurchasesScreenState
               ),
             ],
             const SizedBox(height: 10),
-            TextField(
-              controller: _searchController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => _runSearch(),
-              decoration: InputDecoration(
-                labelText: 'Поиск по телефону, имени, нику, userId',
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  tooltip: 'Найти',
-                  onPressed: _runSearch,
+            StandardSearchSurface(
+              child: TextField(
+                controller: _searchController,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _runSearch(),
+                decoration: InputDecoration(
+                  labelText: 'Поиск по телефону, имени, нику, userId',
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.search),
+                    tooltip: 'Найти',
+                    onPressed: _runSearch,
+                  ),
+                  isDense: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
                 ),
               ),
             ),

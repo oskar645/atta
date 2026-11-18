@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:atta/src/models/car_specs.dart';
+import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/models/listing.dart';
+import 'package:atta/src/models/map_listing.dart';
 import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_config.dart';
 import 'package:atta/src/services/api/api_exception.dart';
@@ -43,6 +45,7 @@ class ListingFeedFilters {
   final bool? autoCleared;
   final bool onlyUncrashed;
   final bool onlyWithPhoto;
+  final String dealType;
   const ListingFeedFilters({
     required this.category,
     required this.search,
@@ -70,6 +73,7 @@ class ListingFeedFilters {
     this.autoCleared,
     this.onlyUncrashed = false,
     this.onlyWithPhoto = false,
+    this.dealType = '',
   });
 }
 
@@ -207,6 +211,37 @@ class ListingsService {
   Future<String> getOwnerCallContact(String ownerId) async {
     final response = await _api.getOwnerCallContact(ownerId);
     return (response['phone'] ?? '').toString().trim();
+  }
+
+  Future<List<MapListing>> getRealEstateMapListings({
+    required double north,
+    required double south,
+    required double east,
+    required double west,
+    required ListingFeedFilters filters,
+  }) async {
+    final response = await _api.realEstateMap(
+      north: north,
+      south: south,
+      east: east,
+      west: west,
+      subcategory: filters.subcategory == 'Все'
+          ? null
+          : canonicalSubcategory('Недвижимость', filters.subcategory),
+      city: filters.location,
+      search: filters.search,
+      dealType: filters.dealType,
+      minPrice: filters.priceFrom,
+      maxPrice: filters.priceTo,
+    );
+    final raw = response['items'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((item) => MapListing.fromMap(
+              item.map((key, value) => MapEntry(key.toString(), value)),
+            ))
+        .toList(growable: false);
   }
 
   Object? _lastMyListingsError;
@@ -838,6 +873,8 @@ class ListingsService {
     String? clothesType,
     String? clothesSize,
     String? oemPartNumber,
+    double? latitude,
+    double? longitude,
     ListingPhotoUploadStatusCallback? onPhotoStatusChanged,
   }) async {
     _debugSource('Listings source: Timeweb');
@@ -858,6 +895,8 @@ class ListingsService {
       'phone_hidden': phoneHidden,
       'city': city,
       'address': city,
+      if (latitude != null && longitude != null)
+        'location': {'latitude': latitude, 'longitude': longitude},
       'delivery': delivery,
       'photo_urls': const <String>[],
       if (car != null) 'car': car.toMap(),
@@ -1060,6 +1099,8 @@ class ListingsService {
     String? clothesType,
     String? clothesSize,
     String? oemPartNumber,
+    double? latitude,
+    double? longitude,
   }) async {
     _debugSource('Listings source: Timeweb');
     final response = await _api.update(
@@ -1076,6 +1117,7 @@ class ListingsService {
         'phone_hidden': phoneHidden,
         'city': city,
         'address': city,
+        'location': {'latitude': latitude, 'longitude': longitude},
         'delivery': delivery,
         if (car != null) 'car': car.toMap(),
         if (dealType != null && dealType.trim().isNotEmpty)
@@ -1329,7 +1371,8 @@ class ListingsService {
     final subcategory = filters.subcategory.trim();
     if (subcategory.isNotEmpty &&
         subcategory != 'Все' &&
-        listing.subcategory != subcategory) {
+        !subcategoriesMatch(
+            listing.category, listing.subcategory, subcategory)) {
       return false;
     }
 
@@ -1639,7 +1682,7 @@ class ListingsService {
     return [
       filters.category,
       filters.search,
-      filters.subcategory,
+      canonicalSubcategory(filters.category, filters.subcategory),
       filters.priceFrom ?? '',
       filters.priceTo ?? '',
       filters.location,

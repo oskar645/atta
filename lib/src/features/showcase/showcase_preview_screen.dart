@@ -1,6 +1,7 @@
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/models/showcase_item.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:flutter/material.dart';
 
@@ -22,66 +23,84 @@ class ShowcasePreviewScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(20),
+          AttaCoolSurface(
+            borderRadius: 20,
             child: AspectRatio(
               aspectRatio: 4 / 3,
               child: _ShowcaseImage(photoUrl: item.firstPhotoUrl),
             ),
           ),
           const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.blue.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: const Text(
-              'Витрина ATTA',
-              style: TextStyle(
-                color: Colors.blue,
-                fontWeight: FontWeight.w700,
+          AttaCoolSurface(
+            borderRadius: 20,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Витрина ATTA',
+                      style: TextStyle(
+                        color: Colors.blue,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    item.title.isEmpty ? 'Объявление недоступно' : item.title,
+                    style: const TextStyle(
+                        fontSize: 24, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '${formatPrice(item.price)} ₽',
+                    style: const TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.w900),
+                  ),
+                  const SizedBox(height: 12),
+                  _InfoRow(
+                    icon: Icons.location_on_outlined,
+                    text: item.city.isEmpty ? 'Город не указан' : item.city,
+                  ),
+                  _InfoRow(
+                    icon: Icons.person_outline,
+                    text:
+                        item.sellerName.isEmpty ? 'Продавец' : item.sellerName,
+                  ),
+                  if (item.sellerRating != null)
+                    _InfoRow(
+                      icon: Icons.star_rounded,
+                      text:
+                          'Рейтинг продавца: ${item.sellerRating!.toStringAsFixed(1)}',
+                    ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: item.listingId.trim().isEmpty
+                          ? null
+                          : () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ListingDetailScreen(
+                                      listingId: item.listingId),
+                                ),
+                              );
+                            },
+                      child: const Text('Открыть объявление'),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            item.title.isEmpty ? 'Объявление недоступно' : item.title,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '${formatPrice(item.price)} ₽',
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 12),
-          _InfoRow(
-            icon: Icons.location_on_outlined,
-            text: item.city.isEmpty ? 'Город не указан' : item.city,
-          ),
-          _InfoRow(
-            icon: Icons.person_outline,
-            text: item.sellerName.isEmpty ? 'Продавец' : item.sellerName,
-          ),
-          if (item.sellerRating != null)
-            _InfoRow(
-              icon: Icons.star_rounded,
-              text:
-                  'Рейтинг продавца: ${item.sellerRating!.toStringAsFixed(1)}',
-            ),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: item.listingId.trim().isEmpty
-                ? null
-                : () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            ListingDetailScreen(listingId: item.listingId),
-                      ),
-                    );
-                  },
-            child: const Text('Открыть объявление'),
           ),
         ],
       ),

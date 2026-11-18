@@ -8,6 +8,7 @@ import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/push_notification_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -275,9 +276,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-      child: Material(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(18),
+      child: AttaCoolSurface(
+        borderRadius: 18,
         child: ListTile(
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -387,21 +387,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _sectionTitle('Приложение'),
           if (_hasNativePush)
-            SwitchListTile(
-              secondary: const Icon(Icons.notifications_active_outlined),
-              title: const Text('Push-уведомления'),
-              subtitle: const Text('Сообщения и события ATTA'),
-              value: _pushEnabled,
-              onChanged: _updatingPush ? null : _setPushEnabled,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+              child: AttaCoolSurface(
+                borderRadius: 18,
+                child: AttaIosSwitchTheme(
+                  child: SwitchListTile(
+                    secondary: const Icon(Icons.notifications_active_outlined),
+                    title: const Text('Push-уведомления'),
+                    subtitle: const Text('Сообщения и события ATTA'),
+                    value: _pushEnabled,
+                    onChanged: _updatingPush ? null : _setPushEnabled,
+                  ),
+                ),
+              ),
             ),
-          SwitchListTile(
-            secondary: const Icon(Icons.campaign_outlined),
-            title: const Text('Рекламные уведомления'),
-            subtitle: const Text(
-              'Акции, новости и предложения ATTA',
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+            child: AttaCoolSurface(
+              borderRadius: 18,
+              child: AttaIosSwitchTheme(
+                child: SwitchListTile(
+                  secondary: const Icon(Icons.campaign_outlined),
+                  title: const Text('Рекламные уведомления'),
+                  subtitle: const Text(
+                    'Акции, новости и предложения ATTA',
+                  ),
+                  value: _marketingConsent,
+                  onChanged:
+                      _loadingMarketingConsent ? null : _setMarketingConsent,
+                ),
+              ),
             ),
-            value: _marketingConsent,
-            onChanged: _loadingMarketingConsent ? null : _setMarketingConsent,
           ),
           _tile(
             icon: Icons.notifications_none,

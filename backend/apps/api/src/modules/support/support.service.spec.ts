@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma, SupportSenderType, SupportTicketStatus } from '@prisma/client';
 
 import { SupportService } from './support.service';
@@ -58,6 +58,35 @@ function createService(
     dashboardSignal as never,
   );
 }
+
+test('support image validation accepts real JPEG, PNG and WebP signatures', () => {
+  const service = createService({});
+  const cases = [
+    { mimetype: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff]) },
+    { mimetype: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
+    { mimetype: 'image/webp', buffer: Buffer.from('RIFFxxxxWEBP', 'ascii') },
+  ];
+
+  for (const item of cases) {
+    const file = { ...item, size: item.buffer.length, originalname: 'image' };
+    assert.equal(service.requireImage(file, 1024), file);
+  }
+});
+
+test('support image validation rejects a forged image MIME type', () => {
+  const service = createService({});
+  assert.throws(
+    () => service.requireImage({
+      buffer: Buffer.from('not an image'),
+      mimetype: 'image/jpeg',
+      size: 12,
+      originalname: 'payload.jpg',
+    }, 1024),
+    (error: unknown) =>
+      error instanceof BadRequestException &&
+      error.message === 'Файл не является корректным изображением',
+  );
+});
 
 test('admin first message creates support ticket, message and notification payload', async () => {
   const notifications: Array<Record<string, unknown>> = [];

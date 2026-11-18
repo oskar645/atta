@@ -1,4 +1,5 @@
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -46,7 +47,7 @@ class _AdminRepeatedMessagesScreenState
               return const Center(
                   child: Text('За последние 24 часа совпадений нет.'));
             }
-            return RefreshIndicator(
+            return AttaRefreshIndicator(
               onRefresh: () async {
                 setState(_reload);
                 await _result;

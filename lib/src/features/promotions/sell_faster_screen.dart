@@ -11,6 +11,7 @@ import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/features/wallet/wallet_screen.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -81,34 +82,38 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
   Future<void> _showInsufficientBonuses(PromotionPlan plan) async {
     await showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Colors.transparent,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Недостаточно бонусов',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Для тарифа "${plan.title}" нужно ${plan.costBonus} бонусов.',
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _openWallet();
-                  },
-                  child: const Text('Получить бонусы'),
+        child: AttaCoolSurface(
+          borderRadius: 24,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Недостаточно бонусов',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Text(
+                  'Для тарифа "${plan.title}" нужно ${plan.costBonus} бонусов.',
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _openWallet();
+                    },
+                    child: const Text('Получить бонусы'),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -157,6 +162,7 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
     final response = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       showDragHandle: true,
       builder: (context) => _PromotionConfirmSheet(
         listing: widget.listing,
@@ -342,83 +348,86 @@ class _SellFasterScreenState extends State<SellFasterScreen> {
                 final enoughBalance =
                     balance == null || balance >= plan.costBonus;
                 final isLoading = _activatingPlanType == plan.type;
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 18,
-                              backgroundColor:
-                                  Colors.blue.withValues(alpha: 0.10),
-                              child: Icon(
-                                _iconForType(plan.type),
-                                color: Colors.blue,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                plan.title,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: AttaCoolSurface(
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 18,
+                                backgroundColor:
+                                    Colors.blue.withValues(alpha: 0.10),
+                                child: Icon(
+                                  _iconForType(plan.type),
+                                  color: Colors.blue,
                                 ),
                               ),
-                            ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  plan.title,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${plan.costBonus} бонусов',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w900),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Text(plan.description),
+                          const SizedBox(height: 8),
+                          Text(
+                              'Длительность: ${_durationLabel(plan.durationHours)}'),
+                          if (active != null && active.endsAt != null) ...[
+                            const SizedBox(height: 6),
                             Text(
-                              '${plan.costBonus} бонусов',
+                              'Активно до ${_formatDateTime(active.endsAt!)}',
                               style:
-                                  const TextStyle(fontWeight: FontWeight.w900),
+                                  const TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(plan.description),
-                        const SizedBox(height: 8),
-                        Text(
-                            'Длительность: ${_durationLabel(plan.durationHours)}'),
-                        if (active != null && active.endsAt != null) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            'Активно до ${_formatDateTime(active.endsAt!)}',
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton(
+                              onPressed:
+                                  (active == null || plan.type == 'bump') &&
+                                          !isLoading
+                                      ? () => _onPlanPressed(plan, data)
+                                      : null,
+                              child: isLoading
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(
+                                      active != null && plan.type != 'bump'
+                                          ? 'Уже подключено'
+                                          : !data.canPromote
+                                              ? 'Подключить'
+                                              : !enoughBalance
+                                                  ? 'Подключить'
+                                                  : 'Подключить',
+                                    ),
+                            ),
                           ),
                         ],
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            onPressed:
-                                (active == null || plan.type == 'bump') &&
-                                        !isLoading
-                                    ? () => _onPlanPressed(plan, data)
-                                    : null,
-                            child: isLoading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : Text(
-                                    active != null && plan.type != 'bump'
-                                        ? 'Уже подключено'
-                                        : !data.canPromote
-                                            ? 'Подключить'
-                                            : !enoughBalance
-                                                ? 'Подключить'
-                                                : 'Подключить',
-                                  ),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 );
@@ -540,174 +549,175 @@ class _PromotionConfirmSheetState extends State<_PromotionConfirmSheet> {
     final photo = listing.firstPhotoUrl;
     final previewBalance = wallet == null ? null : wallet.balance - _totalPrice;
     return SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              plan.type == 'showcase'
-                  ? 'Добавить в Витрину ATTA?'
-                  : 'Подключить ${plan.title}?',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 8),
-            Text(plan.description),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant,
+      child: AttaCoolSurface(
+        borderRadius: 24,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                plan.type == 'showcase'
+                    ? 'Добавить в Витрину ATTA?'
+                    : 'Подключить ${plan.title}?',
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(plan.description),
+              const SizedBox(height: 16),
+              AttaCoolSurface(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: SizedBox(
+                          width: 68,
+                          height: 68,
+                          child: photo == null
+                              ? Container(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                                  alignment: Alignment.center,
+                                  child: const Icon(Icons.image_outlined),
+                                )
+                              : CachedNetworkImage(
+                                  imageUrl: photo,
+                                  fit: BoxFit.cover,
+                                  errorWidget: (_, __, ___) =>
+                                      const Icon(Icons.broken_image_outlined),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              listing.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 6),
+                            Text('${formatPrice(listing.price)} ₽'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              child: Row(
+              const SizedBox(height: 16),
+              if (_hasQuantitySelector) ...[
+                Row(
+                  children: [
+                    IconButton.outlined(
+                      onPressed: _days > 1 && !_isSubmitting
+                          ? () => _changeDays(-1)
+                          : null,
+                      icon: const Icon(Icons.remove),
+                      tooltip: 'Уменьшить',
+                    ),
+                    Expanded(
+                      child: Center(
+                        child: Text(
+                          '$_displayDays ${russianDayWord(_displayDays)}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton.outlined(
+                      onPressed: _days < 30 && !_isSubmitting
+                          ? () => _changeDays(1)
+                          : null,
+                      icon: const Icon(Icons.add),
+                      tooltip: 'Увеличить',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ],
+              if (_isRaise) ...[
+                Text('Количество поднятий: $_days'),
+                const SizedBox(height: 4),
+                Text('Длительность: $_days ${russianDayWord(_days)}'),
+                const SizedBox(height: 4),
+              ] else if (_hasQuantitySelector) ...[
+                Text('Срок: $_displayDays ${russianDayWord(_displayDays)}'),
+                const SizedBox(height: 4),
+              ],
+              Text('Стоимость: $_totalPrice бонусов'),
+              const SizedBox(height: 4),
+              Text(
+                wallet == null
+                    ? 'Баланс временно недоступен'
+                    : 'Ваш баланс: ${wallet.balance} бонусов',
+              ),
+              if (previewBalance != null) ...[
+                const SizedBox(height: 4),
+                Text('После оплаты останется: $previewBalance бонусов'),
+              ],
+              if (!_hasEnoughBalance) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Недостаточно бонусов. Не хватает $_missingBonuses бонусов',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              if (_errorText != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _errorText!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Row(
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: SizedBox(
-                      width: 68,
-                      height: 68,
-                      child: photo == null
-                          ? Container(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                              alignment: Alignment.center,
-                              child: const Icon(Icons.image_outlined),
-                            )
-                          : CachedNetworkImage(
-                              imageUrl: photo,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) =>
-                                  const Icon(Icons.broken_image_outlined),
-                            ),
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _isSubmitting
+                          ? null
+                          : () => Navigator.of(context).pop(),
+                      child: const Text('Отмена'),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          listing.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 6),
-                        Text('${formatPrice(listing.price)} ₽'),
-                      ],
+                    child: FilledButton(
+                      onPressed:
+                          _hasEnoughBalance && !_isSubmitting ? _submit : null,
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Подключить'),
                     ),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 16),
-            if (_hasQuantitySelector) ...[
-              Row(
-                children: [
-                  IconButton.outlined(
-                    onPressed: _days > 1 && !_isSubmitting
-                        ? () => _changeDays(-1)
-                        : null,
-                    icon: const Icon(Icons.remove),
-                    tooltip: 'Уменьшить',
-                  ),
-                  Expanded(
-                    child: Center(
-                      child: Text(
-                        '$_displayDays ${russianDayWord(_displayDays)}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton.outlined(
-                    onPressed: _days < 30 && !_isSubmitting
-                        ? () => _changeDays(1)
-                        : null,
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Увеличить',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
             ],
-            if (_isRaise) ...[
-              Text('Количество поднятий: $_days'),
-              const SizedBox(height: 4),
-              Text('Длительность: $_days ${russianDayWord(_days)}'),
-              const SizedBox(height: 4),
-            ] else if (_hasQuantitySelector) ...[
-              Text('Срок: $_displayDays ${russianDayWord(_displayDays)}'),
-              const SizedBox(height: 4),
-            ],
-            Text('Стоимость: $_totalPrice бонусов'),
-            const SizedBox(height: 4),
-            Text(
-              wallet == null
-                  ? 'Баланс временно недоступен'
-                  : 'Ваш баланс: ${wallet.balance} бонусов',
-            ),
-            if (previewBalance != null) ...[
-              const SizedBox(height: 4),
-              Text('После оплаты останется: $previewBalance бонусов'),
-            ],
-            if (!_hasEnoughBalance) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Недостаточно бонусов. Не хватает $_missingBonuses бонусов',
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-            if (_errorText != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _errorText!,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _isSubmitting
-                        ? null
-                        : () => Navigator.of(context).pop(),
-                    child: const Text('Отмена'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton(
-                    onPressed:
-                        _hasEnoughBalance && !_isSubmitting ? _submit : null,
-                    child: _isSubmitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Text('Подключить'),
-                  ),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );

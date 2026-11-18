@@ -25,6 +25,48 @@ const List<String> kCategories = <String>[
   'Другое',
 ];
 
+/// Legacy values remain valid in Backend and old listings, but new UI exposes
+/// one unambiguous label for each meaning.
+const Map<String, Map<String, String>> kSubcategoryAliases = {
+  'Недвижимость': {
+    'Квартира': 'Квартиры',
+    'Комната': 'Комнаты',
+    'Дом': 'Дома',
+    'Таунхаус': 'Таунхаусы',
+    'Дача': 'Дачи',
+    'Коттедж': 'Коттеджи',
+    'Земельный участок': 'Земельные участки',
+    'Гараж': 'Гаражи',
+    'Машино-место': 'Машино-места',
+    'Коммерческая недвижимость': 'Коммерческие помещения',
+    'Офис': 'Офисы',
+    'Склад': 'Склады',
+    'Производственное помещение': 'Производственные помещения',
+  },
+  'Услуги': {
+    'Сварка и аргон': 'Сварочные работы',
+  },
+};
+
+String canonicalSubcategory(String category, String value) {
+  final trimmed = value.trim();
+  return kSubcategoryAliases[category]?[trimmed] ?? trimmed;
+}
+
+Set<String> compatibleSubcategoryValues(String category, String value) {
+  final canonical = canonicalSubcategory(category, value);
+  return {
+    canonical,
+    for (final entry in kSubcategoryAliases[category]?.entries ??
+        const <MapEntry<String, String>>[])
+      if (entry.value == canonical) entry.key,
+  };
+}
+
+bool subcategoriesMatch(String category, String left, String right) =>
+    canonicalSubcategory(category, left) ==
+    canonicalSubcategory(category, right);
+
 const Map<String, List<String>> kSubcategories = <String, List<String>>{
   'Авто': [
     'Легковые автомобили',
@@ -120,31 +162,19 @@ const Map<String, List<String>> kSubcategories = <String, List<String>>{
   ],
   'Недвижимость': [
     'Квартиры',
-    'Квартира',
     'Комнаты',
-    'Комната',
     'Дома',
-    'Дом',
     'Части дома',
     'Таунхаусы',
-    'Таунхаус',
     'Дачи',
-    'Дача',
     'Коттеджи',
-    'Коттедж',
     'Земельные участки',
-    'Земельный участок',
-    'Гаражи и машиноместа',
-    'Гараж',
-    'Машино-место',
+    'Гаражи',
+    'Машино-места',
     'Коммерческие помещения',
-    'Коммерческая недвижимость',
     'Офисы',
-    'Офис',
     'Склады',
-    'Склад',
     'Производственные помещения',
-    'Производственное помещение',
     'Торговое помещение',
     'Готовый бизнес',
     'Недостроенный объект',
@@ -456,7 +486,6 @@ const Map<String, List<String>> kSubcategories = <String, List<String>>{
     'Полировка авто',
     'Кузовной ремонт',
     'Покраска авто',
-    'Сварка и аргон',
     'Автоэлектрик',
     'Диагностика авто',
     'Ремонт двигателя',

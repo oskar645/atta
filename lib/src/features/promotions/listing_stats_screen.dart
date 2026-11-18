@@ -1,5 +1,6 @@
 import 'package:atta/src/models/listing_stats.dart';
 import 'package:atta/src/services/promotions_service.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -80,13 +81,16 @@ class _ListingStatsScreenState extends State<ListingStatsScreen> {
                 const Text('Активных продвижений нет')
               else
                 ...stats.activePromotions.map(
-                  (promotion) => Card(
-                    child: ListTile(
-                      title: Text(promotion.title),
-                      subtitle: Text(
-                        promotion.endsAt == null
-                            ? 'Активно'
-                            : 'Активно до ${_formatDateTime(promotion.endsAt!)}',
+                  (promotion) => Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: AttaCoolSurface(
+                      child: ListTile(
+                        title: Text(promotion.title),
+                        subtitle: Text(
+                          promotion.endsAt == null
+                              ? 'Активно'
+                              : 'Активно до ${_formatDateTime(promotion.endsAt!)}',
+                        ),
                       ),
                     ),
                   ),
@@ -110,13 +114,15 @@ class _StatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        title: Text(title),
-        trailing: Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w900),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: AttaCoolSurface(
+        child: ListTile(
+          title: Text(title),
+          trailing: Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w900),
+          ),
         ),
       ),
     );

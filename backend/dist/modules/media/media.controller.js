@@ -32,9 +32,11 @@ const rate_limit_service_1 = require("../rate-limit/rate-limit.service");
 const storage_service_1 = require("../storage/storage.service");
 const users_service_1 = require("../users/users.service");
 const serializers_1 = require("../../common/serializers");
-const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
-    storage: require('multer').memoryStorage(),
-});
+const image_upload_1 = require("./image-upload");
+const avatarImageUpload = (0, platform_express_1.FileInterceptor)('file', (0, image_upload_1.memoryImageUploadOptions)(image_upload_1.IMAGE_UPLOAD_LIMITS.avatar));
+const listingImageUpload = (0, platform_express_1.FileInterceptor)('file', (0, image_upload_1.memoryImageUploadOptions)(image_upload_1.IMAGE_UPLOAD_LIMITS.listing));
+const chatImageUpload = (0, platform_express_1.FileInterceptor)('file', (0, image_upload_1.memoryImageUploadOptions)(image_upload_1.IMAGE_UPLOAD_LIMITS.chat));
+const adminImageUpload = (0, platform_express_1.FileInterceptor)('file', (0, image_upload_1.memoryImageUploadOptions)(image_upload_1.IMAGE_UPLOAD_LIMITS.admin));
 // TODO: Video upload / 30 sec limit will be migrated later.
 let MediaController = MediaController_1 = class MediaController {
     constructor(jwtService, prisma, rateLimitService, chatsGateway, chatsService, feedAdsService, topBannersService, listingsService, notificationsService, storageService, usersService) {
@@ -236,7 +238,7 @@ let MediaController = MediaController_1 = class MediaController {
         if (!allowed.has(mime)) {
             throw new common_1.BadRequestException('Поддерживаются JPG, PNG, WEBP и HEIC/HEIF');
         }
-        const detectedMime = this.detectImageMime(file.buffer);
+        const detectedMime = (0, image_upload_1.detectImageMime)(file.buffer);
         if (!detectedMime || detectedMime !== mime) {
             throw new common_1.BadRequestException('Файл не является корректным изображением');
         }
@@ -250,50 +252,6 @@ let MediaController = MediaController_1 = class MediaController {
             return;
         }
         this.logger.debug(`Media proxy status=${status} category=${category} provider=${provider} key=${key}`);
-    }
-    detectImageMime(buffer) {
-        if (buffer.length >= 3 &&
-            buffer[0] === 0xff &&
-            buffer[1] === 0xd8 &&
-            buffer[2] === 0xff) {
-            return 'image/jpeg';
-        }
-        if (buffer.length >= 8 &&
-            buffer[0] === 0x89 &&
-            buffer[1] === 0x50 &&
-            buffer[2] === 0x4e &&
-            buffer[3] === 0x47 &&
-            buffer[4] === 0x0d &&
-            buffer[5] === 0x0a &&
-            buffer[6] === 0x1a &&
-            buffer[7] === 0x0a) {
-            return 'image/png';
-        }
-        if (buffer.length >= 12 &&
-            buffer[0] === 0x52 &&
-            buffer[1] === 0x49 &&
-            buffer[2] === 0x46 &&
-            buffer[3] === 0x46 &&
-            buffer[8] === 0x57 &&
-            buffer[9] === 0x45 &&
-            buffer[10] === 0x42 &&
-            buffer[11] === 0x50) {
-            return 'image/webp';
-        }
-        if (buffer.length >= 12 &&
-            buffer[4] === 0x66 &&
-            buffer[5] === 0x74 &&
-            buffer[6] === 0x79 &&
-            buffer[7] === 0x70) {
-            const brand = Buffer.from(buffer.subarray(8, 12)).toString('ascii').toLowerCase();
-            if (brand.includes('heic') || brand.includes('heix')) {
-                return 'image/heic';
-            }
-            if (brand.includes('heif') || brand.includes('hevx')) {
-                return 'image/heif';
-            }
-        }
-        return null;
     }
     detectMediaMime(key) {
         const lowerKey = key.toLowerCase();
@@ -358,7 +316,7 @@ exports.MediaController = MediaController;
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('avatar'),
-    (0, common_1.UseInterceptors)(memoryImageUpload),
+    (0, common_1.UseInterceptors)(avatarImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.UploadedFile)()),
     __metadata("design:type", Function),
@@ -368,7 +326,7 @@ __decorate([
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('listings/:listingId/photos'),
-    (0, common_1.UseInterceptors)(memoryImageUpload),
+    (0, common_1.UseInterceptors)(listingImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('listingId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.Req)()),
@@ -390,7 +348,7 @@ __decorate([
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Post)('chats/:chatId/images'),
-    (0, common_1.UseInterceptors)(memoryImageUpload),
+    (0, common_1.UseInterceptors)(chatImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('chatId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.UploadedFile)()),
@@ -440,7 +398,7 @@ __decorate([
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
     (0, common_1.Post)('feed-ads/:feedAdId/image'),
-    (0, common_1.UseInterceptors)(memoryImageUpload),
+    (0, common_1.UseInterceptors)(adminImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('feedAdId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.UploadedFile)()),
@@ -451,7 +409,7 @@ __decorate([
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
     (0, common_1.Post)('top-banners/:topBannerId/image'),
-    (0, common_1.UseInterceptors)(memoryImageUpload),
+    (0, common_1.UseInterceptors)(adminImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Param)('topBannerId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.UploadedFile)()),
@@ -462,7 +420,7 @@ __decorate([
 __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard, admin_guard_1.AdminGuard),
     (0, common_1.Post)('notifications/image'),
-    (0, common_1.UseInterceptors)(memoryImageUpload),
+    (0, common_1.UseInterceptors)(adminImageUpload),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.UploadedFile)()),
     __metadata("design:type", Function),

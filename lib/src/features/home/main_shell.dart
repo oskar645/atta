@@ -154,6 +154,18 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  Widget _animatedNavIcon({
+    required int index,
+    required Widget icon,
+  }) {
+    return AnimatedScale(
+      scale: _i == index ? 1.15 : 1,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      child: icon,
+    );
+  }
+
   void _handleExternalTabSelection() {
     final controller = _shellController;
     if (controller == null || !mounted || controller.selectedIndex == _i) {
@@ -226,6 +238,9 @@ class _MainShellState extends State<MainShell> {
     final uid = auth.currentUser?.uid ?? '';
 
     final navTheme = NavigationBarThemeData(
+      backgroundColor: Theme.of(context).brightness == Brightness.light
+          ? Colors.white
+          : null,
       labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
         final selected = states.contains(WidgetState.selected);
         return TextStyle(
@@ -257,8 +272,7 @@ class _MainShellState extends State<MainShell> {
         builder: (context, chatSnap) {
           final unreadChats = chatSnap.data;
 
-          Widget msgIcon(Color color) {
-            final icon = Icon(Icons.chat_bubble_outline, color: color);
+          Widget msgIcon(Widget icon) {
             if (unreadChats == null || unreadChats <= 0) return icon;
             return Badge(
               label: Text(unreadChats > 99 ? '99+' : '$unreadChats'),
@@ -295,43 +309,83 @@ class _MainShellState extends State<MainShell> {
                             selectedIndex: _i,
                             onDestinationSelected: _onDestinationSelected,
                             destinations: [
-                              const NavigationDestination(
-                                icon: Icon(Icons.search, color: _inactive),
-                                selectedIcon:
-                                    Icon(Icons.search, color: _search),
+                              NavigationDestination(
+                                icon: _animatedNavIcon(
+                                  index: 0,
+                                  icon: const Icon(Icons.search,
+                                      color: _inactive),
+                                ),
+                                selectedIcon: _animatedNavIcon(
+                                  index: 0,
+                                  icon:
+                                      const Icon(Icons.search, color: _search),
+                                ),
                                 label: 'Поиск',
                               ),
                               NavigationDestination(
                                 icon: _dotIcon(
-                                  const Icon(Icons.favorite_border,
-                                      color: _inactive),
+                                  _animatedNavIcon(
+                                    index: 1,
+                                    icon: const Icon(Icons.favorite_border,
+                                        color: _inactive),
+                                  ),
                                   hasSavedSearchAlerts,
                                 ),
                                 selectedIcon: _dotIcon(
-                                  const Icon(Icons.favorite, color: _fav),
+                                  _animatedNavIcon(
+                                    index: 1,
+                                    icon:
+                                        const Icon(Icons.favorite, color: _fav),
+                                  ),
                                   hasSavedSearchAlerts,
                                 ),
                                 label: 'Избранное',
                               ),
-                              const NavigationDestination(
-                                icon: Icon(Icons.list_alt, color: _inactive),
-                                selectedIcon:
-                                    Icon(Icons.list_alt, color: _listings),
+                              NavigationDestination(
+                                icon: _animatedNavIcon(
+                                  index: 2,
+                                  icon: const Icon(Icons.list_alt,
+                                      color: _inactive),
+                                ),
+                                selectedIcon: _animatedNavIcon(
+                                  index: 2,
+                                  icon: const Icon(Icons.list_alt,
+                                      color: _listings),
+                                ),
                                 label: 'Объявления',
                               ),
                               NavigationDestination(
-                                icon: msgIcon(_inactive),
-                                selectedIcon: msgIcon(_msgs),
+                                icon: msgIcon(
+                                  _animatedNavIcon(
+                                    index: 3,
+                                    icon: const Icon(Icons.chat_bubble_outline,
+                                        color: _inactive),
+                                  ),
+                                ),
+                                selectedIcon: msgIcon(
+                                  _animatedNavIcon(
+                                    index: 3,
+                                    icon: const Icon(Icons.chat_bubble_outline,
+                                        color: _msgs),
+                                  ),
+                                ),
                                 label: 'Сообщения',
                               ),
                               NavigationDestination(
                                 icon: _dotIcon(
-                                  const Icon(Icons.person_outline,
-                                      color: _inactive),
+                                  _animatedNavIcon(
+                                    index: 4,
+                                    icon: const Icon(Icons.person_outline,
+                                        color: _inactive),
+                                  ),
                                   hasAdminAlert,
                                 ),
                                 selectedIcon: _dotIcon(
-                                  const Icon(Icons.person, color: _profile),
+                                  _animatedNavIcon(
+                                    index: 4,
+                                    icon: const Icon(Icons.person,
+                                        color: _profile),
+                                  ),
                                   hasAdminAlert,
                                 ),
                                 label: 'Профиль',

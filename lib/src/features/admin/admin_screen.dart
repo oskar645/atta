@@ -2,6 +2,7 @@ import 'admin_usage_analytics.dart';
 import 'dart:async';
 import 'dart:io';
 
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -1191,7 +1192,7 @@ class _DashboardTabState extends State<_DashboardTab>
             return amount.toStringAsFixed(2);
           }
 
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refreshTimewebDashboard,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),

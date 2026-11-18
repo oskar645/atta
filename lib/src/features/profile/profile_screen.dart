@@ -19,6 +19,7 @@ import 'package:atta/src/utils/share_texts.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -431,7 +432,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AttaCoolConfirmationDialog(
         title: const Text('Выйти из аккаунта?'),
         content: const Text('Вы уверены, что хотите выйти?'),
         actions: [
@@ -545,7 +546,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   color: Theme.of(context).brightness == Brightness.light
                       ? Colors.white
                       : Theme.of(context).colorScheme.surfaceContainerHighest,
-                  boxShadow: attaSoftShadows(context),
+                  boxShadow: attaCoolSoftCardShadows(context),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -692,11 +693,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   children: [
                     const _ProfileWalletTile(),
                     const SizedBox(height: 10),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                    _ProfileActionSurface(
                       leading: const Icon(Icons.settings_outlined),
                       title: const Text('Настройки'),
                       onTap: () {
@@ -707,11 +704,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                       },
                     ),
                     const SizedBox(height: 10),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                    _ProfileActionSurface(
                       leading: const Icon(Icons.person_add_alt_1_outlined),
                       title: const Text('Пригласить друга'),
                       subtitle: const Text('Поделиться ссылкой на мой профиль'),
@@ -723,18 +716,16 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                     ),
                     const SizedBox(height: 10),
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                    _ProfileActionSurface(
                       leading: const Icon(Icons.dark_mode_outlined),
                       title: const Text('Тёмная тема'),
-                      trailing: Switch(
-                        value: context.watch<ThemeService>().mode ==
-                            ThemeMode.dark,
-                        onChanged: (v) =>
-                            context.read<ThemeService>().toggle(v),
+                      trailing: AttaIosSwitchTheme(
+                        child: Switch(
+                          value: context.watch<ThemeService>().mode ==
+                              ThemeMode.dark,
+                          onChanged: (v) =>
+                              context.read<ThemeService>().toggle(v),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -745,12 +736,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         builder: (context, attSnap) {
                           final hasAlert = attSnap.data == true;
 
-                          return ListTile(
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14)),
-                            tileColor: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
+                          return _ProfileActionSurface(
                             leading: Stack(
                               clipBehavior: Clip.none,
                               children: [
@@ -797,11 +783,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                       ),
                       const SizedBox(height: 10),
                     ],
-                    ListTile(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      tileColor:
-                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                    _ProfileActionSurface(
                       leading: const Icon(Icons.logout, color: Colors.red),
                       title: const Text('Выйти',
                           style: TextStyle(color: Colors.red)),
@@ -813,6 +795,50 @@ class _ProfileScreenState extends State<ProfileScreen>
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+class _ProfileActionSurface extends StatelessWidget {
+  const _ProfileActionSurface({
+    required this.leading,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+    this.onTap,
+  });
+
+  final Widget leading;
+  final Widget title;
+  final Widget? subtitle;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final radius = BorderRadius.circular(14);
+    final color = theme.brightness == Brightness.light
+        ? Colors.white
+        : theme.colorScheme.surfaceContainerHighest;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: attaCoolSoftCardShadows(context),
+      ),
+      child: Material(
+        color: color,
+        borderRadius: radius,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          leading: leading,
+          title: title,
+          subtitle: subtitle,
+          trailing: trailing,
+          onTap: onTap,
+        ),
       ),
     );
   }

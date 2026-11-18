@@ -82,6 +82,42 @@ void main() {
     expect(find.textContaining('user-1'), findsNothing);
   });
 
+  testWidgets('profile actions use white three-layer surfaces in light theme',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Настройки'));
+
+    final decoratedSurfaces = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>()
+        .where((decoration) {
+      final shadows = decoration.boxShadow;
+      return shadows != null &&
+          shadows.length == 3 &&
+          shadows.first.color == const Color(0x38547CA5);
+    }).toList();
+    final whiteMaterials = tester
+        .widgetList<Material>(find.byType(Material))
+        .where((material) =>
+            material.color == Colors.white &&
+            material.borderRadius == BorderRadius.circular(14))
+        .toList();
+
+    expect(decoratedSurfaces.length, greaterThanOrEqualTo(4));
+    expect(whiteMaterials.length, greaterThanOrEqualTo(4));
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Пригласить друга'), findsOneWidget);
+    expect(find.text('Тёмная тема'), findsOneWidget);
+    expect(find.text('Выйти'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('ordinary profile shows verification and member since statuses',
       (tester) async {
     await tester.pumpWidget(

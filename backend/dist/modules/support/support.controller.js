@@ -25,9 +25,8 @@ const send_support_message_dto_1 = require("./dto/send-support-message.dto");
 const update_support_message_dto_1 = require("./dto/update-support-message.dto");
 const support_service_1 = require("./support.service");
 const public_support_dto_1 = require("./dto/public-support.dto");
-const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', {
-    storage: require('multer').memoryStorage(),
-});
+const image_upload_1 = require("../media/image-upload");
+const memoryImageUpload = (0, platform_express_1.FileInterceptor)('file', (0, image_upload_1.memoryImageUploadOptions)(image_upload_1.IMAGE_UPLOAD_LIMITS.support));
 let PublicSupportController = class PublicSupportController {
     constructor(supportService, rateLimitService) {
         this.supportService = supportService;

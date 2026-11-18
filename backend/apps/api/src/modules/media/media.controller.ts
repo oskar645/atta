@@ -36,10 +36,12 @@ import { StorageService } from '../storage/storage.service';
 import { UploadedImageFile } from '../storage/uploaded-image-file.type';
 import { UsersService } from '../users/users.service';
 import { normalizeStoredMediaUrl } from '../../common/serializers';
+import { detectImageMime, IMAGE_UPLOAD_LIMITS, memoryImageUploadOptions } from './image-upload';
 
-const memoryImageUpload = FileInterceptor('file', {
-  storage: require('multer').memoryStorage(),
-});
+const avatarImageUpload = FileInterceptor('file', memoryImageUploadOptions(IMAGE_UPLOAD_LIMITS.avatar));
+const listingImageUpload = FileInterceptor('file', memoryImageUploadOptions(IMAGE_UPLOAD_LIMITS.listing));
+const chatImageUpload = FileInterceptor('file', memoryImageUploadOptions(IMAGE_UPLOAD_LIMITS.chat));
+const adminImageUpload = FileInterceptor('file', memoryImageUploadOptions(IMAGE_UPLOAD_LIMITS.admin));
 
 // TODO: Video upload / 30 sec limit will be migrated later.
 
@@ -63,7 +65,7 @@ export class MediaController {
 
   @UseGuards(JwtAuthGuard)
   @Post('avatar')
-  @UseInterceptors(memoryImageUpload)
+  @UseInterceptors(avatarImageUpload)
   async uploadAvatar(
     @CurrentUser() authUser: AuthenticatedUser,
     @UploadedFile() file?: UploadedImageFile,
@@ -80,7 +82,7 @@ export class MediaController {
 
   @UseGuards(JwtAuthGuard)
   @Post('listings/:listingId/photos')
-  @UseInterceptors(memoryImageUpload)
+  @UseInterceptors(listingImageUpload)
   async uploadListingPhoto(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('listingId', new ParseUUIDPipe()) listingId: string,
@@ -118,7 +120,7 @@ export class MediaController {
 
   @UseGuards(JwtAuthGuard)
   @Post('chats/:chatId/images')
-  @UseInterceptors(memoryImageUpload)
+  @UseInterceptors(chatImageUpload)
   async uploadChatImage(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('chatId', new ParseUUIDPipe()) chatId: string,
@@ -285,7 +287,7 @@ export class MediaController {
 
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('feed-ads/:feedAdId/image')
-  @UseInterceptors(memoryImageUpload)
+  @UseInterceptors(adminImageUpload)
   uploadFeedAdImage(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('feedAdId', new ParseUUIDPipe()) feedAdId: string,
@@ -300,7 +302,7 @@ export class MediaController {
 
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('top-banners/:topBannerId/image')
-  @UseInterceptors(memoryImageUpload)
+  @UseInterceptors(adminImageUpload)
   uploadTopBannerImage(
     @CurrentUser() authUser: AuthenticatedUser,
     @Param('topBannerId', new ParseUUIDPipe()) topBannerId: string,
@@ -311,7 +313,7 @@ export class MediaController {
 
   @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('notifications/image')
-  @UseInterceptors(memoryImageUpload)
+  @UseInterceptors(adminImageUpload)
   async uploadNotificationImage(
     @CurrentUser() authUser: AuthenticatedUser,
     @UploadedFile() file?: UploadedImageFile,
@@ -388,7 +390,7 @@ export class MediaController {
         'Поддерживаются JPG, PNG, WEBP и HEIC/HEIF',
       );
     }
-    const detectedMime = this.detectImageMime(file.buffer);
+    const detectedMime = detectImageMime(file.buffer);
     if (!detectedMime || detectedMime !== mime) {
       throw new BadRequestException('Файл не является корректным изображением');
     }
@@ -410,51 +412,6 @@ export class MediaController {
     this.logger.debug(
       `Media proxy status=${status} category=${category} provider=${provider} key=${key}`,
     );
-  }
-
-  private detectImageMime(buffer: Buffer) {
-    if (buffer.length >= 3 &&
-        buffer[0] === 0xff &&
-        buffer[1] === 0xd8 &&
-        buffer[2] === 0xff) {
-      return 'image/jpeg';
-    }
-    if (buffer.length >= 8 &&
-        buffer[0] === 0x89 &&
-        buffer[1] === 0x50 &&
-        buffer[2] === 0x4e &&
-        buffer[3] === 0x47 &&
-        buffer[4] === 0x0d &&
-        buffer[5] === 0x0a &&
-        buffer[6] === 0x1a &&
-        buffer[7] === 0x0a) {
-      return 'image/png';
-    }
-    if (buffer.length >= 12 &&
-        buffer[0] === 0x52 &&
-        buffer[1] === 0x49 &&
-        buffer[2] === 0x46 &&
-        buffer[3] === 0x46 &&
-        buffer[8] === 0x57 &&
-        buffer[9] === 0x45 &&
-        buffer[10] === 0x42 &&
-        buffer[11] === 0x50) {
-      return 'image/webp';
-    }
-    if (buffer.length >= 12 &&
-        buffer[4] === 0x66 &&
-        buffer[5] === 0x74 &&
-        buffer[6] === 0x79 &&
-        buffer[7] === 0x70) {
-      const brand = Buffer.from(buffer.subarray(8, 12)).toString('ascii').toLowerCase();
-      if (brand.includes('heic') || brand.includes('heix')) {
-        return 'image/heic';
-      }
-      if (brand.includes('heif') || brand.includes('hevx')) {
-        return 'image/heif';
-      }
-    }
-    return null;
   }
 
   private detectMediaMime(key: string) {

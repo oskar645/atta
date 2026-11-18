@@ -2,6 +2,7 @@ import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -109,7 +110,7 @@ class _AdminOnlineUsersScreenState extends State<AdminOnlineUsersScreen> {
               ? _items
               : (snap.data ?? const <Map<String, dynamic>>[]);
           if (items.isEmpty) {
-            return RefreshIndicator(
+            return AttaRefreshIndicator(
               onRefresh: _refresh,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -121,7 +122,7 @@ class _AdminOnlineUsersScreenState extends State<AdminOnlineUsersScreen> {
             );
           }
 
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refresh,
             child: ListView.separated(
               physics: const AlwaysScrollableScrollPhysics(),

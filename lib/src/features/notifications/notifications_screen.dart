@@ -9,6 +9,7 @@ import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -130,7 +131,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AttaCoolConfirmationDialog(
         title: const Text('Удалить уведомление?'),
         content: Text(
           title.trim().isEmpty
@@ -522,9 +523,10 @@ class _NotificationListItemState extends State<_NotificationListItem> {
     final isPersonal = scope == 'personal';
     final unreadPersonal = isPersonal && !isRead;
 
-    return Card(
+    return AttaCoolSurface(
+      borderRadius: 16,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         onTap: _handleTap,
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -609,9 +611,11 @@ class _NotificationListItemState extends State<_NotificationListItem> {
                       imageUrl,
                       fit: BoxFit.cover,
                       errorBuilder: (_, __, ___) => Container(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
+                        color: Theme.of(context).brightness == Brightness.light
+                            ? Colors.white
+                            : Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
                       ),
                     ),
                   ),
@@ -625,7 +629,7 @@ class _NotificationListItemState extends State<_NotificationListItem> {
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
-                  child: FilledButton.tonal(
+                  child: FilledButton(
                     onPressed: _openingUrl ? null : _openActionUrl,
                     child: Text(notificationActionLabelForUrl(actionUrl)),
                   ),

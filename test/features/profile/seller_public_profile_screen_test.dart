@@ -11,6 +11,7 @@ import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -265,6 +266,39 @@ void main() {
     expect(listings.publicOwnerQueries.last['search'], 'Toyota');
     expect(find.text('Фара Toyota'), findsOneWidget);
     expect(find.text('Дверь Honda'), findsNothing);
+  });
+
+  testWidgets('seller search is white and listings remain visible',
+      (tester) async {
+    final listings = _FakeSellerListingsService(
+      initialItems: <Listing>[
+        _listing('listing-1', 'Видимое объявление'),
+      ],
+    );
+
+    await tester.pumpWidget(_buildApp(listings: listings));
+    await tester.pumpAndSettle();
+
+    final search = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Поиск в объявлениях продавца'),
+    );
+    expect(search.textAlign, TextAlign.start);
+    expect(search.textAlignVertical, TextAlignVertical.center);
+    expect(search.decoration?.contentPadding, EdgeInsets.zero);
+    expect(search.decoration?.fillColor, Colors.white);
+    expect(find.byType(StandardSearchSurface), findsOneWidget);
+    expect(find.text('Видимое объявление'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Поиск в объявлениях продавца'),
+      'Видимое',
+    );
+    await tester.pump();
+    final activeSearch = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Поиск в объявлениях продавца'),
+    );
+    expect(activeSearch.textAlign, TextAlign.start);
+    expect(activeSearch.textAlignVertical, TextAlignVertical.center);
   });
 
   testWidgets('listing context keeps call action available', (tester) async {

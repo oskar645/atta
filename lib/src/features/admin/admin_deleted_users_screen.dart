@@ -1,4 +1,5 @@
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -145,7 +146,7 @@ class _AdminDeletedUsersScreenState extends State<AdminDeletedUsersScreen> {
                       : items.isEmpty
                           ? const Center(
                               child: Text('За выбранный период удалений нет.'))
-                          : RefreshIndicator(
+                          : AttaRefreshIndicator(
                               onRefresh: _load,
                               child: ListView.separated(
                                 controller: _scroll,

@@ -1,6 +1,8 @@
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:atta/src/utils/moscow_calendar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -453,7 +455,7 @@ class _OverviewTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final spentByReason = Map<String, dynamic>.from(
         data.analytics['spentByReason'] as Map? ?? {});
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
         padding: const EdgeInsets.all(12),
@@ -594,7 +596,7 @@ class _ReferralsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final summary = data.referralSummary;
     final hasSearch = data.referralSearch.trim().isNotEmpty;
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
       onRefresh: onRefresh,
       child: NotificationListener<ScrollNotification>(
         onNotification: (notification) {
@@ -635,16 +637,22 @@ class _ReferralsTab extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 10),
-            TextField(
-              controller: searchController,
-              textInputAction: TextInputAction.search,
-              onSubmitted: (_) => onSearch(),
-              decoration: InputDecoration(
-                labelText: 'Поиск по имени, телефону, коду, userId',
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.search),
-                  tooltip: 'Найти',
-                  onPressed: onSearch,
+            StandardSearchSurface(
+              child: TextField(
+                controller: searchController,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => onSearch(),
+                decoration: InputDecoration(
+                  labelText: 'Поиск по имени, телефону, коду, userId',
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.search),
+                    tooltip: 'Найти',
+                    onPressed: onSearch,
+                  ),
+                  isDense: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
                 ),
               ),
             ),

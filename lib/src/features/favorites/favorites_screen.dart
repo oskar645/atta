@@ -14,10 +14,13 @@ import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/skeletons.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -271,75 +274,75 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                               ? listing.photoUrls.first
                               : null;
 
-                          return ListTile(
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    ListingDetailScreen(listingId: listing.id),
+                          return AttaCoolSurface(
+                            child: ListTile(
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ListingDetailScreen(
+                                      listingId: listing.id),
+                                ),
                               ),
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            tileColor: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerLowest,
-                            leading: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: SizedBox(
-                                width: 56,
-                                height: 56,
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    Container(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .surfaceContainerHighest,
-                                      child: photo == null
-                                          ? const Icon(Icons
-                                              .image_not_supported_outlined)
-                                          : CachedNetworkImage(
-                                              imageUrl: photo,
-                                              fit: BoxFit.cover,
-                                            ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              tileColor: Colors.transparent,
+                              leading: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                  width: 56,
+                                  height: 56,
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      Container(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .surfaceContainerHighest,
+                                        child: photo == null
+                                            ? const Icon(Icons
+                                                .image_not_supported_outlined)
+                                            : CachedNetworkImage(
+                                                imageUrl: photo,
+                                                fit: BoxFit.cover,
+                                              ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                listing.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '${formatPrice(listing.price)} ₽ • ${listing.category}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  if (listing.hasVipPromotion ||
+                                      listing.hasBumpPromotion) ...[
+                                    const SizedBox(height: 4),
+                                    _FavoritePromotionBadges(
+                                      showVip: listing.hasVipPromotion,
+                                      showBump: listing.hasBumpPromotion,
                                     ),
                                   ],
-                                ),
-                              ),
-                            ),
-                            title: Text(
-                              listing.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  '${formatPrice(listing.price)} ₽ • ${listing.category}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if (listing.hasVipPromotion ||
-                                    listing.hasBumpPromotion) ...[
-                                  const SizedBox(height: 4),
-                                  _FavoritePromotionBadges(
-                                    showVip: listing.hasVipPromotion,
-                                    showBump: listing.hasBumpPromotion,
-                                  ),
                                 ],
-                              ],
-                            ),
-                            trailing: IconButton(
-                              tooltip: 'Убрать из избранного',
-                              icon:
-                                  const Icon(Icons.favorite, color: Colors.red),
-                              onPressed: () => favs.toggleFavorite(
-                                uid: user.uid,
-                                listingId: listing.id,
-                                makeFavorite: false,
+                              ),
+                              trailing: IconButton(
+                                tooltip: 'Убрать из избранного',
+                                icon: const Icon(Icons.favorite,
+                                    color: Colors.red),
+                                onPressed: () => favs.toggleFavorite(
+                                  uid: user.uid,
+                                  listingId: listing.id,
+                                  makeFavorite: false,
+                                ),
                               ),
                             ),
                           );
@@ -375,118 +378,120 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                         filters: item.toFilters(),
                       );
 
-                      return ListTile(
-                        onTap: () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                _SavedSearchResultsScreen(savedSearch: item),
-                          ),
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        tileColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerLowest,
-                        leading: Icon(
-                          item.alertsEnabled
-                              ? Icons.favorite
-                              : Icons.favorite_border,
-                          color: item.alertsEnabled ? Colors.red : null,
-                        ),
-                        title: Text(
-                          item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(summary),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              tooltip: item.alertsEnabled
-                                  ? 'Выключить уведомления'
-                                  : 'Включить уведомления',
-                              onPressed: () async {
-                                try {
-                                  await savedSearches.setAlertsEnabled(
-                                    savedSearchId: item.id,
-                                    enabled: !item.alertsEnabled,
-                                  );
-                                } catch (e) {
-                                  if (!context.mounted) return;
-                                  final message = savedSearches
-                                          .isMissingTableError(e)
-                                      ? SavedSearchService.missingTableMessage
-                                      : 'Не удалось обновить уведомления: $e';
-                                  showAppSnack(context, message, isError: true);
-                                }
-                              },
-                              icon: Icon(
-                                item.alertsEnabled
-                                    ? Icons.notifications_active
-                                    : Icons.notifications_off_outlined,
-                                color: item.alertsEnabled ? Colors.red : null,
-                              ),
+                      return AttaCoolSurface(
+                        child: ListTile(
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  _SavedSearchResultsScreen(savedSearch: item),
                             ),
-                            IconButton(
-                              tooltip: 'Удалить поиск',
-                              onPressed: () async {
-                                final confirmed = await showDialog<bool>(
-                                  context: context,
-                                  builder: (dialogContext) {
-                                    return AlertDialog(
-                                      title: const Text('Удалить поиск?'),
-                                      content: Text(
-                                        'Поиск "${item.title}" будет удалён из сохранённых.',
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.of(dialogContext)
-                                                  .pop(false),
-                                          child: const Text('Отмена'),
-                                        ),
-                                        FilledButton(
-                                          onPressed: () =>
-                                              Navigator.of(dialogContext)
-                                                  .pop(true),
-                                          child: const Text('Удалить'),
-                                        ),
-                                      ],
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          tileColor: Colors.transparent,
+                          leading: Icon(
+                            item.alertsEnabled
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: item.alertsEnabled ? Colors.red : null,
+                          ),
+                          title: Text(
+                            item.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(summary),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: item.alertsEnabled
+                                    ? 'Выключить уведомления'
+                                    : 'Включить уведомления',
+                                onPressed: () async {
+                                  try {
+                                    await savedSearches.setAlertsEnabled(
+                                      savedSearchId: item.id,
+                                      enabled: !item.alertsEnabled,
                                     );
-                                  },
-                                );
-
-                                if (confirmed != true) return;
-
-                                setState(() {
-                                  _pendingDeletedSearchKeys.add(item.queryKey);
-                                });
-
-                                try {
-                                  await savedSearches.deleteSavedSearch(
-                                    userId: user.uid,
-                                    queryKey: item.queryKey,
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    final message = savedSearches
+                                            .isMissingTableError(e)
+                                        ? SavedSearchService.missingTableMessage
+                                        : 'Не удалось обновить уведомления: $e';
+                                    showAppSnack(context, message,
+                                        isError: true);
+                                  }
+                                },
+                                icon: Icon(
+                                  item.alertsEnabled
+                                      ? Icons.notifications_active
+                                      : Icons.notifications_off_outlined,
+                                  color: item.alertsEnabled ? Colors.red : null,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Удалить поиск',
+                                onPressed: () async {
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (dialogContext) {
+                                      return AlertDialog(
+                                        title: const Text('Удалить поиск?'),
+                                        content: Text(
+                                          'Поиск "${item.title}" будет удалён из сохранённых.',
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(dialogContext)
+                                                    .pop(false),
+                                            child: const Text('Отмена'),
+                                          ),
+                                          FilledButton(
+                                            onPressed: () =>
+                                                Navigator.of(dialogContext)
+                                                    .pop(true),
+                                            child: const Text('Удалить'),
+                                          ),
+                                        ],
+                                      );
+                                    },
                                   );
-                                  if (!context.mounted) return;
-                                  showAppSnack(context, 'Поиск удалён');
-                                } catch (e) {
-                                  if (!context.mounted) return;
+
+                                  if (confirmed != true) return;
+
                                   setState(() {
                                     _pendingDeletedSearchKeys
-                                        .remove(item.queryKey);
+                                        .add(item.queryKey);
                                   });
-                                  showAppSnack(
-                                    context,
-                                    'Не удалось удалить поиск: $e',
-                                    isError: true,
-                                  );
-                                }
-                              },
-                              icon: const Icon(Icons.delete_outline),
-                            ),
-                          ],
+
+                                  try {
+                                    await savedSearches.deleteSavedSearch(
+                                      userId: user.uid,
+                                      queryKey: item.queryKey,
+                                    );
+                                    if (!context.mounted) return;
+                                    showAppSnack(context, 'Поиск удалён');
+                                  } catch (e) {
+                                    if (!context.mounted) return;
+                                    setState(() {
+                                      _pendingDeletedSearchKeys
+                                          .remove(item.queryKey);
+                                    });
+                                    showAppSnack(
+                                      context,
+                                      'Не удалось удалить поиск: $e',
+                                      isError: true,
+                                    );
+                                  }
+                                },
+                                icon: const Icon(Icons.delete_outline),
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
@@ -561,6 +566,9 @@ class _FavoritesScreenState extends State<FavoritesScreen>
                             userId: user.uid,
                             isSeen: history.hasViewed(item.id),
                             reviews: reviews,
+                            whiteSurfaceInLightTheme: true,
+                            ordinaryCardShadows:
+                                attaCoolSoftCardShadows(context),
                             onError: (error) {
                               if (!context.mounted) return;
                               showAppSnack(
@@ -662,6 +670,8 @@ class _ViewedListingsTab extends StatelessWidget {
               userId: userId,
               isSeen: history.hasViewed(item.id),
               reviews: reviews,
+              whiteSurfaceInLightTheme: true,
+              ordinaryCardShadows: attaCoolSoftCardShadows(context),
               onError: (error) {
                 if (!context.mounted) return;
                 showAppSnack(
@@ -1187,7 +1197,7 @@ class _TimewebFavoriteListingsTabState
           );
         }
 
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
           onRefresh: _refresh,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
@@ -1205,69 +1215,70 @@ class _TimewebFavoriteListingsTabState
                     : null;
                 final isUnavailable = listing.isPermanentlyUnavailableForBuyer;
 
-                return ListTile(
-                  onTap: isUnavailable
-                      ? null
-                      : () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  ListingDetailScreen(listingId: listing.id),
+                return AttaCoolSurface(
+                  child: ListTile(
+                    onTap: isUnavailable
+                        ? null
+                        : () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    ListingDetailScreen(listingId: listing.id),
+                              ),
                             ),
-                          ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  tileColor:
-                      Theme.of(context).colorScheme.surfaceContainerLowest,
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: SizedBox(
-                      width: 56,
-                      height: 56,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Container(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            child: _FavoriteListingThumbnail(
-                              photoUrl: photo,
-                              grayscale: isUnavailable,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    tileColor: Colors.transparent,
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Container(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                              child: _FavoriteListingThumbnail(
+                                photoUrl: photo,
+                                grayscale: isUnavailable,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  title: Text(
-                    listing.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${formatPrice(listing.price)} ₽ • ${listing.category}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (listing.hasVipPromotion ||
-                          listing.hasBumpPromotion) ...[
-                        const SizedBox(height: 4),
-                        _FavoritePromotionBadges(
-                          showVip: listing.hasVipPromotion,
-                          showBump: listing.hasBumpPromotion,
+                    title: Text(
+                      listing.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${formatPrice(listing.price)} ₽ • ${listing.category}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                        if (listing.hasVipPromotion ||
+                            listing.hasBumpPromotion) ...[
+                          const SizedBox(height: 4),
+                          _FavoritePromotionBadges(
+                            showVip: listing.hasVipPromotion,
+                            showBump: listing.hasBumpPromotion,
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-                  trailing: IconButton(
-                    tooltip: 'Убрать из избранного',
-                    icon: const Icon(Icons.favorite, color: Colors.red),
-                    onPressed: () => _removeFavorite(listing.id),
+                    ),
+                    trailing: IconButton(
+                      tooltip: 'Убрать из избранного',
+                      icon: const Icon(Icons.favorite, color: Colors.red),
+                      onPressed: () => _removeFavorite(listing.id),
+                    ),
                   ),
                 );
               },
@@ -1447,7 +1458,7 @@ class _TimewebSavedSearchesTabState extends State<_TimewebSavedSearchesTab>
           );
         }
 
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
           onRefresh: _refresh,
           child: ListView.separated(
             padding: const EdgeInsets.all(12),
@@ -1460,115 +1471,118 @@ class _TimewebSavedSearchesTabState extends State<_TimewebSavedSearchesTab>
                 filters: item.toFilters(),
               );
 
-              return ListTile(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        _SavedSearchResultsScreen(savedSearch: item),
+              return AttaCoolSurface(
+                child: ListTile(
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          _SavedSearchResultsScreen(savedSearch: item),
+                    ),
                   ),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                tileColor: Theme.of(context).colorScheme.surfaceContainerLowest,
-                leading: Icon(
-                  item.alertsEnabled ? Icons.favorite : Icons.favorite_border,
-                  color: item.alertsEnabled ? Colors.red : null,
-                ),
-                title: Text(
-                  item.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(summary),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      tooltip: item.alertsEnabled
-                          ? 'Выключить уведомления'
-                          : 'Включить уведомления',
-                      onPressed: () async {
-                        try {
-                          await widget.savedSearches.setAlertsEnabled(
-                            savedSearchId: item.id,
-                            enabled: !item.alertsEnabled,
-                          );
-                          if (!context.mounted) return;
-                          await _refresh();
-                        } catch (e) {
-                          if (!context.mounted) return;
-                          final message =
-                              widget.savedSearches.isMissingTableError(e)
-                                  ? SavedSearchService.missingTableMessage
-                                  : 'Не удалось обновить уведомления: $e';
-                          showAppSnack(context, message, isError: true);
-                        }
-                      },
-                      icon: Icon(
-                        item.alertsEnabled
-                            ? Icons.notifications_active
-                            : Icons.notifications_off_outlined,
-                        color: item.alertsEnabled ? Colors.red : null,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  tileColor: Colors.transparent,
+                  leading: Icon(
+                    item.alertsEnabled ? Icons.favorite : Icons.favorite_border,
+                    color: item.alertsEnabled ? Colors.red : null,
+                  ),
+                  title: Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: Text(summary),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: item.alertsEnabled
+                            ? 'Выключить уведомления'
+                            : 'Включить уведомления',
+                        onPressed: () async {
+                          try {
+                            await widget.savedSearches.setAlertsEnabled(
+                              savedSearchId: item.id,
+                              enabled: !item.alertsEnabled,
+                            );
+                            if (!context.mounted) return;
+                            await _refresh();
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            final message =
+                                widget.savedSearches.isMissingTableError(e)
+                                    ? SavedSearchService.missingTableMessage
+                                    : 'Не удалось обновить уведомления: $e';
+                            showAppSnack(context, message, isError: true);
+                          }
+                        },
+                        icon: Icon(
+                          item.alertsEnabled
+                              ? Icons.notifications_active
+                              : Icons.notifications_off_outlined,
+                          color: item.alertsEnabled ? Colors.red : null,
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Удалить поиск',
-                      onPressed: () async {
-                        final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (dialogContext) {
-                                return AlertDialog(
-                                  title: const Text('Удалить поиск?'),
-                                  content: Text(
-                                    'Поиск "${item.title}" будет удалён из сохранённых.',
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.of(dialogContext)
-                                              .pop(false),
-                                      child: const Text('Отмена'),
+                      IconButton(
+                        tooltip: 'Удалить поиск',
+                        onPressed: () async {
+                          final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (dialogContext) {
+                                  return AlertDialog(
+                                    title: const Text('Удалить поиск?'),
+                                    content: Text(
+                                      'Поиск "${item.title}" будет удалён из сохранённых.',
                                     ),
-                                    FilledButton(
-                                      onPressed: () =>
-                                          Navigator.of(dialogContext).pop(true),
-                                      child: const Text('Удалить'),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ) ??
-                            false;
-                        if (!confirmed) return;
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.of(dialogContext)
+                                                .pop(false),
+                                        child: const Text('Отмена'),
+                                      ),
+                                      FilledButton(
+                                        onPressed: () =>
+                                            Navigator.of(dialogContext)
+                                                .pop(true),
+                                        child: const Text('Удалить'),
+                                      ),
+                                    ],
+                                  );
+                                },
+                              ) ??
+                              false;
+                          if (!confirmed) return;
 
-                        setState(() {
-                          widget.pendingDeletedSearchKeys.add(item.queryKey);
-                        });
-                        try {
-                          await widget.savedSearches.deleteSavedSearch(
-                            userId: widget.userId,
-                            queryKey: item.queryKey,
-                          );
-                          if (!context.mounted) return;
-                          showAppSnack(context, 'Поиск удалён');
-                          await _refresh();
-                        } catch (e) {
-                          if (!context.mounted) return;
                           setState(() {
-                            widget.pendingDeletedSearchKeys
-                                .remove(item.queryKey);
+                            widget.pendingDeletedSearchKeys.add(item.queryKey);
                           });
-                          showAppSnack(
-                            context,
-                            'Не удалось удалить поиск: $e',
-                            isError: true,
-                          );
-                        }
-                      },
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                  ],
+                          try {
+                            await widget.savedSearches.deleteSavedSearch(
+                              userId: widget.userId,
+                              queryKey: item.queryKey,
+                            );
+                            if (!context.mounted) return;
+                            showAppSnack(context, 'Поиск удалён');
+                            await _refresh();
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            setState(() {
+                              widget.pendingDeletedSearchKeys
+                                  .remove(item.queryKey);
+                            });
+                            showAppSnack(
+                              context,
+                              'Не удалось удалить поиск: $e',
+                              isError: true,
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+                    ],
+                  ),
                 ),
               );
             },
@@ -1778,7 +1792,7 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
           );
         }
 
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
           onRefresh: _refresh,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
@@ -1803,6 +1817,8 @@ class _TimewebViewedListingsTabState extends State<_TimewebViewedListingsTab>
                         userId: widget.userId,
                         isSeen: widget.history.hasViewed(item.id),
                         reviews: widget.reviews,
+                        whiteSurfaceInLightTheme: true,
+                        ordinaryCardShadows: attaCoolSoftCardShadows(context),
                         onError: (error) {
                           if (!context.mounted) return;
                           showAppSnack(
@@ -2053,7 +2069,7 @@ class _TimewebFollowedListingsTabState
           );
         }
 
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
           onRefresh: _refresh,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
@@ -2078,6 +2094,8 @@ class _TimewebFollowedListingsTabState
                         userId: widget.userId,
                         isSeen: widget.history.hasViewed(item.id),
                         reviews: widget.reviews,
+                        whiteSurfaceInLightTheme: true,
+                        ordinaryCardShadows: attaCoolSoftCardShadows(context),
                         onError: (error) {
                           if (!context.mounted) return;
                           showAppSnack(
@@ -2165,7 +2183,7 @@ class _RefreshableEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -2376,6 +2394,8 @@ class _SavedSearchResultsScreen extends StatelessWidget {
                       userId: user.uid,
                       isSeen: history.hasViewed(item.id),
                       reviews: reviews,
+                      whiteSurfaceInLightTheme: true,
+                      ordinaryCardShadows: attaCoolSoftCardShadows(context),
                       onError: (error) {
                         if (!context.mounted) return;
                         showAppSnack(

@@ -31,6 +31,29 @@ void main() {
     expect(find.text('Не добавлен'), findsOneWidget);
   });
 
+  testWidgets('settings action rows use white cool-shadow surfaces',
+      (tester) async {
+    await tester.pumpWidget(_settingsApp());
+    await tester.pumpAndSettle();
+
+    final coolSurfaces = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>()
+        .where((decoration) =>
+            decoration.boxShadow?.length == 3 &&
+            decoration.boxShadow?.first.color == const Color(0x38547CA5))
+        .toList();
+    final whiteMaterials = tester
+        .widgetList<Material>(find.byType(Material))
+        .where((material) => material.color == Colors.white)
+        .toList();
+
+    expect(coolSurfaces.length, greaterThanOrEqualTo(4));
+    expect(whiteMaterials.length, greaterThanOrEqualTo(4));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('security only shows complete status for verified email',
       (tester) async {
     await tester.pumpWidget(

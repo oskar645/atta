@@ -76,6 +76,59 @@ void main() {
     expect(api.lastCreateBody.containsKey('clothes_size'), isFalse);
   });
 
+  test('real-estate listing sends selected coordinates to backend', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.createListing(
+      ownerId: 'user-1',
+      ownerEmail: 'user@example.com',
+      ownerName: 'User',
+      title: 'Дом',
+      description: 'Описание',
+      category: 'Недвижимость',
+      subcategory: 'Дома',
+      price: 5000000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Чеченская Республика, Гудермес',
+      delivery: const <String, bool>{},
+      photos: const <File>[],
+      latitude: 43.3530186,
+      longitude: 46.1049578,
+    );
+
+    expect(api.lastCreateBody['address'], 'Чеченская Республика, Гудермес');
+    expect(api.lastCreateBody['location'], {
+      'latitude': 43.3530186,
+      'longitude': 46.1049578,
+    });
+  });
+
+  test('legacy listing request without coordinates remains valid', () async {
+    final api = _FakeListingsApi();
+    final service = ListingsService(api: api, mediaApi: _FakeMediaApi());
+
+    await service.createListing(
+      ownerId: 'user-1',
+      ownerEmail: 'user@example.com',
+      ownerName: 'User',
+      title: 'Дом',
+      description: 'Описание',
+      category: 'Недвижимость',
+      subcategory: 'Дома',
+      price: 5000000,
+      phone: '+79990000000',
+      phoneHidden: false,
+      city: 'Чеченская Республика, Гудермес',
+      delivery: const <String, bool>{},
+      photos: const <File>[],
+    );
+
+    expect(api.lastCreateBody.containsKey('location'), isFalse);
+    expect(api.lastCreateBody['address'], 'Чеченская Республика, Гудермес');
+  });
+
   for (final size in ['XL', '46', 'One Size']) {
     test('create clothes listing sends optional size $size', () async {
       final api = _FakeListingsApi();

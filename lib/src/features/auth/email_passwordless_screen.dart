@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/auth_service.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -228,135 +229,159 @@ class _EmailPasswordlessScreenState extends State<EmailPasswordlessScreen> {
                     Text(title,
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineSmall),
-                    if (_step == _EmailStep.email) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        'Укажите адрес электронной почты, пришлём код для входа.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
-                      ),
-                      const SizedBox(height: 20),
-                    ] else
-                      const SizedBox(height: 24),
-                    if (_step == _EmailStep.email) ...[
-                      TextField(
-                        key: const ValueKey('email-passwordless-email'),
-                        controller: _email,
-                        autofocus: true,
-                        enabled: !_busy,
-                        keyboardType: TextInputType.emailAddress,
-                        textInputAction: TextInputAction.done,
-                        autofillHints: const [AutofillHints.email],
-                        autocorrect: false,
-                        onChanged: (_) => setState(() {}),
-                        onSubmitted: (_) => _start(),
-                        decoration: const InputDecoration(
-                          labelText: 'Электронная почта',
-                          hintText: 'example@mail.ru',
+                    const SizedBox(height: 24),
+                    AttaCoolSurface(
+                      borderRadius: 24,
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            if (_step == _EmailStep.email) ...[
+                              Text(
+                                'Укажите адрес электронной почты, пришлём код для входа.',
+                                textAlign: TextAlign.center,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurfaceVariant,
+                                    ),
+                              ),
+                              const SizedBox(height: 20),
+                            ] else
+                              const SizedBox.shrink(),
+                            if (_step == _EmailStep.email) ...[
+                              TextField(
+                                key: const ValueKey('email-passwordless-email'),
+                                controller: _email,
+                                autofocus: true,
+                                enabled: !_busy,
+                                keyboardType: TextInputType.emailAddress,
+                                textInputAction: TextInputAction.done,
+                                autofillHints: const [AutofillHints.email],
+                                autocorrect: false,
+                                onChanged: (_) => setState(() {}),
+                                onSubmitted: (_) => _start(),
+                                decoration: const InputDecoration(
+                                  labelText: 'Электронная почта',
+                                  hintText: 'example@mail.ru',
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              FilledButton(
+                                key: const ValueKey('email-passwordless-start'),
+                                onPressed:
+                                    _busy || !_validEmail ? null : _start,
+                                child: Text(
+                                    _busy ? 'Отправляем...' : 'Получить код'),
+                              ),
+                            ],
+                            if (_step == _EmailStep.code) ...[
+                              Text('Код отправлен на $_maskedEmail',
+                                  textAlign: TextAlign.center),
+                              const SizedBox(height: 18),
+                              TextField(
+                                key: const ValueKey('email-passwordless-code'),
+                                controller: _code,
+                                autofocus: true,
+                                enabled: !_busy,
+                                keyboardType: TextInputType.number,
+                                textInputAction: TextInputAction.done,
+                                autofillHints: const [
+                                  AutofillHints.oneTimeCode
+                                ],
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                  LengthLimitingTextInputFormatter(6),
+                                ],
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    fontSize: 24,
+                                    letterSpacing: 8,
+                                    fontWeight: FontWeight.w700),
+                                onChanged: (value) {
+                                  setState(() {});
+                                  if (value.length == 6) _check();
+                                },
+                                onSubmitted: (_) => _check(),
+                                decoration: const InputDecoration(
+                                    labelText: 'Шестизначный код',
+                                    counterText: ''),
+                              ),
+                              const SizedBox(height: 18),
+                              FilledButton(
+                                key: const ValueKey('email-passwordless-check'),
+                                onPressed: _busy || _code.text.length != 6
+                                    ? null
+                                    : _check,
+                                child:
+                                    Text(_busy ? 'Проверяем...' : 'Продолжить'),
+                              ),
+                              TextButton(
+                                onPressed: _busy || _resendSeconds > 0
+                                    ? null
+                                    : () => _start(resend: true),
+                                child: Text(_resendSeconds > 0
+                                    ? 'Отправить снова через $_resendSeconds сек.'
+                                    : 'Отправить код ещё раз'),
+                              ),
+                              TextButton(
+                                  onPressed: _busy ? null : _changeEmail,
+                                  child: const Text('Изменить email')),
+                            ],
+                            if (_step == _EmailStep.name) ...[
+                              TextField(
+                                key: const ValueKey('email-passwordless-name'),
+                                controller: _name,
+                                autofocus: true,
+                                enabled: !_busy,
+                                maxLength: 100,
+                                keyboardType: TextInputType.name,
+                                textCapitalization: TextCapitalization.words,
+                                autofillHints: const [AutofillHints.givenName],
+                                onChanged: (_) => setState(() {}),
+                                decoration: const InputDecoration(
+                                    labelText: 'Ваше имя'),
+                              ),
+                              const SizedBox(height: 12),
+                              RegistrationConsents(
+                                acceptedLegal: _acceptedLegal,
+                                acceptedPersonalData: _acceptedPersonalData,
+                                loading: _busy,
+                                onLegalChanged: (value) =>
+                                    setState(() => _acceptedLegal = value),
+                                onPersonalDataChanged: (value) => setState(
+                                    () => _acceptedPersonalData = value),
+                              ),
+                              const SizedBox(height: 20),
+                              FilledButton(
+                                key: const ValueKey(
+                                    'email-passwordless-complete'),
+                                onPressed: _busy ||
+                                        _name.text.trim().isEmpty ||
+                                        !_acceptedLegal ||
+                                        !_acceptedPersonalData
+                                    ? null
+                                    : _complete,
+                                child: Text(
+                                    _busy ? 'Создаём аккаунт...' : 'Готово'),
+                              ),
+                            ],
+                            if (_error != null) ...[
+                              const SizedBox(height: 14),
+                              Text(_error!,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      color:
+                                          Theme.of(context).colorScheme.error)),
+                            ],
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      FilledButton(
-                        key: const ValueKey('email-passwordless-start'),
-                        onPressed: _busy || !_validEmail ? null : _start,
-                        child: Text(_busy ? 'Отправляем...' : 'Получить код'),
-                      ),
-                    ],
-                    if (_step == _EmailStep.code) ...[
-                      Text('Код отправлен на $_maskedEmail',
-                          textAlign: TextAlign.center),
-                      const SizedBox(height: 18),
-                      TextField(
-                        key: const ValueKey('email-passwordless-code'),
-                        controller: _code,
-                        autofocus: true,
-                        enabled: !_busy,
-                        keyboardType: TextInputType.number,
-                        textInputAction: TextInputAction.done,
-                        autofillHints: const [AutofillHints.oneTimeCode],
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly,
-                          LengthLimitingTextInputFormatter(6),
-                        ],
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            fontSize: 24,
-                            letterSpacing: 8,
-                            fontWeight: FontWeight.w700),
-                        onChanged: (value) {
-                          setState(() {});
-                          if (value.length == 6) _check();
-                        },
-                        onSubmitted: (_) => _check(),
-                        decoration: const InputDecoration(
-                            labelText: 'Шестизначный код', counterText: ''),
-                      ),
-                      const SizedBox(height: 18),
-                      FilledButton(
-                        key: const ValueKey('email-passwordless-check'),
-                        onPressed:
-                            _busy || _code.text.length != 6 ? null : _check,
-                        child: Text(_busy ? 'Проверяем...' : 'Продолжить'),
-                      ),
-                      TextButton(
-                        onPressed: _busy || _resendSeconds > 0
-                            ? null
-                            : () => _start(resend: true),
-                        child: Text(_resendSeconds > 0
-                            ? 'Отправить снова через $_resendSeconds сек.'
-                            : 'Отправить код ещё раз'),
-                      ),
-                      TextButton(
-                          onPressed: _busy ? null : _changeEmail,
-                          child: const Text('Изменить email')),
-                    ],
-                    if (_step == _EmailStep.name) ...[
-                      TextField(
-                        key: const ValueKey('email-passwordless-name'),
-                        controller: _name,
-                        autofocus: true,
-                        enabled: !_busy,
-                        maxLength: 100,
-                        keyboardType: TextInputType.name,
-                        textCapitalization: TextCapitalization.words,
-                        autofillHints: const [AutofillHints.givenName],
-                        onChanged: (_) => setState(() {}),
-                        decoration:
-                            const InputDecoration(labelText: 'Ваше имя'),
-                      ),
-                      const SizedBox(height: 12),
-                      RegistrationConsents(
-                        acceptedLegal: _acceptedLegal,
-                        acceptedPersonalData: _acceptedPersonalData,
-                        loading: _busy,
-                        onLegalChanged: (value) =>
-                            setState(() => _acceptedLegal = value),
-                        onPersonalDataChanged: (value) =>
-                            setState(() => _acceptedPersonalData = value),
-                      ),
-                      const SizedBox(height: 20),
-                      FilledButton(
-                        key: const ValueKey('email-passwordless-complete'),
-                        onPressed: _busy ||
-                                _name.text.trim().isEmpty ||
-                                !_acceptedLegal ||
-                                !_acceptedPersonalData
-                            ? null
-                            : _complete,
-                        child: Text(_busy ? 'Создаём аккаунт...' : 'Готово'),
-                      ),
-                    ],
-                    if (_error != null) ...[
-                      const SizedBox(height: 14),
-                      Text(_error!,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
-                    ],
+                    ),
                   ],
                 ),
               ),

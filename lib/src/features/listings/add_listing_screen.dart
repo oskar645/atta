@@ -14,6 +14,8 @@ import 'package:atta/src/models/listing.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/utils/ru_phone.dart';
@@ -138,6 +140,9 @@ class _AddListingScreenState extends State<AddListingScreen> {
   final _price = TextEditingController();
   final _phone = TextEditingController();
   final _oemPartNumber = TextEditingController();
+  double? _latitude;
+  double? _longitude;
+  String _coordinatesAddress = '';
 
   // ✅ авто-поля
   final _carYear = TextEditingController();
@@ -941,6 +946,14 @@ class _AddListingScreenState extends State<AddListingScreen> {
       MaterialPageRoute(builder: (_) => const PickLocationScreen()),
     );
     if (res == null) return;
+    if (res is ListingLocationSelection) {
+      _city.text = res.address;
+      _latitude = res.latitude;
+      _longitude = res.longitude;
+      _coordinatesAddress = res.address.trim();
+      if (mounted) setState(() {});
+      return;
+    }
     if (res is latlng.LatLng) {
       await _fillCityFromLatLng(res);
       if (mounted) setState(() {});
@@ -950,6 +963,25 @@ class _AddListingScreenState extends State<AddListingScreen> {
       _city.text = res;
       if (mounted) setState(() {});
     }
+  }
+
+  Future<void> _resolveCoordinates(String address) async {
+    if (_latitude != null &&
+        _longitude != null &&
+        _coordinatesAddress == address.trim()) {
+      return;
+    }
+    _latitude = null;
+    _longitude = null;
+    _coordinatesAddress = '';
+    try {
+      final points = await locationFromAddress(address);
+      if (points.isNotEmpty) {
+        _latitude = points.first.latitude;
+        _longitude = points.first.longitude;
+        _coordinatesAddress = address.trim();
+      }
+    } catch (_) {}
   }
 
   // ================== ДОСТАВКА ==================
@@ -1256,15 +1288,19 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: TextField(
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search),
-                        hintText: 'Поиск',
-                        border: OutlineInputBorder(),
-                        isDense: true,
+                    child: StandardSearchSurface(
+                      child: TextField(
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Поиск',
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          isDense: true,
+                        ),
+                        onChanged: (v) => setM(() => q = v),
                       ),
-                      onChanged: (v) => setM(() => q = v),
                     ),
                   ),
                   Padding(
@@ -1403,15 +1439,19 @@ class _AddListingScreenState extends State<AddListingScreen> {
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: TextField(
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(
-                        prefixIcon: Icon(Icons.search),
-                        hintText: 'Поиск',
-                        border: OutlineInputBorder(),
-                        isDense: true,
+                    child: StandardSearchSurface(
+                      child: TextField(
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Поиск',
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          isDense: true,
+                        ),
+                        onChanged: (v) => setM(() => q = v),
                       ),
-                      onChanged: (v) => setM(() => q = v),
                     ),
                   ),
                   const Divider(height: 1),
@@ -1534,6 +1574,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
   Future<void> _save() async {
     final title = _title.text.trim();
     final city = _city.text.trim();
+    await _resolveCoordinates(city);
+    if (!mounted) return;
     final desc = _desc.text.trim();
     final phone = _phone.text.trim();
     final price = parseFormattedPrice(_price.text);
@@ -1672,6 +1714,8 @@ class _AddListingScreenState extends State<AddListingScreen> {
         clothesType: clothesType,
         clothesSize: clothesSize,
         oemPartNumber: _isAutoParts ? _oemPartNumber.text : null,
+        latitude: _latitude,
+        longitude: _longitude,
       );
 
       if (_video != null) {
@@ -1703,32 +1747,29 @@ class _AddListingScreenState extends State<AddListingScreen> {
     required VoidCallback? onTap,
     Widget? leading,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-        child: Row(
-          children: [
-            if (leading != null) ...[leading, const SizedBox(width: 10)],
-            Expanded(
-              child: _fieldText(
-                value.isEmpty ? title : value,
-                TextStyle(
-                  color: value.isEmpty
-                      ? Theme.of(context).colorScheme.outline
-                      : Theme.of(context).colorScheme.onSurface,
+    return AttaCoolSurface(
+      borderRadius: 12,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Row(
+            children: [
+              if (leading != null) ...[leading, const SizedBox(width: 10)],
+              Expanded(
+                child: _fieldText(
+                  value.isEmpty ? title : value,
+                  TextStyle(
+                    color: value.isEmpty
+                        ? Theme.of(context).colorScheme.outline
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
               ),
-            ),
-            const Icon(Icons.chevron_right),
-          ],
+              const Icon(Icons.chevron_right),
+            ],
+          ),
         ),
       ),
     );
@@ -1797,45 +1838,42 @@ class _AddListingScreenState extends State<AddListingScreen> {
   }
 
   Widget _carParametersTile() {
-    return InkWell(
-      onTap: _openCarParameters,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Параметры авто',
-                    style: TextStyle(
-                      color: Colors.blue,
-                      fontWeight: FontWeight.w700,
+    return AttaCoolSurface(
+      borderRadius: 12,
+      child: InkWell(
+        onTap: _openCarParameters,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Параметры авто',
+                      style: TextStyle(
+                        color: Colors.blue,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _carParametersSummary(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.outline,
-                      fontSize: 13,
+                    const SizedBox(height: 2),
+                    Text(
+                      _carParametersSummary(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.outline,
+                        fontSize: 13,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const Icon(Icons.chevron_right),
-          ],
+              const Icon(Icons.chevron_right),
+            ],
+          ),
         ),
       ),
     );
@@ -2125,22 +2163,24 @@ class _AddListingScreenState extends State<AddListingScreen> {
             ),
           ),
 
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text(
-              _phoneHidden
-                  ? 'Номер скрыт в объявлении'
-                  : 'Номер показан в объявлении',
+          AttaIosSwitchTheme(
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                _phoneHidden
+                    ? 'Номер скрыт в объявлении'
+                    : 'Номер показан в объявлении',
+              ),
+              subtitle: Text(
+                _phoneHidden
+                    ? _phone.text.trim().isEmpty
+                        ? 'Кнопка звонка не показывается без номера телефона'
+                        : 'Покупатель не увидит номер в карточке, но сможет нажать “Позвонить”'
+                    : 'Покупатель увидит ваш номер прямо в объявлении',
+              ),
+              value: _phoneHidden,
+              onChanged: (v) => setState(() => _phoneHidden = v),
             ),
-            subtitle: Text(
-              _phoneHidden
-                  ? _phone.text.trim().isEmpty
-                      ? 'Кнопка звонка не показывается без номера телефона'
-                      : 'Покупатель не увидит номер в карточке, но сможет нажать “Позвонить”'
-                  : 'Покупатель увидит ваш номер прямо в объявлении',
-            ),
-            value: _phoneHidden,
-            onChanged: (v) => setState(() => _phoneHidden = v),
           ),
 
           const SizedBox(height: 12),
@@ -2163,33 +2203,31 @@ class _AddListingScreenState extends State<AddListingScreen> {
           ),
           const SizedBox(height: 8),
 
-          InkWell(
-            onTap: _openDeliveryPicker,
-            borderRadius: BorderRadius.circular(12),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.local_shipping_outlined, size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _deliverySummary(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.outline,
+          AttaCoolSurface(
+            borderRadius: 12,
+            child: InkWell(
+              onTap: _openDeliveryPicker,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_shipping_outlined, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _deliverySummary(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
                       ),
                     ),
-                  ),
-                  const Icon(Icons.chevron_right),
-                ],
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
               ),
             ),
           ),

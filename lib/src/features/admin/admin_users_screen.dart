@@ -5,7 +5,10 @@ import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -462,16 +465,22 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           if (!_showRegistrationStats)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-              child: TextField(
-                controller: _searchController,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _runSearch(),
-                decoration: InputDecoration(
-                  labelText: 'Поиск по имени, телефону, Email, userId',
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.search),
-                    tooltip: 'Найти',
-                    onPressed: _runSearch,
+              child: StandardSearchSurface(
+                child: TextField(
+                  controller: _searchController,
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _runSearch(),
+                  decoration: InputDecoration(
+                    labelText: 'Поиск по имени, телефону, Email, userId',
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.search),
+                      tooltip: 'Найти',
+                      onPressed: _runSearch,
+                    ),
+                    isDense: true,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
                   ),
                 ),
               ),
@@ -523,7 +532,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                         );
                       }
 
-                      return RefreshIndicator(
+                      return AttaRefreshIndicator(
                         onRefresh: _refresh,
                         child: ListView.builder(
                           controller: _scrollController,
@@ -960,7 +969,7 @@ class _RegistrationStatsViewState extends State<_RegistrationStatsView> {
         );
         final compareText = _comparisonText(months, selectedRow.month);
 
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
           onRefresh: widget.onRefresh,
           child: ListView(
             padding: const EdgeInsets.all(16),
@@ -1393,21 +1402,16 @@ class _RegistrationSummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final colors = Theme.of(context).colorScheme;
     return SizedBox(
       width: width,
       height: 94,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: colors.surface,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFE8ECF2)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0A101828),
-              blurRadius: 18,
-              offset: Offset(0, 8),
-            ),
-          ],
+          border: Border.all(color: colors.outlineVariant),
+          boxShadow: attaSoftCardShadows(context),
         ),
         child: Padding(
           padding: const EdgeInsets.all(14),

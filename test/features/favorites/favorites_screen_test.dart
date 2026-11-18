@@ -214,6 +214,15 @@ void main() {
     expect(find.text('Активное 2'), findsOneWidget);
     expect(find.byType(ColorFiltered), findsNothing);
     expect(find.byIcon(Icons.favorite), findsNWidgets(2));
+
+    final coolSurfaces = tester
+        .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+        .map((widget) => widget.decoration)
+        .whereType<BoxDecoration>()
+        .where((decoration) =>
+            decoration.boxShadow?.length == 3 &&
+            decoration.boxShadow?.first.color == const Color(0x38547CA5));
+    expect(coolSurfaces, isNotEmpty);
   });
 
   testWidgets(

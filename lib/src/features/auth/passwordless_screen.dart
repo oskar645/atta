@@ -1,6 +1,7 @@
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -133,124 +134,143 @@ class _PasswordlessScreenState extends State<PasswordlessScreen> {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 24),
-                  if (step == PasswordlessStep.phone) ...[
-                    TextField(
-                      key: const ValueKey('passwordless-phone'),
-                      controller: _phone,
-                      keyboardType: TextInputType.phone,
-                      autofillHints: const [
-                        AutofillHints.telephoneNumberNational
-                      ],
-                      inputFormatters: const [RuPhoneInputFormatter()],
-                      decoration: const InputDecoration(
-                          floatingLabelBehavior: FloatingLabelBehavior.always,
-                          prefix: Padding(
-                              padding: EdgeInsets.only(right: 8),
-                              child: Text('+7')),
-                          labelText: 'Номер телефона'),
-                      onChanged: (_) => setState(() {}),
-                      onSubmitted: (_) => _start(),
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton(
-                      onPressed: _flow.canSubmit &&
-                              normalizeRuPhoneForApi(_phone.text).isNotEmpty
-                          ? _start
-                          : null,
-                      child: const Text('Продолжить'),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      alignment: WrapAlignment.spaceBetween,
-                      runAlignment: WrapAlignment.center,
-                      spacing: 12,
-                      children: [
-                        TextButton(
-                          key: const ValueKey('account-recovery-link'),
-                          onPressed: () => openAccountRecoveryScreen(context),
-                          child: const Text('Нет доступа к номеру?',
-                              style: TextStyle(fontSize: 13)),
-                        ),
-                        TextButton(
-                          key: const ValueKey('public-support-link'),
-                          onPressed: () => openPublicSupportScreen(context),
-                          child: const Text('Нужна помощь?',
-                              style: TextStyle(fontSize: 13)),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (step == PasswordlessStep.call) ...[
-                    Text(
-                        'Позвоните с номера ${formatRussianPhone(_flow.phone)} на:',
-                        textAlign: TextAlign.center),
-                    const SizedBox(height: 16),
-                    SelectableText(formatRussianPhone(_flow.callToPhone),
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 12),
-                    Text(
-                        '${_flow.secondsLeft ~/ 60}:${(_flow.secondsLeft % 60).toString().padLeft(2, '0')}',
-                        key: const ValueKey('passwordless-countdown'),
-                        textAlign: TextAlign.center),
-                    const SizedBox(height: 20),
-                    FilledButton(
-                        onPressed: _openingDialer ? null : _call,
-                        child: const Text('Позвонить')),
-                  ],
-                  if (step == PasswordlessStep.name) ...[
-                    TextField(
-                        controller: _name,
-                        inputFormatters: [
-                          LengthLimitingTextInputFormatter(100)
+                  AttaCoolSurface(
+                    borderRadius: 24,
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (step == PasswordlessStep.phone) ...[
+                            TextField(
+                              key: const ValueKey('passwordless-phone'),
+                              controller: _phone,
+                              keyboardType: TextInputType.phone,
+                              autofillHints: const [
+                                AutofillHints.telephoneNumberNational
+                              ],
+                              inputFormatters: const [RuPhoneInputFormatter()],
+                              decoration: const InputDecoration(
+                                  floatingLabelBehavior:
+                                      FloatingLabelBehavior.always,
+                                  prefix: Padding(
+                                      padding: EdgeInsets.only(right: 8),
+                                      child: Text('+7')),
+                                  labelText: 'Номер телефона'),
+                              onChanged: (_) => setState(() {}),
+                              onSubmitted: (_) => _start(),
+                            ),
+                            const SizedBox(height: 20),
+                            FilledButton(
+                              onPressed: _flow.canSubmit &&
+                                      normalizeRuPhoneForApi(_phone.text)
+                                          .isNotEmpty
+                                  ? _start
+                                  : null,
+                              child: const Text('Продолжить'),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              alignment: WrapAlignment.spaceBetween,
+                              runAlignment: WrapAlignment.center,
+                              spacing: 12,
+                              children: [
+                                TextButton(
+                                  key: const ValueKey('account-recovery-link'),
+                                  onPressed: () =>
+                                      openAccountRecoveryScreen(context),
+                                  child: const Text('Нет доступа к номеру?',
+                                      style: TextStyle(fontSize: 13)),
+                                ),
+                                TextButton(
+                                  key: const ValueKey('public-support-link'),
+                                  onPressed: () =>
+                                      openPublicSupportScreen(context),
+                                  child: const Text('Нужна помощь?',
+                                      style: TextStyle(fontSize: 13)),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if (step == PasswordlessStep.call) ...[
+                            Text(
+                                'Позвоните с номера ${formatRussianPhone(_flow.phone)} на:',
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: 16),
+                            SelectableText(
+                                formatRussianPhone(_flow.callToPhone),
+                                textAlign: TextAlign.center,
+                                style:
+                                    Theme.of(context).textTheme.headlineSmall),
+                            const SizedBox(height: 12),
+                            Text(
+                                '${_flow.secondsLeft ~/ 60}:${(_flow.secondsLeft % 60).toString().padLeft(2, '0')}',
+                                key: const ValueKey('passwordless-countdown'),
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: 20),
+                            FilledButton(
+                                onPressed: _openingDialer ? null : _call,
+                                child: const Text('Позвонить')),
+                          ],
+                          if (step == PasswordlessStep.name) ...[
+                            TextField(
+                                controller: _name,
+                                inputFormatters: [
+                                  LengthLimitingTextInputFormatter(100)
+                                ],
+                                textCapitalization: TextCapitalization.words,
+                                autofillHints: const [AutofillHints.givenName],
+                                decoration: const InputDecoration(
+                                    labelText: 'Ваше имя'),
+                                onChanged: (_) => setState(() {})),
+                            const SizedBox(height: 20),
+                            RegistrationConsents(
+                              acceptedLegal: _acceptedLegal,
+                              acceptedPersonalData: _acceptedPersonalData,
+                              loading: _flow.busy,
+                              onLegalChanged: (value) =>
+                                  setState(() => _acceptedLegal = value),
+                              onPersonalDataChanged: (value) =>
+                                  setState(() => _acceptedPersonalData = value),
+                            ),
+                            const SizedBox(height: 20),
+                            FilledButton(
+                              onPressed: _flow.canSubmit &&
+                                      _name.text.trim().isNotEmpty &&
+                                      _acceptedLegal &&
+                                      _acceptedPersonalData
+                                  ? () {
+                                      FocusScope.of(context).unfocus();
+                                      _flow.complete(
+                                          displayName: _name.text,
+                                          acceptedLegal: _acceptedLegal,
+                                          acceptedPersonalData:
+                                              _acceptedPersonalData);
+                                    }
+                                  : null,
+                              child: const Text('Готово'),
+                            ),
+                          ],
+                          if (step == PasswordlessStep.expired)
+                            FilledButton(
+                                onPressed: _flow.canSubmit ? _start : null,
+                                child: const Text('Попробовать снова')),
+                          if (step != PasswordlessStep.phone &&
+                              step != PasswordlessStep.signedIn)
+                            TextButton(
+                                onPressed: _changePhone,
+                                child: const Text('Изменить номер')),
+                          if (_flow.message != null &&
+                              _flow.message != title) ...[
+                            const SizedBox(height: 12),
+                            Text(_flow.message!,
+                                textAlign: TextAlign.center,
+                                semanticsLabel: _flow.message),
+                          ],
                         ],
-                        textCapitalization: TextCapitalization.words,
-                        autofillHints: const [AutofillHints.givenName],
-                        decoration:
-                            const InputDecoration(labelText: 'Ваше имя'),
-                        onChanged: (_) => setState(() {})),
-                    const SizedBox(height: 20),
-                    RegistrationConsents(
-                      acceptedLegal: _acceptedLegal,
-                      acceptedPersonalData: _acceptedPersonalData,
-                      loading: _flow.busy,
-                      onLegalChanged: (value) =>
-                          setState(() => _acceptedLegal = value),
-                      onPersonalDataChanged: (value) =>
-                          setState(() => _acceptedPersonalData = value),
+                      ),
                     ),
-                    const SizedBox(height: 20),
-                    FilledButton(
-                      onPressed: _flow.canSubmit &&
-                              _name.text.trim().isNotEmpty &&
-                              _acceptedLegal &&
-                              _acceptedPersonalData
-                          ? () {
-                              FocusScope.of(context).unfocus();
-                              _flow.complete(
-                                  displayName: _name.text,
-                                  acceptedLegal: _acceptedLegal,
-                                  acceptedPersonalData: _acceptedPersonalData);
-                            }
-                          : null,
-                      child: const Text('Готово'),
-                    ),
-                  ],
-                  if (step == PasswordlessStep.expired)
-                    FilledButton(
-                        onPressed: _flow.canSubmit ? _start : null,
-                        child: const Text('Попробовать снова')),
-                  if (step != PasswordlessStep.phone &&
-                      step != PasswordlessStep.signedIn)
-                    TextButton(
-                        onPressed: _changePhone,
-                        child: const Text('Изменить номер')),
-                  if (_flow.message != null && _flow.message != title) ...[
-                    const SizedBox(height: 12),
-                    Text(_flow.message!,
-                        textAlign: TextAlign.center,
-                        semanticsLabel: _flow.message),
-                  ],
+                  ),
                 ],
               ),
             ),

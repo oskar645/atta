@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atta/src/services/api/api_client.dart';
+import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/services/api/saved_searches_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
 import 'package:atta/src/services/listings_service.dart';
@@ -320,7 +321,7 @@ class SavedSearchService {
       return [
         norm(search),
         norm(filters.category),
-        norm(filters.subcategory),
+        norm(canonicalSubcategory(filters.category, filters.subcategory)),
         norm(filters.location),
         filters.preferLocationFirst ? '1' : '0',
         filters.radiusKm?.toString() ?? '',
@@ -335,7 +336,7 @@ class SavedSearchService {
     return [
       norm(search),
       norm(filters.category),
-      norm(filters.subcategory),
+      norm(canonicalSubcategory(filters.category, filters.subcategory)),
       filters.priceFrom?.toString() ?? '',
       filters.priceTo?.toString() ?? '',
       norm(filters.location),

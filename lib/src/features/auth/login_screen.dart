@@ -5,6 +5,7 @@ import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/main_shell_controller.dart';
 import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/services/profile_service.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -457,43 +458,45 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildWelcomeCard(ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          colors: [
-            theme.colorScheme.primaryContainer,
-            theme.colorScheme.secondaryContainer,
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return AttaCoolSurface(
+      borderRadius: 24,
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              theme.colorScheme.primaryContainer,
+              theme.colorScheme.secondaryContainer,
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Добро пожаловать',
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Добро пожаловать',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _isLogin
-                ? 'Войдите по номеру телефона.'
-                : 'Регистрация по телефону в 3 шага: профиль, номер и подтверждение звонком.',
-            style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            ApiConfig.emailAuthDisabledMessage,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+            const SizedBox(height: 8),
+            Text(
+              _isLogin
+                  ? 'Войдите по номеру телефона.'
+                  : 'Регистрация по телефону в 3 шага: профиль, номер и подтверждение звонком.',
+              style: theme.textTheme.bodyMedium?.copyWith(height: 1.45),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              ApiConfig.emailAuthDisabledMessage,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -502,51 +505,49 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_showEmailSignup) {
       return const SizedBox.shrink();
     }
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: _authMethod == _AuthMethod.phone
-                    ? theme.colorScheme.primary
-                    : Colors.transparent,
-                foregroundColor: _authMethod == _AuthMethod.phone
-                    ? theme.colorScheme.onPrimary
-                    : theme.colorScheme.onSurface,
-                elevation: 0,
+    return AttaCoolSurface(
+      borderRadius: 20,
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Row(
+          children: [
+            Expanded(
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _authMethod == _AuthMethod.phone
+                      ? theme.colorScheme.primary
+                      : Colors.transparent,
+                  foregroundColor: _authMethod == _AuthMethod.phone
+                      ? theme.colorScheme.onPrimary
+                      : theme.colorScheme.onSurface,
+                  elevation: 0,
+                ),
+                onPressed: _loading
+                    ? null
+                    : () => setState(() => _authMethod = _AuthMethod.phone),
+                child: const Text('С телефона'),
               ),
-              onPressed: _loading
-                  ? null
-                  : () => setState(() => _authMethod = _AuthMethod.phone),
-              child: const Text('С телефона'),
             ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: _authMethod == _AuthMethod.email
-                    ? theme.colorScheme.primary
-                    : Colors.transparent,
-                foregroundColor: _authMethod == _AuthMethod.email
-                    ? theme.colorScheme.onPrimary
-                    : theme.colorScheme.onSurface,
-                elevation: 0,
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _authMethod == _AuthMethod.email
+                      ? theme.colorScheme.primary
+                      : Colors.transparent,
+                  foregroundColor: _authMethod == _AuthMethod.email
+                      ? theme.colorScheme.onPrimary
+                      : theme.colorScheme.onSurface,
+                  elevation: 0,
+                ),
+                onPressed: _loading
+                    ? null
+                    : () => setState(() => _authMethod = _AuthMethod.email),
+                child: const Text('С email'),
               ),
-              onPressed: _loading
-                  ? null
-                  : () => setState(() => _authMethod = _AuthMethod.email),
-              child: const Text('С email'),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -613,152 +614,167 @@ class _LoginScreenState extends State<LoginScreen> {
         children: [
           _buildWelcomeCard(theme),
           const SizedBox(height: 16),
-          if (!_isLogin && _showEmailSignup) ...[
-            _buildMethodSwitch(theme),
-            const SizedBox(height: 16),
-          ],
-          if (_isLogin) ...[
-            _buildPhoneField(
-              key: const ValueKey('login-phone-field'),
-              focusNode: _loginPhoneFocusNode,
-              controller: _loginCtrl,
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) {
-                if (_canContinuePhoneLogin) {
-                  _continuePhoneLogin();
-                }
-              },
-              labelText: 'Номер телефона',
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
-                onPressed: _loading ? null : _resetPassword,
-                child: const Text('Забыли пароль?'),
-              ),
-            ),
-            if (!_showEmailLogin) ...[
-              const SizedBox(height: 4),
-              Text(
-                _emailAuthDisabledMessage,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            FilledButton(
-              onPressed: _canContinuePhoneLogin ? _continuePhoneLogin : null,
-              child: Text(_loading ? 'Подождите...' : 'Продолжить'),
-            ),
-          ] else if (_showPhoneAuth &&
-              (_authMethod == _AuthMethod.phone || !_showEmailSignup)) ...[
-            TextField(
-              key: const ValueKey('phone-registration-username-field'),
-              focusNode: _registrationNameFocusNode,
-              controller: _nameCtrl,
-              keyboardType: TextInputType.text,
-              textCapitalization: TextCapitalization.words,
-              textInputAction: TextInputAction.next,
-              onTap: () {
-                if (!_registrationNameFocusNode.hasFocus) {
-                  FocusScope.of(context).unfocus();
-                  _registrationNameFocusNode.requestFocus();
-                }
-              },
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(labelText: 'Имя пользователя'),
-            ),
-            const SizedBox(height: 12),
-            _PasswordTextField(
-              controller: _passCtrl,
-              textInputAction: TextInputAction.done,
-              onChanged: (_) => setState(() {}),
-              labelText: 'Пароль',
-              helperText: 'Минимум 8 символов',
-            ),
-            const SizedBox(height: 16),
-            _buildLegalBlock(theme),
-            const SizedBox(height: 8),
-            const SizedBox(height: 14),
-            FilledButton(
-              onPressed: _canContinuePhoneRegistration
-                  ? _openPhoneRegistrationFlow
-                  : null,
-              child: const Text('Продолжить'),
-            ),
-          ] else if (_showEmailSignup) ...[
-            TextField(
-              key: const ValueKey('email-registration-name-field'),
-              controller: _nameCtrl,
-              keyboardType: TextInputType.name,
-              textCapitalization: TextCapitalization.words,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(labelText: 'Имя'),
-            ),
-            const SizedBox(height: 12),
-            _buildPhonePrefixField(),
-            const SizedBox(height: 12),
-            TextField(
-              key: const ValueKey('email-registration-email-field'),
-              controller: _emailCtrl,
-              keyboardType: TextInputType.emailAddress,
-              textInputAction: TextInputAction.next,
-              decoration: const InputDecoration(labelText: 'Email'),
-            ),
-            const SizedBox(height: 12),
-            _PasswordTextField(
-              controller: _passCtrl,
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.done,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              labelText: 'Пароль',
-              helperText: 'Минимум 8 символов',
-              onSubmitted: (_) {
-                if (!_loading) {
-                  _submitEmailRegistration();
-                }
-              },
-            ),
-            const SizedBox(height: 16),
-            _buildLegalBlock(theme),
-            const SizedBox(height: 8),
-            const SizedBox(height: 14),
-            FilledButton(
-              onPressed: _loading ? null : _submitEmailRegistration,
-              child: Text(_loading ? 'Подождите...' : 'Зарегистрироваться'),
-            ),
-          ] else ...[
-            Text(
-              _emailAuthDisabledMessage,
-              style: theme.textTheme.bodyMedium,
-            ),
-          ],
-          const SizedBox(height: 10),
-          TextButton(
-            onPressed: _loading ? null : _toggleMode,
-            child: _isLogin
-                ? const FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text.rich(
-                      TextSpan(children: [
-                        TextSpan(
-                          text: 'Нет аккаунта? ',
-                          style: TextStyle(fontSize: 15),
-                        ),
-                        TextSpan(
-                          text: 'Создать аккаунт',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ]),
-                      maxLines: 1,
+          AttaCoolSurface(
+            borderRadius: 24,
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (!_isLogin && _showEmailSignup) ...[
+                    _buildMethodSwitch(theme),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_isLogin) ...[
+                    _buildPhoneField(
+                      key: const ValueKey('login-phone-field'),
+                      focusNode: _loginPhoneFocusNode,
+                      controller: _loginCtrl,
+                      onChanged: (_) => setState(() {}),
+                      onSubmitted: (_) {
+                        if (_canContinuePhoneLogin) {
+                          _continuePhoneLogin();
+                        }
+                      },
+                      labelText: 'Номер телефона',
                     ),
-                  )
-                : const Text('Уже есть аккаунт? Войти'),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: _loading ? null : _resetPassword,
+                        child: const Text('Забыли пароль?'),
+                      ),
+                    ),
+                    if (!_showEmailLogin) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _emailAuthDisabledMessage,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    FilledButton(
+                      onPressed:
+                          _canContinuePhoneLogin ? _continuePhoneLogin : null,
+                      child: Text(_loading ? 'Подождите...' : 'Продолжить'),
+                    ),
+                  ] else if (_showPhoneAuth &&
+                      (_authMethod == _AuthMethod.phone ||
+                          !_showEmailSignup)) ...[
+                    TextField(
+                      key: const ValueKey('phone-registration-username-field'),
+                      focusNode: _registrationNameFocusNode,
+                      controller: _nameCtrl,
+                      keyboardType: TextInputType.text,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      onTap: () {
+                        if (!_registrationNameFocusNode.hasFocus) {
+                          FocusScope.of(context).unfocus();
+                          _registrationNameFocusNode.requestFocus();
+                        }
+                      },
+                      onChanged: (_) => setState(() {}),
+                      decoration:
+                          const InputDecoration(labelText: 'Имя пользователя'),
+                    ),
+                    const SizedBox(height: 12),
+                    _PasswordTextField(
+                      controller: _passCtrl,
+                      textInputAction: TextInputAction.done,
+                      onChanged: (_) => setState(() {}),
+                      labelText: 'Пароль',
+                      helperText: 'Минимум 8 символов',
+                    ),
+                    const SizedBox(height: 16),
+                    _buildLegalBlock(theme),
+                    const SizedBox(height: 8),
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      onPressed: _canContinuePhoneRegistration
+                          ? _openPhoneRegistrationFlow
+                          : null,
+                      child: const Text('Продолжить'),
+                    ),
+                  ] else if (_showEmailSignup) ...[
+                    TextField(
+                      key: const ValueKey('email-registration-name-field'),
+                      controller: _nameCtrl,
+                      keyboardType: TextInputType.name,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(labelText: 'Имя'),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPhonePrefixField(),
+                    const SizedBox(height: 12),
+                    TextField(
+                      key: const ValueKey('email-registration-email-field'),
+                      controller: _emailCtrl,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(labelText: 'Email'),
+                    ),
+                    const SizedBox(height: 12),
+                    _PasswordTextField(
+                      controller: _passCtrl,
+                      keyboardType: TextInputType.number,
+                      textInputAction: TextInputAction.done,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      labelText: 'Пароль',
+                      helperText: 'Минимум 8 символов',
+                      onSubmitted: (_) {
+                        if (!_loading) {
+                          _submitEmailRegistration();
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _buildLegalBlock(theme),
+                    const SizedBox(height: 8),
+                    const SizedBox(height: 14),
+                    FilledButton(
+                      onPressed: _loading ? null : _submitEmailRegistration,
+                      child: Text(
+                          _loading ? 'Подождите...' : 'Зарегистрироваться'),
+                    ),
+                  ] else ...[
+                    Text(
+                      _emailAuthDisabledMessage,
+                      style: theme.textTheme.bodyMedium,
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  TextButton(
+                    onPressed: _loading ? null : _toggleMode,
+                    child: _isLogin
+                        ? const FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text.rich(
+                              TextSpan(children: [
+                                TextSpan(
+                                  text: 'Нет аккаунта? ',
+                                  style: TextStyle(fontSize: 15),
+                                ),
+                                TextSpan(
+                                  text: 'Создать аккаунт',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ]),
+                              maxLines: 1,
+                            ),
+                          )
+                        : const Text('Уже есть аккаунт? Войти'),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

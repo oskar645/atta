@@ -1,4 +1,5 @@
 import 'package:atta/src/services/listings_service.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 
 class ListingArchiveDecision {
@@ -30,52 +31,56 @@ Future<ListingArchiveDecision?> showListingArchiveConfirmation(
 ) {
   return showModalBottomSheet<ListingArchiveDecision>(
     context: context,
+    backgroundColor: Colors.transparent,
     showDragHandle: true,
     builder: (sheetContext) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Снять объявление?',
-              style: Theme.of(sheetContext).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Вы продали товар или хотите временно снять объявление с публикации?',
-              style: Theme.of(sheetContext).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.of(sheetContext).pop(
-                  soldListingArchiveDecision,
+      child: AttaCoolSurface(
+        borderRadius: 24,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Снять объявление?',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Вы продали товар или хотите временно снять объявление с публикации?',
+                style: Theme.of(sheetContext).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(
+                    soldListingArchiveDecision,
+                  ),
+                  child: const Text('Да, продано'),
                 ),
-                child: const Text('Да, продано'),
               ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: () => Navigator.of(sheetContext).pop(
-                  archivedListingArchiveDecision,
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(
+                    archivedListingArchiveDecision,
+                  ),
+                  child: const Text('Снять без продажи'),
                 ),
-                child: const Text('Снять без продажи'),
               ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () => Navigator.of(sheetContext).pop(),
-                child: const Text('Отмена'),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(),
+                  child: const Text('Отмена'),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     ),

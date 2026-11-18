@@ -19,6 +19,7 @@ class MediaPreviewBox extends StatelessWidget {
     this.icon = Icons.image_outlined,
     this.errorIcon = Icons.broken_image_outlined,
     this.alignment = Alignment.center,
+    this.backgroundColor,
     @visibleForTesting this.debugImageProvider,
   });
 
@@ -34,6 +35,7 @@ class MediaPreviewBox extends StatelessWidget {
   final IconData icon;
   final IconData errorIcon;
   final Alignment alignment;
+  final Color? backgroundColor;
   final ImageProvider? debugImageProvider;
 
   @override
@@ -97,7 +99,8 @@ class MediaPreviewBox extends StatelessWidget {
         return SizedBox.expand(
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              color: backgroundColor ??
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
             ),
             child: debugImageProvider != null
                 ? _coverImage(debugImageProvider!)
@@ -197,7 +200,8 @@ class MediaPreviewBox extends StatelessWidget {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      color: backgroundColor ??
+          Theme.of(context).colorScheme.surfaceContainerHighest,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: LayoutBuilder(
         builder: (context, constraints) {

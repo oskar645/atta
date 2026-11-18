@@ -5,6 +5,7 @@ import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/media_url.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -343,7 +344,7 @@ class _AdminBlocksScreenState extends State<AdminBlocksScreen> {
                   onRetry: _refresh,
                 );
               }
-              return RefreshIndicator(
+              return AttaRefreshIndicator(
                 onRefresh: _refresh,
                 child: ListView.builder(
                   controller: _scrollController,

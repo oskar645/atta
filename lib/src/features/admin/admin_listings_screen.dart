@@ -5,6 +5,8 @@ import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -265,14 +267,18 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
                       const SizedBox(width: 8),
                       SizedBox(
                           width: 220,
-                          child: TextField(
-                              controller: _search,
-                              onChanged: _onSearch,
-                              decoration: const InputDecoration(
-                                  isDense: true,
-                                  prefixIcon: Icon(Icons.search, size: 20),
-                                  hintText: 'Поиск',
-                                  border: OutlineInputBorder())))
+                          child: StandardSearchSurface(
+                            child: TextField(
+                                controller: _search,
+                                onChanged: _onSearch,
+                                decoration: const InputDecoration(
+                                    isDense: true,
+                                    prefixIcon: Icon(Icons.search, size: 20),
+                                    hintText: 'Поиск',
+                                    border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none)),
+                          ))
                     ]),
                   ]),
             )),
@@ -298,7 +304,7 @@ class _AdminListingsScreenState extends State<AdminListingsScreen> {
           retry: _load,
           showButton: false);
     }
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
         onRefresh: _load,
         child: ListView.builder(
             controller: _scroll,

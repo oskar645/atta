@@ -4,6 +4,8 @@ import 'package:atta/src/services/api/api_client.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/api/support_api.dart';
 import 'package:atta/src/services/auth/token_storage.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -141,42 +143,60 @@ class _PublicSupportScreenState extends State<PublicSupportScreen> {
                 : buildConversation(),
       );
 
-  Widget buildForm() => ListView(padding: const EdgeInsets.all(24), children: [
-        TextField(
-            controller: phone,
-            keyboardType: TextInputType.phone,
-            maxLength: 32,
-            decoration:
-                const InputDecoration(labelText: 'Старый номер телефона')),
-        TextField(
-            controller: name,
-            maxLength: 120,
-            decoration: const InputDecoration(
-                labelText: 'Имя профиля (необязательно)')),
-        TextField(
-            controller: email,
-            keyboardType: TextInputType.emailAddress,
-            maxLength: 254,
-            decoration: const InputDecoration(
-                labelText: 'Email для связи (необязательно)')),
-        TextField(
-            controller: description,
-            maxLength: 2000,
-            minLines: 4,
-            maxLines: 8,
-            decoration: const InputDecoration(labelText: 'Опишите проблему')),
-        const SizedBox(height: 12),
-        FilledButton(
-            onPressed: busy ? null : create,
-            child: const Text('Отправить обращение')),
-        if (error != null)
-          Text(error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
-      ]);
+  Widget buildForm() => ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          AttaCoolSurface(
+            borderRadius: 20,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  TextField(
+                      controller: phone,
+                      keyboardType: TextInputType.phone,
+                      maxLength: 32,
+                      decoration: const InputDecoration(
+                          labelText: 'Старый номер телефона')),
+                  TextField(
+                      controller: name,
+                      maxLength: 120,
+                      decoration: const InputDecoration(
+                          labelText: 'Имя профиля (необязательно)')),
+                  TextField(
+                      controller: email,
+                      keyboardType: TextInputType.emailAddress,
+                      maxLength: 254,
+                      decoration: const InputDecoration(
+                          labelText: 'Email для связи (необязательно)')),
+                  TextField(
+                      controller: description,
+                      maxLength: 2000,
+                      minLines: 4,
+                      maxLines: 8,
+                      decoration:
+                          const InputDecoration(labelText: 'Опишите проблему')),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                        onPressed: busy ? null : create,
+                        child: const Text('Отправить обращение')),
+                  ),
+                  if (error != null)
+                    Text(error!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
 
   Widget buildConversation() => Column(children: [
         Expanded(
-          child: RefreshIndicator(
+          child: AttaRefreshIndicator(
             onRefresh: refresh,
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
@@ -213,12 +233,31 @@ class _PublicSupportScreenState extends State<PublicSupportScreen> {
               padding: const EdgeInsets.all(12),
               child: Row(children: [
                 Expanded(
-                  child: TextField(
-                    controller: message,
-                    maxLength: 2000,
-                    decoration: const InputDecoration(
-                      hintText: 'Сообщение',
-                      counterText: '',
+                  child: AttaCoolSurface(
+                    borderRadius: 18,
+                    child: TextField(
+                      controller: message,
+                      maxLength: 2000,
+                      decoration: InputDecoration(
+                        hintText: 'Сообщение',
+                        counterText: '',
+                        filled: true,
+                        fillColor:
+                            Theme.of(context).brightness == Brightness.light
+                                ? Colors.white
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),

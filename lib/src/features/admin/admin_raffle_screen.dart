@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -767,24 +768,29 @@ class _AdminRaffleScreenState extends State<AdminRaffleScreen> {
             ),
             const SizedBox(height: 12),
             if (_view == 'tickets') ...[
-              TextField(
-                controller: _searchController,
-                onChanged: _searchChanged,
-                decoration: InputDecoration(
-                  hintText: 'Поиск по имени, телефону или № билета',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searchController.text.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Очистить',
-                          onPressed: () {
-                            _searchController.clear();
-                            setState(() {});
-                            _loadTicketPage(resetHistory: true);
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                  border: const OutlineInputBorder(),
+              StandardSearchSurface(
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: _searchChanged,
+                  decoration: InputDecoration(
+                    hintText: 'Поиск по имени, телефону или № билета',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchController.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Очистить',
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {});
+                              _loadTicketPage(resetHistory: true);
+                            },
+                            icon: const Icon(Icons.close),
+                          ),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    isDense: true,
+                  ),
                 ),
               ),
               const SizedBox(height: 10),

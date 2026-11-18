@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +14,9 @@ import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/category_chip_label.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 
 class VipShowcaseScreen extends StatefulWidget {
   const VipShowcaseScreen({super.key});
@@ -188,17 +192,17 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
         title: const Text('Витрина VIP'),
         centerTitle: false,
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+            child: StandardSearchSurface(
               child: TextField(
                 key: const ValueKey('vip_showcase_search_field'),
                 controller: _searchController,
                 textCapitalization: TextCapitalization.sentences,
                 textInputAction: TextInputAction.search,
+                textAlignVertical: TextAlignVertical.center,
                 onChanged: _onSearchChanged,
                 onSubmitted: (value) {
                   _searchDebounceTimer?.cancel();
@@ -218,41 +222,65 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
                 decoration: InputDecoration(
                   hintText: 'Поиск',
                   prefixIcon: const Icon(Icons.search),
+                  prefixIconConstraints:
+                      const BoxConstraints.tightFor(width: 44, height: 44),
                   suffixIcon: _searchController.text.trim().isEmpty
                       ? null
                       : IconButton(
                           tooltip: 'Очистить',
                           icon: const Icon(Icons.close),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 44,
+                            height: 44,
+                          ),
                           onPressed: _clearSearch,
                         ),
+                  suffixIconConstraints:
+                      const BoxConstraints.tightFor(width: 44, height: 44),
+                  contentPadding: EdgeInsets.zero,
                   isDense: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
                 ),
               ),
             ),
-            SizedBox(
-              height: 52,
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                scrollDirection: Axis.horizontal,
-                itemBuilder: (context, index) {
-                  final category = kCategories[index];
-                  final selected = category == _selectedCategory;
-                  return ChoiceChip(
-                    label: Text(category),
+          ),
+          SizedBox(
+            height: 52,
+            child: ListView.separated(
+              clipBehavior: Clip.none,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              scrollDirection: Axis.horizontal,
+              itemBuilder: (context, index) {
+                final category = kCategories[index];
+                final selected = category == _selectedCategory;
+                return CategoryChipSurface(
+                  selected: selected,
+                  child: ChoiceChip(
+                    label: CategoryChipLabel(
+                      category: category,
+                      selected: selected,
+                    ),
                     selected: selected,
+                    backgroundColor: categoryChipBackgroundColor(context),
                     onSelected: (_) => _selectCategory(category),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
-                  );
-                },
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemCount: kCategories.length,
-              ),
+                    side: BorderSide.none,
+                    elevation: 0,
+                    pressElevation: 1,
+                  ),
+                );
+              },
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemCount: kCategories.length,
             ),
-            Expanded(
+          ),
+          Expanded(
+            child: AttaRefreshIndicator(
+              onRefresh: _refresh,
               child: Builder(
                 builder: (context) {
                   if (_initialLoading && _items.isEmpty) {
@@ -305,6 +333,9 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
                               userId: userId,
                               isSeen: history.hasViewed(item.id),
                               reviews: reviews,
+                              whiteSurfaceInLightTheme: true,
+                              ordinaryCardShadows:
+                                  attaCoolSoftCardShadows(context),
                               onOpen: () => Navigator.of(context).push(
                                 MaterialPageRoute(
                                   builder: (_) =>
@@ -333,8 +364,8 @@ class _VipShowcaseScreenState extends State<VipShowcaseScreen> {
                 },
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

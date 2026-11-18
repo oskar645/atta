@@ -23,6 +23,7 @@ const storage_service_1 = require("../storage/storage.service");
 const serializers_1 = require("../../common/serializers");
 const admin_dashboard_signal_1 = require("../../common/admin-dashboard-signal");
 const support_realtime_signal_1 = require("../../common/support-realtime-signal");
+const image_upload_1 = require("../media/image-upload");
 let SupportService = SupportService_1 = class SupportService {
     constructor(prisma, notificationsService, storageService, adminDashboardSignal, supportRealtimeSignal) {
         this.prisma = prisma;
@@ -191,6 +192,9 @@ let SupportService = SupportService_1 = class SupportService {
         const allowed = new Set(['image/jpeg', 'image/png', 'image/webp']);
         if (!allowed.has(mime)) {
             throw new common_1.BadRequestException('Поддерживаются JPG, PNG и WEBP');
+        }
+        if ((0, image_upload_1.detectImageMime)(file.buffer) !== mime) {
+            throw new common_1.BadRequestException('Файл не является корректным изображением');
         }
         if (file.size > maxSizeBytes) {
             throw new common_1.BadRequestException('Файл слишком большой');

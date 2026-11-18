@@ -45,6 +45,11 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>yandexmaps</string>
+		<string>comgooglemaps</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Нужно, чтобы отправлять фото в сообщениях и делать снимки с камеры</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

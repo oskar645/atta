@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 
 class PickOptionScreen extends StatefulWidget {
   final String title;
@@ -33,15 +34,19 @@ class _PickOptionScreenState extends State<PickOptionScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
-            child: TextField(
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Поиск',
-                border: OutlineInputBorder(),
-                isDense: true,
+            child: StandardSearchSurface(
+              child: TextField(
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Поиск',
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  isDense: true,
+                ),
+                onChanged: (v) => setState(() => _q = v),
               ),
-              onChanged: (v) => setState(() => _q = v),
             ),
           ),
           Expanded(

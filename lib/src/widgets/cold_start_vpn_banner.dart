@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:flutter/material.dart';
 
 class ColdStartVpnBanner extends StatefulWidget {
@@ -85,16 +86,11 @@ class _ColdStartVpnBannerState extends State<ColdStartVpnBanner>
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: colors.surfaceContainerLow,
+              color: Theme.of(context).brightness == Brightness.light
+                  ? Colors.white
+                  : colors.surfaceContainerLow,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: colors.outlineVariant),
-              boxShadow: [
-                BoxShadow(
-                  color: colors.shadow.withValues(alpha: 0.08),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              boxShadow: attaCoolSoftCardShadows(context),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(

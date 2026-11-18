@@ -1,6 +1,7 @@
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -282,7 +283,7 @@ class _AdminPromotionsScreenState extends State<AdminPromotionsScreen> {
 
           final data = snap.data!;
           _data = data;
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
               controller: _scrollController,

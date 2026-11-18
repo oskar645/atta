@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:atta/src/services/yandex_suggest_service.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 
 class YandexAddressField extends StatefulWidget {
   final TextEditingController controller;
@@ -157,11 +158,16 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
         link: _layerLink,
         showWhenUnlinked: false,
         offset: Offset(0, size.height + 4),
-        child: Material(
-          elevation: 10,
-          borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surface,
-          child: ConstrainedBox(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: attaModalOverlayShadows(context),
+          ),
+          child: Material(
+            elevation: 0,
+            borderRadius: BorderRadius.circular(16),
+            color: Theme.of(context).colorScheme.surface,
+            child: ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 320),
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(vertical: 6),
@@ -240,6 +246,7 @@ class _YandexAddressFieldState extends State<YandexAddressField> {
                   onTap: () => _select(typed),
                 );
               },
+            ),
             ),
           ),
         ),

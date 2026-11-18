@@ -575,6 +575,8 @@ class _CapturingListingsService extends ListingsService {
     String? clothesType,
     String? clothesSize,
     String? oemPartNumber,
+    double? latitude,
+    double? longitude,
   }) async {
     createCalled = true;
     capturedCity = city;

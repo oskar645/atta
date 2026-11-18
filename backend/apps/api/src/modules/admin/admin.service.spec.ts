@@ -299,7 +299,8 @@ test('users list excludes soft-deleted users', async () => {
   });
 
   await service.listUsers({ search: 'member@example.com' });
-  const searchConditions = (capturedWhere?.['OR'] ?? []) as Array<
+  const searchWhere = capturedWhere as Record<string, unknown> | undefined;
+  const searchConditions = (searchWhere?.['OR'] ?? []) as Array<
     Record<string, unknown>
   >;
   assert.ok(

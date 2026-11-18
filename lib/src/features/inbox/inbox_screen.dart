@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -294,7 +295,7 @@ class _InboxScreenState extends State<InboxScreen> {
       );
     }
 
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
       onRefresh: () => _refreshInbox(chat, uid),
       child: ListView.separated(
         controller: _scrollController,
@@ -526,9 +527,9 @@ class _SupportInboxCard extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: primary.withValues(alpha: 0.22),
-                  blurRadius: 22,
-                  offset: const Offset(0, 12),
+                  color: primary.withValues(alpha: 0.12),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
                 ),
               ],
             ),

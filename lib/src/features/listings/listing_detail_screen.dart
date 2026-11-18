@@ -7,6 +7,7 @@ import 'package:atta/src/features/inbox/chat_screen.dart';
 import 'package:atta/src/features/listings/edit_listing_screen.dart';
 import 'package:atta/src/features/listings/desktop_web_photo_navigation.dart';
 import 'package:atta/src/features/listings/listing_archive_flow.dart';
+import 'package:atta/src/features/listings/listing_location_map_screen.dart';
 import 'package:atta/src/features/listings/photo_viewer_screen.dart';
 import 'package:atta/src/features/promotions/listing_stats_screen.dart';
 import 'package:atta/src/features/promotions/sell_faster_screen.dart';
@@ -44,6 +45,7 @@ import 'package:atta/src/widgets/listing_price_row.dart';
 import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/seller_level_badge.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -432,7 +434,7 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
     final ok = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AttaCoolConfirmationDialog(
         title: const Text('Пожаловаться'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -664,46 +666,42 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
 
     final isLong = text.length > 180;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Описание',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-          const SizedBox(height: 10),
-          Text(
-            text,
-            maxLines: (!_showFullDescription && isLong) ? 4 : null,
-            overflow: (!_showFullDescription && isLong)
-                ? TextOverflow.ellipsis
-                : null,
-          ),
-          if (isLong) ...[
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: () =>
-                  setState(() => _showFullDescription = !_showFullDescription),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                  _showFullDescription ? 'Скрыть' : 'Показать полностью',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w700,
+    return AttaCoolSurface(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Описание',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 10),
+            Text(
+              text,
+              maxLines: (!_showFullDescription && isLong) ? 4 : null,
+              overflow: (!_showFullDescription && isLong)
+                  ? TextOverflow.ellipsis
+                  : null,
+            ),
+            if (isLong) ...[
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: () => setState(
+                    () => _showFullDescription = !_showFullDescription),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    _showFullDescription ? 'Скрыть' : 'Показать полностью',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -715,41 +713,37 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
     final visible = _showAllSpecs ? specs : specs.take(3).toList();
     final hasMore = specs.length > 3;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Характеристики',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-          const SizedBox(height: 10),
-          ...visible.map((e) => _kv(e.key, e.value)),
-          if (hasMore) ...[
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: () => setState(() => _showAllSpecs = !_showAllSpecs),
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                  _showAllSpecs
-                      ? 'Скрыть характеристики'
-                      : 'Показать все (${specs.length})',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w700,
+    return AttaCoolSurface(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Характеристики',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 10),
+            ...visible.map((e) => _kv(e.key, e.value)),
+            if (hasMore) ...[
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () => setState(() => _showAllSpecs = !_showAllSpecs),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Text(
+                    _showAllSpecs
+                        ? 'Скрыть характеристики'
+                        : 'Показать все (${specs.length})',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -1004,6 +998,18 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                       },
                     ),
                   PopupMenuButton<String>(
+                    color: Theme.of(context).brightness == Brightness.light
+                        ? Colors.white
+                        : Theme.of(context).colorScheme.surfaceContainerHigh,
+                    surfaceTintColor: Colors.transparent,
+                    elevation: 8,
+                    shadowColor:
+                        Theme.of(context).brightness == Brightness.light
+                            ? const Color(0x40547CA5)
+                            : Colors.black54,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
                     onSelected: (v) async {
                       if (v == 'edit') {
                         Navigator.of(context).push(
@@ -1545,8 +1551,16 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           InkWell(
-                            onTap:
-                                hasAddress ? () => _openInMaps(address) : null,
+                            onTap: hasAddress
+                                ? () => Navigator.of(ctx).push(
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            ListingLocationMapScreen(
+                                          listing: listing,
+                                        ),
+                                      ),
+                                    )
+                                : null,
                             borderRadius: BorderRadius.circular(8),
                             child: Text(
                               hasAddress
@@ -1576,65 +1590,52 @@ class _ListingDetailScreenState extends State<ListingDetailScreen> {
                     },
                   ),
                   const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(14),
-                      color: Theme.of(context).colorScheme.surface,
-                      border: Border.all(
-                          color: Theme.of(context)
-                              .dividerColor
-                              .withValues(alpha: 0.18)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.schedule,
-                            size: 18,
-                            color: Theme.of(context).colorScheme.outline),
-                        const SizedBox(width: 6),
-                        Text(_publishedTimeText(listing.createdAt),
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.outline)),
-                        const Spacer(),
-                        Icon(Icons.remove_red_eye_outlined,
-                            size: 18,
-                            color: Theme.of(context).colorScheme.outline),
-                        const SizedBox(width: 6),
-                        Text('${listing.viewCount}',
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.outline)),
-                      ],
+                  AttaCoolSurface(
+                    borderRadius: 14,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          Icon(Icons.schedule,
+                              size: 18,
+                              color: Theme.of(context).colorScheme.outline),
+                          const SizedBox(width: 6),
+                          Text(_publishedTimeText(listing.createdAt),
+                              style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.outline)),
+                          const Spacer(),
+                          Icon(Icons.remove_red_eye_outlined,
+                              size: 18,
+                              color: Theme.of(context).colorScheme.outline),
+                          const SizedBox(width: 6),
+                          Text('${listing.viewCount}',
+                              style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.outline)),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
                   if (deliveryNames.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        color: Theme.of(context).colorScheme.surface,
-                        border: Border.all(
-                            color: Theme.of(context)
-                                .dividerColor
-                                .withValues(alpha: 0.18)),
+                    AttaCoolSurface(
+                      borderRadius: 14,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text('Доставка: ${deliveryNames.join(', ')}'),
                       ),
-                      child: Text('Доставка: ${deliveryNames.join(', ')}'),
                     )
                   else
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        color: Theme.of(context).colorScheme.surface,
-                        border: Border.all(
-                            color: Theme.of(context)
-                                .dividerColor
-                                .withValues(alpha: 0.18)),
+                    AttaCoolSurface(
+                      borderRadius: 14,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text('Доставка: не указано',
+                            style: TextStyle(
+                                color: Theme.of(context).colorScheme.outline)),
                       ),
-                      child: Text('Доставка: не указано',
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.outline)),
                     ),
                   const SizedBox(height: 12),
                   if (specs.isNotEmpty) _buildCarSpecsSection(context, specs),
@@ -1815,14 +1816,8 @@ class _SellerReviewsOverviewSectionState
     }
     final average = count == 0 ? 0.0 : (sum / count);
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(
-          color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
-        ),
-      ),
+    return AttaCoolSurface(
+      borderRadius: 14,
       child: Column(
         children: [
           Padding(
@@ -2015,135 +2010,132 @@ class _SellerInfoSectionState extends State<_SellerInfoSection> {
           ),
         );
       },
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.18),
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Text(
-                  'Продавец',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-                ),
-                if (_isLoading) ...[
-                  const SizedBox(width: 8),
-                  const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ],
-              ],
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
+      child: AttaCoolSurface(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      'Не удалось обновить данные продавца',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.error,
+                  const Text(
+                    'Продавец',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                  if (_isLoading) ...[
+                    const SizedBox(width: 8),
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ],
+                ],
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Не удалось обновить данные продавца',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                       ),
                     ),
+                    TextButton(
+                      onPressed: _loadProfile,
+                      child: const Text('Повторить'),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  StreamBuilder<bool>(
+                    stream: widget.presence.streamIsOnline(widget.sellerId),
+                    builder: (context, onlineSnap) {
+                      final isOnline = onlineSnap.data == true;
+                      return PresenceBadge(
+                        isOnline: isOnline,
+                        child: RemoteAvatar(
+                          imageUrl: _sellerAvatar,
+                          fallbackText:
+                              widget.sellerInitialBuilder(_sellerName),
+                          radius: 22,
+                          textStyle: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                  TextButton(
-                    onPressed: _loadProfile,
-                    child: const Text('Повторить'),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _sellerName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          widget.phoneHidden
+                              ? 'Телефон: скрыт'
+                              : widget.phone.trim().isEmpty
+                                  ? 'Телефон: не указан'
+                                  : 'Телефон: ${formatRussianPhone(widget.phone)}',
+                          style: TextStyle(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AdminCopyUserIdButton(userId: widget.sellerId),
+                      if (_sellerLevel != null) ...[
+                        const SizedBox(height: 4),
+                        SellerLevelBadge(
+                          level: _sellerLevel,
+                          size: SellerLevelBadgeSize.compact,
+                        ),
+                      ],
+                    ],
+                  ),
+                  Icon(
+                    Icons.chevron_right,
+                    color: Theme.of(context).colorScheme.outline,
                   ),
                 ],
               ),
-            ],
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                StreamBuilder<bool>(
-                  stream: widget.presence.streamIsOnline(widget.sellerId),
-                  builder: (context, onlineSnap) {
-                    final isOnline = onlineSnap.data == true;
-                    return PresenceBadge(
-                      isOnline: isOnline,
-                      child: RemoteAvatar(
-                        imageUrl: _sellerAvatar,
-                        fallbackText: widget.sellerInitialBuilder(_sellerName),
-                        radius: 22,
-                        textStyle: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _sellerName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.phoneHidden
-                            ? 'Телефон: скрыт'
-                            : widget.phone.trim().isEmpty
-                                ? 'Телефон: не указан'
-                                : 'Телефон: ${formatRussianPhone(widget.phone)}',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    AdminCopyUserIdButton(userId: widget.sellerId),
-                    if (_sellerLevel != null) ...[
-                      const SizedBox(height: 4),
-                      SellerLevelBadge(
-                        level: _sellerLevel,
-                        size: SellerLevelBadgeSize.compact,
-                      ),
-                    ],
-                  ],
-                ),
-                Icon(
-                  Icons.chevron_right,
+              const SizedBox(height: 10),
+              Text(
+                'Открыть профиль продавца',
+                style: TextStyle(
                   color: Theme.of(context).colorScheme.outline,
+                  fontWeight: FontWeight.w600,
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              'Открыть профиль продавца',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.outline,
-                fontWeight: FontWeight.w600,
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2423,6 +2415,8 @@ class _SimilarListingsSectionState extends State<_SimilarListingsSection> {
                   userId: widget.currentUserId,
                   isSeen: widget.history.hasViewed(item.id),
                   reviews: widget.reviews,
+                  whiteSurfaceInLightTheme: true,
+                  ordinaryCardShadows: attaCoolSoftCardShadows(context),
                   onError: (error) {
                     if (!context.mounted) return;
                     showAppSnack(
@@ -2486,33 +2480,6 @@ class _InlineSectionError extends StatelessWidget {
   }
 }
 
-Future<void> _openInMaps(String address) async {
-  final query = Uri.encodeComponent(address.trim());
-  if (query.isEmpty) return;
-
-  final geo = Uri.parse('geo:0,0?q=$query');
-  if (await canLaunchUrl(geo)) {
-    await launchUrl(geo, mode: LaunchMode.externalApplication);
-    return;
-  }
-
-  final google =
-      Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
-  if (await canLaunchUrl(google)) {
-    await launchUrl(google, mode: LaunchMode.externalApplication);
-    return;
-  }
-
-  final yandex = Uri.parse('https://yandex.ru/maps/?text=$query');
-  if (await canLaunchUrl(yandex)) {
-    await launchUrl(yandex, mode: LaunchMode.externalApplication);
-    return;
-  }
-
-  final osm = Uri.parse('https://www.openstreetmap.org/search?query=$query');
-  await launchUrl(osm, mode: LaunchMode.externalApplication);
-}
-
 Widget _kv(String k, String v) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 8),
@@ -2557,8 +2524,10 @@ class _PhotosState extends State<_Photos> {
         height: 260,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          boxShadow: attaSoftShadows(context),
+          color: Theme.of(context).brightness == Brightness.light
+              ? Colors.white
+              : Theme.of(context).colorScheme.surfaceContainerHighest,
+          boxShadow: attaCoolSoftCardShadows(context),
         ),
         child: const Center(
             child: Icon(Icons.image_not_supported_outlined, size: 48)),
@@ -2568,7 +2537,7 @@ class _PhotosState extends State<_Photos> {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        boxShadow: attaSoftShadows(context),
+        boxShadow: attaCoolSoftCardShadows(context),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),

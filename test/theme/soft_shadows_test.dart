@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('soft shadows stay subtle and adapt to theme brightness',
       (tester) async {
-    Future<BoxShadow> shadowFor(Brightness brightness) async {
-      late BoxShadow result;
+    Future<List<BoxShadow>> shadowsFor(Brightness brightness) async {
+      late List<BoxShadow> result;
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
@@ -14,7 +14,7 @@ void main() {
             data: ThemeData(brightness: brightness),
             child: Builder(
               builder: (context) {
-                result = attaSoftShadows(context).single;
+                result = attaSoftShadows(context);
                 return const SizedBox();
               },
             ),
@@ -24,13 +24,17 @@ void main() {
       return result;
     }
 
-    final light = await shadowFor(Brightness.light);
-    final dark = await shadowFor(Brightness.dark);
+    final light = await shadowsFor(Brightness.light);
+    final dark = await shadowsFor(Brightness.dark);
 
-    expect(light.blurRadius, 8);
-    expect(light.spreadRadius, -1);
-    expect(light.offset, const Offset(0, 2));
-    expect(light.color.a, lessThan(dark.color.a));
-    expect(dark.color.a, lessThan(0.2));
+    expect(light, hasLength(2));
+    expect(dark, hasLength(2));
+    expect(light.first.blurRadius, 10);
+    expect(light.first.offset, const Offset(0, 2));
+    expect(light.last.blurRadius, 24);
+    expect(light.last.spreadRadius, -2);
+    expect(light.last.offset, const Offset(0, 8));
+    expect(light.first.color.a, lessThan(dark.first.color.a));
+    expect(dark.last.color.a, lessThan(dark.first.color.a));
   });
 }

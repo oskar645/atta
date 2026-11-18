@@ -24,6 +24,7 @@ import { normalizeStoredMediaUrl } from '../../common/serializers';
 import { ListAdminSupportTicketsDto } from './dto/list-admin-support-tickets.dto';
 import { AdminDashboardSignal } from '../../common/admin-dashboard-signal';
 import { SupportRealtimeSignal } from '../../common/support-realtime-signal';
+import { detectImageMime } from '../media/image-upload';
 
 @Injectable()
 export class SupportService {
@@ -266,6 +267,9 @@ export class SupportService {
     const allowed = new Set(['image/jpeg', 'image/png', 'image/webp']);
     if (!allowed.has(mime)) {
       throw new BadRequestException('Поддерживаются JPG, PNG и WEBP');
+    }
+    if (detectImageMime(file.buffer) !== mime) {
+      throw new BadRequestException('Файл не является корректным изображением');
     }
     if (file.size > maxSizeBytes) {
       throw new BadRequestException('Файл слишком большой');

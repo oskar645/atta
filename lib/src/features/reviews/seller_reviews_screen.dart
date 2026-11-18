@@ -5,6 +5,7 @@ import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -226,7 +227,7 @@ class _ReviewTile extends StatelessWidget {
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => AttaCoolConfirmationDialog(
         title: const Text('Удалить отзыв?'),
         content: const Text('Это действие нельзя отменить.'),
         actions: [
@@ -277,109 +278,114 @@ class _ReviewTile extends StatelessWidget {
     final createdAt = _dateText(review['created_at']);
     final replyText = (review['reply_text'] ?? '').toString().trim();
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                RemoteAvatar(
-                  imageUrl: reviewerAvatar,
-                  fallbackText: reviewerName,
-                  radius: 18,
-                  textStyle: const TextStyle(fontSize: 12),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    reviewerName,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: AttaCoolSurface(
+        borderRadius: 14,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  RemoteAvatar(
+                    imageUrl: reviewerAvatar,
+                    fallbackText: reviewerName,
+                    radius: 18,
+                    textStyle: const TextStyle(fontSize: 12),
                   ),
-                ),
-                Text(
-                  createdAt,
-                  style:
-                      TextStyle(color: Theme.of(context).colorScheme.outline),
-                ),
-                if (isAdmin)
-                  IconButton(
-                    onPressed: () => _deleteReview(context),
-                    tooltip: 'Удалить отзыв',
-                    iconSize: 18,
-                    splashRadius: 18,
-                    visualDensity: VisualDensity.compact,
-                    icon: Icon(
-                      Icons.delete_outline,
-                      color: Theme.of(context).colorScheme.error,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      reviewerName,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
-              ],
-            ),
-            const SizedBox(height: 6),
-
-            Row(
-              children: List.generate(5, (i) {
-                final filled = i < rating;
-                return Icon(
-                  filled ? Icons.star : Icons.star_border,
-                  size: 16,
-                  color: filled
-                      ? Colors.amber
-                      : Theme.of(context).colorScheme.outline,
-                );
-              }),
-            ),
-
-            const SizedBox(height: 8),
-            Text(text.isEmpty ? '—' : text),
-
-            // ✅ Ответ продавца (если есть)
-            if (replyText.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                ),
-                child: Text('Ответ продавца: $replyText'),
+                  Text(
+                    createdAt,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.outline),
+                  ),
+                  if (isAdmin)
+                    IconButton(
+                      onPressed: () => _deleteReview(context),
+                      tooltip: 'Удалить отзыв',
+                      iconSize: 18,
+                      splashRadius: 18,
+                      visualDensity: VisualDensity.compact,
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                ],
               ),
-            ],
+              const SizedBox(height: 6),
 
-            // ✅ Кнопка для продавца: ответить / изменить ответ
-            if (isSeller) ...[
-              const SizedBox(height: 10),
-              TextButton.icon(
-                onPressed: () async {
-                  final reviews = context.read<ReviewsService>();
-                  final res = await showDialog<String>(
-                    context: context,
-                    builder: (_) => _ReplyDialog(initial: replyText),
+              Row(
+                children: List.generate(5, (i) {
+                  final filled = i < rating;
+                  return Icon(
+                    filled ? Icons.star : Icons.star_border,
+                    size: 16,
+                    color: filled
+                        ? Colors.amber
+                        : Theme.of(context).colorScheme.outline,
                   );
-                  if (res == null || res.trim().isEmpty) return;
-
-                  try {
-                    await reviews.replyToReview(
-                      sellerId: sellerId,
-                      reviewId: (review['id'] ?? '').toString(),
-                      replyText: res,
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Ошибка: $e')),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.reply),
-                label: Text(replyText.isEmpty ? 'Ответить' : 'Изменить ответ'),
+                }),
               ),
+
+              const SizedBox(height: 8),
+              Text(text.isEmpty ? '—' : text),
+
+              // ✅ Ответ продавца (если есть)
+              if (replyText.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                  ),
+                  child: Text('Ответ продавца: $replyText'),
+                ),
+              ],
+
+              // ✅ Кнопка для продавца: ответить / изменить ответ
+              if (isSeller) ...[
+                const SizedBox(height: 10),
+                TextButton.icon(
+                  onPressed: () async {
+                    final reviews = context.read<ReviewsService>();
+                    final res = await showDialog<String>(
+                      context: context,
+                      builder: (_) => _ReplyDialog(initial: replyText),
+                    );
+                    if (res == null || res.trim().isEmpty) return;
+
+                    try {
+                      await reviews.replyToReview(
+                        sellerId: sellerId,
+                        reviewId: (review['id'] ?? '').toString(),
+                        replyText: res,
+                      );
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Ошибка: $e')),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.reply),
+                  label:
+                      Text(replyText.isEmpty ? 'Ответить' : 'Изменить ответ'),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -550,7 +556,7 @@ class _ReplyDialogState extends State<_ReplyDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return AttaCoolConfirmationDialog(
       title: const Text('Ответ продавца'),
       content: TextField(
         controller: _c,

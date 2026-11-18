@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:atta/src/services/admin_service.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -107,7 +108,7 @@ class _AdminServerStatusScreenState extends State<AdminServerStatusScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _data == null
               ? _ErrorState(onRetry: _refresh)
-              : RefreshIndicator(
+              : AttaRefreshIndicator(
                   onRefresh: _refresh,
                   child: _content(context, _data!),
                 ),

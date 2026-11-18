@@ -7,6 +7,19 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'package:atta/src/services/yandex_suggest_service.dart';
+import 'package:atta/src/services/map_config.dart';
+
+class ListingLocationSelection {
+  const ListingLocationSelection({
+    required this.address,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final String address;
+  final double latitude;
+  final double longitude;
+}
 
 class PickLocationScreen extends StatefulWidget {
   final String? initialAddress;
@@ -139,15 +152,52 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
     }
   }
 
-  void _onSuggestionTap(YandexAddressSuggestion suggestion) {
+  Future<void> _onSuggestionTap(YandexAddressSuggestion suggestion) async {
     final label = suggestion.value.trim();
     if (label.isEmpty) return;
-    Navigator.of(context).maybePop(label);
+    try {
+      final points = await locationFromAddress(label);
+      if (!mounted || points.isEmpty) return;
+      final point = points.first;
+      Navigator.of(context).maybePop(ListingLocationSelection(
+        address: label,
+        latitude: point.latitude,
+        longitude: point.longitude,
+      ));
+    } catch (_) {
+      if (mounted) Navigator.of(context).maybePop(label);
+    }
   }
 
   Future<void> _onMapChoose() async {
     if (!mounted) return;
-    Navigator.of(context).maybePop(_picked);
+    var address = _qCtrl.text.trim();
+    try {
+      final marks = await placemarkFromCoordinates(
+        _picked.latitude,
+        _picked.longitude,
+      );
+      if (marks.isNotEmpty) {
+        final mark = marks.first;
+        address = [
+          mark.administrativeArea,
+          mark.locality,
+          mark.street,
+          mark.subThoroughfare
+        ]
+            .whereType<String>()
+            .map((part) => part.trim())
+            .where((part) => part.isNotEmpty)
+            .toSet()
+            .join(', ');
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    Navigator.of(context).maybePop(ListingLocationSelection(
+      address: address,
+      latitude: _picked.latitude,
+      longitude: _picked.longitude,
+    ));
   }
 
   @override
@@ -300,10 +350,7 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
         onTap: (_, point) => setState(() => _picked = point),
       ),
       children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.example.atta',
-        ),
+        AttaMapConfig.tiles(),
         MarkerLayer(
           markers: [
             Marker(
@@ -314,6 +361,7 @@ class _PickLocationScreenState extends State<PickLocationScreen> {
             ),
           ],
         ),
+        AttaMapConfig.attribution(),
       ],
     );
   }

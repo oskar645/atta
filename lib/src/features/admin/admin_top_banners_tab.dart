@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -48,7 +49,7 @@ class _State extends State<AdminTopBannersTab> {
           return const Center(child: CircularProgressIndicator());
         }
         final items = snap.data ?? [];
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
             onRefresh: reload,
             child: ListView(padding: const EdgeInsets.all(12), children: [
               Row(children: [

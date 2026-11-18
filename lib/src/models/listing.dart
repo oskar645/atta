@@ -1,6 +1,7 @@
 // lib/src/models/listing.dart
 import 'active_promotion.dart';
 import 'car_specs.dart';
+import '../constants/categories.dart';
 import '../utils/media_url.dart';
 import '../utils/ru_phone.dart';
 
@@ -192,6 +193,8 @@ class Listing {
   /// В базе это может быть колонка `location` (jsonb).
   /// Если колонки нет — просто будет вычисляться из city.
   final ListingLocation location;
+  final double? latitude;
+  final double? longitude;
 
   final Map<String, dynamic> delivery; // jsonb
   final List<String> photoUrls; // text[]
@@ -240,6 +243,8 @@ class Listing {
     this.hasCallContact = false,
     required this.city,
     required this.location,
+    this.latitude,
+    this.longitude,
     required this.delivery,
     required this.photoUrls,
     required this.photoItems,
@@ -334,6 +339,14 @@ class Listing {
     return city.trim();
   }
 
+  bool get hasCoordinates =>
+      latitude != null &&
+      longitude != null &&
+      latitude! >= -90 &&
+      latitude! <= 90 &&
+      longitude! >= -180 &&
+      longitude! <= 180;
+
   List<ActivePromotion> get activePromotions => [
         activeShowcase,
         activeBump,
@@ -396,6 +409,11 @@ class Listing {
     if (v is num) return v.toInt();
     if (v is String) return int.tryParse(v.trim());
     return null;
+  }
+
+  static double? _parseOptionalDouble(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse((v ?? '').toString().trim());
   }
 
   static List<String> _parseTextArray(dynamic v) {
@@ -496,6 +514,11 @@ class Listing {
     final carRaw = row['car'];
 
     final city = (row['city'] ?? '').toString();
+    final category = (row['category'] ?? '').toString();
+    final subcategory = canonicalSubcategory(
+      category,
+      (row['subcategory'] ?? '').toString(),
+    );
     final promotions = _parseJson(row['promotions']);
     final owner = _parseJson(row['owner']);
     final sellerLevel = _nullableTrimmedString(
@@ -521,8 +544,8 @@ class Listing {
       sellerLevel: sellerLevel,
       title: (row['title'] ?? '').toString(),
       description: (row['description'] ?? '').toString(),
-      category: (row['category'] ?? '').toString(),
-      subcategory: (row['subcategory'] ?? '').toString(),
+      category: category,
+      subcategory: subcategory,
       price: (row['price'] is num) ? (row['price'] as num).toInt() : 0,
       previousPrice:
           _parseOptionalInt(row['previous_price'] ?? row['previousPrice']),
@@ -535,6 +558,8 @@ class Listing {
           : normalizeRuPhoneForApi(phone).isNotEmpty,
       city: city,
       location: location,
+      latitude: _parseOptionalDouble(row['latitude']),
+      longitude: _parseOptionalDouble(row['longitude']),
       delivery: delivery,
       photoUrls: photos,
       photoItems: photoItems.isNotEmpty
@@ -615,6 +640,8 @@ class Listing {
 
 // Новое поле для location, если бэкенд его поддерживает.
       'location': location.toMap(),
+      'latitude': latitude,
+      'longitude': longitude,
 
       'delivery': delivery,
       'photo_urls': photoUrls,

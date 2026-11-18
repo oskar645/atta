@@ -8,6 +8,10 @@ import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/category_chip_label.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -193,58 +197,82 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
         title: const Text('Витрина ATTA'),
         centerTitle: false,
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+            child: StandardSearchSurface(
               child: TextField(
                 key: const ValueKey('showcase_search_field'),
                 controller: _searchController,
                 textCapitalization: TextCapitalization.sentences,
                 textInputAction: TextInputAction.search,
+                textAlignVertical: TextAlignVertical.center,
                 onChanged: _onSearchChanged,
                 onSubmitted: _submitSearch,
                 decoration: InputDecoration(
                   hintText: 'Поиск',
                   prefixIcon: const Icon(Icons.search),
+                  prefixIconConstraints:
+                      const BoxConstraints.tightFor(width: 44, height: 44),
                   suffixIcon: _searchController.text.trim().isEmpty
                       ? null
                       : IconButton(
                           tooltip: 'Очистить',
                           icon: const Icon(Icons.close),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 44,
+                            height: 44,
+                          ),
                           onPressed: _clearSearch,
                         ),
+                  suffixIconConstraints:
+                      const BoxConstraints.tightFor(width: 44, height: 44),
+                  contentPadding: EdgeInsets.zero,
                   isDense: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
                 ),
               ),
             ),
-            SizedBox(
-              height: 52,
-              child: ListView.separated(
-                key: const ValueKey('showcase_category_filters'),
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                scrollDirection: Axis.horizontal,
-                itemBuilder: (context, index) {
-                  final filter = kCategories[index];
-                  final selected = filter == _selectedFilter;
-                  return ChoiceChip(
-                    label: Text(filter),
+          ),
+          SizedBox(
+            height: 52,
+            child: ListView.separated(
+              key: const ValueKey('showcase_category_filters'),
+              clipBehavior: Clip.none,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+              scrollDirection: Axis.horizontal,
+              itemBuilder: (context, index) {
+                final filter = kCategories[index];
+                final selected = filter == _selectedFilter;
+                return CategoryChipSurface(
+                  selected: selected,
+                  child: ChoiceChip(
+                    label: CategoryChipLabel(
+                      category: filter,
+                      selected: selected,
+                    ),
                     selected: selected,
+                    backgroundColor: categoryChipBackgroundColor(context),
                     onSelected: (_) => _selectCategory(filter),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
-                  );
-                },
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemCount: kCategories.length,
-              ),
+                    side: BorderSide.none,
+                    elevation: 0,
+                    pressElevation: 1,
+                  ),
+                );
+              },
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemCount: kCategories.length,
             ),
-            Expanded(
+          ),
+          Expanded(
+            child: AttaRefreshIndicator(
+              onRefresh: _refresh,
               child: Builder(
                 builder: (context) {
                   if (_initialLoading && _items.isEmpty) {
@@ -300,8 +328,8 @@ class _ShowcaseAllScreenState extends State<ShowcaseAllScreen> {
                 },
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -338,17 +366,19 @@ class _ShowcaseGridCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
+    return DecoratedBox(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _openListing(context),
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: scheme.outlineVariant),
-          ),
+        boxShadow: attaCoolSoftCardShadows(context),
+      ),
+      child: Material(
+        color: Theme.of(context).brightness == Brightness.light
+            ? Colors.white
+            : scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => _openListing(context),
           child: Stack(
             fit: StackFit.expand,
             children: [

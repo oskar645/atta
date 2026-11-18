@@ -39,7 +39,8 @@ void main() {
     expect(image.memCacheHeight, 300);
   });
 
-  testWidgets('listing card uses one subtle outer shadow', (tester) async {
+  testWidgets('listing card uses one cool three-layer outer shadow',
+      (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -69,15 +70,20 @@ void main() {
         .map((widget) => widget.decoration)
         .whereType<BoxDecoration>()
         .where(
-          (decoration) =>
-              decoration.boxShadow?.any(
-                (shadow) =>
-                    shadow.blurRadius == 8 &&
-                    shadow.spreadRadius == -1 &&
-                    shadow.offset == const Offset(0, 2),
-              ) ==
-              true,
-        );
+      (decoration) {
+        final shadows = decoration.boxShadow;
+        return shadows?.length == 3 &&
+            shadows![0].color == const Color(0x38547CA5) &&
+            shadows[0].blurRadius == 3 &&
+            shadows[0].offset == Offset.zero &&
+            shadows[1].color == const Color(0x20547CA5) &&
+            shadows[1].blurRadius == 10 &&
+            shadows[1].offset == const Offset(0, 1) &&
+            shadows[2].color == const Color(0x10547CA5) &&
+            shadows[2].blurRadius == 22 &&
+            shadows[2].offset == const Offset(0, 4);
+      },
+    );
 
     expect(shadowDecorations, hasLength(1));
     final material = tester.widget<Material>(
@@ -89,6 +95,28 @@ void main() {
           .first,
     );
     expect(material.color, Colors.white);
+    final shape = material.shape! as RoundedRectangleBorder;
+    expect(shape.side, BorderSide.none);
+    expect(
+      tester
+          .widgetList<ClipRRect>(
+            find.descendant(
+              of: find.byType(ListingCard),
+              matching: find.byType(ClipRRect),
+            ),
+          )
+          .any(
+            (clip) =>
+                clip.borderRadius ==
+                const BorderRadius.only(
+                  topLeft: Radius.circular(12),
+                  topRight: Radius.circular(12),
+                  bottomLeft: Radius.circular(6),
+                  bottomRight: Radius.circular(6),
+                ),
+          ),
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
   });
 

@@ -2,6 +2,7 @@ import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -118,7 +119,7 @@ class _AdminTodayVisitsScreenState extends State<AdminTodayVisitsScreen> {
           final updatedAt =
               _formatTime((data['last_updated_at'] ?? '').toString().trim());
 
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refresh,
             child: ListView.separated(
               physics: const AlwaysScrollableScrollPhysics(),

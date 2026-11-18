@@ -20,6 +20,8 @@ import 'package:atta/src/services/notifications_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
 import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/services/top_banners_service.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
 import 'package:flutter/material.dart';
@@ -53,13 +55,83 @@ void main() {
 
     expect(
       tester.getSize(find.byKey(const ValueKey('home_search_field'))).height,
-      48,
+      44,
     );
     var field = tester.widget<TextField>(
       find.byKey(const ValueKey('home_search_field')),
     );
     expect(field.decoration?.filled, isTrue);
     expect(field.decoration?.fillColor, Colors.white);
+    expect(field.decoration?.border, InputBorder.none);
+    expect(field.textAlignVertical, TextAlignVertical.center);
+    expect(field.decoration?.hintText, 'Поиск по названию');
+    expect(field.decoration?.contentPadding, EdgeInsets.zero);
+    expect(find.byIcon(Icons.apps_rounded), findsNothing);
+    expect(find.byIcon(Icons.directions_car_rounded), findsOneWidget);
+    final allCategoryText = tester.widget<Text>(
+      find.descendant(
+        of: find.widgetWithText(ChoiceChip, 'Все'),
+        matching: find.text('Все'),
+      ),
+    );
+    final carCategoryText = tester.widget<Text>(
+      find.descendant(
+        of: find.widgetWithText(ChoiceChip, 'Авто'),
+        matching: find.text('Авто'),
+      ),
+    );
+    final carCategoryChip = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, 'Авто'),
+    );
+    expect(allCategoryText.style?.fontWeight, FontWeight.w600);
+    expect(carCategoryText.style?.fontWeight, FontWeight.w400);
+    expect(carCategoryChip.backgroundColor, Colors.white);
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.widgetWithText(ChoiceChip, 'Все'),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.any(
+                  (shadow) => shadow.color == const Color(0x38547CA5),
+                ) ==
+                true,
+          ),
+      isFalse,
+    );
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.widgetWithText(ChoiceChip, 'Авто'),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+        (decoration) {
+          final shadows = decoration.boxShadow;
+          return shadows?.length == 3 &&
+              shadows![0].color == const Color(0x38547CA5) &&
+              shadows[0].blurRadius == 3 &&
+              shadows[0].offset == Offset.zero &&
+              shadows[1].color == const Color(0x20547CA5) &&
+              shadows[1].blurRadius == 10 &&
+              shadows[1].offset == const Offset(0, 1) &&
+              shadows[2].color == const Color(0x10547CA5) &&
+              shadows[2].blurRadius == 22 &&
+              shadows[2].offset == const Offset(0, 4);
+        },
+      ),
+      isTrue,
+    );
     expect(
       tester
           .widgetList<DecoratedBox>(
@@ -70,8 +142,35 @@ void main() {
           )
           .map((widget) => widget.decoration)
           .whereType<BoxDecoration>()
-          .any((decoration) => decoration.boxShadow?.isNotEmpty == true),
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.any(
+                  (shadow) => shadow.color == const Color(0x38547CA5),
+                ) ==
+                true,
+          ),
       isTrue,
+    );
+    expect(
+      find.ancestor(
+        of: find.byKey(const ValueKey('home_search_field')),
+        matching: find.byType(AttaRoundedCornerShadowSupport),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(
+        of: find.widgetWithText(ChoiceChip, 'Авто'),
+        matching: find.byType(AttaRoundedCornerShadowSupport),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(
+        of: find.widgetWithText(ChoiceChip, 'Все'),
+        matching: find.byType(AttaRoundedCornerShadowSupport),
+      ),
+      findsNothing,
     );
 
     await tester.pumpWidget(
@@ -86,12 +185,131 @@ void main() {
     field = tester.widget<TextField>(
       find.byKey(const ValueKey('home_search_field')),
     );
+    final darkCarCategoryChip = tester.widget<ChoiceChip>(
+      find.widgetWithText(ChoiceChip, 'Авто'),
+    );
     expect(field.decoration?.fillColor, isNot(Colors.white));
     expect(
       field.decoration?.fillColor,
-      ThemeData.dark().scaffoldBackgroundColor,
+      const Color(0xFF292F39),
     );
+    expect(darkCarCategoryChip.backgroundColor, const Color(0xFF292F39));
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.byKey(const ValueKey('home_search_field')),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x3D7CA1C7),
+          ),
+      isTrue,
+    );
+    final darkHomeScaffold =
+        tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(darkHomeScaffold.backgroundColor, const Color(0xFF15181E));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('home filters use soft surfaces without decorative outlines',
+      (tester) async {
+    final listings = _FakeListingsService(
+      onGetListingsPage: (_) async => const ListingsFeedPage(
+        items: <Listing>[],
+        hasMore: false,
+      ),
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Фильтры'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Фильтры'), findsOneWidget);
+    final categoryDecorator = tester.widget<InputDecorator>(
+      find.ancestor(
+        of: find.text('Все категории'),
+        matching: find.byType(InputDecorator),
+      ),
+    );
+    expect(categoryDecorator.decoration.border, InputBorder.none);
+    expect(categoryDecorator.decoration.enabledBorder, InputBorder.none);
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: find.text('Все категории'),
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x38547CA5),
+          ),
+      isTrue,
+    );
+
+    for (final field in tester.widgetList<TextField>(find.byType(TextField))) {
+      expect(field.decoration?.border, InputBorder.none);
+      expect(field.decoration?.enabledBorder, InputBorder.none);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('where search aligns like Home and uses iOS switch',
+      (tester) async {
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: _FakeListingsService(
+          onGetListingsPage: (_) async => const ListingsFeedPage(
+            items: <Listing>[],
+            hasMore: false,
+          ),
+        ),
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Фильтры'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Где искать'));
+    await tester.tap(find.text('Где искать'));
+    await tester.pumpAndSettle();
+
+    var field = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Например: Москва'),
+    );
+    expect(field.textAlign, TextAlign.start);
+    expect(field.textAlignVertical, TextAlignVertical.center);
+    expect(field.decoration?.contentPadding, EdgeInsets.zero);
+    expect(find.byType(AttaIosSwitchTheme), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Например: Москва'),
+      'Грозный',
+    );
+    await tester.pump();
+    field = tester.widget<TextField>(
+      find.widgetWithText(TextField, 'Например: Москва'),
+    );
+    expect(field.textAlign, TextAlign.start);
+    expect(field.textAlignVertical, TextAlignVertical.center);
   });
 
   testWidgets('home uses white light surface and keeps listing card shadow',
@@ -123,6 +341,13 @@ void main() {
     );
     expect(cardMaterial.color, Colors.white);
     expect(
+      find.descendant(
+        of: cardFinder,
+        matching: find.byType(AttaRoundedCornerShadowSupport),
+      ),
+      findsNothing,
+    );
+    expect(
       tester
           .widgetList<DecoratedBox>(
             find.descendant(
@@ -132,7 +357,50 @@ void main() {
           )
           .map((widget) => widget.decoration)
           .whereType<BoxDecoration>()
-          .any((decoration) => decoration.boxShadow?.isNotEmpty == true),
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.any(
+                  (shadow) => shadow.color == const Color(0x38547CA5),
+                ) ==
+                true,
+          ),
+      isTrue,
+    );
+
+    await tester.pumpWidget(
+      _buildHomeTestApp(
+        listings: listings,
+        showcase: _FakeShowcaseService(items: const <ShowcaseItem>[]),
+        themeMode: ThemeMode.dark,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final darkCardFinder = find.byType(ListingCard);
+    final darkCardMaterial = tester.widget<Material>(
+      find
+          .descendant(
+            of: darkCardFinder,
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(darkCardMaterial.color, const Color(0xFF292F39));
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.descendant(
+              of: darkCardFinder,
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x3D7CA1C7),
+          ),
       isTrue,
     );
   });

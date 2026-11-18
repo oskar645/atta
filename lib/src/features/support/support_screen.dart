@@ -10,8 +10,10 @@ import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/support_service.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
 import 'package:atta/src/widgets/app_error_view.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -432,27 +434,37 @@ class _SupportScreenState extends State<SupportScreen> {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Выбрать из галереи'),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                await _pickImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Сделать фото'),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                await _pickImage(ImageSource.camera);
-              },
-            ),
-          ],
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).brightness == Brightness.light
+              ? Colors.white
+              : Theme.of(ctx).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: attaCoolSoftCardShadows(ctx),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Выбрать из галереи'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _pickImage(ImageSource.gallery);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Сделать фото'),
+                onTap: () async {
+                  Navigator.of(ctx).pop();
+                  await _pickImage(ImageSource.camera);
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -681,43 +693,45 @@ class _SupportScreenState extends State<SupportScreen> {
                     icon: const Icon(Icons.add_photo_alternate_outlined),
                   ),
                   Expanded(
-                    child: TextField(
-                      controller: _text,
-                      minLines: 1,
-                      maxLines: 5,
-                      decoration: InputDecoration(
-                        hintText: 'Напишите в поддержку...',
-                        isDense: true,
-                        filled: true,
-                        fillColor: Theme.of(context)
-                            .colorScheme
-                            .surfaceContainerHighest,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(
-                            color: Theme.of(context).colorScheme.outlineVariant,
+                    child: AttaCoolSurface(
+                      borderRadius: 20,
+                      child: TextField(
+                        controller: _text,
+                        minLines: 1,
+                        maxLines: 5,
+                        decoration: InputDecoration(
+                          hintText: 'Напишите в поддержку...',
+                          isDense: true,
+                          filled: true,
+                          fillColor:
+                              Theme.of(context).brightness == Brightness.light
+                                  ? Colors.white
+                                  : Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerHighest,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide(
+                              color: Theme.of(context).colorScheme.primary,
+                              width: 1.4,
+                            ),
                           ),
                         ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(
-                            color: Theme.of(context).colorScheme.outlineVariant,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(20),
-                          borderSide: BorderSide(
-                            color: Theme.of(context).colorScheme.primary,
-                            width: 1.4,
-                          ),
-                        ),
+                        onSubmitted: (_) =>
+                            _sending || _loadingTicket ? null : _send(),
                       ),
-                      onSubmitted: (_) =>
-                          _sending || _loadingTicket ? null : _send(),
                     ),
                   ),
                   const SizedBox(width: 8),

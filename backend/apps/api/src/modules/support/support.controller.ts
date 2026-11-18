@@ -27,10 +27,9 @@ import { SendSupportMessageDto } from './dto/send-support-message.dto';
 import { UpdateSupportMessageDto } from './dto/update-support-message.dto';
 import { SupportService } from './support.service';
 import { CreatePublicSupportTicketDto, PublicSupportMessageDto } from './dto/public-support.dto';
+import { IMAGE_UPLOAD_LIMITS, memoryImageUploadOptions } from '../media/image-upload';
 
-const memoryImageUpload = FileInterceptor('file', {
-  storage: require('multer').memoryStorage(),
-});
+const memoryImageUpload = FileInterceptor('file', memoryImageUploadOptions(IMAGE_UPLOAD_LIMITS.support));
 
 @Controller('support/public')
 export class PublicSupportController {

@@ -10,6 +10,7 @@ import 'package:atta/src/services/follow_service.dart';
 import 'package:atta/src/services/listings_service.dart';
 import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:atta/src/utils/price_formatter.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
@@ -23,6 +24,54 @@ void _debugMyListingsLog(String message) {
     debugPrint('[MYLIST] $message');
     return true;
   }());
+}
+
+List<BoxShadow> _myListingCardShadows(BuildContext context) {
+  if (Theme.of(context).brightness == Brightness.dark) {
+    return attaSoftCardShadows(context);
+  }
+  return const <BoxShadow>[
+    BoxShadow(
+      color: Color(0x30547CA5),
+      blurRadius: 2,
+      offset: Offset.zero,
+    ),
+    BoxShadow(
+      color: Color(0x16547CA5),
+      blurRadius: 6,
+      offset: Offset(0, 1),
+    ),
+    BoxShadow(
+      color: Color(0x08547CA5),
+      blurRadius: 12,
+      spreadRadius: -2,
+      offset: Offset(0, 3),
+    ),
+  ];
+}
+
+List<BoxShadow> _myListingActionShadows(BuildContext context) {
+  if (Theme.of(context).brightness == Brightness.dark) {
+    return attaSoftCardShadows(context);
+  }
+  return const <BoxShadow>[
+    BoxShadow(
+      color: Color(0x28547CA5),
+      blurRadius: 2,
+      offset: Offset.zero,
+    ),
+    BoxShadow(
+      color: Color(0x10547CA5),
+      blurRadius: 5,
+      offset: Offset(0, 1),
+    ),
+    BoxShadow(
+      color: Color(0x06547CA5),
+      blurRadius: 10,
+      spreadRadius: -2,
+      offset: Offset(0, 2),
+    ),
+  ];
 }
 
 void _debugMyListingsStack(String source, {int maxFrames = 20}) {
@@ -324,31 +373,43 @@ class _ListingActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 46),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        ),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 20),
-                const SizedBox(width: 6),
+    final theme = Theme.of(context);
+    const radius = BorderRadius.all(Radius.circular(999));
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: _myListingActionShadows(context),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            backgroundColor: theme.brightness == Brightness.light
+                ? Colors.white
+                : theme.colorScheme.surfaceContainerHighest,
+            side: BorderSide.none,
+            minimumSize: const Size(0, 46),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 20),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: const TextStyle(fontSize: 13),
+                ),
               ],
-              Text(
-                label,
-                maxLines: 1,
-                softWrap: false,
-                style: const TextStyle(fontSize: 13),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -843,7 +904,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
         }
 
         if (_errorText != null && items.isNotEmpty) {
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
@@ -875,7 +936,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
         }
 
         if (_loadedOnce && items.isEmpty) {
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
@@ -888,7 +949,7 @@ class _TimewebMyListingsTabState extends State<_TimewebMyListingsTab>
           );
         }
 
-        return RefreshIndicator(
+        return AttaRefreshIndicator(
           onRefresh: _refresh,
           child: NotificationListener<ScrollNotification>(
             onNotification: _handleScroll,
@@ -1113,273 +1174,279 @@ class _MyListingTile extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        boxShadow: attaSoftShadows(context),
+        boxShadow: _myListingCardShadows(context),
       ),
-      child: InkWell(
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => ListingDetailScreen(listingId: listing.id),
-          ),
+      child: Material(
+        key: ValueKey('my_listing_surface:${listing.id}'),
+        color: Theme.of(context).brightness == Brightness.light
+            ? Colors.white
+            : Theme.of(context).colorScheme.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: listing.hasVipPromotion
+              ? BorderSide(
+                  color: vipBorderColor(context),
+                  width: 1.25,
+                )
+              : BorderSide.none,
         ),
-        borderRadius: BorderRadius.circular(16),
-        child: Ink(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).brightness == Brightness.light
-                ? Colors.white
-                : Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: listing.hasVipPromotion
-                  ? vipBorderColor(context)
-                  : Theme.of(context).colorScheme.outlineVariant,
-              width: listing.hasVipPromotion ? 1.25 : 1,
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ListingDetailScreen(listingId: listing.id),
             ),
           ),
-          child: Column(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: SizedBox(
-                      width: 92,
-                      height: 69,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          (photo?.trim().isNotEmpty ?? false)
-                              ? MediaPreviewBox(
-                                  imageUrl: photo!,
-                                  categoryHint: 'listings',
-                                  width: 92,
-                                  height: 69,
-                                  borderRadius: 12,
-                                )
-                              : Container(
-                                  width: 92,
-                                  height: 69,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerHighest,
-                                  alignment: Alignment.center,
-                                  child: const Icon(Icons.image_outlined),
-                                ),
-                          ListingPromotionBadges(
-                            showVip: listing.hasVipPromotion,
-                            showBump: listing.hasBumpPromotion,
-                          ),
-                        ],
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SizedBox(
+                        width: 92,
+                        height: 69,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            (photo?.trim().isNotEmpty ?? false)
+                                ? MediaPreviewBox(
+                                    imageUrl: photo!,
+                                    categoryHint: 'listings',
+                                    width: 92,
+                                    height: 69,
+                                    borderRadius: 12,
+                                  )
+                                : Container(
+                                    width: 92,
+                                    height: 69,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    alignment: Alignment.center,
+                                    child: const Icon(Icons.image_outlined),
+                                  ),
+                            ListingPromotionBadges(
+                              showVip: listing.hasVipPromotion,
+                              showBump: listing.hasBumpPromotion,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          listing.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: normalizedStatus == 'approved'
-                              ? Text(
-                                  key: ValueKey(
-                                    'my_listing_status:${listing.id}',
-                                  ),
-                                  statusPresentation.label,
-                                  style: TextStyle(
-                                    color: statusPresentation.foreground,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                )
-                              : Container(
-                                  key: ValueKey(
-                                    'my_listing_status:${listing.id}',
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: statusPresentation.background,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            listing.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: normalizedStatus == 'approved'
+                                ? Text(
+                                    key: ValueKey(
+                                      'my_listing_status:${listing.id}',
+                                    ),
                                     statusPresentation.label,
                                     style: TextStyle(
                                       color: statusPresentation.foreground,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w700,
                                     ),
+                                  )
+                                : Container(
+                                    key: ValueKey(
+                                      'my_listing_status:${listing.id}',
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: statusPresentation.background,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      statusPresentation.label,
+                                      style: TextStyle(
+                                        color: statusPresentation.foreground,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${formatPrice(listing.price)} ₽',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Flexible(
+                                fit: FlexFit.loose,
+                                child: Text(
+                                  'Просмотров: ${listing.viewCount}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (showFavoriteCount) ...[
+                                const SizedBox(width: 6),
+                                Icon(
+                                  Icons.favorite_border,
+                                  key: ValueKey(
+                                    'my_listing_favorite_icon:${listing.id}',
+                                  ),
+                                  size: 14,
+                                  color: Theme.of(context).colorScheme.outline,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${listing.favoriteCount}',
+                                  key: ValueKey(
+                                    'my_listing_favorite_count:${listing.id}',
                                   ),
                                 ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${formatPrice(listing.price)} ₽',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Flexible(
-                              fit: FlexFit.loose,
-                              child: Text(
-                                'Просмотров: ${listing.viewCount}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (showFavoriteCount) ...[
-                              const SizedBox(width: 6),
-                              Icon(
-                                Icons.favorite_border,
-                                key: ValueKey(
-                                  'my_listing_favorite_icon:${listing.id}',
+                                const SizedBox(width: 6),
+                                Icon(
+                                  Icons.person_outline,
+                                  key: ValueKey(
+                                    'my_listing_followers_icon:${listing.id}',
+                                  ),
+                                  size: 14,
+                                  color: Theme.of(context).colorScheme.outline,
                                 ),
-                                size: 14,
-                                color: Theme.of(context).colorScheme.outline,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${listing.favoriteCount}',
-                                key: ValueKey(
-                                  'my_listing_favorite_count:${listing.id}',
+                                const SizedBox(width: 4),
+                                StreamBuilder<int>(
+                                  stream: context
+                                      .read<FollowService>()
+                                      .streamFollowersCount(listing.ownerId),
+                                  builder: (context, snapshot) {
+                                    final count = snapshot.data ?? 0;
+                                    return Text(
+                                      '$count',
+                                      key: ValueKey(
+                                        'my_listing_followers_count:${listing.id}',
+                                      ),
+                                    );
+                                  },
                                 ),
-                              ),
-                              const SizedBox(width: 6),
-                              Icon(
-                                Icons.person_outline,
-                                key: ValueKey(
-                                  'my_listing_followers_icon:${listing.id}',
-                                ),
-                                size: 14,
-                                color: Theme.of(context).colorScheme.outline,
-                              ),
-                              const SizedBox(width: 4),
-                              StreamBuilder<int>(
-                                stream: context
-                                    .read<FollowService>()
-                                    .streamFollowersCount(listing.ownerId),
-                                builder: (context, snapshot) {
-                                  final count = snapshot.data ?? 0;
-                                  return Text(
-                                    '$count',
-                                    key: ValueKey(
-                                      'my_listing_followers_count:${listing.id}',
-                                    ),
-                                  );
-                                },
-                              ),
+                              ],
                             ],
-                          ],
-                        ),
-                        if (archiveNote.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            archiveNote,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.outline,
-                            ),
                           ),
+                          if (archiveNote.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              archiveNote,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.outline,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (_canSellFaster) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => SellFasterScreen(listing: listing),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.bolt_outlined),
+                      label: const Text('Продать быстрее'),
                     ),
                   ),
                 ],
-              ),
-              if (_canSellFaster) ...[
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => SellFasterScreen(listing: listing),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.bolt_outlined),
-                    label: const Text('Продать быстрее'),
-                  ),
-                ),
-              ],
-              if (canEdit || showSecondaryAction) ...[
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _AsyncListingActionButton(
-                        label: 'Редактировать',
-                        icon: Icons.edit,
-                        onPressed: canEdit
-                            ? () async {
-                                await Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => EditListingScreen(
-                                      listingId: listing.id,
-                                    ),
-                                  ),
-                                );
-                              }
-                            : null,
-                      ),
-                    ),
-                    if (showSecondaryAction) ...[
-                      const SizedBox(width: 8),
+                if (canEdit || showSecondaryAction) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
                       Expanded(
                         child: _AsyncListingActionButton(
-                          label: secondaryLabel,
-                          onPressed: canResubmit
+                          label: 'Редактировать',
+                          icon: Icons.edit,
+                          onPressed: canEdit
                               ? () async {
-                                  try {
-                                    await svc.resubmitListing(
-                                      listingId: listing.id,
-                                    );
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Объявление отправлено на модерацию',
-                                        ),
+                                  await Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => EditListingScreen(
+                                        listingId: listing.id,
                                       ),
-                                    );
-                                  } catch (_) {
-                                    if (!context.mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Не удалось отправить объявление. Проверьте данные и попробуйте снова.',
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                }
-                              : () async {
-                                  await runListingArchiveFlow(
-                                    context,
-                                    listingId: listing.id,
-                                    listingsService: svc,
+                                    ),
                                   );
-                                },
+                                }
+                              : null,
                         ),
                       ),
+                      if (showSecondaryAction) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _AsyncListingActionButton(
+                            label: secondaryLabel,
+                            onPressed: canResubmit
+                                ? () async {
+                                    try {
+                                      await svc.resubmitListing(
+                                        listingId: listing.id,
+                                      );
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Объявление отправлено на модерацию',
+                                          ),
+                                        ),
+                                      );
+                                    } catch (_) {
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Не удалось отправить объявление. Проверьте данные и попробуйте снова.',
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  }
+                                : () async {
+                                    await runListingArchiveFlow(
+                                      context,
+                                      listingId: listing.id,
+                                      listingsService: svc,
+                                    );
+                                  },
+                          ),
+                        ),
+                      ],
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

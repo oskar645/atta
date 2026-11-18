@@ -5,6 +5,7 @@ import 'package:atta/src/utils/ru_phone.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 
 enum _RecoveryStep { email, code, phone, call, done }
 
@@ -98,98 +99,117 @@ class _AccountRecoveryScreenState extends State<AccountRecoveryScreen> {
                     shrinkWrap: true,
                     padding: const EdgeInsets.all(24),
                     children: [
-                      if (step == _RecoveryStep.email) ...[
-                        const Text(
-                            'Введите резервный email, который вы ранее подтвердили в ATTA.',
-                            textAlign: TextAlign.center),
-                        const SizedBox(height: 20),
-                        TextField(
-                            key: const ValueKey('account-recovery-email'),
-                            controller: email,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration:
-                                const InputDecoration(labelText: 'Email')),
-                        const SizedBox(height: 20),
-                        FilledButton(
-                            onPressed: busy ? null : startEmail,
-                            child: const Text('Продолжить')),
-                      ],
-                      if (step == _RecoveryStep.code) ...[
-                        const Text('Введите код из письма',
-                            textAlign: TextAlign.center),
-                        const SizedBox(height: 20),
-                        TextField(
-                            controller: code,
-                            onChanged: (_) => setState(() {}),
-                            maxLength: 6,
-                            textAlign: TextAlign.center,
-                            keyboardType: TextInputType.number,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly
+                      AttaCoolSurface(
+                        borderRadius: 24,
+                        child: Padding(
+                          padding: const EdgeInsets.all(18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (step == _RecoveryStep.email) ...[
+                                const Text(
+                                    'Введите резервный email, который вы ранее подтвердили в ATTA.',
+                                    textAlign: TextAlign.center),
+                                const SizedBox(height: 20),
+                                TextField(
+                                    key: const ValueKey(
+                                        'account-recovery-email'),
+                                    controller: email,
+                                    keyboardType: TextInputType.emailAddress,
+                                    decoration: const InputDecoration(
+                                        labelText: 'Email')),
+                                const SizedBox(height: 20),
+                                FilledButton(
+                                    onPressed: busy ? null : startEmail,
+                                    child: const Text('Продолжить')),
+                              ],
+                              if (step == _RecoveryStep.code) ...[
+                                const Text('Введите код из письма',
+                                    textAlign: TextAlign.center),
+                                const SizedBox(height: 20),
+                                TextField(
+                                    controller: code,
+                                    onChanged: (_) => setState(() {}),
+                                    maxLength: 6,
+                                    textAlign: TextAlign.center,
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly
+                                    ],
+                                    decoration: const InputDecoration(
+                                        labelText: 'Код')),
+                                FilledButton(
+                                    onPressed: busy || code.text.length != 6
+                                        ? null
+                                        : verifyEmail,
+                                    child: const Text('Подтвердить')),
+                              ],
+                              if (step == _RecoveryStep.phone) ...[
+                                const Text('Новый номер телефона',
+                                    textAlign: TextAlign.center),
+                                const SizedBox(height: 20),
+                                TextField(
+                                    controller: phone,
+                                    keyboardType: TextInputType.phone,
+                                    inputFormatters: const [
+                                      RuPhoneInputFormatter()
+                                    ],
+                                    decoration: const InputDecoration(
+                                        prefixText: '+7 ',
+                                        labelText: 'Номер телефона')),
+                                const SizedBox(height: 20),
+                                FilledButton(
+                                    onPressed: busy ? null : startPhone,
+                                    child: const Text('Продолжить')),
+                              ],
+                              if (step == _RecoveryStep.call) ...[
+                                const Text(
+                                    'Позвоните на номер для подтверждения нового телефона',
+                                    textAlign: TextAlign.center),
+                                const SizedBox(height: 16),
+                                SelectableText(callToPhone,
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall),
+                                const SizedBox(height: 16),
+                                FilledButton(
+                                    onPressed: () => const PhoneCallService()
+                                        .openNumber(callToPhone),
+                                    child: const Text('Позвонить')),
+                                TextButton(
+                                    onPressed: busy ? null : checkPhone,
+                                    child:
+                                        const Text('Проверить подтверждение')),
+                              ],
+                              if (step == _RecoveryStep.done) ...[
+                                const Icon(Icons.check_circle,
+                                    color: Colors.green, size: 56),
+                                const SizedBox(height: 16),
+                                const Text('Доступ восстановлен',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w700)),
+                                const SizedBox(height: 20),
+                                FilledButton(
+                                    onPressed: () => Navigator.of(context)
+                                        .popUntil((route) => route.isFirst),
+                                    child: const Text('Готово')),
+                              ],
+                              if (error != null)
+                                Padding(
+                                    padding: const EdgeInsets.only(top: 12),
+                                    child: Text(error!,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .error))),
                             ],
-                            decoration:
-                                const InputDecoration(labelText: 'Код')),
-                        FilledButton(
-                            onPressed: busy || code.text.length != 6
-                                ? null
-                                : verifyEmail,
-                            child: const Text('Подтвердить')),
-                      ],
-                      if (step == _RecoveryStep.phone) ...[
-                        const Text('Новый номер телефона',
-                            textAlign: TextAlign.center),
-                        const SizedBox(height: 20),
-                        TextField(
-                            controller: phone,
-                            keyboardType: TextInputType.phone,
-                            inputFormatters: const [RuPhoneInputFormatter()],
-                            decoration: const InputDecoration(
-                                prefixText: '+7 ',
-                                labelText: 'Номер телефона')),
-                        const SizedBox(height: 20),
-                        FilledButton(
-                            onPressed: busy ? null : startPhone,
-                            child: const Text('Продолжить')),
-                      ],
-                      if (step == _RecoveryStep.call) ...[
-                        const Text(
-                            'Позвоните на номер для подтверждения нового телефона',
-                            textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        SelectableText(callToPhone,
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context).textTheme.headlineSmall),
-                        const SizedBox(height: 16),
-                        FilledButton(
-                            onPressed: () => const PhoneCallService()
-                                .openNumber(callToPhone),
-                            child: const Text('Позвонить')),
-                        TextButton(
-                            onPressed: busy ? null : checkPhone,
-                            child: const Text('Проверить подтверждение')),
-                      ],
-                      if (step == _RecoveryStep.done) ...[
-                        const Icon(Icons.check_circle,
-                            color: Colors.green, size: 56),
-                        const SizedBox(height: 16),
-                        const Text('Доступ восстановлен',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 22, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 20),
-                        FilledButton(
-                            onPressed: () => Navigator.of(context)
-                                .popUntil((route) => route.isFirst),
-                            child: const Text('Готово')),
-                      ],
-                      if (error != null)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 12),
-                            child: Text(error!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color:
-                                        Theme.of(context).colorScheme.error))),
+                          ),
+                        ),
+                      ),
                     ]))),
       );
 }

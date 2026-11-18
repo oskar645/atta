@@ -6,6 +6,9 @@ import 'package:atta/src/services/api/api_exception.dart';
 import 'package:atta/src/services/network_resilience.dart';
 import 'package:atta/src/services/wallet_service.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -230,34 +233,30 @@ class _WalletScreenState extends State<WalletScreen>
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
-                    color: Theme.of(context).colorScheme.surface,
-                    border: Border.all(
-                      color: Theme.of(context).colorScheme.outlineVariant,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Баланс',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                AttaCoolSurface(
+                  borderRadius: 18,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Баланс',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(_walletErrorText(snapshot.error!)),
-                    ],
+                        const SizedBox(height: 8),
+                        const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(_walletErrorText(snapshot.error!)),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -281,7 +280,7 @@ class _WalletScreenState extends State<WalletScreen>
           final bundle = snapshot.data!;
           final refreshing = snapshot.connectionState != ConnectionState.done;
           final previewTransactions = _walletPreviewItems(bundle.transactions);
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: _refresh,
             child: ListView(
               padding: const EdgeInsets.all(16),
@@ -718,15 +717,11 @@ class _WalletTopUpSheetState extends State<WalletTopUpSheet> {
       padding: EdgeInsets.only(bottom: bottomInset),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: scheme.surface,
+          color: theme.brightness == Brightness.light
+              ? Colors.white
+              : scheme.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
-              blurRadius: 24,
-              offset: const Offset(0, -8),
-            ),
-          ],
+          boxShadow: attaCoolSoftCardShadows(context),
         ),
         child: SafeArea(
           top: false,
@@ -756,22 +751,38 @@ class _WalletTopUpSheetState extends State<WalletTopUpSheet> {
                   ),
                 ),
                 const SizedBox(height: 22),
-                TextField(
-                  key: const Key('wallet-top-up-amount-field'),
-                  controller: _amountController,
-                  keyboardType: TextInputType.number,
-                  textInputAction: TextInputAction.done,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  onChanged: _handleManualInput,
-                  decoration: InputDecoration(
-                    hintText: 'Введите сумму',
-                    suffixText: '₽',
-                    filled: true,
-                    fillColor: scheme.surfaceContainerHighest,
-                    errorText: _errorText,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: BorderSide.none,
+                AttaCoolSurface(
+                  borderRadius: 18,
+                  child: TextField(
+                    key: const Key('wallet-top-up-amount-field'),
+                    controller: _amountController,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    onChanged: _handleManualInput,
+                    decoration: InputDecoration(
+                      hintText: 'Введите сумму',
+                      suffixText: '₽',
+                      filled: true,
+                      fillColor: theme.brightness == Brightness.light
+                          ? Colors.white
+                          : scheme.surfaceContainerHighest,
+                      errorText: _errorText,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(18),
+                        borderSide: BorderSide(
+                          color: scheme.primary,
+                          width: 1.4,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -845,58 +856,55 @@ class _TopUpStatusBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: scheme.surfaceContainerHighest,
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: checking
-                    ? const CircularProgressIndicator(strokeWidth: 2)
-                    : const Icon(Icons.payments_rounded, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+    return AttaCoolSurface(
+      borderRadius: 14,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: checking
+                      ? const CircularProgressIndicator(strokeWidth: 2)
+                      : const Icon(Icons.payments_rounded, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            if (onClose != null || !checking) ...[
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  children: [
+                    TextButton(
+                      onPressed: checking ? null : onCheck,
+                      child: const Text('Проверить ещё раз'),
+                    ),
+                    if (onClose != null)
+                      TextButton(
+                        onPressed: checking ? null : onClose,
+                        child: const Text('Закрыть'),
+                      ),
+                  ],
                 ),
               ),
             ],
-          ),
-          if (onClose != null || !checking) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: [
-                  TextButton(
-                    onPressed: checking ? null : onCheck,
-                    child: const Text('Проверить ещё раз'),
-                  ),
-                  if (onClose != null)
-                    TextButton(
-                      onPressed: checking ? null : onClose,
-                      child: const Text('Закрыть'),
-                    ),
-                ],
-              ),
-            ),
           ],
-        ],
+        ),
       ),
     );
   }
@@ -916,44 +924,54 @@ class _TopUpPresetChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final borderColor = selected ? Colors.blue : scheme.outlineVariant;
     final textColor = selected ? Colors.blue : scheme.onSurface;
 
     return SizedBox(
       width: 104,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: textColor,
-          backgroundColor:
-              selected ? Colors.blue.withValues(alpha: 0.08) : scheme.surface,
-          side: BorderSide(color: borderColor, width: selected ? 1.6 : 1),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: selected ? const [] : attaCoolSoftCardShadows(context),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${_formatInt(amount)} ₽',
-              maxLines: 1,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-              ),
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: textColor,
+            backgroundColor: selected
+                ? Colors.blue.withValues(alpha: 0.08)
+                : Theme.of(context).brightness == Brightness.light
+                    ? Colors.white
+                    : scheme.surface,
+            side: selected
+                ? const BorderSide(color: Colors.blue, width: 1.6)
+                : BorderSide.none,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
             ),
-            const SizedBox(height: 3),
-            Text(
-              '${_formatInt(amount)} бонусов',
-              maxLines: 1,
-              style: TextStyle(
-                fontSize: 11,
-                color: selected ? Colors.blue : scheme.onSurfaceVariant,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${_formatInt(amount)} ₽',
+                maxLines: 1,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 3),
+              Text(
+                '${_formatInt(amount)} бонусов',
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: selected ? Colors.blue : scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

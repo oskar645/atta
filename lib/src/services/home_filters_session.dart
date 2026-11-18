@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:atta/src/constants/categories.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeFiltersState {
@@ -102,9 +103,13 @@ class HomeFiltersState {
       return double.tryParse(v.toString());
     }
 
+    final category = (json['category'] ?? 'Все').toString();
     return HomeFiltersState(
-      category: (json['category'] ?? 'Все').toString(),
-      subcategory: (json['subcategory'] ?? 'Все').toString(),
+      category: category,
+      subcategory: canonicalSubcategory(
+        category,
+        (json['subcategory'] ?? 'Все').toString(),
+      ),
       priceFrom: parseInt(json['priceFrom']),
       priceTo: parseInt(json['priceTo']),
       location: (json['location'] ?? '').toString(),

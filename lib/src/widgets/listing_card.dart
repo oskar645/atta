@@ -19,6 +19,8 @@ class ListingCard extends StatelessWidget {
   final ValueChanged<bool> onToggleFav;
   final ReviewsService reviews;
   final bool whiteSurfaceInLightTheme;
+  final List<BoxShadow>? ordinaryCardShadows;
+  final Color? mediaPlaceholderColor;
 
   const ListingCard({
     super.key,
@@ -29,6 +31,8 @@ class ListingCard extends StatelessWidget {
     required this.onToggleFav,
     required this.reviews,
     this.whiteSurfaceInLightTheme = true,
+    this.ordinaryCardShadows,
+    this.mediaPlaceholderColor,
   });
 
   @override
@@ -37,16 +41,15 @@ class ListingCard extends StatelessWidget {
     final cityShort = listing.cityShort.trim();
     final hasVipPromotion = listing.hasVipPromotion;
     final hasBumpPromotion = listing.hasBumpPromotion;
-    final borderColor = hasVipPromotion
-        ? vipBorderColor(context)
-        : Theme.of(context).colorScheme.outlineVariant;
     final compactTextScaler =
         MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.1);
 
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        boxShadow: attaSoftShadows(context),
+        boxShadow: hasVipPromotion
+            ? attaSoftShadows(context)
+            : ordinaryCardShadows ?? attaCoolSoftCardShadows(context),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
@@ -57,10 +60,12 @@ class ListingCard extends StatelessWidget {
               : Theme.of(context).colorScheme.surface,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: BorderSide(
-              color: borderColor,
-              width: hasVipPromotion ? 1.25 : 1,
-            ),
+            side: hasVipPromotion
+                ? BorderSide(
+                    color: vipBorderColor(context),
+                    width: 1.25,
+                  )
+                : BorderSide.none,
           ),
           shadowColor: hasVipPromotion
               ? vipAccentColor(context).withValues(alpha: 0.20)
@@ -71,27 +76,34 @@ class ListingCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ClipRRect(
-                  borderRadius:
-                      const BorderRadius.vertical(top: Radius.circular(12)),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(12),
+                    topRight: Radius.circular(12),
+                    bottomLeft: Radius.circular(6),
+                    bottomRight: Radius.circular(6),
+                  ),
                   child: AspectRatio(
                     aspectRatio: 4 / 3,
                     child: Stack(
                       children: [
                         Container(
                           width: double.infinity,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
+                          color: mediaPlaceholderColor ??
+                              Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
                           child: photo == null || photo.isEmpty
-                              ? const MediaPreviewBox(
+                              ? MediaPreviewBox(
                                   imageUrl: '',
                                   categoryHint: 'listings',
                                   borderRadius: 0,
+                                  backgroundColor: mediaPlaceholderColor,
                                 )
                               : MediaPreviewBox(
                                   imageUrl: photo,
                                   categoryHint: 'listings',
                                   borderRadius: 0,
+                                  backgroundColor: mediaPlaceholderColor,
                                 ),
                         ),
                         if (isSeen)
@@ -399,6 +411,8 @@ class FavoriteListingCard extends StatelessWidget {
     required this.onOpen,
     this.onError,
     this.whiteSurfaceInLightTheme = true,
+    this.ordinaryCardShadows,
+    this.mediaPlaceholderColor,
   });
 
   final Listing listing;
@@ -409,6 +423,8 @@ class FavoriteListingCard extends StatelessWidget {
   final VoidCallback onOpen;
   final ValueChanged<Object>? onError;
   final bool whiteSurfaceInLightTheme;
+  final List<BoxShadow>? ordinaryCardShadows;
+  final Color? mediaPlaceholderColor;
 
   @override
   Widget build(BuildContext context) {
@@ -423,6 +439,8 @@ class FavoriteListingCard extends StatelessWidget {
           isSeen: isSeen,
           reviews: reviews,
           whiteSurfaceInLightTheme: whiteSurfaceInLightTheme,
+          ordinaryCardShadows: ordinaryCardShadows,
+          mediaPlaceholderColor: mediaPlaceholderColor,
           onToggleFav: (makeFav) async {
             if (userId.trim().isEmpty) {
               final authenticated = await promptGuestAuth(context);

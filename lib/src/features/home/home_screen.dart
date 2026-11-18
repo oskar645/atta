@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:atta/src/constants/app_install_url.dart';
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
 import 'package:flutter/foundation.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -17,6 +18,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:atta/src/constants/categories.dart';
 import 'package:atta/src/data/auto_catalog.dart';
 import 'package:atta/src/features/listings/listing_detail_screen.dart';
+import 'package:atta/src/features/listings/real_estate_map_screen.dart';
 import 'package:atta/src/features/listings/vip_showcase_screen.dart';
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/models/feed_ad.dart';
@@ -37,7 +39,9 @@ import 'package:atta/src/services/saved_search_service.dart';
 import 'package:atta/src/services/search_attempt_analytics.dart';
 import 'package:atta/src/services/showcase_service.dart';
 import 'package:atta/src/theme/soft_shadows.dart';
+import 'package:atta/src/theme/ui_metrics.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/utils/map_button_scroll_gate.dart';
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/widgets/feed_ad_banner.dart';
 import 'package:atta/src/widgets/listing_card.dart';
@@ -45,11 +49,19 @@ import 'package:atta/src/widgets/listing_price_row.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/media_preview_box.dart';
 import 'package:atta/src/widgets/add_listing_icon_button.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:atta/src/widgets/cold_start_vpn_banner.dart';
+import 'package:atta/src/widgets/category_chip_label.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:atta/src/widgets/top_banner_header.dart';
 import 'package:atta/src/features/showcase/showcase_all_screen.dart';
 import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
+
+const Color _homeDarkBackground = Color(0xFF15181E);
+const Color _homeDarkSurface = Color(0xFF292F39);
+const Color _homeDarkPrimaryText = Color(0xFFF4F6FA);
+const Color _homeDarkSecondaryText = Color(0xFFB8C5D3);
 
 bool _hasRestrictiveSearchFilters(ListingFeedFilters f) =>
     (f.category.trim().isNotEmpty && f.category != 'Все') ||
@@ -835,9 +847,11 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     final notifications = context.read<NotificationsService>();
     final user = context.read<AuthService>().currentUser;
     final isLight = Theme.of(context).brightness == Brightness.light;
-    final homeSurface =
+    final homeSurface = isLight ? Colors.white : _homeDarkBackground;
+    final homeElementSurface = isLight ? Colors.white : _homeDarkSurface;
+    final appBarSurface =
         isLight ? Colors.white : Theme.of(context).colorScheme.surface;
-    final headerSurface = _hasTopBanner ? Colors.white : homeSurface;
+    final headerSurface = _hasTopBanner ? Colors.white : appBarSurface;
 
     // Search hint in Avito-like format: "Поиск в <локация>".
     final hint =
@@ -847,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       backgroundColor: homeSurface,
       appBar: AppBar(
         centerTitle: false,
-        backgroundColor: homeSurface,
+        backgroundColor: appBarSurface,
         surfaceTintColor: Colors.transparent,
         flexibleSpace: FutureBuilder<TopBanner?>(
           future: _topBanner,
@@ -967,61 +981,75 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         selected: _category, onSelect: _selectCategory),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: attaSoftShadows(context),
-                        ),
-                        child: SizedBox(
-                          height: 48,
-                          child: TextField(
-                            key: const ValueKey('home_search_field'),
-                            controller: _searchCtrl,
-                            textCapitalization: TextCapitalization.sentences,
-                            onTapOutside: (_) =>
-                                FocusScope.of(context).unfocus(),
-                            decoration: InputDecoration(
-                              filled: true,
-                              fillColor: Theme.of(context).brightness ==
-                                      Brightness.light
-                                  ? Colors.white
-                                  : Theme.of(context).scaffoldBackgroundColor,
-                              prefixIcon: const Icon(Icons.search),
-                              suffixIcon: IconButton(
-                                tooltip: 'Фильтры',
-                                onPressed: _openFilters,
-                                icon: const Icon(Icons.tune),
+                      child: StandardSearchSurface(
+                        borderRadius: 16,
+                        boxShadows: attaHomeSoftCardShadows(context),
+                        surfaceColor: homeElementSurface,
+                        supportRoundedShadowCorners: true,
+                        child: TextField(
+                          key: const ValueKey('home_search_field'),
+                          controller: _searchCtrl,
+                          textCapitalization: TextCapitalization.sentences,
+                          style: isLight
+                              ? null
+                              : const TextStyle(color: _homeDarkPrimaryText),
+                          textAlignVertical: TextAlignVertical.center,
+                          onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: homeElementSurface,
+                            prefixIcon: Icon(
+                              Icons.search,
+                              color: isLight ? null : _homeDarkSecondaryText,
+                            ),
+                            prefixIconConstraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
+                            suffixIcon: IconButton(
+                              tooltip: 'Фильтры',
+                              onPressed: _openFilters,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 44,
+                                height: 44,
                               ),
-                              hintText: hint,
-                              isDense: true,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(
-                                    color: Theme.of(context).dividerColor),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  width: 1.6,
-                                ),
+                              padding: EdgeInsets.zero,
+                              icon: Icon(
+                                Icons.tune,
+                                color: isLight ? null : _homeDarkSecondaryText,
                               ),
                             ),
-                            onChanged: (v) {
-                              _searchAnalytics.queryChanged(v);
-                              _searchDebounce?.cancel();
-                              _searchDebounce =
-                                  Timer(const Duration(milliseconds: 400), () {
-                                if (!mounted) return;
-                                setState(() => _search = v.trim());
-                                _persistFilters();
-                                unawaited(_reloadFeed(reset: true));
-                              });
-                            },
+                            suffixIconConstraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
+                            hintText: hint,
+                            hintStyle: TextStyle(
+                              color: isLight
+                                  ? Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant
+                                      .withValues(alpha: 0.90)
+                                  : _homeDarkSecondaryText,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            isDense: true,
+                            contentPadding: EdgeInsets.zero,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
                           ),
+                          onChanged: (v) {
+                            _searchAnalytics.queryChanged(v);
+                            _searchDebounce?.cancel();
+                            _searchDebounce =
+                                Timer(const Duration(milliseconds: 400), () {
+                              if (!mounted) return;
+                              setState(() => _search = v.trim());
+                              _persistFilters();
+                              unawaited(_reloadFeed(reset: true));
+                            });
+                          },
                         ),
                       ),
                     ),
@@ -1029,7 +1057,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 ),
               ),
               Expanded(
-                child: RefreshIndicator(
+                child: AttaRefreshIndicator(
                   onRefresh: _handleRefresh,
                   edgeOffset: 8,
                   child: Builder(
@@ -1203,6 +1231,30 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
   late final ListingsService _bumpListings;
   late final SearchAttemptAnalytics _searchAnalytics;
   Timer? _searchDebounce;
+  bool _showMapButton = true;
+  final MapButtonScrollGate _mapButtonScrollGate = MapButtonScrollGate();
+
+  bool _onScroll(ScrollNotification notification) {
+    if (widget.category != 'Недвижимость') return false;
+    if (notification is! ScrollUpdateNotification) return false;
+    final show = _mapButtonScrollGate.update(
+      notification.scrollDelta ?? 0,
+      pixels: notification.metrics.pixels,
+    );
+    if (show != null && show != _showMapButton) {
+      setState(() => _showMapButton = show);
+    }
+    return false;
+  }
+
+  void _openRealEstateMap() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => RealEstateMapScreen(
+        filters: _feedFilters,
+        subcategories: _subcategories,
+      ),
+    ));
+  }
 
   void _onBumpPurchased() {
     unawaited(_reload(reset: true));
@@ -1417,121 +1469,164 @@ class _CategoryFeedScreenState extends State<CategoryFeedScreen> {
       appBar: AppBar(
         title: Text(widget.category),
       ),
-      body: Column(
-        children: [
-          Container(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: Column(
-              children: [
-                if (_subcategories.isNotEmpty)
-                  _SubcategoryRow(
-                    selected: _subcategory,
-                    items: _subcategories,
-                    onSelect: _selectSubcategory,
-                  ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                  child: TextField(
-                    controller: _searchCtrl,
-                    textCapitalization: TextCapitalization.sentences,
-                    onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: IconButton(
-                        tooltip: 'Фильтры',
-                        onPressed: _openFilters,
-                        icon: const Icon(Icons.tune),
-                      ),
-                      hintText: hint,
-                      isDense: true,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide:
-                            BorderSide(color: Theme.of(context).dividerColor),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(16),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 1.6,
-                        ),
-                      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: widget.category == 'Недвижимость'
+          ? AnimatedSlide(
+              duration: Duration(milliseconds: _showMapButton ? 450 : 600),
+              curve: Curves.easeInOutCubic,
+              offset: _showMapButton ? Offset.zero : const Offset(0, 2),
+              child: AnimatedOpacity(
+                duration: Duration(milliseconds: _showMapButton ? 450 : 600),
+                curve: Curves.easeInOutCubic,
+                opacity: _showMapButton ? 1 : 0,
+                child: Transform.scale(
+                  scale: 0.9,
+                  child: FloatingActionButton.extended(
+                    heroTag: 'real-estate-map-category',
+                    onPressed: _showMapButton ? _openRealEstateMap : null,
+                    backgroundColor: const Color(0xFF2E7D32),
+                    foregroundColor: Colors.white,
+                    extendedPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    extendedIconLabelSpacing: 6,
+                    extendedTextStyle:
+                        Theme.of(context).textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                    icon: const Icon(Icons.map_outlined, size: 20),
+                    label: const Text(
+                      'Показать на карте',
+                      style:
+                          TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                     ),
-                    onChanged: (v) {
-                      _searchAnalytics.queryChanged(v);
-                      _searchDebounce?.cancel();
-                      _searchDebounce =
-                          Timer(const Duration(milliseconds: 400), () {
-                        if (!mounted) return;
-                        setState(() => _search = v.trim());
-                        unawaited(_reload(reset: true));
-                      });
-                    },
                   ),
                 ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () => _reload(reset: true),
-              edgeOffset: 8,
-              child: Builder(
-                builder: (context) {
-                  if (_isInitialLoading && _items.isEmpty) {
-                    return const SkeletonListingGrid(
-                      physics: AlwaysScrollableScrollPhysics(),
-                    );
-                  }
-
-                  if (_error != null && _items.isEmpty) {
-                    return ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        Padding(
-                          padding: EdgeInsets.only(top: 120),
-                          child: Center(
-                            child: Text(
-                              'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
-                              textAlign: TextAlign.center,
+              ),
+            )
+          : null,
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: Column(
+          children: [
+            Container(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              child: Column(
+                children: [
+                  if (_subcategories.isNotEmpty)
+                    _SubcategoryRow(
+                      selected: _subcategory,
+                      items: _subcategories,
+                      onSelect: _selectSubcategory,
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                    child: StandardSearchSurface(
+                      borderRadius: 16,
+                      child: TextField(
+                        controller: _searchCtrl,
+                        textCapitalization: TextCapitalization.sentences,
+                        textAlignVertical: TextAlignVertical.center,
+                        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          prefixIconConstraints: const BoxConstraints.tightFor(
+                            width: 44,
+                            height: 44,
+                          ),
+                          suffixIcon: IconButton(
+                            tooltip: 'Фильтры',
+                            onPressed: _openFilters,
+                            icon: const Icon(Icons.tune),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 44,
+                              height: 44,
                             ),
                           ),
+                          suffixIconConstraints: const BoxConstraints.tightFor(
+                            width: 44,
+                            height: 44,
+                          ),
+                          hintText: hint,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
                         ),
-                      ],
-                    );
-                  }
-
-                  return StreamBuilder<FeedAd?>(
-                    stream: feedAds.streamActiveAd(),
-                    builder: (context, adSnap) {
-                      return _HomeFeedView(
-                        key: _feedKey,
-                        items: _items,
-                        ad: adSnap.data,
-                        showcaseItems: const <ShowcaseItem>[],
-                        vipItems: const <Listing>[],
-                        vipHasMore: false,
-                        vipInitialIndex: 0,
-                        showcaseLoading: false,
-                        history: history,
-                        reviews: reviews,
-                        favs: favs,
-                        userId: user?.uid ?? '',
-                        isLoadingMore: _isLoadingMore,
-                        hasMore: _hasMore,
-                        onLoadMore: _loadMore,
-                        onLoadMoreVip: () async {},
-                      );
-                    },
-                  );
-                },
+                        onChanged: (v) {
+                          _searchAnalytics.queryChanged(v);
+                          _searchDebounce?.cancel();
+                          _searchDebounce =
+                              Timer(const Duration(milliseconds: 400), () {
+                            if (!mounted) return;
+                            setState(() => _search = v.trim());
+                            unawaited(_reload(reset: true));
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
-        ],
+            Expanded(
+              child: AttaRefreshIndicator(
+                onRefresh: () => _reload(reset: true),
+                edgeOffset: 8,
+                child: Builder(
+                  builder: (context) {
+                    if (_isInitialLoading && _items.isEmpty) {
+                      return const SkeletonListingGrid(
+                        physics: AlwaysScrollableScrollPhysics(),
+                      );
+                    }
+
+                    if (_error != null && _items.isEmpty) {
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const [
+                          Padding(
+                            padding: EdgeInsets.only(top: 120),
+                            child: Center(
+                              child: Text(
+                                'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+
+                    return StreamBuilder<FeedAd?>(
+                      stream: feedAds.streamActiveAd(),
+                      builder: (context, adSnap) {
+                        return _HomeFeedView(
+                          key: _feedKey,
+                          items: _items,
+                          ad: adSnap.data,
+                          showcaseItems: const <ShowcaseItem>[],
+                          vipItems: const <Listing>[],
+                          vipHasMore: false,
+                          vipInitialIndex: 0,
+                          showcaseLoading: false,
+                          history: history,
+                          reviews: reviews,
+                          favs: favs,
+                          userId: user?.uid ?? '',
+                          isLoadingMore: _isLoadingMore,
+                          hasMore: _hasMore,
+                          onLoadMore: _loadMore,
+                          onLoadMoreVip: () async {},
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1723,13 +1818,17 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
   }
 
   Widget _buildCard(BuildContext context, Listing item) {
-    return FavoriteListingCard(
+    final card = FavoriteListingCard(
       listing: item,
       favoritesService: widget.favs,
       userId: widget.userId,
       isSeen: widget.history.hasViewed(item.id),
       reviews: widget.reviews,
       whiteSurfaceInLightTheme: true,
+      ordinaryCardShadows: attaHomeSoftCardShadows(context),
+      mediaPlaceholderColor: Theme.of(context).brightness == Brightness.light
+          ? Colors.white
+          : _homeDarkSurface,
       onError: (error) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1741,6 +1840,22 @@ class _HomeFeedViewState extends State<_HomeFeedView> {
           builder: (_) => ListingDetailScreen(listingId: item.id),
         ),
       ),
+    );
+    if (Theme.of(context).brightness == Brightness.light ||
+        item.hasVipPromotion) {
+      return card;
+    }
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        colorScheme: theme.colorScheme.copyWith(
+          surface: _homeDarkSurface,
+          onSurface: _homeDarkPrimaryText,
+          onSurfaceVariant: _homeDarkSecondaryText,
+          outline: _homeDarkSecondaryText,
+        ),
+      ),
+      child: card,
     );
   }
 
@@ -2124,96 +2239,98 @@ class _ShowcaseCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final photo = item.firstPhotoUrl?.trim() ?? '';
-    final scheme = Theme.of(context).colorScheme;
     return SizedBox(
       width: width,
-      child: Material(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        elevation: 1,
-        child: InkWell(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          onTap: onTap,
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: scheme.outlineVariant,
+          boxShadow: attaHomeSoftCardShadows(context),
+        ),
+        child: Material(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onTap,
+            child: Ink(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
               ),
-            ),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: MediaPreviewBox(
-                    imageUrl: photo,
-                    categoryHint: 'listings',
-                    borderRadius: 0,
-                  ),
-                ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withValues(alpha: 0.06),
-                        Colors.black.withValues(alpha: 0.00),
-                        Colors.black.withValues(alpha: 0.62),
+                    child: MediaPreviewBox(
+                      imageUrl: photo,
+                      categoryHint: 'listings',
+                      borderRadius: 0,
+                    ),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.06),
+                          Colors.black.withValues(alpha: 0.00),
+                          Colors.black.withValues(alpha: 0.62),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    bottom: 8,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          item.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            height: 1.1,
+                            shadows: [
+                              Shadow(
+                                blurRadius: 10,
+                                color: Color(0x66000000),
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${formatPrice(item.price)} ₽',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            shadows: [
+                              Shadow(
+                                blurRadius: 10,
+                                color: Color(0x66000000),
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                ),
-                Positioned(
-                  left: 10,
-                  right: 10,
-                  bottom: 8,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        item.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          height: 1.1,
-                          shadows: [
-                            Shadow(
-                              blurRadius: 10,
-                              color: Color(0x66000000),
-                              offset: Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${formatPrice(item.price)} ₽',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w900,
-                          shadows: [
-                            Shadow(
-                              blurRadius: 10,
-                              color: Color(0x66000000),
-                              offset: Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -2344,28 +2461,16 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
           boxShadow: isDark
               ? const [
                   BoxShadow(
-                    color: Color(0x52000000),
-                    blurRadius: 22,
-                    spreadRadius: 1,
-                    offset: Offset(0, 8),
-                  ),
-                  BoxShadow(
-                    color: Color(0x1A2563D9),
-                    blurRadius: 10,
-                    offset: Offset(0, -2),
+                    color: Color(0x38000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 6),
                   ),
                 ]
-              : [
-                  const BoxShadow(
-                    color: Color(0x262563D9),
-                    blurRadius: 22,
-                    spreadRadius: 1,
-                    offset: Offset(0, 8),
-                  ),
+              : const [
                   BoxShadow(
-                    color: Colors.white.withValues(alpha: 0.72),
-                    blurRadius: 10,
-                    offset: const Offset(0, -2),
+                    color: Color(0x1F2563D9),
+                    blurRadius: 16,
+                    offset: Offset(0, 6),
                   ),
                 ],
         ),
@@ -2397,13 +2502,6 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                                 border: Border.all(
                                   color: vipBlue.withValues(alpha: 0.20),
                                 ),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Color(0x1A2563D9),
-                                    blurRadius: 10,
-                                    offset: Offset(0, 3),
-                                  ),
-                                ],
                               ),
                               child: const Icon(
                                 Icons.workspace_premium_rounded,
@@ -2434,14 +2532,6 @@ class _VipShowcaseSectionState extends State<_VipShowcaseSection> {
                               decoration: BoxDecoration(
                                 color: vipAccentColor(context),
                                 borderRadius: BorderRadius.circular(999),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: vipAccentColor(context)
-                                        .withValues(alpha: 0.22),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
                               ),
                               child: const Text(
                                 'VIP',
@@ -2719,30 +2809,47 @@ class _CategoryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 50,
+      height: kCategoryStripHeight,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        clipBehavior: Clip.none,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         scrollDirection: Axis.horizontal,
         itemCount: kCategories.length,
         separatorBuilder: (_, __) => const SizedBox(width: 6),
         itemBuilder: (_, i) {
           final c = kCategories[i];
           final isSel = c == selected;
-          return ChoiceChip(
-            label: Text(c),
+          return CategoryChipSurface(
             selected: isSel,
-            selectedColor: Colors.blue,
-            checkmarkColor: Colors.white,
-            labelStyle: TextStyle(
-              color: isSel ? Colors.white : null,
-              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+            boxShadows: attaHomeSoftCardShadows(context),
+            supportRoundedShadowCorners: true,
+            child: ChoiceChip(
+              label: CategoryChipLabel(
+                category: c,
+                selected: isSel,
+                selectedForegroundColor: Colors.white,
+                unselectedForegroundColor:
+                    Theme.of(context).brightness == Brightness.dark
+                        ? _homeDarkPrimaryText
+                        : null,
+              ),
+              selected: isSel,
+              selectedColor: Colors.blue,
+              backgroundColor: Theme.of(context).brightness == Brightness.dark
+                  ? _homeDarkSurface
+                  : categoryChipBackgroundColor(context),
+              checkmarkColor: Colors.white,
+              labelStyle: TextStyle(
+                color: isSel ? Colors.white : null,
+                fontWeight: isSel ? FontWeight.w600 : FontWeight.w400,
+              ),
+              onSelected: (_) => onSelect(c),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              side: BorderSide.none,
+              elevation: 0,
+              pressElevation: 1,
             ),
-            onSelected: (_) => onSelect(c),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            visualDensity: VisualDensity.compact,
-            elevation: 0.5,
-            pressElevation: 1,
-            shadowColor: attaSoftShadowColor(context),
           );
         },
       ),
@@ -2765,9 +2872,9 @@ class _SubcategoryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final options = <String>['Все', ...items];
     return SizedBox(
-      height: 50,
+      height: kCategoryStripHeight,
       child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         scrollDirection: Axis.horizontal,
         itemCount: options.length,
         separatorBuilder: (_, __) => const SizedBox(width: 6),
@@ -2786,6 +2893,10 @@ class _SubcategoryRow extends StatelessWidget {
             onSelected: (_) => onSelect(value),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             visualDensity: VisualDensity.compact,
+            side: BorderSide.none,
+            elevation: 0.5,
+            pressElevation: 1,
+            shadowColor: attaSoftShadowColor(context),
           );
         },
       ),
@@ -2970,6 +3081,30 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
   String? _nextCursor;
   Object? _error;
   int _requestSerial = 0;
+  bool _showMapButton = true;
+  final MapButtonScrollGate _mapButtonScrollGate = MapButtonScrollGate();
+
+  bool _onScroll(ScrollNotification notification) {
+    if (filters.category != 'Недвижимость') return false;
+    if (notification is! ScrollUpdateNotification) return false;
+    final show = _mapButtonScrollGate.update(
+      notification.scrollDelta ?? 0,
+      pixels: notification.metrics.pixels,
+    );
+    if (show != null && show != _showMapButton) {
+      setState(() => _showMapButton = show);
+    }
+    return false;
+  }
+
+  void _openRealEstateMap() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => RealEstateMapScreen(
+        filters: _feedFilters,
+        subcategories: kSubcategories['Недвижимость'] ?? const [],
+      ),
+    ));
+  }
 
   String get search => widget.search;
   _HomeFilters get filters => widget.filters;
@@ -3221,92 +3356,129 @@ class _FilteredListingsScreenState extends State<_FilteredListingsScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                _summaryText,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.color
-                          ?.withValues(alpha: 0.75),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: filters.category == 'Недвижимость'
+          ? AnimatedSlide(
+              duration: Duration(milliseconds: _showMapButton ? 450 : 600),
+              curve: Curves.easeInOutCubic,
+              offset: _showMapButton ? Offset.zero : const Offset(0, 2),
+              child: AnimatedOpacity(
+                duration: Duration(milliseconds: _showMapButton ? 450 : 600),
+                curve: Curves.easeInOutCubic,
+                opacity: _showMapButton ? 1 : 0,
+                child: Transform.scale(
+                  scale: 0.9,
+                  child: FloatingActionButton.extended(
+                    heroTag: 'real-estate-map-search',
+                    onPressed: _showMapButton ? _openRealEstateMap : null,
+                    backgroundColor: const Color(0xFF2E7D32),
+                    foregroundColor: Colors.white,
+                    extendedPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    extendedIconLabelSpacing: 6,
+                    extendedTextStyle:
+                        Theme.of(context).textTheme.labelMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                    icon: const Icon(Icons.map_outlined, size: 20),
+                    label: const Text(
+                      'Показать на карте',
+                      style:
+                          TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                     ),
+                  ),
+                ),
+              ),
+            )
+          : null,
+      body: NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _summaryText,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.color
+                            ?.withValues(alpha: 0.75),
+                      ),
+                ),
               ),
             ),
-          ),
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () => _reload(reset: true),
-              child: Builder(
-                builder: (context) {
-                  if (_isInitialLoading && _items.isEmpty) {
-                    return const SkeletonListingGrid(
-                      physics: AlwaysScrollableScrollPhysics(),
-                    );
-                  }
+            Expanded(
+              child: AttaRefreshIndicator(
+                onRefresh: () => _reload(reset: true),
+                child: Builder(
+                  builder: (context) {
+                    if (_isInitialLoading && _items.isEmpty) {
+                      return const SkeletonListingGrid(
+                        physics: AlwaysScrollableScrollPhysics(),
+                      );
+                    }
 
-                  if (_error != null && _items.isEmpty) {
-                    return ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        Padding(
-                          padding: EdgeInsets.only(top: 120),
-                          child: Center(
-                            child: Text(
-                              'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
-                              textAlign: TextAlign.center,
+                    if (_error != null && _items.isEmpty) {
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const [
+                          Padding(
+                            padding: EdgeInsets.only(top: 120),
+                            child: Center(
+                              child: Text(
+                                'Не удалось загрузить объявления. Потяните вниз, чтобы повторить.',
+                                textAlign: TextAlign.center,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    );
-                  }
-
-                  if (_items.isEmpty) {
-                    return ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        Padding(
-                          padding: EdgeInsets.only(top: 120),
-                          child: Center(child: Text('Ничего не найдено')),
-                        ),
-                      ],
-                    );
-                  }
-
-                  return StreamBuilder<FeedAd?>(
-                    stream: feedAds.streamActiveAd(),
-                    builder: (context, adSnap) {
-                      return _HomeFeedView(
-                        key: _feedKey,
-                        items: _items,
-                        ad: adSnap.data,
-                        showcaseItems: const <ShowcaseItem>[],
-                        vipItems: const <Listing>[],
-                        vipHasMore: false,
-                        vipInitialIndex: 0,
-                        showcaseLoading: false,
-                        history: history,
-                        reviews: reviews,
-                        favs: favs,
-                        userId: user?.uid ?? '',
-                        isLoadingMore: _isLoadingMore,
-                        hasMore: _hasMore,
-                        onLoadMore: _loadMore,
-                        onLoadMoreVip: () async {},
+                        ],
                       );
-                    },
-                  );
-                },
+                    }
+
+                    if (_items.isEmpty) {
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const [
+                          Padding(
+                            padding: EdgeInsets.only(top: 120),
+                            child: Center(child: Text('Ничего не найдено')),
+                          ),
+                        ],
+                      );
+                    }
+
+                    return StreamBuilder<FeedAd?>(
+                      stream: feedAds.streamActiveAd(),
+                      builder: (context, adSnap) {
+                        return _HomeFeedView(
+                          key: _feedKey,
+                          items: _items,
+                          ad: adSnap.data,
+                          showcaseItems: const <ShowcaseItem>[],
+                          vipItems: const <Listing>[],
+                          vipHasMore: false,
+                          vipInitialIndex: 0,
+                          showcaseLoading: false,
+                          history: history,
+                          reviews: reviews,
+                          favs: favs,
+                          userId: user?.uid ?? '',
+                          isLoadingMore: _isLoadingMore,
+                          hasMore: _hasMore,
+                          onLoadMore: _loadMore,
+                          onLoadMoreVip: () async {},
+                        );
+                      },
+                    );
+                  },
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -3374,6 +3546,33 @@ class _FiltersScreen extends StatefulWidget {
 }
 
 const double _filterCardRadius = 16;
+
+class _HomeFilterSurface extends StatelessWidget {
+  const _HomeFilterSurface({
+    required this.child,
+  });
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(_filterCardRadius),
+        boxShadow: attaCoolSoftCardShadows(context),
+      ),
+      child: Material(
+        color: theme.brightness == Brightness.light
+            ? Colors.white
+            : theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(_filterCardRadius),
+        clipBehavior: Clip.antiAlias,
+        child: child,
+      ),
+    );
+  }
+}
 
 class _FiltersScreenState extends State<_FiltersScreen> {
   late String _category = widget.initialCategory;
@@ -3601,7 +3800,7 @@ class _FiltersScreenState extends State<_FiltersScreen> {
         child: ListView.separated(
           shrinkWrap: true,
           itemCount: options.length,
-          separatorBuilder: (_, __) => const Divider(height: 1),
+          separatorBuilder: (_, __) => const SizedBox(height: 2),
           itemBuilder: (context, index) {
             final option = options[index];
             final selected = option == current;
@@ -3635,35 +3834,38 @@ class _FiltersScreenState extends State<_FiltersScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _fieldLabel(label),
-        InkWell(
-          borderRadius: BorderRadius.circular(_filterCardRadius),
-          onTap: onTap,
-          child: InputDecorator(
-            decoration: InputDecoration(
-              enabled: enabled,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(_filterCardRadius),
+        _HomeFilterSurface(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(_filterCardRadius),
+            onTap: onTap,
+            child: InputDecorator(
+              decoration: InputDecoration(
+                enabled: enabled,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
               ),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: enabled ? null : Theme.of(context).disabledColor,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: enabled ? null : Theme.of(context).disabledColor,
+                      ),
                     ),
                   ),
-                ),
-                Icon(
-                  Icons.keyboard_arrow_down,
-                  color: enabled ? null : Theme.of(context).disabledColor,
-                ),
-              ],
+                  Icon(
+                    Icons.keyboard_arrow_down,
+                    color: enabled ? null : Theme.of(context).disabledColor,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -3677,20 +3879,22 @@ class _FiltersScreenState extends State<_FiltersScreen> {
     required ValueChanged<String> onChanged,
     String? suffixText,
   }) {
-    return TextField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      textInputAction: TextInputAction.next,
-      decoration: InputDecoration(
-        hintText: hint,
-        suffixText: suffixText,
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(_filterCardRadius),
+    return _HomeFilterSurface(
+      child: TextField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textInputAction: TextInputAction.next,
+        decoration: InputDecoration(
+          hintText: hint,
+          suffixText: suffixText,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
         ),
+        onChanged: onChanged,
       ),
-      onChanged: onChanged,
     );
   }
 
@@ -3915,6 +4119,9 @@ class _FiltersScreenState extends State<_FiltersScreen> {
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
               childrenPadding: const EdgeInsets.only(top: 8, bottom: 8),
+              shape: const RoundedRectangleBorder(side: BorderSide.none),
+              collapsedShape:
+                  const RoundedRectangleBorder(side: BorderSide.none),
               title: Text(
                 'Дополнительно',
                 style: TextStyle(
@@ -4024,45 +4231,47 @@ class _FiltersScreenState extends State<_FiltersScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: _onlyWithPhoto,
-                  title: const Text('Только с фото'),
-                  onChanged: (value) => setState(() => _onlyWithPhoto = value),
+                AttaIosSwitchTheme(
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _onlyWithPhoto,
+                    title: const Text('Только с фото'),
+                    onChanged: (value) =>
+                        setState(() => _onlyWithPhoto = value),
+                  ),
                 ),
               ],
             ),
           ],
           const SizedBox(height: 16),
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(_filterCardRadius),
-              side: BorderSide(color: Theme.of(context).dividerColor),
-            ),
-            leading: const Icon(Icons.place_outlined),
-            title: const Text('Где искать'),
-            subtitle: Text(_location.trim().isEmpty ? 'Не выбрано' : _location),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              final res = await Navigator.of(context).push<_WhereResult>(
-                MaterialPageRoute(
-                  builder: (_) => _WhereToSearchScreen(
-                    initialLocation: _location,
-                    initialPreferFirst: _preferFirst,
-                    initialRadiusKm: _radiusKm,
+          _HomeFilterSurface(
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14),
+              leading: const Icon(Icons.place_outlined),
+              title: const Text('Где искать'),
+              subtitle:
+                  Text(_location.trim().isEmpty ? 'Не выбрано' : _location),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () async {
+                final res = await Navigator.of(context).push<_WhereResult>(
+                  MaterialPageRoute(
+                    builder: (_) => _WhereToSearchScreen(
+                      initialLocation: _location,
+                      initialPreferFirst: _preferFirst,
+                      initialRadiusKm: _radiusKm,
+                    ),
                   ),
-                ),
-              );
+                );
 
-              if (!mounted || res == null) return;
+                if (!mounted || res == null) return;
 
-              setState(() {
-                _location = res.location;
-                _preferFirst = res.preferFirst;
-                _radiusKm = res.radiusKm;
-              });
-            },
+                setState(() {
+                  _location = res.location;
+                  _preferFirst = res.preferFirst;
+                  _radiusKm = res.radiusKm;
+                });
+              },
+            ),
           ),
           const SizedBox(height: 20),
         ],
@@ -4148,59 +4357,66 @@ class _WhereToSearchScreenState extends State<_WhereToSearchScreen> {
           const Text('Город или регион',
               style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
-          TextField(
-            controller: _locCtrl,
-            textCapitalization: TextCapitalization.sentences,
-            onTapOutside: (_) => FocusScope.of(context).unfocus(),
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Например: Москва',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.all(
-                  Radius.circular(_filterCardRadius),
+          _HomeFilterSurface(
+            child: TextField(
+              controller: _locCtrl,
+              textAlign: TextAlign.start,
+              textAlignVertical: TextAlignVertical.center,
+              textCapitalization: TextCapitalization.sentences,
+              onTapOutside: (_) => FocusScope.of(context).unfocus(),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                prefixIconConstraints: BoxConstraints(
+                  minWidth: 44,
+                  minHeight: 44,
                 ),
+                hintText: 'Например: Москва',
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
               ),
-              isDense: true,
+              onChanged: (_) => setState(() {}),
             ),
-            onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 14),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _preferFirst,
-            onChanged: (v) => setState(() => _preferFirst = v),
-            title: Text(
-              locationText.isEmpty
-                  ? 'Сначала из выбранного региона'
-                  : 'Сначала из $locationText',
+          AttaIosSwitchTheme(
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _preferFirst,
+              onChanged: (v) => setState(() => _preferFirst = v),
+              title: Text(
+                locationText.isEmpty
+                    ? 'Сначала из выбранного региона'
+                    : 'Сначала из $locationText',
+              ),
             ),
           ),
           const SizedBox(height: 12),
-          ListTile(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(_filterCardRadius),
-            ),
-            tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-            title: const Text('Радиус'),
-            subtitle:
-                Text(_radiusKm == null ? 'Не ограничивать' : '$_radiusKm км'),
-            trailing: const Icon(Icons.chevron_right),
-            enabled: locationText.isNotEmpty,
-            onTap: locationText.isEmpty
-                ? null
-                : () async {
-                    final r = await Navigator.of(context).push<int?>(
-                      MaterialPageRoute(
-                        builder: (_) => _RadiusPickerScreen(
-                          title: locationText,
-                          initialRadiusKm: _radiusKm,
+          _HomeFilterSurface(
+            child: ListTile(
+              title: const Text('Радиус'),
+              subtitle:
+                  Text(_radiusKm == null ? 'Не ограничивать' : '$_radiusKm км'),
+              trailing: const Icon(Icons.chevron_right),
+              enabled: locationText.isNotEmpty,
+              onTap: locationText.isEmpty
+                  ? null
+                  : () async {
+                      final r = await Navigator.of(context).push<int?>(
+                        MaterialPageRoute(
+                          builder: (_) => _RadiusPickerScreen(
+                            title: locationText,
+                            initialRadiusKm: _radiusKm,
+                          ),
                         ),
-                      ),
-                    );
+                      );
 
-                    if (!mounted) return;
-                    setState(() => _radiusKm = r);
-                  },
+                      if (!mounted) return;
+                      setState(() => _radiusKm = r);
+                    },
+            ),
           ),
           const SizedBox(height: 18),
           SafeArea(
@@ -4296,15 +4512,17 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: TextField(
-              readOnly: true,
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: widget.title,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(_filterCardRadius),
+            child: _HomeFilterSurface(
+              child: TextField(
+                readOnly: true,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search),
+                  hintText: widget.title,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  isDense: true,
                 ),
-                isDense: true,
               ),
             ),
           ),
@@ -4349,33 +4567,49 @@ class _RadiusPickerScreenState extends State<_RadiusPickerScreen> {
                   SizedBox(
                     height: 44,
                     child: ListView.separated(
+                      clipBehavior: Clip.none,
                       scrollDirection: Axis.horizontal,
                       itemCount: _options.length + 1,
                       separatorBuilder: (_, __) => const SizedBox(width: 8),
                       itemBuilder: (_, i) {
                         if (i == 0) {
                           final isSel = selected == null;
-                          return ChoiceChip(
-                            label: const Text('Не ограничивать'),
+                          return CategoryChipSurface(
                             selected: isSel,
-                            shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(_filterCardRadius),
+                            boxShadows: attaCoolSoftCardShadows(context),
+                            child: ChoiceChip(
+                              label: const Text('Не ограничивать'),
+                              selected: isSel,
+                              backgroundColor:
+                                  categoryChipBackgroundColor(context),
+                              side: BorderSide.none,
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(_filterCardRadius),
+                              ),
+                              onSelected: (_) =>
+                                  setState(() => _radiusKm = null),
                             ),
-                            onSelected: (_) => setState(() => _radiusKm = null),
                           );
                         }
 
                         final km = _options[i - 1];
                         final isSel = selected == km;
-                        return ChoiceChip(
-                          label: Text('$km км'),
+                        return CategoryChipSurface(
                           selected: isSel,
-                          shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(_filterCardRadius),
+                          boxShadows: attaCoolSoftCardShadows(context),
+                          child: ChoiceChip(
+                            label: Text('$km км'),
+                            selected: isSel,
+                            backgroundColor:
+                                categoryChipBackgroundColor(context),
+                            side: BorderSide.none,
+                            shape: RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.circular(_filterCardRadius),
+                            ),
+                            onSelected: (_) => setState(() => _radiusKm = km),
                           ),
-                          onSelected: (_) => setState(() => _radiusKm = km),
                         );
                       },
                     ),

@@ -14,6 +14,7 @@ import 'package:atta/src/services/presence_service.dart';
 import 'package:atta/src/services/phone_call_service.dart';
 import 'package:atta/src/services/profile_service.dart';
 import 'package:atta/src/services/reviews_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:atta/src/utils/ru_phone.dart';
 import 'package:atta/src/widgets/listing_promotion_badges.dart';
 import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
@@ -22,6 +23,8 @@ import 'package:atta/src/widgets/presence_badge.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/seller_level_badge.dart';
 import 'package:atta/src/widgets/skeletons.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
+import 'package:atta/src/theme/soft_shadows.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -407,7 +410,7 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
               !isMe;
           final canWrite = !isMe;
 
-          return RefreshIndicator(
+          return AttaRefreshIndicator(
             onRefresh: () => _handleRefresh(profile: profile, reviews: reviews),
             child: ListView(
               controller: _scrollController,
@@ -705,45 +708,48 @@ class _SellerPublicProfileScreenState extends State<SellerPublicProfileScreen>
                     },
                   ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _searchController,
-                  textCapitalization: TextCapitalization.sentences,
-                  onChanged: _onSellerSearchChanged,
-                  onTapOutside: (_) => FocusScope.of(context).unfocus(),
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.search),
-                    hintText: 'Поиск в объявлениях продавца',
-                    isDense: true,
-                    filled: true,
-                    fillColor:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: Theme.of(context).dividerColor,
+                StandardSearchSurface(
+                  borderRadius: 16,
+                  child: TextField(
+                    controller: _searchController,
+                    textAlign: TextAlign.start,
+                    textAlignVertical: TextAlignVertical.center,
+                    textCapitalization: TextCapitalization.sentences,
+                    onChanged: _onSellerSearchChanged,
+                    onTapOutside: (_) => FocusScope.of(context).unfocus(),
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      prefixIconConstraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
+                      ),
+                      hintText: 'Поиск в объявлениях продавца',
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                      filled: true,
+                      fillColor:
+                          Theme.of(context).brightness == Brightness.light
+                              ? Colors.white
+                              : Theme.of(context).colorScheme.surface,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      suffixIcon: _searchController.text.trim().isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Очистить',
+                              onPressed: () {
+                                _searchDebounce?.cancel();
+                                _searchController.clear();
+                                setState(() => _sellerSearch = '');
+                              },
+                              icon: const Icon(Icons.close),
+                            ),
+                      suffixIconConstraints: const BoxConstraints(
+                        minWidth: 44,
+                        minHeight: 44,
                       ),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide(
-                        color: Theme.of(context).colorScheme.primary,
-                        width: 1.6,
-                      ),
-                    ),
-                    suffixIcon: _searchController.text.trim().isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: 'Очистить',
-                            onPressed: () {
-                              _searchDebounce?.cancel();
-                              _searchController.clear();
-                              setState(() => _sellerSearch = '');
-                            },
-                            icon: const Icon(Icons.close),
-                          ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -812,8 +818,12 @@ class _SellerActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final enabled = onTap != null;
-    final background =
-        selected ? scheme.secondaryContainer : scheme.surfaceContainerHighest;
+    final isLight = Theme.of(context).brightness == Brightness.light;
+    final background = selected
+        ? scheme.secondaryContainer
+        : isLight
+            ? Colors.white
+            : scheme.surface;
     final foreground = selected
         ? scheme.onSecondaryContainer
         : enabled
@@ -834,6 +844,9 @@ class _SellerActionButton extends StatelessWidget {
               decoration: BoxDecoration(
                 color: background,
                 shape: BoxShape.circle,
+                boxShadow: selected
+                    ? const <BoxShadow>[]
+                    : attaCoolSoftCardShadows(context),
               ),
               alignment: Alignment.center,
               child: busy
@@ -1241,134 +1254,142 @@ class _ListingCard extends StatelessWidget {
       errorLabel: 'Фото недоступно',
     );
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(14),
-      onTap: isArchive ? null : onTap,
-      child: Ink(
-        decoration: BoxDecoration(
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: hasVipPromotion
+            ? attaSoftShadows(context)
+            : attaCoolSoftCardShadows(context),
+      ),
+      child: Material(
+        color: Theme.of(context).brightness == Brightness.light
+            ? Colors.white
+            : Theme.of(context).colorScheme.surface,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          color: Theme.of(context).colorScheme.surface,
-          border: Border.all(
-            color: hasVipPromotion
-                ? vipBorderColor(context)
-                : Theme.of(context).dividerColor.withValues(alpha: 0.18),
-            width: hasVipPromotion ? 1.25 : 1,
-          ),
+          side: hasVipPromotion
+              ? BorderSide(color: vipBorderColor(context), width: 1.25)
+              : BorderSide.none,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius:
-                  const BorderRadius.vertical(top: Radius.circular(14)),
-              child: AspectRatio(
-                aspectRatio: 4 / 3,
-                child: Stack(
-                  fit: StackFit.expand,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: isArchive ? null : onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(14)),
+                child: AspectRatio(
+                  aspectRatio: 4 / 3,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (isArchive)
+                        ColorFiltered(
+                          colorFilter: const ColorFilter.matrix(<double>[
+                            0.2126,
+                            0.7152,
+                            0.0722,
+                            0,
+                            0,
+                            0.2126,
+                            0.7152,
+                            0.0722,
+                            0,
+                            0,
+                            0.2126,
+                            0.7152,
+                            0.0722,
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            1,
+                            0,
+                          ]),
+                          child: Opacity(opacity: 0.78, child: image),
+                        )
+                      else
+                        image,
+                      ListingPromotionBadges(
+                        showVip: hasVipPromotion,
+                        showBump: hasBumpPromotion,
+                      ),
+                      if (isArchive)
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.12),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (isArchive)
-                      ColorFiltered(
-                        colorFilter: const ColorFilter.matrix(<double>[
-                          0.2126,
-                          0.7152,
-                          0.0722,
-                          0,
-                          0,
-                          0.2126,
-                          0.7152,
-                          0.0722,
-                          0,
-                          0,
-                          0.2126,
-                          0.7152,
-                          0.0722,
-                          0,
-                          0,
-                          0,
-                          0,
-                          0,
-                          1,
-                          0,
-                        ]),
-                        child: Opacity(opacity: 0.78, child: image),
-                      )
-                    else
-                      image,
-                    ListingPromotionBadges(
-                      showVip: hasVipPromotion,
-                      showBump: hasBumpPromotion,
-                    ),
-                    if (isArchive)
-                      Positioned.fill(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.12),
+                    if (isArchive) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(999),
+                          color: statusColor.withValues(alpha: 0.14),
+                          border: Border.all(
+                            color: statusColor.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: Text(
+                          statusText,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                       ),
+                      const SizedBox(height: 6),
+                    ],
+                    Text(
+                      listing.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${listing.price} ₽',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (archiveNote != null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        archiveNote,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (isArchive) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        color: statusColor.withValues(alpha: 0.14),
-                        border: Border.all(
-                          color: statusColor.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: Text(
-                        statusText,
-                        style: TextStyle(
-                          color: statusColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                  ],
-                  Text(
-                    listing.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${listing.price} ₽',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.primary,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  if (archiveNote != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      archiveNote,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.outline,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

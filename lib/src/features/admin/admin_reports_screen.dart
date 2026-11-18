@@ -4,7 +4,9 @@ import 'package:atta/src/features/listings/listing_detail_screen.dart';
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/auth_service.dart';
 import 'package:atta/src/services/reports_service.dart';
+import 'package:atta/src/widgets/standard_search_surface.dart';
 import 'package:atta/src/utils/app_snackbar.dart';
+import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -129,24 +131,29 @@ class _AdminReportsScreenState extends State<AdminReportsScreen>
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-            child: TextField(
-              controller: _search,
-              onChanged: _scheduleSearch,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                hintText: 'Поиск по жалобам',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _search.text.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: 'Очистить поиск',
-                        onPressed: () {
-                          _search.clear();
-                          setState(() {});
-                        },
-                        icon: const Icon(Icons.close),
-                      ),
-                isDense: true,
+            child: StandardSearchSurface(
+              child: TextField(
+                controller: _search,
+                onChanged: _scheduleSearch,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: 'Поиск по жалобам',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _search.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Очистить поиск',
+                          onPressed: () {
+                            _search.clear();
+                            setState(() {});
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                  isDense: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                ),
               ),
             ),
           ),
@@ -391,7 +398,7 @@ class _ReportsTabState extends State<_ReportsTab>
       return _ReportsError(error: _error!, onRetry: () => _load(reset: true));
     }
     if (_items.isEmpty) return Center(child: Text(widget.emptyText));
-    return RefreshIndicator(
+    return AttaRefreshIndicator(
       onRefresh: () => _load(reset: true),
       child: ListView.separated(
         key: PageStorageKey('admin-reports-${widget.status}'),

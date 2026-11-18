@@ -62,6 +62,103 @@ void main() {
     expect(buildCounts.containsKey(4), isFalse);
   });
 
+  testWidgets('bottom navigation uses a white background in light theme',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ChatService>.value(value: _FakeChatService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<PresenceService>.value(value: _FakePresenceService()),
+          ChangeNotifierProvider<MainShellController>(
+            create: (_) => MainShellController(),
+          ),
+        ],
+        child: MaterialApp(
+          home: MainShell(
+            pageBuilder: (index, controller) =>
+                Text('page:$index', textDirection: TextDirection.ltr),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final navigationTheme = tester.widget<NavigationBarTheme>(
+      find.byType(NavigationBarTheme),
+    );
+    expect(navigationTheme.data.backgroundColor, Colors.white);
+    expect(navigationTheme.data.height, 64);
+    expect(navigationTheme.data.indicatorColor, Colors.transparent);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('selected bottom navigation icon scales without moving layout',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ChatService>.value(value: _FakeChatService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<PresenceService>.value(value: _FakePresenceService()),
+          ChangeNotifierProvider<MainShellController>(
+            create: (_) => MainShellController(),
+          ),
+        ],
+        child: MaterialApp(
+          home: MainShell(
+            pageBuilder: (index, controller) =>
+                Text('page:$index', textDirection: TextDirection.ltr),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    List<AnimatedScale> scalesFor(IconData icon) => tester
+        .widgetList<AnimatedScale>(find.byType(AnimatedScale))
+        .where((scale) =>
+            scale.child is Icon && (scale.child as Icon).icon == icon)
+        .toList();
+
+    expect(scalesFor(Icons.search), isNotEmpty);
+    expect(
+        scalesFor(Icons.search).every((scale) => scale.scale == 1.15), isTrue);
+    expect(
+      scalesFor(Icons.search).every(
+        (scale) =>
+            scale.duration == const Duration(milliseconds: 220) &&
+            scale.curve == Curves.easeOutCubic,
+      ),
+      isTrue,
+    );
+    expect(scalesFor(Icons.favorite_border).single.scale, 1);
+    final searchCenterBefore =
+        tester.getCenter(find.byIcon(Icons.search).first);
+    final favoriteCenterBefore =
+        tester.getCenter(find.byIcon(Icons.favorite_border));
+
+    await tester.tap(find.text('Избранное'));
+    await tester.pump();
+
+    expect(scalesFor(Icons.search).every((scale) => scale.scale == 1), isTrue);
+    expect(scalesFor(Icons.favorite).single.scale, 1.15);
+    expect(
+        tester.getCenter(find.byIcon(Icons.search).first), searchCenterBefore);
+    expect(tester.getCenter(find.byIcon(Icons.favorite)), favoriteCenterBefore);
+
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
       'search tab preserves feed position when reselected from another tab',
       (tester) async {

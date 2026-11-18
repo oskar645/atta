@@ -1,5 +1,6 @@
 import 'package:atta/src/utils/price_formatter.dart';
 import 'package:atta/src/utils/vehicle_specs.dart';
+import 'package:atta/src/widgets/atta_cool_surface.dart';
 import 'package:flutter/material.dart';
 
 class CarParametersScreen extends StatefulWidget {
@@ -283,31 +284,28 @@ class _CarParametersScreenState extends State<CarParametersScreen> {
     required String value,
     required VoidCallback? onTap,
   }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Theme.of(context).colorScheme.outlineVariant,
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: _fieldText(
-                value.isEmpty ? title : value,
-                TextStyle(
-                  color: value.isEmpty
-                      ? Theme.of(context).colorScheme.outline
-                      : Theme.of(context).colorScheme.onSurface,
+    return AttaCoolSurface(
+      borderRadius: 12,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: _fieldText(
+                  value.isEmpty ? title : value,
+                  TextStyle(
+                    color: value.isEmpty
+                        ? Theme.of(context).colorScheme.outline
+                        : Theme.of(context).colorScheme.onSurface,
+                  ),
                 ),
               ),
-            ),
-            const Icon(Icons.chevron_right),
-          ],
+              const Icon(Icons.chevron_right),
+            ],
+          ),
         ),
       ),
     );
