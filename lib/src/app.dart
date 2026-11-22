@@ -66,6 +66,47 @@ bool shouldGenerateListingRouteForPlatform({
   return isWeb || platform != TargetPlatform.android;
 }
 
+@visibleForTesting
+ThemeData buildAttaDarkTheme() {
+  const surface = Color(0xFF000000);
+  final scheme = ColorScheme.fromSeed(
+    seedColor: const Color(0xFF2B2D33),
+    brightness: Brightness.dark,
+  ).copyWith(
+    surface: surface,
+    surfaceContainerLowest: surface,
+    surfaceContainerLow: surface,
+    surfaceContainer: surface,
+    surfaceContainerHigh: surface,
+    surfaceContainerHighest: surface,
+  );
+
+  return ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.dark,
+    colorScheme: scheme,
+    scaffoldBackgroundColor: surface,
+    canvasColor: surface,
+    appBarTheme: const AppBarTheme(
+      backgroundColor: surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+    cardTheme: const CardThemeData(
+      color: surface,
+      elevation: 0.5,
+      shadowColor: Color(0x29000000),
+    ),
+    dialogTheme: const DialogThemeData(
+      backgroundColor: surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: surface,
+      surfaceTintColor: Colors.transparent,
+    ),
+  );
+}
+
 class AttaApp extends StatelessWidget {
   const AttaApp({super.key});
 
@@ -86,18 +127,7 @@ class AttaApp extends StatelessWidget {
       ),
     );
 
-    final darkBase = ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF2B2D33),
-        brightness: Brightness.dark,
-      ),
-      cardTheme: const CardThemeData(
-        elevation: 0.5,
-        shadowColor: Color(0x29000000),
-      ),
-    );
+    final darkBase = buildAttaDarkTheme();
 
     return MultiProvider(
       providers: [

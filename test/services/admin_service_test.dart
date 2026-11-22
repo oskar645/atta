@@ -58,13 +58,34 @@ void main() {
     expect(await service.streamPendingModerationCount().first, 2);
 
     await service.markSectionSeen(AdminService.moderationSection);
-    expect(await service.streamPendingModerationCount().first, 0);
+    expect(await service.streamPendingModerationCount().first, 2);
+    expect(await service.streamNeedsAttention().first, isFalse);
 
     final restarted = AdminService(api: api);
     restarted.bindAdminUser('admin-1');
     await restarted.refreshAdminAttention(force: true);
 
-    expect(await restarted.streamPendingModerationCount().first, 0);
+    expect(await restarted.streamPendingModerationCount().first, 2);
+    expect(await restarted.streamNeedsAttention().first, isFalse);
+  });
+
+  test('resolved moderation item decrements persistent pending count',
+      () async {
+    final tokenStorage = TokenStorage();
+    await tokenStorage.saveSession(
+      accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      currentUser: const AuthUser(uid: 'admin-1', isAdmin: true),
+    );
+    final service = AdminService(api: _FakeAdminApi())
+      ..bindAdminUser('admin-1');
+
+    await service.refreshAdminAttention(force: true);
+    expect(await service.streamPendingModerationCount().first, 2);
+
+    await service.approveListing('listing-1', wasPending: true);
+
+    expect(await service.streamPendingModerationCount().first, 1);
   });
 
   test('refreshAdminAttention skips admin endpoints for non-admin session',
@@ -199,7 +220,8 @@ void main() {
 
     await service.refreshAdminAttention(force: true);
     await service.markSectionSeen(AdminService.moderationSection);
-    expect(await service.streamPendingModerationCount().first, 0);
+    expect(await service.streamPendingModerationCount().first, 2);
+    expect(await service.streamNeedsAttention().first, isFalse);
 
     api.pendingItems = <Map<String, dynamic>>[
       ...api.pendingItems,
@@ -232,7 +254,8 @@ void main() {
     api.pendingItems = <Map<String, dynamic>>[api.pendingItems.last];
     await service.refreshAdminAttention(force: true);
 
-    expect(await service.streamPendingModerationCount().first, 0);
+    expect(await service.streamPendingModerationCount().first, 1);
+    expect(await service.streamNeedsAttention().first, isFalse);
   });
 
   test('late marker load for admin A cannot overwrite active admin B',
@@ -319,6 +342,19 @@ class _FakeAdminApi extends AdminApi {
       'updated_at': '2026-07-03T11:00:00.000Z',
     },
   ];
+
+  @override
+  Future<Map<String, dynamic>> approveListing(String listingId) async {
+    pendingItems = pendingItems
+        .where((item) => item['id']?.toString() != listingId)
+        .toList(growable: false);
+    return <String, dynamic>{
+      'listing': <String, dynamic>{
+        'id': listingId,
+        'status': 'approved',
+      },
+    };
+  }
 
   @override
   Future<Map<String, dynamic>> listings({

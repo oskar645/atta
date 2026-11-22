@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:atta/src/features/favorites/favorites_screen.dart';
 import 'package:atta/src/features/auth/guest_auth_prompt.dart';
@@ -62,12 +63,18 @@ class _MainShellState extends State<MainShell> {
   bool _didCheckWebPromo = false;
   late final bool _showColdStartVpnBanner = _claimColdStartVpnBanner();
 
-  static const _inactive = Color(0xFF8E95A3);
   static const _search = Colors.blue;
   static const _fav = Colors.red;
   static const _listings = Colors.blue;
   static const _msgs = Colors.blue;
   static const _profile = Color.fromARGB(221, 2, 71, 23);
+  static const _navIconShadows = [
+    Shadow(
+      color: Color(0x66000000),
+      blurRadius: 3,
+      offset: Offset(0, 1),
+    ),
+  ];
 
   @override
   void initState() {
@@ -166,6 +173,14 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
+  Widget _navIcon(IconData icon, {Color color = Colors.white}) {
+    return Icon(
+      icon,
+      color: color,
+      shadows: _navIconShadows,
+    );
+  }
+
   void _handleExternalTabSelection() {
     final controller = _shellController;
     if (controller == null || !mounted || controller.selectedIndex == _i) {
@@ -231,23 +246,31 @@ class _MainShellState extends State<MainShell> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final auth = context.read<AuthService>();
     final chat = context.read<ChatService>();
     final admin = context.read<AdminService>();
     final notifications = context.read<NotificationsService>();
     final uid = auth.currentUser?.uid ?? '';
 
+    const navigationBorderRadius = BorderRadius.all(Radius.circular(28));
+    final navigationGlassColor = theme.brightness == Brightness.light
+        ? const Color(0xFF080D14).withValues(alpha: 0.45)
+        : const Color(0xFF05080D).withValues(alpha: 0.30);
+    final navigationGlassEdgeColor = Colors.white.withValues(
+      alpha: theme.brightness == Brightness.light ? 0.24 : 0.18,
+    );
     final navTheme = NavigationBarThemeData(
-      backgroundColor: Theme.of(context).brightness == Brightness.light
-          ? Colors.white
-          : null,
+      backgroundColor: Colors.transparent,
       labelTextStyle: WidgetStateProperty.resolveWith<TextStyle?>((states) {
         final selected = states.contains(WidgetState.selected);
         return TextStyle(
           fontSize: 10.5,
           fontWeight: FontWeight.w400,
           height: 1.2,
-          color: selected ? null : _inactive,
+          color: selected
+              ? Colors.white
+              : Colors.white.withValues(alpha: 0.82),
         );
       }),
       height: 64,
@@ -255,6 +278,7 @@ class _MainShellState extends State<MainShell> {
     );
 
     return Scaffold(
+      extendBody: true,
       body: IndexedStack(
         index: _i,
         children: List<Widget>.generate(5, (index) {
@@ -302,95 +326,135 @@ class _MainShellState extends State<MainShell> {
                           isAdmin && (attentionSnap.data == true);
 
                       return SafeArea(
+                        key: const Key(
+                          'main_shell_bottom_navigation_safe_area',
+                        ),
                         top: false,
-                        child: NavigationBarTheme(
-                          data: navTheme,
-                          child: NavigationBar(
-                            selectedIndex: _i,
-                            onDestinationSelected: _onDestinationSelected,
-                            destinations: [
-                              NavigationDestination(
-                                icon: _animatedNavIcon(
-                                  index: 0,
-                                  icon: const Icon(Icons.search,
-                                      color: _inactive),
-                                ),
-                                selectedIcon: _animatedNavIcon(
-                                  index: 0,
-                                  icon:
-                                      const Icon(Icons.search, color: _search),
-                                ),
-                                label: 'Поиск',
+                        minimum: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                        child: ClipRRect(
+                          key: const Key(
+                            'main_shell_bottom_navigation_surface',
+                          ),
+                          borderRadius: navigationBorderRadius,
+                          child: BackdropFilter(
+                            key: const Key(
+                              'main_shell_bottom_navigation_blur',
+                            ),
+                            filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+                            child: DecoratedBox(
+                              key: const Key(
+                                'main_shell_bottom_navigation_glass',
                               ),
-                              NavigationDestination(
-                                icon: _dotIcon(
-                                  _animatedNavIcon(
-                                    index: 1,
-                                    icon: const Icon(Icons.favorite_border,
-                                        color: _inactive),
-                                  ),
-                                  hasSavedSearchAlerts,
+                              decoration: BoxDecoration(
+                                color: navigationGlassColor,
+                                borderRadius: navigationBorderRadius,
+                                border: Border.all(
+                                  color: navigationGlassEdgeColor,
+                                  width: 0.8,
                                 ),
-                                selectedIcon: _dotIcon(
-                                  _animatedNavIcon(
-                                    index: 1,
-                                    icon:
-                                        const Icon(Icons.favorite, color: _fav),
-                                  ),
-                                  hasSavedSearchAlerts,
-                                ),
-                                label: 'Избранное',
                               ),
-                              NavigationDestination(
-                                icon: _animatedNavIcon(
-                                  index: 2,
-                                  icon: const Icon(Icons.list_alt,
-                                      color: _inactive),
+                              child: NavigationBarTheme(
+                                data: navTheme,
+                                child: NavigationBar(
+                                  selectedIndex: _i,
+                                  onDestinationSelected: _onDestinationSelected,
+                                  destinations: [
+                                    NavigationDestination(
+                                      icon: _animatedNavIcon(
+                                        index: 0,
+                                        icon: _navIcon(Icons.search),
+                                      ),
+                                      selectedIcon: _animatedNavIcon(
+                                        index: 0,
+                                        icon: _navIcon(
+                                          Icons.search,
+                                          color: _search,
+                                        ),
+                                      ),
+                                      label: 'Поиск',
+                                    ),
+                                    NavigationDestination(
+                                      icon: _dotIcon(
+                                        _animatedNavIcon(
+                                          index: 1,
+                                          icon: _navIcon(
+                                            Icons.favorite_border,
+                                          ),
+                                        ),
+                                        hasSavedSearchAlerts,
+                                      ),
+                                      selectedIcon: _dotIcon(
+                                        _animatedNavIcon(
+                                          index: 1,
+                                          icon: _navIcon(
+                                            Icons.favorite,
+                                            color: _fav,
+                                          ),
+                                        ),
+                                        hasSavedSearchAlerts,
+                                      ),
+                                      label: 'Избранное',
+                                    ),
+                                    NavigationDestination(
+                                      icon: _animatedNavIcon(
+                                        index: 2,
+                                        icon: _navIcon(Icons.list_alt),
+                                      ),
+                                      selectedIcon: _animatedNavIcon(
+                                        index: 2,
+                                        icon: _navIcon(
+                                          Icons.list_alt,
+                                          color: _listings,
+                                        ),
+                                      ),
+                                      label: 'Объявления',
+                                    ),
+                                    NavigationDestination(
+                                      icon: msgIcon(
+                                        _animatedNavIcon(
+                                          index: 3,
+                                          icon: _navIcon(
+                                            Icons.chat_bubble_outline,
+                                          ),
+                                        ),
+                                      ),
+                                      selectedIcon: msgIcon(
+                                        _animatedNavIcon(
+                                          index: 3,
+                                          icon: _navIcon(
+                                            Icons.chat_bubble_outline,
+                                            color: _msgs,
+                                          ),
+                                        ),
+                                      ),
+                                      label: 'Сообщения',
+                                    ),
+                                    NavigationDestination(
+                                      icon: _dotIcon(
+                                        _animatedNavIcon(
+                                          index: 4,
+                                          icon: _navIcon(
+                                            Icons.person_outline,
+                                          ),
+                                        ),
+                                        hasAdminAlert,
+                                      ),
+                                      selectedIcon: _dotIcon(
+                                        _animatedNavIcon(
+                                          index: 4,
+                                          icon: _navIcon(
+                                            Icons.person,
+                                            color: _profile,
+                                          ),
+                                        ),
+                                        hasAdminAlert,
+                                      ),
+                                      label: 'Профиль',
+                                    ),
+                                  ],
                                 ),
-                                selectedIcon: _animatedNavIcon(
-                                  index: 2,
-                                  icon: const Icon(Icons.list_alt,
-                                      color: _listings),
-                                ),
-                                label: 'Объявления',
                               ),
-                              NavigationDestination(
-                                icon: msgIcon(
-                                  _animatedNavIcon(
-                                    index: 3,
-                                    icon: const Icon(Icons.chat_bubble_outline,
-                                        color: _inactive),
-                                  ),
-                                ),
-                                selectedIcon: msgIcon(
-                                  _animatedNavIcon(
-                                    index: 3,
-                                    icon: const Icon(Icons.chat_bubble_outline,
-                                        color: _msgs),
-                                  ),
-                                ),
-                                label: 'Сообщения',
-                              ),
-                              NavigationDestination(
-                                icon: _dotIcon(
-                                  _animatedNavIcon(
-                                    index: 4,
-                                    icon: const Icon(Icons.person_outline,
-                                        color: _inactive),
-                                  ),
-                                  hasAdminAlert,
-                                ),
-                                selectedIcon: _dotIcon(
-                                  _animatedNavIcon(
-                                    index: 4,
-                                    icon: const Icon(Icons.person,
-                                        color: _profile),
-                                  ),
-                                  hasAdminAlert,
-                                ),
-                                label: 'Профиль',
-                              ),
-                            ],
+                            ),
                           ),
                         ),
                       );

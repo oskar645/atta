@@ -225,6 +225,50 @@ void main() {
     expect(coolSurfaces, isNotEmpty);
   });
 
+  testWidgets('dark favorites use black surfaces and home three-layer shadows',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapFavorites(
+        themeMode: ThemeMode.dark,
+        listingsService: _CachedListingsService(
+          initialItems: <Listing>[
+            _listingFixture(id: 'listing-1', title: 'Тёмное избранное'),
+          ],
+        ),
+        favoritesService: _StaticFavoritesService(
+          ids: <String>{'listing-1'},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).scaffoldBackgroundColor,
+      const Color(0xFF000000),
+    );
+    final card = find.text('Тёмное избранное');
+    final cardMaterials = tester
+        .widgetList<Material>(
+          find.ancestor(of: card, matching: find.byType(Material)),
+        )
+        .where((material) => material.color == const Color(0xFF000000));
+    expect(cardMaterials, isNotEmpty);
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(of: card, matching: find.byType(DecoratedBox)),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x3D7CA1C7),
+          ),
+      isTrue,
+    );
+  });
+
   testWidgets(
       'favorites cold start does not launch duplicate missing listing loads',
       (tester) async {
@@ -538,6 +582,7 @@ Widget _wrapFavorites({
   ListingHistoryService? historyService,
   ListingsService? listingsService,
   MainShellController? shellController,
+  ThemeMode themeMode = ThemeMode.light,
 }) {
   return MultiProvider(
     providers: [
@@ -560,7 +605,12 @@ Widget _wrapFavorites({
       ),
       Provider<ReviewsService>.value(value: _FakeReviewsService()),
     ],
-    child: const MaterialApp(home: FavoritesScreen()),
+    child: MaterialApp(
+      theme: ThemeData.light(useMaterial3: true),
+      darkTheme: ThemeData.dark(useMaterial3: true),
+      themeMode: themeMode,
+      home: const FavoritesScreen(),
+    ),
   );
 }
 

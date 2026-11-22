@@ -1,3 +1,4 @@
+import 'package:atta/src/app.dart';
 import 'package:atta/src/features/auth/legal_document_screen.dart';
 import 'package:atta/src/features/profile/about_app_screen.dart';
 import 'package:atta/src/features/profile/security_screen.dart';
@@ -51,6 +52,42 @@ void main() {
 
     expect(coolSurfaces.length, greaterThanOrEqualTo(4));
     expect(whiteMaterials.length, greaterThanOrEqualTo(4));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('dark settings use black three-layer action surfaces',
+      (tester) async {
+    await tester.pumpWidget(_settingsApp(themeMode: ThemeMode.dark));
+    await tester.pumpAndSettle();
+
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).scaffoldBackgroundColor,
+      Colors.black,
+    );
+    final securityTile = find.text('Безопасность');
+    expect(
+      tester
+          .widgetList<Material>(
+            find.ancestor(
+              of: securityTile,
+              matching: find.byType(Material),
+            ),
+          )
+          .any((material) => material.color == Colors.black),
+      isTrue,
+    );
+    expect(
+      tester
+          .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x3D7CA1C7),
+          ),
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -292,6 +329,7 @@ Widget _settingsApp({
   bool emailVerified = false,
   _FakeAuthService? auth,
   _FakeProfileService? profile,
+  ThemeMode themeMode = ThemeMode.light,
 }) {
   return MultiProvider(
     providers: [
@@ -303,7 +341,12 @@ Widget _settingsApp({
               )),
       Provider<ProfileService>.value(value: profile ?? _FakeProfileService()),
     ],
-    child: const MaterialApp(home: SettingsScreen()),
+    child: MaterialApp(
+      theme: ThemeData.light(useMaterial3: true),
+      darkTheme: buildAttaDarkTheme(),
+      themeMode: themeMode,
+      home: const SettingsScreen(),
+    ),
   );
 }
 

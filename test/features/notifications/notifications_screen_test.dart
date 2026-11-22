@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:atta/src/app.dart';
 import 'package:atta/src/features/notifications/notifications_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/services/auth_service.dart';
@@ -331,16 +332,79 @@ void main() {
 
     expect(notifications.bellBadgeStreamListenCount, 0);
   });
+
+  testWidgets('dark notifications use black three-layer cards', (tester) async {
+    final notifications = _FakeNotificationsService(
+      globalItems: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'global-dark',
+          'scope': 'global',
+          'title': 'Тёмное уведомление',
+          'body': 'Текст',
+          'type': 'general',
+          'created_at': '2026-07-03T12:00:00.000Z',
+        },
+      ],
+    );
+
+    await tester.pumpWidget(
+      _buildApp(notifications, themeMode: ThemeMode.dark),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).scaffoldBackgroundColor,
+      Colors.black,
+    );
+    final notificationTitle = find.text('Тёмное уведомление');
+    expect(
+      tester
+          .widgetList<Material>(
+            find.ancestor(
+              of: notificationTitle,
+              matching: find.byType(Material),
+            ),
+          )
+          .any((material) => material.color == Colors.black),
+      isTrue,
+    );
+    expect(
+      tester
+          .widgetList<DecoratedBox>(
+            find.ancestor(
+              of: notificationTitle,
+              matching: find.byType(DecoratedBox),
+            ),
+          )
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x3D7CA1C7),
+          ),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
-Widget _buildApp(_FakeNotificationsService notifications) {
+Widget _buildApp(
+  _FakeNotificationsService notifications, {
+  ThemeMode themeMode = ThemeMode.light,
+}) {
   return MultiProvider(
     providers: [
       Provider<AuthService>.value(value: _FakeAuthService()),
       Provider<AdminService>.value(value: _FakeAdminService()),
       Provider<NotificationsService>.value(value: notifications),
     ],
-    child: const MaterialApp(home: NotificationsScreen()),
+    child: MaterialApp(
+      theme: ThemeData.light(useMaterial3: true),
+      darkTheme: buildAttaDarkTheme(),
+      themeMode: themeMode,
+      home: const NotificationsScreen(),
+    ),
   );
 }
 

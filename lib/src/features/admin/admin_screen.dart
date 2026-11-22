@@ -388,7 +388,11 @@ class _TimewebAdminListingsModerationTabState
     setState(() => _busy = true);
     try {
       final listingId = _id(item);
-      await adminService.approveListing(listingId);
+      await adminService.approveListing(
+        listingId,
+        wasPending:
+            (item['status'] ?? '').toString().toLowerCase() == 'pending',
+      );
       _removeItemLocally(listingId);
       unawaited(adminService.dashboardStats(forceRefresh: true));
       if (!mounted) return;
@@ -415,6 +419,8 @@ class _TimewebAdminListingsModerationTabState
       await adminService.rejectListing(
         listingId,
         reason: reason,
+        wasPending:
+            (item['status'] ?? '').toString().toLowerCase() == 'pending',
       );
       _removeItemLocally(listingId);
       unawaited(adminService.dashboardStats(forceRefresh: true));
@@ -442,6 +448,8 @@ class _TimewebAdminListingsModerationTabState
       await adminService.deleteListing(
         listingId,
         reason: reason,
+        wasPending:
+            (item['status'] ?? '').toString().toLowerCase() == 'pending',
       );
       _removeItemLocally(listingId);
       unawaited(adminService.dashboardStats(forceRefresh: true));
@@ -664,11 +672,33 @@ class _TimewebAdminListingsModerationTabState
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        Text(
-                                          (item['title'] ?? 'Без названия')
-                                              .toString(),
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.w800),
+                                        Row(
+                                          children: [
+                                            if (_status == 'pending') ...[
+                                              Container(
+                                                key: ValueKey(
+                                                  'admin-moderation-item-indicator:$listingId',
+                                                ),
+                                                width: 8,
+                                                height: 8,
+                                                decoration: const BoxDecoration(
+                                                  color: Colors.red,
+                                                  shape: BoxShape.circle,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 7),
+                                            ],
+                                            Expanded(
+                                              child: Text(
+                                                (item['title'] ??
+                                                        'Без названия')
+                                                    .toString(),
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                         if (_hasRealModerationChanges(
                                             item)) ...[
@@ -1830,7 +1860,12 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
     final adminService = context.read<AdminService>();
     setState(() => _busy = true);
     try {
-      await adminService.approveListing(widget.listingId);
+      await adminService.approveListing(
+        widget.listingId,
+        wasPending:
+            (widget.listingData['status'] ?? '').toString().toLowerCase() ==
+                'pending',
+      );
 
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -1852,6 +1887,9 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         widget.listingId,
         reason: selected.rejectionReason,
         moderationNote: selected.rejectionReason,
+        wasPending:
+            (widget.listingData['status'] ?? '').toString().toLowerCase() ==
+                'pending',
       );
 
       String? notifyError;
@@ -1939,6 +1977,9 @@ class _AdminListingReviewScreenState extends State<AdminListingReviewScreen> {
         widget.listingId,
         reason: body,
         moderationNote: body,
+        wasPending:
+            (widget.listingData['status'] ?? '').toString().toLowerCase() ==
+                'pending',
       );
 
       String? notifyError;

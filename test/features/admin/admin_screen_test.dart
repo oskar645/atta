@@ -898,6 +898,14 @@ void main() {
     await tester.tap(find.text('Модерация'));
     await tester.pumpAndSettle();
     expect(find.text('Pending listing'), findsOneWidget);
+    expect(
+      find.byKey(
+        const ValueKey(
+          'admin-moderation-item-indicator:listing-pending',
+        ),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Одобрить'));
     await tester.pump();
@@ -905,6 +913,13 @@ void main() {
 
     expect(find.text('Pending listing'), findsNothing);
     expect(adminService.approvedIds, <String>['listing-pending']);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-tab-badge:Модерация')),
+        matching: find.text('1'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('moderation reject removes item immediately', (tester) async {
@@ -987,7 +1002,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-        find.byKey(const ValueKey('admin-tab-badge:Модерация')), findsNothing);
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-tab-badge:Модерация')),
+        matching: find.text('2'),
+      ),
+      findsOneWidget,
+    );
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('admin-tab-badge:Жалобы')),
@@ -1118,8 +1138,6 @@ class _FakeAdminService extends AdminService {
     markedSections.add(section);
     switch (section) {
       case AdminService.moderationSection:
-        _moderationBadgeCount = 0;
-        _moderationBadges.add(0);
         break;
       case AdminService.supportSection:
         _supportBadgeCount = 0;
@@ -1324,9 +1342,16 @@ class _FakeAdminService extends AdminService {
   }
 
   @override
-  Future<Map<String, dynamic>> approveListing(String listingId) async {
+  Future<Map<String, dynamic>> approveListing(
+    String listingId, {
+    bool wasPending = false,
+  }) async {
     approvedIds.add(listingId);
     _showPending = false;
+    if (wasPending && _moderationBadgeCount > 0) {
+      _moderationBadgeCount -= 1;
+      _moderationBadges.add(_moderationBadgeCount);
+    }
     return <String, dynamic>{
       'listing': _listingMap(id: listingId, title: 'Pending listing')
     };
@@ -1337,9 +1362,14 @@ class _FakeAdminService extends AdminService {
     String listingId, {
     String? reason,
     String? moderationNote,
+    bool wasPending = false,
   }) async {
     rejectedIds.add(listingId);
     _showPending = false;
+    if (wasPending && _moderationBadgeCount > 0) {
+      _moderationBadgeCount -= 1;
+      _moderationBadges.add(_moderationBadgeCount);
+    }
     return <String, dynamic>{
       'listing': _listingMap(id: listingId, title: 'Pending listing')
     };

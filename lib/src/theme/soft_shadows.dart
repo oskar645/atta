@@ -78,7 +78,7 @@ List<BoxShadow> attaHomeSoftCardShadows(BuildContext context) {
 /// changing profile and filter surfaces.
 List<BoxShadow> attaCoolSoftCardShadows(BuildContext context) {
   if (Theme.of(context).brightness == Brightness.dark) {
-    return attaSoftCardShadows(context);
+    return attaHomeSoftCardShadows(context);
   }
   return const <BoxShadow>[
     BoxShadow(
@@ -159,7 +159,10 @@ class _RoundedCornerShadowPainter extends CustomPainter {
       final arcPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1
-        ..color = shadow.color.withValues(alpha: shadow.color.a * 0.42)
+        // The regular BoxShadow already keeps the straight edges balanced.
+        // Continue the same cool tone around the curved arcs so the corners do
+        // not visually fade, without strengthening the rest of the surface.
+        ..color = shadow.color.withValues(alpha: shadow.color.a * 0.72)
         ..maskFilter = MaskFilter.blur(
           BlurStyle.normal,
           _convertRadiusToSigma(shadow.blurRadius),

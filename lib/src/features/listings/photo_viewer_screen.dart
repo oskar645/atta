@@ -23,6 +23,8 @@ class PhotoViewerScreen extends StatefulWidget {
 }
 
 class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
+  static const Alignment _photoAlignment = Alignment(0, -0.65);
+
   late final PageController _controller;
   late int _page;
 
@@ -73,11 +75,13 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
             return InteractiveViewer(
               minScale: 1,
               maxScale: 4,
-              child: Center(
+              child: SizedBox.expand(
+                key: const ValueKey('photo_viewer_image_viewport'),
                 child: localPath != null
                     ? Image.file(
                         File(localPath),
                         fit: BoxFit.contain,
+                        alignment: _photoAlignment,
                         errorBuilder: (_, __, ___) => const Center(
                           child: Icon(
                             Icons.broken_image_outlined,
@@ -100,6 +104,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
       return CachedNetworkImage(
         imageUrl: url,
         fit: BoxFit.contain,
+        alignment: _photoAlignment,
         placeholder: (_, __) => const Center(
           child: CircularProgressIndicator(),
         ),
@@ -123,8 +128,9 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
               ? null
               : <String, String>{
                   'Authorization': 'Bearer $token',
-                },
+          },
           fit: BoxFit.contain,
+          alignment: _photoAlignment,
           placeholder: (_, __) => const Center(
             child: CircularProgressIndicator(),
           ),

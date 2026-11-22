@@ -1,6 +1,7 @@
 import 'package:atta/src/features/profile/seller_public_profile_screen.dart';
 import 'package:atta/src/services/admin_service.dart';
 import 'package:atta/src/utils/ru_phone.dart';
+import 'package:atta/src/widgets/admin_copy_user_id_button.dart';
 import 'package:atta/src/widgets/remote_avatar.dart';
 import 'package:atta/src/widgets/atta_refresh_indicator.dart';
 import 'package:flutter/material.dart';
@@ -188,7 +189,11 @@ class _AdminOnlineUsersScreenState extends State<AdminOnlineUsersScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (phone.isNotEmpty) Text(phone),
-                        Text('User ID: $userId'),
+                        if (userId.isNotEmpty)
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: AdminCopyUserIdButton(userId: userId),
+                          ),
                         if (lastSeen.isNotEmpty) Text('Был в сети: $lastSeen'),
                       ],
                     ),

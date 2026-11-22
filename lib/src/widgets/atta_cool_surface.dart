@@ -11,11 +11,15 @@ class AttaCoolSurface extends StatelessWidget {
     required this.child,
     this.borderRadius = 16,
     this.clipBehavior = Clip.antiAlias,
+    this.boxShadows,
+    this.darkSurfaceColor,
   });
 
   final Widget child;
   final double borderRadius;
   final Clip clipBehavior;
+  final List<BoxShadow>? boxShadows;
+  final Color? darkSurfaceColor;
 
   @override
   Widget build(BuildContext context) {
@@ -25,12 +29,12 @@ class AttaCoolSurface extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: radius,
-        boxShadow: attaCoolSoftCardShadows(context),
+        boxShadow: boxShadows ?? attaCoolSoftCardShadows(context),
       ),
       child: Material(
         color: theme.brightness == Brightness.light
             ? Colors.white
-            : theme.colorScheme.surfaceContainerHighest,
+            : darkSurfaceColor ?? theme.colorScheme.surfaceContainerHighest,
         borderRadius: radius,
         clipBehavior: clipBehavior,
         child: child,

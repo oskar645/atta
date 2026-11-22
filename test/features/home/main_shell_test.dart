@@ -62,7 +62,7 @@ void main() {
     expect(buildCounts.containsKey(4), isFalse);
   });
 
-  testWidgets('bottom navigation uses a white background in light theme',
+  testWidgets('bottom navigation uses clipped clear glass in light theme',
       (tester) async {
     await tester.pumpWidget(
       MultiProvider(
@@ -91,9 +91,109 @@ void main() {
     final navigationTheme = tester.widget<NavigationBarTheme>(
       find.byType(NavigationBarTheme),
     );
-    expect(navigationTheme.data.backgroundColor, Colors.white);
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
+    final navigationSurface = tester.widget<ClipRRect>(
+      find.byKey(const Key('main_shell_bottom_navigation_surface')),
+    );
+    final navigationSafeArea = tester.widget<SafeArea>(
+      find.byKey(const Key('main_shell_bottom_navigation_safe_area')),
+    );
+    final navigationGlass = tester.widget<DecoratedBox>(
+      find.byKey(const Key('main_shell_bottom_navigation_glass')),
+    );
+    final glassDecoration = navigationGlass.decoration as BoxDecoration;
+
+    expect(scaffold.extendBody, isTrue);
+    expect(navigationSafeArea.top, isFalse);
+    expect(
+      navigationSafeArea.minimum,
+      const EdgeInsets.fromLTRB(8, 0, 8, 8),
+    );
+    expect(
+      find.ancestor(
+        of: find.byKey(const Key('main_shell_bottom_navigation_surface')),
+        matching: find.byKey(
+          const Key('main_shell_bottom_navigation_safe_area'),
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      navigationSurface.borderRadius,
+      const BorderRadius.all(Radius.circular(28)),
+    );
+    expect(
+      find.byKey(const Key('main_shell_bottom_navigation_blur')),
+      findsOneWidget,
+    );
+    expect(
+      glassDecoration.color,
+      const Color(0xFF080D14).withValues(alpha: 0.45),
+    );
+    expect(
+      glassDecoration.border,
+      Border.all(
+        color: Colors.white.withValues(alpha: 0.24),
+        width: 0.8,
+      ),
+    );
+    expect(navigationTheme.data.backgroundColor, Colors.transparent);
     expect(navigationTheme.data.height, 64);
     expect(navigationTheme.data.indicatorColor, Colors.transparent);
+    expect(
+      navigationTheme.data.labelTextStyle
+          ?.resolve({WidgetState.selected})?.color,
+      Colors.white,
+    );
+    expect(
+      navigationTheme.data.labelTextStyle?.resolve(<WidgetState>{})?.color,
+      Colors.white.withValues(alpha: 0.82),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bottom navigation keeps clear glass in dark theme',
+      (tester) async {
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<AuthService>.value(value: _FakeAuthService()),
+          Provider<ChatService>.value(value: _FakeChatService()),
+          Provider<AdminService>.value(value: _FakeAdminService()),
+          Provider<NotificationsService>.value(
+            value: _FakeNotificationsService(),
+          ),
+          Provider<PresenceService>.value(value: _FakePresenceService()),
+          ChangeNotifierProvider<MainShellController>(
+            create: (_) => MainShellController(),
+          ),
+        ],
+        child: MaterialApp(
+          theme: ThemeData.light(),
+          darkTheme: ThemeData.dark(),
+          themeMode: ThemeMode.dark,
+          home: MainShell(
+            pageBuilder: (index, controller) =>
+                Text('page:$index', textDirection: TextDirection.ltr),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final navigationGlass = tester.widget<DecoratedBox>(
+      find.byKey(const Key('main_shell_bottom_navigation_glass')),
+    );
+    final glassDecoration = navigationGlass.decoration as BoxDecoration;
+
+    expect(
+      glassDecoration.color,
+      const Color(0xFF05080D).withValues(alpha: 0.30),
+    );
+    expect(
+      find.byKey(const Key('main_shell_bottom_navigation_blur')),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
@@ -130,6 +230,13 @@ void main() {
         .toList();
 
     expect(scalesFor(Icons.search), isNotEmpty);
+    final searchIcons =
+        scalesFor(Icons.search).map((scale) => scale.child as Icon).toList();
+    expect(searchIcons.every((icon) => icon.color == Colors.blue), isTrue);
+    expect(
+      searchIcons.every((icon) => icon.shadows?.isNotEmpty ?? false),
+      isTrue,
+    );
     expect(
         scalesFor(Icons.search).every((scale) => scale.scale == 1.15), isTrue);
     expect(
@@ -150,7 +257,17 @@ void main() {
     await tester.pump();
 
     expect(scalesFor(Icons.search).every((scale) => scale.scale == 1), isTrue);
+    expect(
+      scalesFor(Icons.search)
+          .map((scale) => scale.child as Icon)
+          .every((icon) => icon.color == Colors.white),
+      isTrue,
+    );
     expect(scalesFor(Icons.favorite).single.scale, 1.15);
+    expect(
+      (scalesFor(Icons.favorite).single.child as Icon).color,
+      Colors.red,
+    );
     expect(
         tester.getCenter(find.byIcon(Icons.search).first), searchCenterBefore);
     expect(tester.getCenter(find.byIcon(Icons.favorite)), favoriteCenterBefore);

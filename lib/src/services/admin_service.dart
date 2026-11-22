@@ -119,10 +119,16 @@ class AdminService {
     if (!_sessionActive) {
       return Stream<int>.value(0);
     }
-    return _streamSectionBadgeCount(
-      moderationSection,
-      _moderationBadgeController,
-    );
+    return Stream<int>.multi((controller) {
+      controller.add(_sectionSnapshots[moderationSection]?.count ?? 0);
+      final sub = _moderationBadgeController.stream.listen(
+        controller.add,
+        onError: controller.addError,
+      );
+      controller.onCancel = () async {
+        await sub.cancel();
+      };
+    }).distinct().asBroadcastStream();
   }
 
   Stream<int> streamOpenReportsCount() {
@@ -719,11 +725,15 @@ class AdminService {
         ),
         forceRefresh: forceRefresh,
       );
-  Future<Map<String, dynamic>> approveListing(String listingId) =>
+  Future<Map<String, dynamic>> approveListing(
+    String listingId, {
+    bool wasPending = false,
+  }) =>
       _mutateListing(
         () => _api.approveListing(listingId),
         listingId: listingId,
         fallbackStatus: 'approved',
+        wasPending: wasPending,
       );
 
   Future<Map<String, dynamic>> blocks({
@@ -810,6 +820,7 @@ class AdminService {
     String listingId, {
     String? reason,
     String? moderationNote,
+    bool wasPending = false,
   }) =>
       _mutateListing(
         () => _api.rejectListing(
@@ -819,6 +830,7 @@ class AdminService {
         ),
         listingId: listingId,
         fallbackStatus: 'rejected',
+        wasPending: wasPending,
       );
   Future<Map<String, dynamic>> archiveListing(
     String listingId, {
@@ -839,6 +851,7 @@ class AdminService {
     String listingId, {
     String? reason,
     String? moderationNote,
+    bool wasPending = false,
   }) =>
       _mutateListing(
         () => _api.deleteListing(
@@ -848,6 +861,7 @@ class AdminService {
         ),
         listingId: listingId,
         fallbackStatus: 'deleted',
+        wasPending: wasPending,
       );
 
   Future<Map<String, dynamic>> permanentlyDeleteListing(
@@ -898,6 +912,7 @@ class AdminService {
     Future<Map<String, dynamic>> Function() action, {
     required String listingId,
     required String fallbackStatus,
+    bool wasPending = false,
   }) async {
     final response = await action();
     final listing = _extractListing(response);
@@ -905,6 +920,7 @@ class AdminService {
       listingId: listingId,
       fallbackStatus: fallbackStatus,
       listing: listing,
+      wasPending: wasPending,
     );
     return response;
   }
@@ -919,6 +935,7 @@ class AdminService {
     required String listingId,
     required String fallbackStatus,
     Map<String, dynamic>? listing,
+    bool wasPending = false,
   }) {
     _stateGeneration++;
     final normalized = <String, dynamic>{
@@ -935,7 +952,21 @@ class AdminService {
     } else {
       _replaceItemInCache('listings:$fallbackStatus', normalized);
     }
-    _updatePendingSnapshotFromCache();
+    if (wasPending) {
+      final snapshot = _sectionSnapshots[moderationSection];
+      if (snapshot != null && snapshot.count > 0) {
+        final nextCount = snapshot.count - 1;
+        _sectionSnapshots[moderationSection] = AdminSectionSnapshot(
+          count: nextCount,
+          marker: nextCount == 0 ? '' : snapshot.marker,
+        );
+        _emitSectionBadgeCounts();
+      } else {
+        _updatePendingSnapshotFromCache();
+      }
+    } else {
+      _updatePendingSnapshotFromCache();
+    }
     _cache.remove('dashboardStats');
   }
 
@@ -1167,10 +1198,12 @@ class AdminService {
 
   void _emitSectionBadgeCounts() {
     final moderationCount = _unreadCountFor(moderationSection);
+    final pendingModerationCount =
+        _sectionSnapshots[moderationSection]?.count ?? 0;
     final reportsCount = _unreadCountFor(reportsSection);
     final supportCount = _unreadCountFor(supportSection);
     if (!_moderationBadgeController.isClosed) {
-      _moderationBadgeController.add(moderationCount);
+      _moderationBadgeController.add(pendingModerationCount);
     }
     if (!_reportsBadgeController.isClosed) {
       _reportsBadgeController.add(reportsCount);

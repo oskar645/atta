@@ -57,6 +57,14 @@ void main() {
     await tester.pump();
 
     expect(find.text('2/3'), findsOneWidget);
+    final imageViewport = find.byKey(
+      const ValueKey('photo_viewer_image_viewport'),
+    );
+    expect(tester.getSize(imageViewport), const Size(800, 544));
+    final image = tester.widget<Image>(
+      find.descendant(of: imageViewport, matching: find.byType(Image)),
+    );
+    expect(image.alignment, const Alignment(0, -0.65));
     await tester.tap(find.byKey(const ValueKey('photo_next')));
     await tester.pumpAndSettle();
     expect(find.text('3/3'), findsOneWidget);

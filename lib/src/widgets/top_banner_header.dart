@@ -19,6 +19,11 @@ class TopBannerHeaderBackground extends StatefulWidget {
   State<TopBannerHeaderBackground> createState() => _State();
 }
 
+const _topBannerBottomRadius = BorderRadius.only(
+  bottomLeft: Radius.circular(8),
+  bottomRight: Radius.circular(8),
+);
+
 class _State extends State<TopBannerHeaderBackground> {
   bool shown = false;
 
@@ -66,17 +71,22 @@ class _State extends State<TopBannerHeaderBackground> {
       b.imageUrl,
       categoryHint: 'top-banners',
     );
-    return GestureDetector(
+    return ClipRRect(
+      key: const Key('home_top_banner_bottom_corners'),
+      borderRadius: _topBannerBottomRadius,
+      child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: b.hasLink ? open : null,
         child: Image(
-            image:
-                TopBannerHeaderBackground.debugImageProvider?.call(imageUrl) ??
-                    CachedNetworkImageProvider(imageUrl),
-            fit: BoxFit.cover,
-            alignment: Alignment(0, b.imageAlignmentY),
-            errorBuilder: (_, __, ___) => ColoredBox(
-                  color: Theme.of(context).colorScheme.surface,
-                )));
+          image: TopBannerHeaderBackground.debugImageProvider?.call(imageUrl) ??
+              CachedNetworkImageProvider(imageUrl),
+          fit: BoxFit.cover,
+          alignment: Alignment(0, b.imageAlignmentY),
+          errorBuilder: (_, __, ___) => ColoredBox(
+            color: Theme.of(context).colorScheme.surface,
+          ),
+        ),
+      ),
+    );
   }
 }

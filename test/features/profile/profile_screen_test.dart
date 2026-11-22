@@ -118,6 +118,93 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('dark profile uses black surfaces and home three-layer shadows',
+      (tester) async {
+    await tester.pumpWidget(
+      _wrapProfile(
+        themeMode: ThemeMode.dark,
+        walletService: _ProfileWalletSuccessService(),
+        profileService: _FakeProfileService(),
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Настройки'));
+
+    expect(
+      Theme.of(tester.element(find.byType(Scaffold))).scaffoldBackgroundColor,
+      const Color(0xFF000000),
+    );
+    expect(
+      tester
+          .widgetList<Container>(
+            find.ancestor(
+              of: find.byKey(const ValueKey('profile-phone-display')),
+              matching: find.byType(Container),
+            ),
+          )
+          .map((container) => container.decoration)
+          .whereType<BoxDecoration>()
+          .any((decoration) => decoration.color == const Color(0xFF000000)),
+      isTrue,
+    );
+    final darkMaterials = tester
+        .widgetList<Material>(find.byType(Material))
+        .where((material) =>
+            material.color == const Color(0xFF000000) &&
+            material.borderRadius == BorderRadius.circular(14));
+    expect(darkMaterials.length, greaterThanOrEqualTo(4));
+    expect(
+      tester
+          .widgetList<DecoratedBox>(find.byType(DecoratedBox))
+          .map((widget) => widget.decoration)
+          .whereType<BoxDecoration>()
+          .any(
+            (decoration) =>
+                decoration.boxShadow?.length == 3 &&
+                decoration.boxShadow?.first.color == const Color(0x3D7CA1C7),
+          ),
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('profile stream survives repeated light and dark theme changes',
+      (tester) async {
+    final wallet = _ProfileWalletSuccessService();
+    final profile = _FakeProfileService();
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        themeMode: ThemeMode.light,
+        walletService: wallet,
+        profileService: profile,
+      ),
+    );
+    await _pumpUntilFound(tester, find.text('Настройки'));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        themeMode: ThemeMode.dark,
+        walletService: wallet,
+        profileService: profile,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      _wrapProfile(
+        themeMode: ThemeMode.light,
+        walletService: wallet,
+        profileService: profile,
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('ordinary profile shows verification and member since statuses',
       (tester) async {
     await tester.pumpWidget(
@@ -744,6 +831,7 @@ Widget _wrapProfile({
   ProfileService? profileService,
   Future<XFile?> Function(ImageSource source)? pickImage,
   Future<void> Function(BuildContext context, String imageUrl)? precacheAvatar,
+  ThemeMode themeMode = ThemeMode.light,
 }) {
   return MultiProvider(
     providers: [
@@ -756,6 +844,9 @@ Widget _wrapProfile({
       ChangeNotifierProvider(create: (_) => ThemeService()),
     ],
     child: MaterialApp(
+      theme: ThemeData.light(useMaterial3: true),
+      darkTheme: ThemeData.dark(useMaterial3: true),
+      themeMode: themeMode,
       home: ProfileScreen(
         pickImage: pickImage,
         precacheAvatar: precacheAvatar,

@@ -89,6 +89,16 @@ void main() {
     await tester.pumpWidget(app());
     await tester.pumpAndSettle();
     expect(find.byType(Image), findsOneWidget);
+    final bannerClip = tester.widget<ClipRRect>(
+      find.byKey(const Key('home_top_banner_bottom_corners')),
+    );
+    expect(
+      bannerClip.borderRadius,
+      const BorderRadius.only(
+        bottomLeft: Radius.circular(8),
+        bottomRight: Radius.circular(8),
+      ),
+    );
     expect(service.impressions, 1);
 
     await tester.pumpWidget(app());

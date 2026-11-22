@@ -58,8 +58,9 @@ import 'package:atta/src/widgets/top_banner_header.dart';
 import 'package:atta/src/features/showcase/showcase_all_screen.dart';
 import 'package:atta/src/features/showcase/showcase_preview_screen.dart';
 
-const Color _homeDarkBackground = Color(0xFF15181E);
-const Color _homeDarkSurface = Color(0xFF292F39);
+const Color _homeDarkBackground = Color(0xFF000000);
+const Color _homeDarkSurface = Color(0xFF000000);
+const Color _homeDarkSearchSurface = Color(0xFF000000);
 const Color _homeDarkPrimaryText = Color(0xFFF4F6FA);
 const Color _homeDarkSecondaryText = Color(0xFFB8C5D3);
 
@@ -848,7 +849,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
     final user = context.read<AuthService>().currentUser;
     final isLight = Theme.of(context).brightness == Brightness.light;
     final homeSurface = isLight ? Colors.white : _homeDarkBackground;
-    final homeElementSurface = isLight ? Colors.white : _homeDarkSurface;
+    final homeElementSurface = isLight ? Colors.white : _homeDarkSearchSurface;
     final appBarSurface =
         isLight ? Colors.white : Theme.of(context).colorScheme.surface;
     final headerSurface = _hasTopBanner ? Colors.white : appBarSurface;
@@ -2874,6 +2875,7 @@ class _SubcategoryRow extends StatelessWidget {
     return SizedBox(
       height: kCategoryStripHeight,
       child: ListView.separated(
+        clipBehavior: Clip.none,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         scrollDirection: Axis.horizontal,
         itemCount: options.length,
@@ -2881,22 +2883,33 @@ class _SubcategoryRow extends StatelessWidget {
         itemBuilder: (_, i) {
           final value = options[i];
           final isSel = value == selected;
-          return ChoiceChip(
-            label: Text(value),
+          return CategoryChipSurface(
             selected: isSel,
-            selectedColor: Colors.blue,
-            checkmarkColor: Colors.white,
-            labelStyle: TextStyle(
-              color: isSel ? Colors.white : null,
-              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
+            boxShadows: attaHomeSoftCardShadows(context),
+            supportRoundedShadowCorners: true,
+            child: ChoiceChip(
+              label: Text(value),
+              selected: isSel,
+              selectedColor: Colors.blue,
+              backgroundColor: Theme.of(context).brightness == Brightness.dark
+                  ? _homeDarkSurface
+                  : categoryChipBackgroundColor(context),
+              checkmarkColor: Colors.white,
+              labelStyle: TextStyle(
+                color: isSel
+                    ? Colors.white
+                    : Theme.of(context).brightness == Brightness.dark
+                        ? _homeDarkPrimaryText
+                        : null,
+                fontWeight: isSel ? FontWeight.w600 : FontWeight.w400,
+              ),
+              onSelected: (_) => onSelect(value),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              side: BorderSide.none,
+              elevation: 0,
+              pressElevation: 1,
             ),
-            onSelected: (_) => onSelect(value),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            visualDensity: VisualDensity.compact,
-            side: BorderSide.none,
-            elevation: 0.5,
-            pressElevation: 1,
-            shadowColor: attaSoftShadowColor(context),
           );
         },
       ),

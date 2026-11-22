@@ -191,9 +191,9 @@ void main() {
     expect(field.decoration?.fillColor, isNot(Colors.white));
     expect(
       field.decoration?.fillColor,
-      const Color(0xFF292F39),
+      const Color(0xFF000000),
     );
-    expect(darkCarCategoryChip.backgroundColor, const Color(0xFF292F39));
+    expect(darkCarCategoryChip.backgroundColor, const Color(0xFF000000));
     expect(
       tester
           .widgetList<DecoratedBox>(
@@ -213,7 +213,7 @@ void main() {
     );
     final darkHomeScaffold =
         tester.widget<Scaffold>(find.byType(Scaffold).first);
-    expect(darkHomeScaffold.backgroundColor, const Color(0xFF15181E));
+    expect(darkHomeScaffold.backgroundColor, const Color(0xFF000000));
     expect(tester.takeException(), isNull);
   });
 
@@ -385,7 +385,7 @@ void main() {
           )
           .first,
     );
-    expect(darkCardMaterial.color, const Color(0xFF292F39));
+    expect(darkCardMaterial.color, const Color(0xFF000000));
     expect(
       tester
           .widgetList<DecoratedBox>(
@@ -1791,7 +1791,36 @@ void main() {
       expect(listings.requests.last.filters?.category, 'Запчасти');
       expect(listings.requests.last.filters?.subcategory, 'Все');
 
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Запчасти авто'));
+      final subcategoryChip = find.widgetWithText(ChoiceChip, 'Запчасти авто');
+      final subcategoryWidget = tester.widget<ChoiceChip>(subcategoryChip);
+      expect(subcategoryWidget.backgroundColor, Colors.white);
+      expect(subcategoryWidget.elevation, 0);
+      expect(
+        find.ancestor(
+          of: subcategoryChip,
+          matching: find.byType(AttaRoundedCornerShadowSupport),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .widgetList<DecoratedBox>(
+              find.ancestor(
+                of: subcategoryChip,
+                matching: find.byType(DecoratedBox),
+              ),
+            )
+            .map((widget) => widget.decoration)
+            .whereType<BoxDecoration>()
+            .any(
+              (decoration) =>
+                  decoration.boxShadow?.length == 3 &&
+                  decoration.boxShadow?.first.color == const Color(0x38547CA5),
+            ),
+        isTrue,
+      );
+
+      await tester.tap(subcategoryChip);
       await tester.pumpAndSettle();
 
       expect(listings.requests.last.category, 'Запчасти');

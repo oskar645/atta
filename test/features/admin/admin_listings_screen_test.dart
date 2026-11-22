@@ -96,6 +96,7 @@ class _FakeAdminListingsService extends AdminService {
     String listingId, {
     String? reason,
     String? moderationNote,
+    bool wasPending = false,
   }) async {
     softDeletedIds.add(listingId);
     return {

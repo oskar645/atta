@@ -36,6 +36,34 @@ void _debugProfileLog(String message) {
   }());
 }
 
+const Color _profileDarkSurface = Color(0xFF000000);
+
+Widget _profileTheme(BuildContext context, Widget child) {
+  final theme = Theme.of(context);
+  final isDark = theme.brightness == Brightness.dark;
+  final scheme = theme.colorScheme;
+  return Theme(
+    data: isDark
+        ? theme.copyWith(
+            scaffoldBackgroundColor: _profileDarkSurface,
+            appBarTheme: theme.appBarTheme.copyWith(
+              backgroundColor: _profileDarkSurface,
+              surfaceTintColor: Colors.transparent,
+            ),
+            colorScheme: scheme.copyWith(
+              surface: _profileDarkSurface,
+              surfaceContainerLowest: _profileDarkSurface,
+              surfaceContainerLow: _profileDarkSurface,
+              surfaceContainer: _profileDarkSurface,
+              surfaceContainerHigh: _profileDarkSurface,
+              surfaceContainerHighest: _profileDarkSurface,
+            ),
+          )
+        : theme,
+    child: child,
+  );
+}
+
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
@@ -464,7 +492,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     }
     admin.bindAdminUser(user.uid);
 
-    return Scaffold(
+    final scaffold = Scaffold(
       appBar: AppBar(title: const Text('Профиль'), centerTitle: false),
       body: StreamBuilder<Map<String, dynamic>>(
         key: ValueKey('profile-stream-${user.uid}'),
@@ -546,7 +574,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                   color: Theme.of(context).brightness == Brightness.light
                       ? Colors.white
                       : Theme.of(context).colorScheme.surfaceContainerHighest,
-                  boxShadow: attaCoolSoftCardShadows(context),
+                  boxShadow: attaHomeSoftCardShadows(context),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -797,6 +825,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         },
       ),
     );
+    return _profileTheme(context, scaffold);
   }
 }
 
@@ -826,7 +855,7 @@ class _ProfileActionSurface extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: radius,
-        boxShadow: attaCoolSoftCardShadows(context),
+        boxShadow: attaHomeSoftCardShadows(context),
       ),
       child: Material(
         color: color,
@@ -1196,108 +1225,119 @@ class _ProfileWalletCard extends StatelessWidget {
     final theme = Theme.of(context);
     const accent = Color(0xFF2196F3);
     final isDark = theme.brightness == Brightness.dark;
-    final cardColor =
-        isDark ? const Color(0xFF10283B) : const Color(0xFFF0F8FF);
+    final cardColor = isDark ? _profileDarkSurface : const Color(0xFFF0F8FF);
     final borderColor =
         isDark ? accent.withValues(alpha: 0.42) : const Color(0xFFB9DFFF);
-    return Material(
-      elevation: 0.75,
-      shadowColor: attaSoftShadowColor(context),
-      color: cardColor,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: borderColor),
+    final radius = BorderRadius.circular(14);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: isDark ? attaHomeSoftCardShadows(context) : null,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: const Key('profile-wallet-card'),
-        borderRadius: BorderRadius.circular(14),
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const WalletScreen(),
-            ),
-          );
-        },
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final topUpLabel = TextPainter(
-                text: TextSpan(
-                  text: 'Пополнить',
-                  style: theme.textTheme.labelLarge,
-                ),
-                textDirection: Directionality.of(context),
-                textScaler: MediaQuery.textScalerOf(context),
-              )..layout();
-              // Icon, gaps, refresh area and the unchanged button padding.
-              // The info column can shrink because all its text uses ellipsis.
-              final minimumRowWidth =
-                  24 + 16 + 10 + 40 + 8 + 28 + topUpLabel.width.ceilToDouble();
-              topUpLabel.dispose();
-              final narrow = constraints.maxWidth < minimumRowWidth;
-              final info = _ProfileWalletInfo(
-                wallet: wallet,
-                showBalance: !narrow,
-              );
-              final refresh = _ProfileWalletRefreshButton(
-                refreshing: refreshing,
-                onRefresh: onRefresh,
-              );
-              final button = _ProfileWalletTopUpButton(onPressed: onTopUp);
+      child: Material(
+        elevation: isDark ? 0 : 0.75,
+        shadowColor: attaSoftShadowColor(context),
+        color: cardColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: isDark ? BorderSide.none : BorderSide(color: borderColor),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const Key('profile-wallet-card'),
+          borderRadius: BorderRadius.circular(14),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const WalletScreen(),
+              ),
+            );
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final topUpLabel = TextPainter(
+                  text: TextSpan(
+                    text: 'Пополнить',
+                    style: theme.textTheme.labelLarge,
+                  ),
+                  textDirection: Directionality.of(context),
+                  textScaler: MediaQuery.textScalerOf(context),
+                )..layout();
+                // Icon, gaps, refresh area and the unchanged button padding.
+                // The info column can shrink because all its text uses ellipsis.
+                final minimumRowWidth = 24 +
+                    16 +
+                    10 +
+                    40 +
+                    8 +
+                    28 +
+                    topUpLabel.width.ceilToDouble();
+                topUpLabel.dispose();
+                final narrow = constraints.maxWidth < minimumRowWidth;
+                final info = _ProfileWalletInfo(
+                  wallet: wallet,
+                  showBalance: !narrow,
+                );
+                final refresh = _ProfileWalletRefreshButton(
+                  refreshing: refreshing,
+                  onRefresh: onRefresh,
+                );
+                final button = _ProfileWalletTopUpButton(onPressed: onTopUp);
 
-              if (narrow) {
+                if (narrow) {
+                  return ConstrainedBox(
+                    constraints: const BoxConstraints(minHeight: 94),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.account_balance_wallet_rounded,
+                              color: accent,
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(child: info),
+                            const SizedBox(width: 8),
+                            refresh,
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _ProfileWalletBalance(wallet: wallet),
+                            ),
+                            const SizedBox(width: 10),
+                            button,
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
                 return ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 94),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  constraints: const BoxConstraints(minHeight: 64),
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.account_balance_wallet_rounded,
-                            color: accent,
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(child: info),
-                          const SizedBox(width: 8),
-                          refresh,
-                        ],
+                      const Icon(
+                        Icons.account_balance_wallet_rounded,
+                        color: accent,
                       ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _ProfileWalletBalance(wallet: wallet),
-                          ),
-                          const SizedBox(width: 10),
-                          button,
-                        ],
-                      ),
+                      const SizedBox(width: 16),
+                      Expanded(child: info),
+                      const SizedBox(width: 10),
+                      refresh,
+                      const SizedBox(width: 8),
+                      button,
                     ],
                   ),
                 );
-              }
-
-              return ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 64),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.account_balance_wallet_rounded,
-                      color: accent,
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(child: info),
-                    const SizedBox(width: 10),
-                    refresh,
-                    const SizedBox(width: 8),
-                    button,
-                  ],
-                ),
-              );
-            },
+              },
+            ),
           ),
         ),
       ),
